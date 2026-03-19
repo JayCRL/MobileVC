@@ -1,0 +1,43 @@
+完美！骨架非常扎实。接下来，我们需要把“前后端交互闭环”彻底打通。请结合你建议的 选项 3（前端上行输入事件协议） 和 选项 1（接入真实 runner os/exec） 进行本轮开发。
+
+【核心需求与架构设计】
+
+1. 定义上行输入协议 (Client Event)
+在 internal/protocol/event.go 或新建 client_event.go 中，定义前端发给后端的 JSON 结构。
+最核心的是执行命令请求：
+
+JSON
+{
+  "action": "exec",       // 目前先实现 exec
+  "cmd": "npm run build", // 具体的 shell 命令
+  "cwd": "./"             // 执行目录（可选，默认当前工作目录）
+}
+2. 实现基础命令执行器 (Fast Track Runner)
+在 internal/runner/ 下实现基于 os/exec 的 Runner。
+
+接收 cmd 和 cwd。
+
+使用 StdoutPipe 和 StderrPipe 获取输出流。
+
+关键集成： 将读取到的流按行（bufio.Scanner）喂给你上一轮写好的 GenericParser。
+
+将 Parser 吐出的 protocol.Event (比如 LogEvent 或聚合成的 ErrorEvent) 通过 Go Channel 或回调函数，实时发送出去。
+
+3. 缝合 WebSocket 读写循环 (The Loop)
+修改 internal/ws/handler.go：
+
+完善读循环（Read Loop）：监听前端发来的 JSON，解析为 ClientEvent。
+
+如果 action == "exec"，在一个新的 Goroutine 中拉起刚才写的 Runner。
+
+Runner 产生的所有结构化 Event，直接调用 WebSocket 的 conn.WriteJSON 推送给前端。
+
+注意并发安全： Gorilla WebSocket 不允许并发写，请在 Handler 中维护一个 Write Mutex，或者用一个专门的 Write Channel/Goroutine 来汇聚发送。
+
+【验证与交付 (Verification)】
+
+补齐对应的新增单元测试。
+
+运行 go build ./... 确保无编译错误。
+
+请在你的回复末尾，为我提供一段极简的 Node.js 脚本 或 wscat 命令。这段脚本需要能：携带 token 连接到 ws，发送一个测试命令（例如 ls -la 或 ping -c 3 127.0.0.1 这种有持续输出的命令），并将收到的结构化 JSON 打印在控制台上，以便我立即验证闭环效果。

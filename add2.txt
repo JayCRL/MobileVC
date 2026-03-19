@@ -1,0 +1,48 @@
+高阶攻坚阶段：引入 PTY 与交互式进程控制】
+兄弟，上一轮的 exec_runner 闭环做得非常完美！但这只是基础。
+我们的终极愿景是要在移动端可视化地控制 claude code / gemini cli 等有状态的 AI 工具。现在，我们进入本项目的深水区：开发交互式的 PtyRunner。
+
+【技术规范与扩展目标】
+请在现有 exec_runner 平行并存的基础上，引入 github.com/creack/pty，实现一个专为强交互设计的 pty_runner.go。
+
+1. 扩展前端上行协议 (Input Action)
+修改 internal/protocol/event.go：
+
+增加前端向后端发送输入流的协议。当 action == "input" 时，接收 data 字段（如 "y\n" 或具体的命令字符）。
+
+2. 编写 ANSI 剥离器 (The Cleaner)
+在 internal/adapter/ 下新增一个工具函数 StripANSI(str string) string。
+
+使用正则表达式剥离所有终端颜色码和控制符（如 \x1b\[[0-9;]*[a-zA-Z]），确保送入 GenericParser 的是纯净的 ASCII/UTF-8 文本。
+
+3. 核心实现：PtyRunner
+新增 internal/runner/pty_runner.go：
+
+使用 pty.Start(exec.CommandContext(...)) 启动命令。
+
+读协程： 循环从 pty 的文件描述符中读取字节（注意不要用 Scanner，因为交互提示符通常没有换行符 \n，用 io.Reader 读到 buffer 里）。
+
+清洗与探测： 读到的字符串先经过 StripANSI。然后进行特征嗅探：
+
+如果字符串以 [y/N] 结尾，或者包含明显的交互提示特征，立即组装一个 {"type": "prompt_request", "msg": "..."} 事件推给前端。
+
+其他纯文本丢给 GenericParser 走现有的 log/error 组装逻辑。
+
+4. WebSocket 读循环改造 (The Input Router)
+修改 internal/ws/handler.go：
+
+当收到前端 action == "input" 时，如果当前有一个正在运行的 PtyRunner，将其 data（附带换行符）直接写入 pty 的文件描述符（Stdin）。
+
+确保 Handler 能够安全地持有当前活动的 Runner 实例或其写入通道（Input Channel）。
+
+【交付与验证要求】
+
+执行 go get github.com/creack/pty。
+
+完成上述代码编写，确保 exec_runner 和 pty_runner 两个接口共存且互不干扰。
+
+提供单元测试，特别是 StripANSI 的正则准确性测试。
+
+运行 go build ./... 保证编译通过。
+
+验证提示： 请在回复末尾，给出一个包含 input 交互的 python3 或 Node.js 测试脚本示例。该脚本应先发送 exec 启动一个交互式的命令（比如启动一个 python -i 的 REPL 或者需要 read -p 输入的 shell 脚本），然后接收到后端推来的输出，再模拟前端发送一条 input 事件，验证完整的交互闭环。

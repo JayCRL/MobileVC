@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gofmt -w cmd/server/main.go internal/config/config.go internal/ws/handler.go internal/protocol/event.go internal/adapter/adapter.go internal/adapter/generic_parser.go internal/adapter/generic_parser_test.go internal/runner/runner.go internal/session/session.go internal/store/store.go)",
+      "Bash(go mod:*)",
+      "Bash(go test:*)",
+      "Bash(go build:*)",
+      "Bash(AUTH_TOKEN=test PORT=8080 go run ./cmd/server)",
+      "Bash(curl:*)",
+      "Bash(gofmt:*)",
+      "Bash(python:*)",
+      "Bash(AUTH_TOKEN=test PORT=18765 go run ./cmd/server)",
+      "Bash(go get:*)",
+      "Bash(node:*)",
+      "Bash(python3:*)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist:*)",
+      "Bash(taskkill:*)",
+      "Bash(AUTH_TOKEN=test PORT=8081 go run ./cmd/server)",
+      "Bash(go run:*)",
+      "Bash(powershell -NoProfile -Command \"$connections = Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue; if \\(-not $connections\\) { exit 0 }; $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique; foreach \\($pid in $pids\\) { Stop-Process -Id $pid -Force }; Start-Sleep -Milliseconds 500; Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess | Format-Table -HideTableHeaders\")",
+      "Bash(powershell -NoProfile -Command 'Stop-Process -Id 34256 -Force; Start-Sleep -Milliseconds 500; Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess | Format-Table -HideTableHeaders')",
+      "Bash(powershell -NoProfile -Command 'Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess | Format-Table -HideTableHeaders')",
+      "Bash(powershell -NoProfile -Command '$conn = Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if \\($conn\\) { Stop-Process -Id $conn.OwningProcess -Force }; Start-Sleep -Milliseconds 500')",
+      "Bash(claude:*)",
+      "Bash(AUTH_TOKEN=test PORT=8091 go run ./cmd/server)",
+      "Bash(AUTH_TOKEN=test PORT=8092 go run ./cmd/server)",
+      "Bash(AUTH_TOKEN=test PORT=8093 go run ./cmd/server)",
+      "Bash(AUTH_TOKEN=test PORT=8094 go run ./cmd/server)",
+      "Bash(cmd.exe /C \"D:\\\\MobileVC\\\\run.bat\")",
+      "Bash(where git:*)",
+      "Bash(where bash:*)",
+      "Bash(where winpty:*)",
+      "Bash(where script:*)"
+    ]
+  }
+}

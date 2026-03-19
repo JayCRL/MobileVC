@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MobileVC Vibe Coding</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+  <style>
+    .markdown-body {
+      color: #f4f4f5;
+      font-size: 0.95rem;
+      line-height: 1.7;
+    }
+    .markdown-body > *:first-child { margin-top: 0; }
+    .markdown-body > *:last-child { margin-bottom: 0; }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+      margin: 1rem 0 0.5rem;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .markdown-body h1 { font-size: 1.25rem; }
+    .markdown-body h2 { font-size: 1.1rem; }
+    .markdown-body h3 { font-size: 1rem; }
+    .markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body pre, .markdown-body blockquote {
+      margin: 0.75rem 0;
+    }
+    .markdown-body ul, .markdown-body ol {
+      padding-left: 1.25rem;
+    }
+    .markdown-body code:not(pre code) {
+      background: rgba(255,255,255,0.08);
+      border-radius: 0.4rem;
+      padding: 0.12rem 0.35rem;
+      font-size: 0.9em;
+    }
+    .markdown-body pre {
+      position: relative;
+      overflow-x: auto;
+      border-radius: 0.9rem;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: #0f172a;
+      padding: 1rem;
+    }
+    .markdown-body pre code {
+      background: transparent;
+      padding: 0;
+      font-size: 0.88rem;
+    }
+    .markdown-body blockquote {
+      border-left: 3px solid rgba(96,165,250,0.7);
+      padding-left: 0.9rem;
+      color: #d4d4d8;
+    }
+    .code-copy-btn {
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(24,24,27,0.9);
+      color: #fafafa;
+      border-radius: 0.6rem;
+      padding: 0.35rem 0.5rem;
+      font-size: 0.75rem;
+      line-height: 1;
+    }
+    .code-copy-btn:hover {
+      background: rgba(39,39,42,0.95);
+    }
+    .action-scrollbar::-webkit-scrollbar,
+    .sidebar-scrollbar::-webkit-scrollbar,
+    .diff-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .action-scrollbar,
+    .sidebar-scrollbar,
+    .diff-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    @keyframes pulse-file {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.12); }
+      50% { box-shadow: 0 0 0 6px rgba(59,130,246,0.22); }
+    }
+    @keyframes step-flow {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(220%); }
+    }
+    .file-attention {
+      border-color: rgba(96,165,250,0.9);
+      background: rgba(30,41,59,0.95);
+      animation: pulse-file 1.8s ease-in-out infinite;
+    }
+    .step-running::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      width: 38%;
+      background: linear-gradient(90deg, transparent, rgba(96,165,250,0.95), transparent);
+      animation: step-flow 1.4s linear infinite;
+    }
+    .diff-added { background: rgba(34,197,94,0.13); color: #dcfce7; }
+    .diff-removed { background: rgba(248,113,113,0.13); color: #fee2e2; }
+    .diff-meta { color: #93c5fd; }
+  </style>
+</head>
+<body class="min-h-screen bg-zinc-950 text-zinc-100">
+  <div id="sidebarOverlay" class="pointer-events-none fixed inset-0 z-40 bg-black/60 opacity-0 transition-opacity duration-300"></div>
+  <aside id="sidebar" class="sidebar-scrollbar fixed inset-y-0 left-0 z-50 w-[86vw] max-w-sm -translate-x-full overflow-y-auto border-r border-zinc-800 bg-zinc-950/98 p-4 shadow-2xl transition-transform duration-300">
+    <div class="mb-4 flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-sm font-semibold text-zinc-100">工作区文件树</p>
+        <p id="sidebarPath" class="mt-1 break-all text-xs text-zinc-400">.</p>
+      </div>
+      <button id="closeSidebarBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+    </div>
+    <div class="mb-3 flex gap-2">
+      <button id="sidebarUpBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">⬅ 上一级</button>
+      <button id="sidebarRefreshBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">刷新</button>
+    </div>
+    <div id="fileList" class="space-y-2"></div>
+  </aside>
+
+  <div id="appShell" class="mx-auto flex min-h-screen w-full max-w-4xl flex-col px-3 pt-3 sm:px-4">
+    <header class="sticky top-0 z-20 mb-3 rounded-3xl border border-zinc-800 bg-zinc-900/88 px-4 py-3 shadow-xl backdrop-blur">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2">
+            <button id="openSidebarBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-base text-zinc-100 hover:bg-zinc-800">📁</button>
+            <div class="min-w-0">
+              <h1 class="truncate text-lg font-semibold tracking-tight">MobileVC</h1>
+              <p id="workspacePath" class="mt-1 truncate text-sm text-zinc-400">工作区：.</p>
+            </div>
+          </div>
+        </div>
+        <button id="retokenBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">Token</button>
+      </div>
+      <div class="mt-3 flex flex-wrap items-center gap-2 text-sm text-zinc-300">
+        <div class="flex items-center gap-2 rounded-full border border-zinc-800 px-3 py-1.5">
+          <span id="statusDot" class="h-2.5 w-2.5 rounded-full bg-red-500"></span>
+          <span id="statusText">未连接</span>
+        </div>
+        <div class="rounded-full border border-zinc-800 px-3 py-1.5 text-xs text-zinc-400">
+          会话 <span id="sessionText">-</span>
+        </div>
+        <button id="reconnectBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">重连</button>
+      </div>
+      <div id="stepPanel" class="mt-3 hidden rounded-2xl border border-zinc-800 bg-zinc-950/70 px-3 py-2">
+        <div class="mb-2 flex items-center justify-between gap-3">
+          <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">当前步骤</p>
+          <span id="stepStatusText" class="text-[11px] uppercase tracking-wide text-zinc-500">running</span>
+        </div>
+        <p id="stepText" class="text-sm text-zinc-200"></p>
+        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+          <div id="stepBar" class="relative h-full rounded-full bg-blue-500/80"></div>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1">
+      <div id="chatContainer" class="space-y-3"></div>
+    </main>
+  </div>
+
+  <div id="diffModal" class="pointer-events-none fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-3 pb-3 pt-10 opacity-0 transition duration-200 sm:items-center sm:p-6">
+    <div id="diffModalCard" class="diff-scrollbar max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-zinc-800 bg-zinc-950 shadow-2xl">
+      <div class="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p id="diffTitle" class="truncate text-sm font-semibold text-zinc-100">Diff 预览</p>
+            <p id="diffPathText" class="mt-1 break-all text-xs text-zinc-400"></p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <button id="copyDiffBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">复制</button>
+            <button id="closeDiffBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+          </div>
+        </div>
+      </div>
+      <div class="px-4 py-4">
+        <pre id="diffContent" class="overflow-x-auto whitespace-pre-wrap break-words rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4 font-mono text-xs leading-6 text-zinc-100"></pre>
+      </div>
+    </div>
+  </div>
+
+  <div id="bottomDock" class="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-4xl px-3 pb-3 sm:px-4">
+    <section class="rounded-3xl border border-zinc-800 bg-zinc-900/92 p-3 shadow-2xl backdrop-blur">
+      <div id="actionPanel" class="action-scrollbar mb-3 flex gap-2 overflow-x-auto pb-1"></div>
+
+      <section id="inputCard" class="mb-3 hidden rounded-2xl border border-blue-900/70 bg-blue-950/20 p-3">
+        <div class="mb-2">
+          <p class="text-sm font-semibold text-blue-200">等待输入</p>
+          <p id="promptText" class="mt-1 text-sm text-zinc-300"></p>
+        </div>
+        <div id="promptOptionButtons" class="mb-3 flex flex-wrap gap-2"></div>
+        <form id="inputForm" class="flex gap-2">
+          <input id="inputField" type="text" autocomplete="off" placeholder="输入要回复的内容" class="min-w-0 flex-1 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600" />
+          <button id="sendInputBtn" type="submit" class="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-500">发送</button>
+        </form>
+      </section>
+
+      <form id="commandForm" class="flex gap-2">
+        <input id="commandInput" type="text" autocomplete="off" placeholder="例如：claude、python、bash，或直接输入命令" class="min-w-0 flex-1 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600" />
+        <button id="runBtn" type="submit" class="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-700">运行</button>
+      </form>
+    </section>
+  </div>
+
+  <script>
+    marked.setOptions({
+      breaks: true,
+      gfm: true
+    });
+
+    const chatContainer = document.getElementById('chatContainer');
+    const commandForm = document.getElementById('commandForm');
+    const commandInput = document.getElementById('commandInput');
+    const runBtn = document.getElementById('runBtn');
+    const inputCard = document.getElementById('inputCard');
+    const inputForm = document.getElementById('inputForm');
+    const inputField = document.getElementById('inputField');
+    const sendInputBtn = document.getElementById('sendInputBtn');
+    const promptText = document.getElementById('promptText');
+    const promptOptionButtons = document.getElementById('promptOptionButtons');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const sessionText = document.getElementById('sessionText');
+    const reconnectBtn = document.getElementById('reconnectBtn');
+    const retokenBtn = document.getElementById('retokenBtn');
+    const actionPanel = document.getElementById('actionPanel');
+    const openSidebarBtn = document.getElementById('openSidebarBtn');
+    const closeSidebarBtn = document.getElementById('closeSidebarBtn');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+    const workspacePath = document.getElementById('workspacePath');
+    const sidebarPath = document.getElementById('sidebarPath');
+    const fileList = document.getElementById('fileList');
+    const sidebarUpBtn = document.getElementById('sidebarUpBtn');
+    const sidebarRefreshBtn = document.getElementById('sidebarRefreshBtn');
+    const stepPanel = document.getElementById('stepPanel');
+    const stepText = document.getElementById('stepText');
+    const stepStatusText = document.getElementById('stepStatusText');
+    const stepBar = document.getElementById('stepBar');
+    const diffModal = document.getElementById('diffModal');
+    const diffTitle = document.getElementById('diffTitle');
+    const diffPathText = document.getElementById('diffPathText');
+    const diffContent = document.getElementById('diffContent');
+    const copyDiffBtn = document.getElementById('copyDiffBtn');
+    const closeDiffBtn = document.getElementById('closeDiffBtn');
+    const appShell = document.getElementById('appShell');
+    const bottomDock = document.getElementById('bottomDock');
+
+    let token = localStorage.getItem('vibe_token') || '';
+    let ws = null;
+    let connected = false;
+    let running = false;
+    let awaitingInput = false;
+    let sessionId = '';
+    let currentPromptOptions = [];
+    let currentCwd = '.';
+    let sidebarOpen = false;
+    let currentItems = [];
+    let currentStep = '';
+    let currentStepStatus = 'running';
+    let highlightedFilePath = '';
+    let diffModalOpen = false;
+    let currentDiff = null;
+    let activeCommand = '';
+
+    function syncBottomSpacing() {
+      const dockHeight = bottomDock ? bottomDock.offsetHeight : 0;
+      if (appShell) {
+        appShell.style.paddingBottom = `${Math.max(dockHeight + 24, 160)}px`;
+      }
+    }
+
+    function updateStatus() {
+      statusText.textContent = connected ? (running ? '运行中' : '已连接') : '未连接';
+      statusDot.className = 'h-2.5 w-2.5 rounded-full ' + (connected ? (running ? 'bg-amber-400' : 'bg-emerald-500') : 'bg-red-500');
+      sessionText.textContent = sessionId || '-';
+      workspacePath.textContent = `工作区：${currentCwd || '.'}`;
+      sidebarPath.textContent = currentCwd || '.';
+      const allowCommandWhileClaude = running && activeCommand.toLowerCase() === 'claude';
+      runBtn.disabled = !connected || (running && !allowCommandWhileClaude);
+      commandInput.disabled = !connected || (running && !allowCommandWhileClaude);
+      sendInputBtn.disabled = !connected || !awaitingInput;
+      inputField.disabled = !connected || !awaitingInput;
+      sidebarRefreshBtn.disabled = !connected;
+      renderStepPanel();
+      renderActionPanel();
+      syncBottomSpacing();
+    }
+
+    function setSidebarOpen(open) {
+      sidebarOpen = open;
+      sidebar.classList.toggle('-translate-x-full', !open);
+      sidebarOverlay.classList.toggle('opacity-0', !open);
+      sidebarOverlay.classList.toggle('pointer-events-none', !open);
+    }
+
+    function scrollToBottom() {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+
+    function renderStepPanel() {
+      const hasStep = Boolean(currentStep);
+      stepPanel.classList.toggle('hidden', !hasStep);
+      stepText.textContent = currentStep || '';
+      stepStatusText.textContent = currentStepStatus || 'running';
+      if (!hasStep) {
+        stepBar.className = 'relative h-full rounded-full bg-blue-500/80';
+        return;
+      }
+      if (currentStepStatus === 'done') {
+        stepBar.className = 'relative h-full w-full rounded-full bg-emerald-500';
+      } else if (currentStepStatus === 'info') {
+        stepBar.className = 'relative h-full w-1/2 rounded-full bg-sky-500';
+      } else {
+        stepBar.className = 'step-running relative h-full w-full rounded-full bg-blue-500/80';
+      }
+    }
+
+    function normalizeOption(option) {
+      const lower = String(option).toLowerCase();
+      if (lower === 'y') return 'yes';
+      if (lower === 'n') return 'no';
+      return String(option);
+    }
+
+    function shouldUseProceedCTA(message, options) {
+      const text = String(message || '').toLowerCase();
+      const hasProceed = text.includes('should i proceed') || /\bproceed\b/.test(text);
+      if (!hasProceed) return false;
+      return !Array.isArray(options) || !options.length;
+    }
+
+    function effectivePromptOptions(message, options) {
+      if (shouldUseProceedCTA(message, options)) {
+        return ['yes', 'no'];
+      }
+      return Array.isArray(options) ? options.map(normalizeOption) : [];
+    }
+
+    function highlightDiffLine(line) {
+      const escaped = String(line || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      if (escaped.startsWith('+') && !escaped.startsWith('+++')) return `<div class="diff-added px-3">${escaped}</div>`;
+      if (escaped.startsWith('-') && !escaped.startsWith('---')) return `<div class="diff-removed px-3">${escaped}</div>`;
+      if (escaped.startsWith('@@') || escaped.startsWith('diff --git') || escaped.startsWith('*** ') || escaped.startsWith('---') || escaped.startsWith('+++')) {
+        return `<div class="diff-meta px-3">${escaped}</div>`;
+      }
+      return `<div class="px-3 text-zinc-200">${escaped || '&nbsp;'}</div>`;
+    }
+
+    function setCurrentStep(message, status = 'running', target = '') {
+      currentStep = String(message || '').trim();
+      currentStepStatus = status || 'running';
+      if (target) {
+        highlightedFilePath = target;
+        renderFileList();
+      }
+      renderStepPanel();
+    }
+
+    function clearCurrentStep() {
+      currentStep = '';
+      currentStepStatus = 'running';
+      renderStepPanel();
+    }
+
+    function openDiffModal(diffPayload) {
+      currentDiff = diffPayload;
+      diffModalOpen = true;
+      diffTitle.textContent = diffPayload?.title || 'Diff 预览';
+      diffPathText.textContent = diffPayload?.path || '';
+      diffContent.innerHTML = String(diffPayload?.diff || '')
+        .split('\n')
+        .map(highlightDiffLine)
+        .join('');
+      diffModal.classList.remove('pointer-events-none', 'opacity-0');
+      if (diffPayload?.path) {
+        highlightedFilePath = diffPayload.path;
+        renderFileList();
+      }
+    }
+
+    function closeDiffModal() {
+      diffModalOpen = false;
+      diffModal.classList.add('pointer-events-none', 'opacity-0');
+    }
+
+    function basename(path) {
+      return String(path || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    }
+
+    function appendMessageRow(role, innerNode, options = {}) {
+      const row = document.createElement('div');
+      row.className = 'flex w-full ' + (role === 'user' ? 'justify-end' : 'justify-start');
+
+      const bubble = document.createElement('div');
+      bubble.className = role === 'user'
+        ? 'max-w-[86%] rounded-[1.4rem] rounded-br-md bg-blue-600 px-4 py-3 text-sm text-white shadow-lg'
+        : 'max-w-[90%] rounded-[1.4rem] rounded-bl-md border border-zinc-800 bg-zinc-900/90 px-4 py-3 text-sm text-zinc-100 shadow-lg';
+
+      if (options.messageKind) row.dataset.messageKind = options.messageKind;
+      if (options.stream) row.dataset.stream = options.stream;
+      if (options.bodySelector) row.dataset.bodySelector = options.bodySelector;
+
+      bubble.appendChild(innerNode);
+      row.appendChild(bubble);
+      chatContainer.appendChild(row);
+      scrollToBottom();
+      return row;
+    }
+
+    function getLastTerminalBody(stream) {
+      const lastRow = chatContainer.lastElementChild;
+      if (!lastRow) return null;
+      if (lastRow.dataset.messageKind !== 'terminal-log') return null;
+      if ((lastRow.dataset.stream || '') !== (stream || 'stdout')) return null;
+      const selector = lastRow.dataset.bodySelector || '[data-terminal-body="true"]';
+      return lastRow.querySelector(selector);
+    }
+
+    function addSystemMessage(message, timestamp) {
+      const row = document.createElement('div');
+      row.className = 'py-1 text-center text-xs text-zinc-500';
+      row.textContent = `[系统] ${message}${timestamp ? ` · ${formatTime(timestamp)}` : ''}`;
+      chatContainer.appendChild(row);
+      scrollToBottom();
+    }
+
+    function formatTime(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return '';
+      return date.toLocaleTimeString();
+    }
+
+    function addMeta(container, label, timestamp) {
+      const meta = document.createElement('div');
+      meta.className = 'mb-2 text-[11px] uppercase tracking-wide text-zinc-500';
+      meta.textContent = `${label}${timestamp ? ` · ${formatTime(timestamp)}` : ''}`;
+      container.appendChild(meta);
+    }
+
+    function copyText(text, trigger) {
+      if (!text) return;
+      const done = () => {
+        if (!trigger) return;
+        const original = trigger.textContent;
+        trigger.textContent = '已复制';
+        setTimeout(() => {
+          trigger.textContent = original;
+        }, 1200);
+      };
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => {});
+        return;
+      }
+
+      const area = document.createElement('textarea');
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      area.remove();
+      done();
+    }
+
+    function enhanceCodeBlocks(root) {
+      root.querySelectorAll('pre code').forEach((code) => {
+        hljs.highlightElement(code);
+        const pre = code.parentElement;
+        if (!pre || pre.querySelector('.code-copy-btn')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'code-copy-btn';
+        btn.textContent = '复制';
+        btn.addEventListener('click', () => copyText(code.textContent || '', btn));
+        pre.appendChild(btn);
+      });
+    }
+
+    function looksLikeMarkdown(message) {
+      if (!message) return false;
+      return /```|^#{1,6}\s|^>\s|^[-*+]\s|^\d+\.\s|\[[^\]]+\]\([^)]+\)|\|.+\|/.test(message) || message.includes('## ') || message.includes('### ');
+    }
+
+    function looksLikeAIReply(message) {
+      if (!message) return false;
+      return looksLikeMarkdown(message) || message.includes('```') || message.length > 180;
+    }
+
+    function addUserBubble(text, label) {
+      const wrapper = document.createElement('div');
+      const meta = document.createElement('div');
+      meta.className = 'mb-2 text-[11px] uppercase tracking-wide text-blue-100/80';
+      meta.textContent = label;
+      const body = document.createElement('pre');
+      body.className = 'whitespace-pre-wrap break-words text-sm';
+      body.textContent = text;
+      wrapper.append(meta, body);
+      appendMessageRow('user', wrapper);
+    }
+
+    function isTransientTerminalLine(text) {
+      const normalized = String(text || '').replace(/^\r+/, '').trim();
+      if (!normalized) return false;
+      return normalized.includes('◐ medium · /effort') ||
+        normalized.includes('? for shortcuts') ||
+        normalized.includes('Opus now defaults to 1M context') ||
+        normalized.includes('Try "') ||
+        /^[-─]{20,}$/.test(normalized);
+    }
+
+    function trimTransientTerminalTail(text) {
+      const lines = String(text || '').split('\n');
+      while (lines.length) {
+        const last = lines[lines.length - 1];
+        if (String(last || '').trim() === '') {
+          lines.pop();
+          continue;
+        }
+        if (isTransientTerminalLine(last)) {
+          lines.pop();
+          continue;
+        }
+        break;
+      }
+      return lines.join('\n');
+    }
+
+    function applyTerminalDelta(existingText, incomingText) {
+      const current = String(existingText || '');
+      const incoming = String(incomingText || '');
+      if (!incoming) return current;
+
+      if (incoming.startsWith('\r')) {
+        const replacement = incoming.replace(/^\r+/, '');
+        const lines = current.split('\n');
+        if (!lines.length) return replacement;
+        lines[lines.length - 1] = replacement;
+        return lines.join('\n');
+      }
+
+      if (isTransientTerminalLine(incoming)) {
+        const trimmedCurrent = trimTransientTerminalTail(current);
+        return `${trimmedCurrent ? `${trimmedCurrent}\n` : ''}${incoming}`;
+      }
+
+      return `${current ? `${current}\n` : ''}${incoming}`;
+    }
+
+    function addLogMessage(message, stream, timestamp) {
+      const effectiveStream = stream || 'stdout';
+      const normalizedMessage = String(message || '');
+      const isMarkdown = effectiveStream !== 'stderr' && looksLikeAIReply(normalizedMessage) && !normalizedMessage.startsWith('\r');
+
+      if (isMarkdown) {
+        const wrapper = document.createElement('div');
+        addMeta(wrapper, 'assistant', timestamp);
+        const content = document.createElement('div');
+        content.className = 'markdown-body';
+        content.innerHTML = marked.parse(normalizedMessage);
+        wrapper.appendChild(content);
+        appendMessageRow('assistant', wrapper, { messageKind: 'markdown-log', stream: effectiveStream });
+        enhanceCodeBlocks(wrapper);
+        return;
+      }
+
+      const existingBody = getLastTerminalBody(effectiveStream);
+      if (existingBody) {
+        existingBody.textContent = applyTerminalDelta(existingBody.textContent, normalizedMessage);
+        scrollToBottom();
+        return;
+      }
+
+      const wrapper = document.createElement('div');
+      const body = document.createElement('pre');
+      body.dataset.terminalBody = 'true';
+      body.className = 'whitespace-pre-wrap break-words font-mono text-sm ' + (effectiveStream === 'stderr' ? 'text-red-200' : 'text-zinc-100');
+      body.textContent = normalizedMessage.startsWith('\r') ? normalizedMessage.replace(/^\r+/, '') : normalizedMessage;
+      wrapper.appendChild(body);
+      appendMessageRow('assistant', wrapper, {
+        messageKind: 'terminal-log',
+        stream: effectiveStream,
+        bodySelector: '[data-terminal-body="true"]'
+      });
+    }
+
+    function addErrorCard(message, stack, timestamp) {
+      const wrapper = document.createElement('div');
+      addMeta(wrapper, 'error', timestamp);
+
+      const top = document.createElement('div');
+      top.className = 'mb-2 flex items-center justify-between gap-3';
+
+      const title = document.createElement('div');
+      title.className = 'text-sm font-semibold text-red-300';
+      title.textContent = 'Error';
+
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'rounded-xl border border-red-900 px-2.5 py-1 text-xs text-red-100 hover:bg-red-950/50';
+      copyBtn.textContent = '复制';
+      copyBtn.addEventListener('click', () => copyText(stack ? `${message}\n\n${stack}` : message, copyBtn));
+
+      top.append(title, copyBtn);
+      wrapper.append(top);
+
+      const body = document.createElement('pre');
+      body.className = 'whitespace-pre-wrap break-words rounded-2xl border border-red-900/60 bg-red-950/30 p-3 text-sm text-red-100';
+      body.textContent = message || 'unknown error';
+      wrapper.appendChild(body);
+
+      if (stack) {
+        const details = document.createElement('details');
+        details.className = 'mt-3';
+        const summary = document.createElement('summary');
+        summary.className = 'cursor-pointer text-xs text-red-200';
+        summary.textContent = '查看 stack';
+        const stackBody = document.createElement('pre');
+        stackBody.className = 'mt-2 whitespace-pre-wrap break-words rounded-2xl bg-black/20 p-3 text-xs text-red-100';
+        stackBody.textContent = stack;
+        details.append(summary, stackBody);
+        wrapper.appendChild(details);
+      }
+
+      appendMessageRow('assistant', wrapper);
+    }
+
+    function quickButton(label, onClick, className = '') {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'shrink-0 rounded-2xl border px-3 py-2 text-sm ' + className;
+      btn.textContent = label;
+      btn.addEventListener('click', onClick);
+      return btn;
+    }
+
+    function renderActionPanel() {
+      actionPanel.innerHTML = '';
+      actionPanel.appendChild(quickButton('Ctrl+C 中断', () => sendInputRaw('\u0003', '快捷动作'), 'border-red-900 bg-red-950/40 text-red-100 hover:bg-red-900/50'));
+      actionPanel.appendChild(quickButton('清屏', () => {
+        chatContainer.innerHTML = '';
+        addSystemMessage('已清空对话');
+      }, 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800'));
+      actionPanel.appendChild(quickButton('文件树', () => setSidebarOpen(true), 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800'));
+      if (currentDiff && diffModalOpen) {
+        actionPanel.appendChild(quickButton('查看 Diff', () => openDiffModal(currentDiff), 'border-violet-800 bg-violet-950/40 text-violet-100 hover:bg-violet-900/60'));
+      }
+
+      if (awaitingInput && currentPromptOptions.length) {
+        currentPromptOptions.forEach((option) => {
+          const lower = String(option).toLowerCase();
+          let style = 'border-blue-800 bg-blue-950/40 text-blue-100 hover:bg-blue-900/60';
+          let label = option;
+          if (lower === 'y' || lower === 'yes') {
+            style = shouldUseProceedCTA(promptText.textContent, [])
+              ? 'border-emerald-700 bg-emerald-600 text-white hover:bg-emerald-500 text-base font-semibold px-5 py-3'
+              : 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60';
+            label = shouldUseProceedCTA(promptText.textContent, []) ? '🚀 冲！' : option;
+          } else if (lower === 'n' || lower === 'no') {
+            style = shouldUseProceedCTA(promptText.textContent, [])
+              ? 'border-red-700 bg-red-600 text-white hover:bg-red-500 text-base font-semibold px-5 py-3'
+              : 'border-red-800 bg-red-950/40 text-red-100 hover:bg-red-900/60';
+            label = shouldUseProceedCTA(promptText.textContent, []) ? '🛑 停下' : option;
+          }
+          actionPanel.appendChild(quickButton(label, () => sendInput(option), style));
+        });
+      }
+    }
+
+    function renderPromptOptions(options) {
+      promptOptionButtons.innerHTML = '';
+      if (!options || !options.length) return;
+      const proceedCTA = shouldUseProceedCTA(promptText.textContent, []);
+      options.forEach((option) => {
+        const lower = String(option).toLowerCase();
+        let style = 'border-blue-800 bg-blue-950/40 text-blue-100 hover:bg-blue-900/60';
+        let label = option;
+        if (lower === 'y' || lower === 'yes') {
+          style = proceedCTA
+            ? 'border-emerald-700 bg-emerald-600 text-white hover:bg-emerald-500 text-lg font-semibold px-5 py-3'
+            : 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60';
+          label = proceedCTA ? '🚀 冲！' : option;
+        } else if (lower === 'n' || lower === 'no') {
+          style = proceedCTA
+            ? 'border-red-700 bg-red-600 text-white hover:bg-red-500 text-lg font-semibold px-5 py-3'
+            : 'border-red-800 bg-red-950/40 text-red-100 hover:bg-red-900/60';
+          label = proceedCTA ? '🛑 停下' : option;
+        }
+        promptOptionButtons.appendChild(quickButton(label, () => sendInput(option), style));
+      });
+    }
+
+    function formatSize(size) {
+      if (!size) return '';
+      if (size < 1024) return `${size} B`;
+      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+      if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+      return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
+    }
+
+    function renderFileList() {
+      fileList.innerHTML = '';
+
+      if (!currentItems.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-400';
+        empty.textContent = '目录为空';
+        fileList.appendChild(empty);
+        return;
+      }
+
+      const highlightName = basename(highlightedFilePath);
+
+      currentItems.forEach((item) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        const isHighlighted = !!highlightName && basename(item.name) === highlightName;
+        button.className = 'flex w-full items-center justify-between gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-left hover:bg-zinc-800';
+        if (isHighlighted) {
+          button.classList.add('file-attention');
+        }
+
+        const left = document.createElement('div');
+        left.className = 'min-w-0';
+
+        const title = document.createElement('div');
+        title.className = 'truncate text-sm font-medium text-zinc-100';
+        title.textContent = `${item.is_dir ? '📁' : '📄'} ${item.name}`;
+
+        const meta = document.createElement('div');
+        meta.className = 'mt-1 text-xs text-zinc-400';
+        meta.textContent = item.is_dir ? '文件夹' : (formatSize(item.size) || '文件');
+
+        left.append(title, meta);
+        button.appendChild(left);
+
+        if (item.is_dir) {
+          const arrow = document.createElement('div');
+          arrow.className = 'text-xs text-zinc-500';
+          arrow.textContent = '进入';
+          button.appendChild(arrow);
+          button.addEventListener('click', () => requestFSList(joinPath(currentCwd, item.name)));
+        } else {
+          const tag = document.createElement('div');
+          tag.className = 'text-xs ' + (isHighlighted ? 'text-blue-300' : 'text-zinc-500');
+          tag.textContent = isHighlighted ? '关注中' : '文件';
+          button.appendChild(tag);
+        }
+
+        fileList.appendChild(button);
+      });
+    }
+
+    function joinPath(base, name) {
+      if (!base || base === '.' || base === '/') return `${base === '/' ? '/' : ''}${name}`;
+      const normalized = base.replace(/[\\/]+$/, '');
+      return `${normalized}/${name}`;
+    }
+
+    function parentPath(path) {
+      if (!path || path === '.' || path === '/' || /^[A-Za-z]:[\\/]?$/.test(path)) return path;
+      const normalized = path.replace(/[\\/]+$/, '');
+      const index = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+      if (index <= 0) {
+        if (/^[A-Za-z]:/.test(normalized)) {
+          return normalized.slice(0, 2) + '\\';
+        }
+        return '/';
+      }
+      return normalized.slice(0, index);
+    }
+
+    function openInteractiveInputCard(message = '交互式会话进行中，可继续输入') {
+      awaitingInput = true;
+      currentPromptOptions = [];
+      promptText.textContent = message;
+      promptOptionButtons.innerHTML = '';
+      inputCard.classList.remove('hidden');
+      updateStatus();
+      inputField.focus();
+    }
+
+    function openInputCard(message, options) {
+      awaitingInput = true;
+      currentPromptOptions = effectivePromptOptions(message, options);
+      promptText.textContent = message || '等待输入';
+      renderPromptOptions(currentPromptOptions);
+      inputCard.classList.remove('hidden');
+      updateStatus();
+      inputField.focus();
+    }
+
+    function closeInputCard() {
+      awaitingInput = false;
+      currentPromptOptions = [];
+      promptText.textContent = '';
+      promptOptionButtons.innerHTML = '';
+      inputCard.classList.add('hidden');
+      updateStatus();
+    }
+
+    function getWsUrl() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+    }
+
+    function ensureToken(forcePrompt = false) {
+      if (!forcePrompt && token) return true;
+      const next = window.prompt('Enter token', token || '');
+      if (!next) return false;
+      token = next.trim();
+      localStorage.setItem('vibe_token', token);
+      return true;
+    }
+
+    function sendJson(data) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        addErrorCard('WebSocket 未连接。');
+        return false;
+      }
+      ws.send(JSON.stringify(data));
+      return true;
+    }
+
+    function requestFSList(path) {
+      if (!sendJson({ action: 'fs_list', path })) return;
+    }
+
+    function connect(forcePrompt = false) {
+      if (!ensureToken(forcePrompt)) {
+        addErrorCard('缺少 token，无法连接服务。');
+        return;
+      }
+
+      if (ws) {
+        ws.onopen = null;
+        ws.onclose = null;
+        ws.onerror = null;
+        ws.onmessage = null;
+        ws.close();
+      }
+
+      connected = false;
+      running = false;
+      closeInputCard();
+      updateStatus();
+      addSystemMessage('正在连接 WebSocket');
+
+      try {
+        ws = new WebSocket(getWsUrl());
+      } catch (err) {
+        addErrorCard(`创建 WebSocket 失败：${err.message || err}`);
+        return;
+      }
+
+      ws.onopen = () => {
+        connected = true;
+        updateStatus();
+        addSystemMessage('WebSocket 已连接');
+        requestFSList('.');
+      };
+
+      ws.onclose = () => {
+        connected = false;
+        running = false;
+        clearCurrentStep();
+        closeInputCard();
+        updateStatus();
+        addErrorCard('连接已关闭，请检查 token 或服务状态。');
+      };
+
+      ws.onerror = () => {
+        addErrorCard('WebSocket 连接错误，请检查 token 或服务状态。');
+      };
+
+      ws.onmessage = (event) => {
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (err) {
+          addErrorCard(`收到无法解析的消息：${err.message || err}`);
+          return;
+        }
+
+        if (payload.sessionId) sessionId = payload.sessionId;
+
+        switch (payload.type) {
+          case 'session_state':
+            addSystemMessage(payload.msg || payload.state || 'session update', payload.timestamp);
+            if (payload.state === 'closed') {
+              running = false;
+              activeCommand = '';
+              closeInputCard();
+              clearCurrentStep();
+            } else if (payload.state === 'active' && payload.msg === 'command started') {
+              running = true;
+              if (activeCommand.toLowerCase() === 'claude') {
+                openInteractiveInputCard('Claude 会话已启动，可直接在下方继续输入');
+              }
+            }
+            break;
+          case 'log':
+            addLogMessage(payload.msg || '', payload.stream || 'stdout', payload.timestamp);
+            break;
+          case 'error':
+            addErrorCard(payload.msg || 'unknown error', payload.stack || '', payload.timestamp);
+            break;
+          case 'prompt_request':
+            addSystemMessage(payload.msg || '等待输入', payload.timestamp);
+            openInputCard(payload.msg || '等待输入', payload.options || []);
+            break;
+          case 'step_update':
+            setCurrentStep(payload.msg || '', payload.status || 'running', payload.target || '');
+            break;
+          case 'file_diff':
+            currentDiff = {
+              title: payload.title || 'Diff 预览',
+              path: payload.path || '',
+              diff: payload.diff || '',
+              lang: payload.lang || ''
+            };
+            openDiffModal(currentDiff);
+            break;
+          case 'fs_list_result':
+            currentCwd = payload.current_path || currentCwd;
+            currentItems = Array.isArray(payload.items) ? payload.items : [];
+            renderFileList();
+            updateStatus();
+            break;
+          default:
+            addSystemMessage(`收到未处理事件 ${payload.type || 'unknown'}`, payload.timestamp);
+            break;
+        }
+
+        updateStatus();
+      };
+    }
+
+    function sendInputRaw(raw, label = '输入') {
+      if (!raw) return;
+      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n` })) return;
+      addUserBubble(raw === '\u0003' ? 'Ctrl+C' : raw.replace(/\n$/, ''), label);
+      inputField.value = '';
+      inputField.focus();
+    }
+
+    function runCommand(command) {
+      const cmd = (command || '').trim();
+      if (!cmd) return;
+      if (!connected) {
+        addErrorCard('当前未连接，无法运行命令。');
+        return;
+      }
+      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: currentCwd })) return;
+      running = true;
+      activeCommand = cmd.split(/\s+/)[0] || '';
+      if (activeCommand.toLowerCase() === 'claude') {
+        openInteractiveInputCard('Claude 会话启动中，可在就绪后继续输入');
+      } else {
+        closeInputCard();
+      }
+      addUserBubble(`${cmd}\n@ ${currentCwd || '.'}`, '命令');
+      updateStatus();
+      commandInput.value = '';
+      setSidebarOpen(false);
+    }
+
+    function sendInput(value) {
+      const raw = value != null ? String(value).trim() : inputField.value.trim();
+      if (!raw) return;
+      sendInputRaw(raw, '回复');
+    }
+
+    commandForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      runCommand(commandInput.value);
+    });
+
+    inputForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      sendInput();
+    });
+
+    reconnectBtn.addEventListener('click', () => connect(false));
+    retokenBtn.addEventListener('click', () => connect(true));
+    openSidebarBtn.addEventListener('click', () => setSidebarOpen(true));
+    closeSidebarBtn.addEventListener('click', () => setSidebarOpen(false));
+    copyDiffBtn.addEventListener('click', () => copyText(currentDiff?.diff || '', copyDiffBtn));
+    closeDiffBtn.addEventListener('click', () => closeDiffModal());
+    diffModal.addEventListener('click', (event) => {
+      if (event.target === diffModal) closeDiffModal();
+    });
+    window.addEventListener('resize', syncBottomSpacing);
+    sidebarOverlay.addEventListener('click', () => setSidebarOpen(false));
+    sidebarRefreshBtn.addEventListener('click', () => requestFSList(currentCwd || '.'));
+    sidebarUpBtn.addEventListener('click', () => requestFSList(parentPath(currentCwd || '.')));
+
+    updateStatus();
+    renderFileList();
+    connect(false);
+  </script>
+</body>
+</html>

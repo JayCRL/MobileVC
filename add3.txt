@@ -1,0 +1,20 @@
+状态确认与修复指令】
+干得漂亮！核心的 PTY 交互逻辑完美跑通了！看到 Hello, VibeCoder 的那一刻简直太爽了。
+
+现在我们来处理收尾工作。你分析得非常准确，请直接执行你提议的修复方案：
+
+1. 修复 Python 测试脚本 (GBK 噩梦)
+
+直接把所有的 Emoji (✅, ❌, 📩, 🚀 等) 从 ws_pty_verify.py 中删掉，或者强制指定 sys.stdout.reconfigure(encoding='utf-8')。确保脚本在普通的 Windows CMD 下能平稳跑完。
+
+2. 修复 Go 并发 Panic (核心工程逻辑)
+这是典型的生命周期时序问题。请修改 internal/ws/handler.go 和 PtyRunner 之间的通信逻辑：
+
+不要粗暴地在 reader 退出时直接 close(writeCh)。 > - 应该利用 context.Context 的取消机制（ctx.Done()）。当 WebSocket 连接断开时，先触发 cancel()，通知 PtyRunner 停止读取并退出。
+
+在 Handler 的 enqueueEvent 发送事件到 writeCh 之前，加一个 select 监听 ctx.Done()，或者使用并发安全的标志位，确保不会往已关闭的 channel 发数据。
+
+确保 PtyRunner 退出干净后，再优雅回收资源。
+
+【执行要求】
+修复完成后，请再次自动运行修改后的 Python 脚本进行验证。我希望能看到脚本平稳退出，并且服务端后台没有产生任何 Panic 日志。放手干吧！
