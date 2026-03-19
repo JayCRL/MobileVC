@@ -1,0 +1,333 @@
+package runner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+
+	"github.com/creack/pty"
+
+	"mobilevc/internal/adapter"
+	"mobilevc/internal/protocol"
+	"mobilevc/internal/session"
+)
+
+const ptyReadBufferSize = 4096
+
+type PtyRunner struct {
+	mu     sync.Mutex
+	writer io.WriteCloser
+	closer io.Closer
+	cmd    *exec.Cmd
+	closed bool
+}
+
+type interactiveSession struct {
+	stdout io.Reader
+	stderr io.Reader
+	writer io.WriteCloser
+	closer io.Closer
+}
+
+func NewPtyRunner() *PtyRunner {
+	return &PtyRunner{}
+}
+
+func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) error {
+	if req.SessionID == "" {
+		return errors.New("session id is required")
+	}
+	if req.Command == "" {
+		return errors.New("command is required")
+	}
+
+	cwd := req.CWD
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+	}
+
+	cmd := newShellCommand(ctx, req.Command, req.Mode)
+	cmd.Dir = cwd
+
+	interactive, err := startInteractiveCommand(cmd)
+	if err != nil {
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("start pty command: %v", err), ""))
+		return fmt.Errorf("start pty command: %w", err)
+	}
+	defer interactive.closer.Close()
+
+	r.mu.Lock()
+	r.writer = interactive.writer
+	r.closer = interactive.closer
+	r.cmd = cmd
+	r.closed = false
+	r.mu.Unlock()
+	defer r.clear()
+
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+
+	var readWG sync.WaitGroup
+	readWG.Add(1)
+	go func() {
+		defer readWG.Done()
+		r.readOutput(ctx, interactive.stdout, req.SessionID, "stdout", true, sink)
+	}()
+	if interactive.stderr != nil {
+		readWG.Add(1)
+		go func() {
+			defer readWG.Done()
+			r.readOutput(ctx, interactive.stderr, req.SessionID, "stderr", false, sink)
+		}()
+	}
+
+	waitErr := cmd.Wait()
+	_ = interactive.closer.Close()
+	readWG.Wait()
+
+	if waitErr != nil {
+		message := waitErr.Error()
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			message = fmt.Sprintf("command exited with code %d", exitErr.ExitCode())
+		}
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, message, ""))
+		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished with error"))
+		return waitErr
+	}
+
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
+	return nil
+}
+
+func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
+	if len(data) == 0 {
+		return errors.New("input data is required")
+	}
+
+	r.mu.Lock()
+	writer := r.writer
+	closed := r.closed
+	r.mu.Unlock()
+
+	if writer == nil || closed {
+		return errors.New("no active pty session")
+	}
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := writer.Write(data)
+		writeDone <- err
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-writeDone:
+		if err != nil {
+			return fmt.Errorf("write pty input: %w", err)
+		}
+		return nil
+	}
+}
+
+func (r *PtyRunner) Close() error {
+	r.mu.Lock()
+	closer := r.closer
+	cmd := r.cmd
+	r.closed = true
+	r.mu.Unlock()
+
+	if closer != nil {
+		_ = closer.Close()
+	}
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	return nil
+}
+
+func (r *PtyRunner) clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.writer = nil
+	r.closer = nil
+	r.cmd = nil
+	r.closed = true
+}
+
+func startInteractiveCommand(cmd *exec.Cmd) (*interactiveSession, error) {
+	ptmx, err := pty.Start(cmd)
+	if err == nil {
+		return &interactiveSession{stdout: ptmx, writer: ptmx, closer: ptmx}, nil
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "unsupported") {
+		return nil, err
+	}
+
+	stdin, stdinErr := cmd.StdinPipe()
+	if stdinErr != nil {
+		return nil, stdinErr
+	}
+	stdout, stdoutErr := cmd.StdoutPipe()
+	if stdoutErr != nil {
+		_ = stdin.Close()
+		return nil, stdoutErr
+	}
+	stderr, stderrErr := cmd.StderrPipe()
+	if stderrErr != nil {
+		_ = stdin.Close()
+		return nil, stderrErr
+	}
+	if startErr := cmd.Start(); startErr != nil {
+		_ = stdin.Close()
+		return nil, startErr
+	}
+
+	return &interactiveSession{
+		stdout: stdout,
+		stderr: stderr,
+		writer: stdin,
+		closer: &interactiveCloser{writer: stdin},
+	}, nil
+}
+
+type interactiveCloser struct {
+	reader io.Closer
+	writer io.Closer
+	output io.Closer
+}
+
+func (c *interactiveCloser) Close() error {
+	if c.writer != nil {
+		_ = c.writer.Close()
+	}
+	if c.output != nil {
+		_ = c.output.Close()
+	}
+	if c.reader != nil {
+		return c.reader.Close()
+	}
+	return nil
+}
+
+func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID string, stream string, detectPrompt bool, sink EventSink) {
+	parser := adapter.NewGenericParser()
+	buf := make([]byte, ptyReadBufferSize)
+	var pending string
+	var emittedTail string
+	var promptSent bool
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		n, err := reader.Read(buf)
+		if n > 0 {
+			chunk := adapter.StripANSI(string(buf[:n]))
+			pending += chunk
+
+			for {
+				idx := strings.IndexByte(pending, '\n')
+				if idx < 0 {
+					break
+				}
+				line := strings.TrimSuffix(pending[:idx], "\r")
+				for _, event := range parser.ParseLine(line, sessionID, stream) {
+					sendEvent(sink, event)
+				}
+				pending = pending[idx+1:]
+				emittedTail = ""
+				promptSent = false
+			}
+
+			trimmedPending := strings.TrimSuffix(pending, "\r")
+			if trimmedPending != "" {
+				if detectPrompt && isPromptText(trimmedPending) {
+					if !promptSent {
+						sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, trimmedPending, promptOptions(trimmedPending)))
+						promptSent = true
+					}
+				} else if trimmedPending != emittedTail {
+					sendEvent(sink, protocol.NewLogEvent(sessionID, trimmedPending, stream))
+					emittedTail = trimmedPending
+				}
+			}
+		}
+
+		if err != nil {
+			if errors.Is(err, os.ErrClosed) || errors.Is(err, io.EOF) {
+				break
+			}
+			if strings.Contains(err.Error(), "input/output error") || strings.Contains(err.Error(), "file already closed") {
+				break
+			}
+			sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read %s: %v", stream, err), ""))
+			break
+		}
+	}
+
+	pending = strings.TrimSuffix(pending, "\r")
+	if pending != "" {
+		if detectPrompt && isPromptText(pending) && !promptSent {
+			sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, pending, promptOptions(pending)))
+		} else if pending != emittedTail {
+			sendEvent(sink, protocol.NewLogEvent(sessionID, pending, stream))
+		}
+	}
+
+	for _, event := range parser.Flush(sessionID, stream) {
+		sendEvent(sink, event)
+	}
+}
+
+func isPromptText(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+
+	for _, suffix := range []string{"[y/N]", "[Y/n]", "(y/n)", "(Y/n)"} {
+		if strings.Contains(trimmed, suffix) || strings.HasSuffix(trimmed, suffix) {
+			return true
+		}
+	}
+
+	lower := strings.ToLower(trimmed)
+	if strings.HasSuffix(trimmed, "?") || strings.HasSuffix(trimmed, ":") || strings.HasSuffix(trimmed, ">") {
+		for _, keyword := range []string{"continue", "confirm", "password", "input", "select", "proceed", "approve", "yes/no"} {
+			if strings.Contains(lower, keyword) {
+				return true
+			}
+		}
+		if strings.HasSuffix(trimmed, ">") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func promptOptions(text string) []string {
+	trimmed := strings.TrimSpace(text)
+	lower := strings.ToLower(trimmed)
+	switch {
+	case strings.Contains(trimmed, "[y/N]"), strings.Contains(trimmed, "[Y/n]"), strings.Contains(trimmed, "(y/n)"), strings.Contains(trimmed, "(Y/n)"):
+		return []string{"y", "n"}
+	case strings.Contains(lower, "should i proceed"), strings.Contains(lower, "proceed"), strings.Contains(lower, "approve"), strings.Contains(lower, "yes/no"):
+		return []string{"yes", "no"}
+	default:
+		return nil
+	}
+}

@@ -1,0 +1,41 @@
+【UI 降临阶段：移动端 Vibe 面板开发】
+后端大动脉完美打通！你处理并发和优雅退出的手法非常专业。那个 close 1000 日志保留即可，不用降噪。
+
+现在，我们进入“Vibe Coding”最核心的一步：打造移动端可视化前端。我要彻底告别黑框框，用结构化的网页卡片来控制底层的 PTY！
+
+【任务规划】
+
+1. 改造 Go 后端，兼职静态文件服务器
+修改 cmd/server/main.go：
+
+增加一行路由，将根路径 / 代理到本地的 ./web 目录（例如 http.Handle("/", http.FileServer(http.Dir("./web")))）。
+
+这样我们访问 http://127.0.0.1:8080/ 就能直接打开 UI。
+
+2. 编写移动端专属的 index.html (MVP 版)
+新建目录及文件 web/index.html。
+技术栈限制： 仅使用原生 HTML + 原生 JS + Tailwind CSS (直接引入 CDN <script src="https://cdn.tailwindcss.com"></script>)。不需要构建工具。
+
+【UI 交互与结构化映射规则】
+页面需要是一个充满现代感、适配手机屏幕的深色模式（Dark Mode）面板，包含以下核心区域和逻辑：
+
+鉴权拦截： 页面加载时检查 localStorage.getItem('vibe_token')。如果没有，用原生的 prompt() 让用户输入，然后建立 WebSocket 连接。
+
+执行指令区（底部固定）： 一个输入框和一个“运行”按钮。输入命令（如 python3 -c "name=input('?'); print(name)"）后，通过 WS 发送 {"action": "exec", "mode": "pty", "cmd": "..."}。
+
+结构化日志渲染区（主体滚动区）： 这是最重要的映射层！前端只认后端发来的 JSON type：
+
+收到 type: "session_state" -> 在日志流中插入一条灰色的小字居中状态（如 [系统] command started）。
+
+收到 type: "log" -> 插入一条文本。如果是 stream: "stderr"，文字设为红色或带红色左边框；如果是 stdout，设为浅灰/白色。
+
+收到 type: "error" -> [核心体验] 渲染一张醒目的红色错误卡片（Error Card），将 msg 高亮显示，并自带一个“一键复制”的按钮（调用 Clipboard API）。
+
+交互式输入区 (Action Popup)：
+
+当页面处于命令运行状态，且需要在 PTY 中输入数据时，在底部弹出一个明显的“输入卡片/弹窗”。
+
+用户在此框内打字并回车，前端组合成 {"action": "input", "data": "用户输入\n"} 发送给后端。
+
+【交付要求】
+请帮我生成这段绝美的 web/index.html 并修改 main.go。完成后，确保我可以通过访问 http://127.0.0.1:8080 直接在浏览器里测试我们整个系统的全链路交互！

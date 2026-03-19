@@ -1,0 +1,66 @@
+【角色设定与项目愿景】
+你现在是一位顶级的 Go 语言架构师。我们将一起采用 "Vibe Coding" 的方式，开发一款「移动端专属的 AI 编程与电脑控制台后端」。
+
+项目目标： 抛弃传统的移动端 SSH 体验。用 Go 编写一个轻量级、零依赖的后端服务（运行在 Mac/Linux 节点上）。该服务负责执行底层 Shell 命令和交互式 AI CLI（如 claude code, gemini cli），实时拦截并清洗终端输出（剥离 ANSI，利用正则/状态机聚合信息），将其转化为结构化的 JSON 事件流，通过 WebSocket 推送给手机前端，实现手机端纯可视化、UI 化的编程体验。
+
+【技术栈规范】
+
+语言： Go 1.21+ (严格遵守 CGO_ENABLED=0，追求极简部署)。
+
+WebSocket： github.com/gorilla/websocket。
+
+持久化： 纯 Go 版 SQLite 驱动 github.com/glebarez/sqlite (或 modernc.org/sqlite)，配合 gorm 或原生 SQL。
+
+底层进程执行： os/exec (用于一次性脚本) + github.com/creack/pty (用于强交互式进程)。
+
+【核心模块与架构要求】
+
+1. WebSocket 通信与鉴权层 (The Gateway)
+
+实现简单的 Token 鉴权中间件，拦截 ws://...?token=xxx，失败返回 401。
+
+前后端通信契约全部基于 JSON。后端只下发定义好的 Event Struct，如：
+
+{"type": "log", "msg": "..."}
+
+{"type": "progress", "percent": 45}
+
+{"type": "error", "msg": "...", "stack": "..."}
+
+{"type": "prompt_request", "options": ["y", "n"]} (针对交互式命令等待输入)
+
+2. 路由与适配器模式 (Stack Adapters)
+
+采用策略模式处理不同的终端输出。定义 StackAdapter 接口，包含方法 Detect(dir) 和 ParseLog(line) Event。
+
+痛点解决 (多行报错)： 在 Adapter 内实现状态机（Trigger & Buffer）。例如遇到 Java 的 Exception in thread 或 Python 的 Traceback，开启缓冲，直到匹配到非错误行，才将合并后的完整堆栈组装为 error 事件发送，方便前端一键复制给 AI。
+
+3. 进程引擎与 PTY 支持 (The Runner)
+
+支持两种运行模式：
+
+快轨： os/exec + StdoutPipe/StderrPipe，用于 mvn clean, npm build 等。
+
+慢轨 (强交互)： 引入 creack/pty。专门用于挂载 claude code 等 AI CLI。必须实现 ANSI 颜色码清洗器，并将前端发来的按键事件（如 'y\n'）精准写入 PTY stdin。
+
+4. 会话状态与生命周期管理 (SQLite Persistence)
+
+设计并初始化 SQLite 表结构：projects (项目信息与技术栈), sessions (会话状态), command_history (按项目隔离的高频命令历史)。
+
+休眠舱机制 (Hot Resume)： 若 WebSocket 异常断开，不要立即 kill PTY 进程。将其状态标记为 hibernating（休眠），保留 5 分钟。若期间客户端重连，无缝接管原有 PTY 流。
+
+状态落盘： 当用户明确退出或超时后，向 AI CLI 发送保存指令（如 /save），并将状态/记忆写入项目根目录下的隐藏文件夹（如 .vibecoding/），最后安全销毁进程。
+
+【当前首要任务 (First Step)】
+
+请确认你已完全理解上述架构设计。
+
+为我生成该 Go 项目的标准目录结构建议。
+
+优先编写并输出以下核心代码：
+
+核心的数据结构（JSON Event 的 Struct 定义）。
+
+WebSocket 的入口 main.go（包含 Token 鉴权中间件的雏形）。
+
+StackAdapter 接口的定义，以及一个通用的多行日志截获器的伪代码结构
