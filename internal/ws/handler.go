@@ -65,6 +65,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	sessionID := fmt.Sprintf("session-%d", time.Now().UTC().UnixNano())
+	controller := session.NewController(sessionID)
 	writeCh := make(chan any, 128)
 	writeErrCh := make(chan error, 1)
 	var writerWG sync.WaitGroup
@@ -111,6 +112,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	enqueueEvent(ctx, writeCh, protocol.NewSessionStateEvent(sessionID, string(session.StateActive), "connected"))
+	enqueueEvent(ctx, writeCh, controller.InitialEvent())
 
 	for {
 		select {
@@ -171,6 +173,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			activeSessionID = sessionID
 			runnerMu.Unlock()
 
+			for _, event := range controller.OnExecStart(reqEvent.Command) {
+				enqueueEvent(ctx, writeCh, event)
+			}
+
 			go func(req protocol.ExecRequestEvent, selected runner.Runner, selectedMode runner.Mode) {
 				err := selected.Run(ctx, runner.ExecRequest{
 					SessionID: sessionID,
@@ -179,6 +185,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Mode:      selectedMode,
 				}, func(event any) {
 					enqueueEvent(ctx, writeCh, event)
+					for _, mapped := range controller.OnRunnerEvent(event) {
+						enqueueEvent(ctx, writeCh, mapped)
+					}
 				})
 				if err != nil {
 					log.Printf("runner finished with error: %v", err)
@@ -190,6 +199,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					activeSessionID = ""
 				}
 				runnerMu.Unlock()
+
+				for _, event := range controller.OnCommandFinished() {
+					enqueueEvent(ctx, writeCh, event)
+				}
 			}(reqEvent, currentRunner, mode)
 		case "input":
 			var inputEvent protocol.InputRequestEvent
@@ -218,6 +231,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					message = "input is only supported for pty sessions"
 				}
 				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, message, ""))
+			} else {
+				for _, event := range controller.OnInputSent() {
+					enqueueEvent(ctx, writeCh, event)
+				}
 			}
 		case "fs_list":
 			var fsListReq protocol.FSListRequestEvent

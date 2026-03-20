@@ -147,6 +147,11 @@
         </div>
         <button id="reconnectBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">重连</button>
       </div>
+      <div class="mt-3 flex items-center gap-2">
+        <span class="text-xs uppercase tracking-wide text-zinc-500">视图</span>
+        <button id="structuredViewBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">结构化视图</button>
+        <button id="rawTerminalViewBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">原始终端</button>
+      </div>
       <div id="stepPanel" class="mt-3 hidden rounded-2xl border border-zinc-800 bg-zinc-950/70 px-3 py-2">
         <div class="mb-2 flex items-center justify-between gap-3">
           <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">当前步骤</p>
@@ -231,6 +236,8 @@
     const actionPanel = document.getElementById('actionPanel');
     const openSidebarBtn = document.getElementById('openSidebarBtn');
     const closeSidebarBtn = document.getElementById('closeSidebarBtn');
+    const structuredViewBtn = document.getElementById('structuredViewBtn');
+    const rawTerminalViewBtn = document.getElementById('rawTerminalViewBtn');
     const sidebar = document.getElementById('sidebar');
     const sidebarOverlay = document.getElementById('sidebarOverlay');
     const workspacePath = document.getElementById('workspacePath');
@@ -256,6 +263,8 @@
     let connected = false;
     let running = false;
     let awaitingInput = false;
+    let agentState = 'IDLE';
+    let agentStateMessage = '';
     let sessionId = '';
     let currentPromptOptions = [];
     let currentCwd = '.';
@@ -266,7 +275,12 @@
     let highlightedFilePath = '';
     let diffModalOpen = false;
     let currentDiff = null;
-    let activeCommand = '';
+    let viewMode = 'structured';
+    let logEntries = [];
+    let rawTerminalByStream = { stdout: '', stderr: '' };
+    let lastPromptMessage = '';
+    let claudeInteractiveActive = false;
+
 
     function syncBottomSpacing() {
       const dockHeight = bottomDock ? bottomDock.offsetHeight : 0;
@@ -275,15 +289,45 @@
       }
     }
 
+    function updateViewModeButtons() {
+      const activeClass = 'border-blue-700 bg-blue-950/50 text-blue-100';
+      const inactiveClass = 'border-zinc-700 text-zinc-100';
+      structuredViewBtn.className = `rounded-2xl border px-3 py-2 text-xs hover:bg-zinc-800 ${viewMode === 'structured' ? activeClass : inactiveClass}`;
+      rawTerminalViewBtn.className = `rounded-2xl border px-3 py-2 text-xs hover:bg-zinc-800 ${viewMode === 'raw-terminal' ? activeClass : inactiveClass}`;
+    }
+
+    function setViewMode(mode) {
+      if (mode !== 'structured' && mode !== 'raw-terminal') return;
+      if (viewMode === mode) return;
+      viewMode = mode;
+      updateViewModeButtons();
+      renderLogPane();
+    }
+
     function updateStatus() {
-      statusText.textContent = connected ? (running ? '运行中' : '已连接') : '未连接';
-      statusDot.className = 'h-2.5 w-2.5 rounded-full ' + (connected ? (running ? 'bg-amber-400' : 'bg-emerald-500') : 'bg-red-500');
+      const agentStatusMap = {
+        IDLE: '已连接 / 空闲',
+        THINKING: '思考中',
+        WAIT_INPUT: '等待输入',
+        RUNNING_TOOL: '执行工具中'
+      };
+      const effectiveStatus = connected ? (agentStatusMap[agentState] || (running ? '运行中' : '已连接')) : '未连接';
+      statusText.textContent = effectiveStatus;
+      const dotColor = !connected
+        ? 'bg-red-500'
+        : agentState === 'WAIT_INPUT'
+          ? 'bg-blue-400'
+          : agentState === 'RUNNING_TOOL'
+            ? 'bg-violet-400'
+            : agentState === 'THINKING'
+              ? 'bg-amber-400'
+              : 'bg-emerald-500';
+      statusDot.className = 'h-2.5 w-2.5 rounded-full ' + dotColor;
       sessionText.textContent = sessionId || '-';
       workspacePath.textContent = `工作区：${currentCwd || '.'}`;
       sidebarPath.textContent = currentCwd || '.';
-      const allowCommandWhileClaude = running && activeCommand.toLowerCase() === 'claude';
-      runBtn.disabled = !connected || (running && !allowCommandWhileClaude);
-      commandInput.disabled = !connected || (running && !allowCommandWhileClaude);
+      runBtn.disabled = !connected || running;
+      commandInput.disabled = !connected || running;
       sendInputBtn.disabled = !connected || !awaitingInput;
       inputField.disabled = !connected || !awaitingInput;
       sidebarRefreshBtn.disabled = !connected;
@@ -412,8 +456,106 @@
       bubble.appendChild(innerNode);
       row.appendChild(bubble);
       chatContainer.appendChild(row);
-      scrollToBottom();
       return row;
+    }
+
+    function renderStructuredEntry(entry) {
+      if (!entry) return;
+
+      if (entry.kind === 'user') {
+        const wrapper = document.createElement('div');
+        const meta = document.createElement('div');
+        meta.className = 'mb-2 text-[11px] uppercase tracking-wide text-blue-100/80';
+        meta.textContent = entry.label || '输入';
+        const body = document.createElement('pre');
+        body.className = 'whitespace-pre-wrap break-words text-sm';
+        body.textContent = entry.message || '';
+        wrapper.append(meta, body);
+        appendMessageRow('user', wrapper);
+        return;
+      }
+
+      if (entry.kind === 'markdown') {
+        const wrapper = document.createElement('div');
+        addMeta(wrapper, 'assistant', entry.timestamp);
+        const content = document.createElement('div');
+        content.className = 'markdown-body';
+        content.innerHTML = marked.parse(entry.message || '');
+        wrapper.appendChild(content);
+        appendMessageRow('assistant', wrapper, { messageKind: 'markdown-log', stream: entry.stream || 'stdout' });
+        enhanceCodeBlocks(wrapper);
+        return;
+      }
+
+      if (entry.kind === 'terminal') {
+        const wrapper = document.createElement('div');
+        const body = document.createElement('pre');
+        body.dataset.terminalBody = 'true';
+        body.className = 'whitespace-pre-wrap break-words font-mono text-sm ' + ((entry.stream || 'stdout') === 'stderr' ? 'text-red-200' : 'text-zinc-100');
+        body.textContent = entry.text || '';
+        wrapper.appendChild(body);
+        appendMessageRow('assistant', wrapper, {
+          messageKind: 'terminal-log',
+          stream: entry.stream || 'stdout',
+          bodySelector: '[data-terminal-body="true"]'
+        });
+        return;
+      }
+
+      if (entry.kind === 'error') {
+        addErrorCard(entry.message || 'unknown error', entry.stack || '', entry.timestamp);
+        return;
+      }
+
+      if (entry.kind === 'system') {
+        addSystemMessage(entry.message || '', entry.timestamp);
+      }
+    }
+
+    function renderStructuredLogPane() {
+      chatContainer.innerHTML = '';
+      logEntries.forEach(renderStructuredEntry);
+      scrollToBottom();
+    }
+
+    function renderRawTerminalPane() {
+      chatContainer.innerHTML = '';
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'rounded-[1.4rem] border border-zinc-800 bg-zinc-900/90 p-4 shadow-lg';
+
+      const meta = document.createElement('div');
+      meta.className = 'mb-3 flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-zinc-500';
+      meta.innerHTML = '<span>raw terminal</span><span>stdout / stderr merged by panel</span>';
+      wrapper.appendChild(meta);
+
+      const stdout = document.createElement('pre');
+      stdout.className = 'whitespace-pre-wrap break-words font-mono text-sm leading-6 text-zinc-100';
+      stdout.textContent = rawTerminalByStream.stdout || '';
+      wrapper.appendChild(stdout);
+
+      if (rawTerminalByStream.stderr) {
+        const stderrLabel = document.createElement('div');
+        stderrLabel.className = 'mt-4 mb-2 text-[11px] uppercase tracking-wide text-red-300';
+        stderrLabel.textContent = 'stderr';
+        wrapper.appendChild(stderrLabel);
+
+        const stderr = document.createElement('pre');
+        stderr.className = 'whitespace-pre-wrap break-words font-mono text-sm leading-6 text-red-200';
+        stderr.textContent = rawTerminalByStream.stderr;
+        wrapper.appendChild(stderr);
+      }
+
+      chatContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    function renderLogPane() {
+      if (viewMode === 'raw-terminal') {
+        renderRawTerminalPane();
+        return;
+      }
+      renderStructuredLogPane();
     }
 
     function getLastTerminalBody(stream) {
@@ -497,15 +639,10 @@
     }
 
     function addUserBubble(text, label) {
-      const wrapper = document.createElement('div');
-      const meta = document.createElement('div');
-      meta.className = 'mb-2 text-[11px] uppercase tracking-wide text-blue-100/80';
-      meta.textContent = label;
-      const body = document.createElement('pre');
-      body.className = 'whitespace-pre-wrap break-words text-sm';
-      body.textContent = text;
-      wrapper.append(meta, body);
-      appendMessageRow('user', wrapper);
+      logEntries.push({ kind: 'user', message: text, label });
+      if (viewMode === 'structured') {
+        renderLogPane();
+      }
     }
 
     function isTransientTerminalLine(text) {
@@ -556,42 +693,37 @@
       return `${current ? `${current}\n` : ''}${incoming}`;
     }
 
-    function addLogMessage(message, stream, timestamp) {
+    function ingestLogMessage(message, stream, timestamp) {
       const effectiveStream = stream || 'stdout';
       const normalizedMessage = String(message || '');
       const isMarkdown = effectiveStream !== 'stderr' && looksLikeAIReply(normalizedMessage) && !normalizedMessage.startsWith('\r');
 
       if (isMarkdown) {
-        const wrapper = document.createElement('div');
-        addMeta(wrapper, 'assistant', timestamp);
-        const content = document.createElement('div');
-        content.className = 'markdown-body';
-        content.innerHTML = marked.parse(normalizedMessage);
-        wrapper.appendChild(content);
-        appendMessageRow('assistant', wrapper, { messageKind: 'markdown-log', stream: effectiveStream });
-        enhanceCodeBlocks(wrapper);
-        return;
+        logEntries.push({
+          kind: 'markdown',
+          message: normalizedMessage,
+          stream: effectiveStream,
+          timestamp
+        });
+      } else {
+        const previousEntry = logEntries[logEntries.length - 1];
+        const nextText = applyTerminalDelta(previousEntry && previousEntry.kind === 'terminal' && previousEntry.stream === effectiveStream ? previousEntry.text : '', normalizedMessage);
+        if (previousEntry && previousEntry.kind === 'terminal' && previousEntry.stream === effectiveStream) {
+          previousEntry.text = nextText;
+          previousEntry.timestamp = timestamp || previousEntry.timestamp;
+        } else {
+          logEntries.push({
+            kind: 'terminal',
+            stream: effectiveStream,
+            text: normalizedMessage.startsWith('\r') ? normalizedMessage.replace(/^\r+/, '') : normalizedMessage,
+            timestamp
+          });
+        }
       }
 
-      const existingBody = getLastTerminalBody(effectiveStream);
-      if (existingBody) {
-        existingBody.textContent = applyTerminalDelta(existingBody.textContent, normalizedMessage);
-        scrollToBottom();
-        return;
-      }
-
-      const wrapper = document.createElement('div');
-      const body = document.createElement('pre');
-      body.dataset.terminalBody = 'true';
-      body.className = 'whitespace-pre-wrap break-words font-mono text-sm ' + (effectiveStream === 'stderr' ? 'text-red-200' : 'text-zinc-100');
-      body.textContent = normalizedMessage.startsWith('\r') ? normalizedMessage.replace(/^\r+/, '') : normalizedMessage;
-      wrapper.appendChild(body);
-      appendMessageRow('assistant', wrapper, {
-        messageKind: 'terminal-log',
-        stream: effectiveStream,
-        bodySelector: '[data-terminal-body="true"]'
-      });
+      rawTerminalByStream[effectiveStream] = applyTerminalDelta(rawTerminalByStream[effectiveStream] || '', normalizedMessage);
     }
+
 
     function addErrorCard(message, stack, timestamp) {
       const wrapper = document.createElement('div');
@@ -647,8 +779,10 @@
       actionPanel.innerHTML = '';
       actionPanel.appendChild(quickButton('Ctrl+C 中断', () => sendInputRaw('\u0003', '快捷动作'), 'border-red-900 bg-red-950/40 text-red-100 hover:bg-red-900/50'));
       actionPanel.appendChild(quickButton('清屏', () => {
-        chatContainer.innerHTML = '';
-        addSystemMessage('已清空对话');
+        logEntries = [];
+        rawTerminalByStream = { stdout: '', stderr: '' };
+        logEntries.push({ kind: 'system', message: '已清空对话' });
+        renderLogPane();
       }, 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800'));
       actionPanel.appendChild(quickButton('文件树', () => setSidebarOpen(true), 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800'));
       if (currentDiff && diffModalOpen) {
@@ -779,19 +913,10 @@
       return normalized.slice(0, index);
     }
 
-    function openInteractiveInputCard(message = '交互式会话进行中，可继续输入') {
-      awaitingInput = true;
-      currentPromptOptions = [];
-      promptText.textContent = message;
-      promptOptionButtons.innerHTML = '';
-      inputCard.classList.remove('hidden');
-      updateStatus();
-      inputField.focus();
-    }
 
     function openInputCard(message, options) {
       awaitingInput = true;
-      currentPromptOptions = effectivePromptOptions(message, options);
+      currentPromptOptions = Array.isArray(options) && options.length ? effectivePromptOptions(message, options) : currentPromptOptions;
       promptText.textContent = message || '等待输入';
       renderPromptOptions(currentPromptOptions);
       inputCard.classList.remove('hidden');
@@ -805,6 +930,88 @@
       promptText.textContent = '';
       promptOptionButtons.innerHTML = '';
       inputCard.classList.add('hidden');
+      updateStatus();
+    }
+
+    function applyAgentState(payload) {
+      agentState = payload.state || 'IDLE';
+      agentStateMessage = payload.msg || '';
+      running = agentState !== 'IDLE';
+
+      if (payload.step) {
+        setCurrentStep(payload.step, agentState === 'RUNNING_TOOL' ? 'running' : currentStepStatus, '');
+      } else if (agentState === 'IDLE') {
+        clearCurrentStep();
+      }
+
+      if (payload.awaitInput) {
+        openInputCard(agentStateMessage || promptText.textContent || '等待输入', currentPromptOptions);
+      } else {
+        closeInputCard();
+      }
+    }
+
+    function handleIncomingEvent(payload) {
+      if (payload.sessionId) sessionId = payload.sessionId;
+
+      switch (payload.type) {
+        case 'session_state':
+          if (payload.state === 'closed') {
+            running = false;
+            if (claudeInteractiveActive) {
+              break;
+            }
+          }
+          logEntries.push({ kind: 'system', message: payload.msg || payload.state || 'session update', timestamp: payload.timestamp });
+          renderLogPane();
+          break;
+        case 'agent_state':
+          claudeInteractiveActive = payload.command === 'claude' && payload.state !== 'IDLE';
+          applyAgentState(payload);
+          break;
+        case 'log':
+          ingestLogMessage(payload.msg || '', payload.stream || 'stdout', payload.timestamp);
+          renderLogPane();
+          break;
+        case 'error':
+          logEntries.push({ kind: 'error', message: payload.msg || 'unknown error', stack: payload.stack || '', timestamp: payload.timestamp });
+          renderLogPane();
+          break;
+        case 'prompt_request':
+          if ((payload.msg || '等待输入') === lastPromptMessage && agentState === 'WAIT_INPUT') {
+            break;
+          }
+          lastPromptMessage = payload.msg || '等待输入';
+          currentPromptOptions = effectivePromptOptions(payload.msg || '等待输入', payload.options || []);
+          promptText.textContent = payload.msg || '等待输入';
+          renderPromptOptions(currentPromptOptions);
+          if (agentState === 'WAIT_INPUT') {
+            inputCard.classList.remove('hidden');
+          }
+          break;
+        case 'step_update':
+          setCurrentStep(payload.msg || '', payload.status || 'running', payload.target || '');
+          break;
+        case 'file_diff':
+          currentDiff = {
+            title: payload.title || 'Diff 预览',
+            path: payload.path || '',
+            diff: payload.diff || '',
+            lang: payload.lang || ''
+          };
+          openDiffModal(currentDiff);
+          break;
+        case 'fs_list_result':
+          currentCwd = payload.current_path || currentCwd;
+          currentItems = Array.isArray(payload.items) ? payload.items : [];
+          renderFileList();
+          break;
+        default:
+          logEntries.push({ kind: 'system', message: `收到未处理事件 ${payload.type || 'unknown'}`, timestamp: payload.timestamp });
+          renderLogPane();
+          break;
+      }
+
       updateStatus();
     }
 
@@ -824,7 +1031,8 @@
 
     function sendJson(data) {
       if (!ws || ws.readyState !== WebSocket.OPEN) {
-        addErrorCard('WebSocket 未连接。');
+        logEntries.push({ kind: 'error', message: 'WebSocket 未连接。', stack: '' });
+        renderLogPane();
         return false;
       }
       ws.send(JSON.stringify(data));
@@ -837,7 +1045,8 @@
 
     function connect(forcePrompt = false) {
       if (!ensureToken(forcePrompt)) {
-        addErrorCard('缺少 token，无法连接服务。');
+        logEntries.push({ kind: 'error', message: '缺少 token，无法连接服务。', stack: '' });
+        renderLogPane();
         return;
       }
 
@@ -851,35 +1060,48 @@
 
       connected = false;
       running = false;
+      agentState = 'IDLE';
+      agentStateMessage = '';
+      logEntries = [];
+      rawTerminalByStream = { stdout: '', stderr: '' };
+      lastPromptMessage = '';
+      claudeInteractiveActive = false;
       closeInputCard();
       updateStatus();
-      addSystemMessage('正在连接 WebSocket');
+      logEntries.push({ kind: 'system', message: '正在连接 WebSocket' });
+      renderLogPane();
 
       try {
         ws = new WebSocket(getWsUrl());
       } catch (err) {
-        addErrorCard(`创建 WebSocket 失败：${err.message || err}`);
+        logEntries.push({ kind: 'error', message: `创建 WebSocket 失败：${err.message || err}`, stack: '' });
+        renderLogPane();
         return;
       }
 
       ws.onopen = () => {
         connected = true;
         updateStatus();
-        addSystemMessage('WebSocket 已连接');
+        logEntries.push({ kind: 'system', message: 'WebSocket 已连接' });
+        renderLogPane();
         requestFSList('.');
       };
 
       ws.onclose = () => {
         connected = false;
         running = false;
+        agentState = 'IDLE';
+        agentStateMessage = '';
         clearCurrentStep();
         closeInputCard();
         updateStatus();
-        addErrorCard('连接已关闭，请检查 token 或服务状态。');
+        logEntries.push({ kind: 'error', message: '连接已关闭，请检查 token 或服务状态。', stack: '' });
+        renderLogPane();
       };
 
       ws.onerror = () => {
-        addErrorCard('WebSocket 连接错误，请检查 token 或服务状态。');
+        logEntries.push({ kind: 'error', message: 'WebSocket 连接错误，请检查 token 或服务状态。', stack: '' });
+        renderLogPane();
       };
 
       ws.onmessage = (event) => {
@@ -887,61 +1109,12 @@
         try {
           payload = JSON.parse(event.data);
         } catch (err) {
-          addErrorCard(`收到无法解析的消息：${err.message || err}`);
+          logEntries.push({ kind: 'error', message: `收到无法解析的消息：${err.message || err}`, stack: '' });
+          renderLogPane();
           return;
         }
 
-        if (payload.sessionId) sessionId = payload.sessionId;
-
-        switch (payload.type) {
-          case 'session_state':
-            addSystemMessage(payload.msg || payload.state || 'session update', payload.timestamp);
-            if (payload.state === 'closed') {
-              running = false;
-              activeCommand = '';
-              closeInputCard();
-              clearCurrentStep();
-            } else if (payload.state === 'active' && payload.msg === 'command started') {
-              running = true;
-              if (activeCommand.toLowerCase() === 'claude') {
-                openInteractiveInputCard('Claude 会话已启动，可直接在下方继续输入');
-              }
-            }
-            break;
-          case 'log':
-            addLogMessage(payload.msg || '', payload.stream || 'stdout', payload.timestamp);
-            break;
-          case 'error':
-            addErrorCard(payload.msg || 'unknown error', payload.stack || '', payload.timestamp);
-            break;
-          case 'prompt_request':
-            addSystemMessage(payload.msg || '等待输入', payload.timestamp);
-            openInputCard(payload.msg || '等待输入', payload.options || []);
-            break;
-          case 'step_update':
-            setCurrentStep(payload.msg || '', payload.status || 'running', payload.target || '');
-            break;
-          case 'file_diff':
-            currentDiff = {
-              title: payload.title || 'Diff 预览',
-              path: payload.path || '',
-              diff: payload.diff || '',
-              lang: payload.lang || ''
-            };
-            openDiffModal(currentDiff);
-            break;
-          case 'fs_list_result':
-            currentCwd = payload.current_path || currentCwd;
-            currentItems = Array.isArray(payload.items) ? payload.items : [];
-            renderFileList();
-            updateStatus();
-            break;
-          default:
-            addSystemMessage(`收到未处理事件 ${payload.type || 'unknown'}`, payload.timestamp);
-            break;
-        }
-
-        updateStatus();
+        handleIncomingEvent(payload);
       };
     }
 
@@ -949,6 +1122,11 @@
       if (!raw) return;
       if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n` })) return;
       addUserBubble(raw === '\u0003' ? 'Ctrl+C' : raw.replace(/\n$/, ''), label);
+      if (claudeInteractiveActive) {
+        agentState = 'THINKING';
+        agentStateMessage = '思考中';
+        updateStatus();
+      }
       inputField.value = '';
       inputField.focus();
     }
@@ -957,17 +1135,11 @@
       const cmd = (command || '').trim();
       if (!cmd) return;
       if (!connected) {
-        addErrorCard('当前未连接，无法运行命令。');
+        logEntries.push({ kind: 'error', message: '当前未连接，无法运行命令。', stack: '' });
+        renderLogPane();
         return;
       }
       if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: currentCwd })) return;
-      running = true;
-      activeCommand = cmd.split(/\s+/)[0] || '';
-      if (activeCommand.toLowerCase() === 'claude') {
-        openInteractiveInputCard('Claude 会话启动中，可在就绪后继续输入');
-      } else {
-        closeInputCard();
-      }
       addUserBubble(`${cmd}\n@ ${currentCwd || '.'}`, '命令');
       updateStatus();
       commandInput.value = '';
@@ -990,6 +1162,8 @@
       sendInput();
     });
 
+    structuredViewBtn.addEventListener('click', () => setViewMode('structured'));
+    rawTerminalViewBtn.addEventListener('click', () => setViewMode('raw-terminal'));
     reconnectBtn.addEventListener('click', () => connect(false));
     retokenBtn.addEventListener('click', () => connect(true));
     openSidebarBtn.addEventListener('click', () => setSidebarOpen(true));
@@ -1005,7 +1179,9 @@
     sidebarUpBtn.addEventListener('click', () => requestFSList(parentPath(currentCwd || '.')));
 
     updateStatus();
+    updateViewModeButtons();
     renderFileList();
+    renderLogPane();
     connect(false);
   </script>
 </body>

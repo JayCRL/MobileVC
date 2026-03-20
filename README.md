@@ -51,9 +51,12 @@ MobileVC 是一个面向手机浏览器的本地 Vibe Coding 面板。
 
 后端支持以下下行 event：
 - `session_state`
+- `agent_state`
 - `log`
 - `error`
 - `prompt_request`
+- `step_update`
+- `file_diff`
 - `fs_list_result`
 
 ### 命令执行能力
@@ -78,6 +81,9 @@ MobileVC 是一个面向手机浏览器的本地 Vibe Coding 面板。
 - 普通输出流按 `log` 下发
 - 错误下发为 `error`
 - 交互提示识别后下发为 `prompt_request`
+- Agent/Claude 会话状态按 `agent_state` 下发
+- 步骤状态按 `step_update` 下发
+- 文件变更按 `file_diff` 下发
 - 会话生命周期变化下发为 `session_state`
 
 ### 异常信息提炼能力
@@ -105,11 +111,19 @@ MobileVC 是一个面向手机浏览器的本地 Vibe Coding 面板。
 - 用户命令 / 用户输入：右侧气泡
 - 服务端输出 / Markdown / 错误：左侧区域
 - 系统事件：居中显示
+- Claude/Agent 会话支持顶部状态驱动的连续交互
+
+### 双视图日志展示
+- 支持 `结构化视图`
+- 支持 `原始终端` 视图
+- 两种视图共享同一份 WebSocket 日志流
+- 切换视图不会丢失日志、输入状态与增强 UI 状态
 
 ### 终端式日志展示
 - 普通日志使用 `<pre>` + 等宽字体显示
 - 连续同 stream 输出自动合并
 - 避免“每一行一个气泡”的碎片化效果
+- 原始终端视图会复用 carriage-return / transient line 处理逻辑
 
 ### Markdown / AI 输出展示
 - 使用 `marked` 做 Markdown 渲染
@@ -126,6 +140,13 @@ MobileVC 是一个面向手机浏览器的本地 Vibe Coding 面板。
 - 收到 `prompt_request` 后弹出底部输入卡
 - 支持手动输入
 - 支持快捷按钮输入（如 `y` / `n`）
+- Claude 连续对话会在每轮回复后重新回到可输入态
+
+### 当前步骤与 Diff 增强
+- 顶部 step panel 展示 `step_update`
+- 文件树可根据 `step_update.target` 高亮文件
+- `file_diff` 会弹出 diff modal
+- 这些增强层在结构化视图与原始终端视图下都可用
 
 ### 快捷动作盘
 - `Ctrl+C 中断`
@@ -328,6 +349,8 @@ Action Panel 当前支持：
 - 支持运行中输入
 - 支持 prompt 检测
 - 支持更接近真实终端的行为
+- 在 Windows 下对 `claude` 命令做了专门桥接，避免 npm 版 Claude Code 的重 TUI 输出无法稳定映射到前端
+- Claude 会话支持连续对话：每轮通过机器可读输出获取回复，并复用 Claude session 上下文
 
 当前前端主要走 `pty` 模式。
 

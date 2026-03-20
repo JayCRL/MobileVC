@@ -1,7 +1,9 @@
 package runner
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,11 +22,41 @@ import (
 const ptyReadBufferSize = 4096
 
 type PtyRunner struct {
-	mu     sync.Mutex
-	writer io.WriteCloser
-	closer io.Closer
-	cmd    *exec.Cmd
-	closed bool
+	mu              sync.Mutex
+	writer          io.WriteCloser
+	closer          io.Closer
+	cmd             *exec.Cmd
+	closed          bool
+	lazyStart       bool
+	processDone     chan struct{}
+	processErr      error
+	pendingReq      ExecRequest
+	pendingCWD      string
+	sink            EventSink
+	claudeSessionID string
+}
+
+type claudeShellOnceWriter struct {
+	runner *PtyRunner
+}
+
+func (w *claudeShellOnceWriter) Write(data []byte) (int, error) {
+	if w.runner == nil {
+		return 0, errors.New("no runner")
+	}
+	w.runner.mu.Lock()
+	req := w.runner.pendingReq
+	cwd := w.runner.pendingCWD
+	sink := w.runner.sink
+	w.runner.mu.Unlock()
+	if err := w.runner.startClaudeStreamOnFirstInput(context.Background(), req, cwd, sink, data); err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
+
+func (w *claudeShellOnceWriter) Close() error {
+	return nil
 }
 
 type interactiveSession struct {
@@ -52,6 +84,36 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		cwd, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get working directory: %w", err)
+		}
+	}
+
+	if shouldUseClaudeStreamJSON(req.Command) {
+		r.mu.Lock()
+		r.lazyStart = true
+		r.pendingReq = req
+		r.pendingCWD = cwd
+		r.sink = sink
+		r.closed = false
+		r.processDone = make(chan struct{})
+		r.processErr = nil
+		r.mu.Unlock()
+		defer r.clear()
+
+		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
+
+		r.mu.Lock()
+		r.writer = &claudeShellOnceWriter{runner: r}
+		r.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-r.processDone:
+			r.mu.Lock()
+			err := r.processErr
+			r.mu.Unlock()
+			return err
 		}
 	}
 
@@ -114,9 +176,17 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
 	}
 
 	r.mu.Lock()
+	lazyStart := r.lazyStart
 	writer := r.writer
 	closed := r.closed
+	req := r.pendingReq
+	cwd := r.pendingCWD
+	sink := r.sink
 	r.mu.Unlock()
+
+	if lazyStart {
+		return r.startClaudeStreamOnFirstInput(ctx, req, cwd, sink, data)
+	}
 
 	if writer == nil || closed {
 		return errors.New("no active pty session")
@@ -162,6 +232,263 @@ func (r *PtyRunner) clear() {
 	r.closer = nil
 	r.cmd = nil
 	r.closed = true
+}
+
+func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd string, sink EventSink) error {
+	cmd := newClaudeStreamCommand(ctx, req.Command)
+	cmd.Dir = cwd
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("create claude stdin pipe: %v", err), ""))
+		return fmt.Errorf("create claude stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = stdin.Close()
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("create claude stdout pipe: %v", err), ""))
+		return fmt.Errorf("create claude stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		_ = stdin.Close()
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("create claude stderr pipe: %v", err), ""))
+		return fmt.Errorf("create claude stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("start claude stream command: %v", err), ""))
+		return fmt.Errorf("start claude stream command: %w", err)
+	}
+
+	r.mu.Lock()
+	r.writer = &claudeStreamWriter{writer: stdin}
+	r.closer = stdin
+	r.cmd = cmd
+	r.closed = false
+	r.mu.Unlock()
+	defer r.clear()
+	defer stdin.Close()
+
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
+
+	var readWG sync.WaitGroup
+	readWG.Add(2)
+	go func() {
+		defer readWG.Done()
+		r.readClaudeStreamJSON(ctx, stdout, req.SessionID, sink)
+	}()
+	go func() {
+		defer readWG.Done()
+		r.readOutput(ctx, stderr, req.SessionID, "stderr", false, sink)
+	}()
+
+	waitErr := cmd.Wait()
+	readWG.Wait()
+
+	if waitErr != nil {
+		message := waitErr.Error()
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			message = fmt.Sprintf("command exited with code %d", exitErr.ExitCode())
+		}
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, message, ""))
+		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished with error"))
+		return waitErr
+	}
+
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
+	return nil
+}
+
+func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecRequest, cwd string, sink EventSink, firstInput []byte) error {
+	r.mu.Lock()
+	if !r.lazyStart {
+		writer := r.writer
+		closed := r.closed
+		r.mu.Unlock()
+		if writer == nil || closed {
+			return errors.New("no active pty session")
+		}
+		_, err := writer.Write(firstInput)
+		return err
+	}
+	r.lazyStart = false
+	r.mu.Unlock()
+
+	text := strings.TrimSpace(string(firstInput))
+	if text == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	resumeSessionID := r.claudeSessionID
+	r.mu.Unlock()
+
+	cmd := newClaudePromptCommand(ctx, req.Command, text, resumeSessionID)
+	cmd.Dir = cwd
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		r.finishLazyProcess(err, sink, req.SessionID)
+		return fmt.Errorf("create claude stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		r.finishLazyProcess(err, sink, req.SessionID)
+		return fmt.Errorf("create claude stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		r.finishLazyProcess(err, sink, req.SessionID)
+		return fmt.Errorf("start claude prompt command: %w", err)
+	}
+
+	r.mu.Lock()
+	r.cmd = cmd
+	r.closed = false
+	r.writer = &claudeShellOnceWriter{runner: r}
+	r.mu.Unlock()
+
+	go func() {
+		var readWG sync.WaitGroup
+		readWG.Add(2)
+		go func() {
+			defer readWG.Done()
+			r.readClaudeStreamJSON(ctx, stdout, req.SessionID, sink)
+		}()
+		go func() {
+			defer readWG.Done()
+			r.readOutput(ctx, stderr, req.SessionID, "stderr", false, sink)
+		}()
+		waitErr := cmd.Wait()
+		readWG.Wait()
+		if waitErr != nil {
+			message := waitErr.Error()
+			var exitErr *exec.ExitError
+			if errors.As(waitErr, &exitErr) {
+				message = fmt.Sprintf("command exited with code %d", exitErr.ExitCode())
+			}
+			sendEvent(sink, protocol.NewErrorEvent(req.SessionID, message, ""))
+			sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished with error"))
+			r.finishLazyProcess(waitErr, sink, req.SessionID)
+			return
+		}
+		r.mu.Lock()
+		r.lazyStart = true
+		r.writer = &claudeShellOnceWriter{runner: r}
+		r.cmd = nil
+		r.closed = false
+		r.processDone = make(chan struct{})
+		r.processErr = nil
+		r.mu.Unlock()
+		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
+		r.finishLazyProcess(nil, sink, req.SessionID)
+	}()
+
+	return nil
+}
+
+func (r *PtyRunner) finishLazyProcess(err error, sink EventSink, sessionID string) {
+	r.mu.Lock()
+	r.processErr = err
+	done := r.processDone
+	r.mu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}
+}
+
+func shouldUseClaudeStreamJSON(command string) bool {
+	return isClaudeCommandName(command)
+}
+
+type claudeStreamWriter struct {
+	writer io.Writer
+}
+
+func (w *claudeStreamWriter) Write(data []byte) (int, error) {
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return len(data), nil
+	}
+	payload := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": text,
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	encoded = append(encoded, '\n')
+	_, err = w.writer.Write(encoded)
+	if err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
+
+func (w *claudeStreamWriter) Close() error {
+	if closer, ok := w.writer.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+type claudeStreamEnvelope struct {
+	Type      string `json:"type"`
+	Subtype   string `json:"subtype,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Result    string `json:"result,omitempty"`
+	Message   struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text,omitempty"`
+		} `json:"content"`
+	} `json:"message"`
+}
+
+func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, sessionID string, sink EventSink) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), scannerMaxTokenSize)
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var envelope claudeStreamEnvelope
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			sendEvent(sink, protocol.NewLogEvent(sessionID, line, "stdout"))
+			continue
+		}
+		if envelope.SessionID != "" {
+			r.mu.Lock()
+			r.claudeSessionID = envelope.SessionID
+			r.mu.Unlock()
+		}
+		switch envelope.Type {
+		case "result":
+			if strings.TrimSpace(envelope.Result) != "" {
+				sendEvent(sink, protocol.NewLogEvent(sessionID, envelope.Result, "stdout"))
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read claude stream: %v", err), ""))
+	}
 }
 
 func startInteractiveCommand(cmd *exec.Cmd) (*interactiveSession, error) {

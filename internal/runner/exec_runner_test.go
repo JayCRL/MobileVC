@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +86,31 @@ func TestExecRunnerWriteNotSupported(t *testing.T) {
 	runner := NewExecRunner()
 	if err := runner.Write(context.Background(), []byte("y\\n")); !errors.Is(err, ErrInputNotSupported) {
 		t.Fatalf("expected ErrInputNotSupported, got %v", err)
+	}
+}
+
+func TestNewShellCommandUsesPowerShellForClaudeOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows only")
+	}
+
+	cmd := newShellCommand(context.Background(), "claude", ModePTY)
+	path := strings.ToLower(cmd.Path)
+	if !strings.HasSuffix(path, "bash.exe") {
+		t.Fatalf("expected bash entry for interactive claude, got %q", cmd.Path)
+	}
+	args := strings.Join(cmd.Args, " ")
+	lowerArgs := strings.ToLower(args)
+	if !strings.Contains(lowerArgs, "-lc") || !strings.Contains(lowerArgs, "winpty") || !strings.Contains(lowerArgs, "claude") {
+		t.Fatalf("expected bash wrapped winpty claude invocation, got %q", args)
+	}
+}
+
+func TestBuildClaudePromptCommandIncludesResume(t *testing.T) {
+	got := buildClaudePromptCommand("claude", "hello", "session-123")
+	lower := strings.ToLower(got)
+	if !strings.Contains(lower, "--resume session-123") {
+		t.Fatalf("expected resume flag in %q", got)
 	}
 }
 

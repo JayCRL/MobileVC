@@ -8,6 +8,7 @@ const (
 	EventTypeError         = "error"
 	EventTypePromptRequest = "prompt_request"
 	EventTypeSessionState  = "session_state"
+	EventTypeAgentState    = "agent_state"
 	EventTypeFSListResult  = "fs_list_result"
 	EventTypeStepUpdate    = "step_update"
 	EventTypeFileDiff      = "file_diff"
@@ -69,6 +70,16 @@ type SessionStateEvent struct {
 	Event
 	State   string `json:"state"`
 	Message string `json:"msg,omitempty"`
+}
+
+type AgentStateEvent struct {
+	Event
+	State      string `json:"state"`
+	Message    string `json:"msg,omitempty"`
+	AwaitInput bool   `json:"awaitInput,omitempty"`
+	Command    string `json:"command,omitempty"`
+	Step       string `json:"step,omitempty"`
+	Tool       string `json:"tool,omitempty"`
 }
 
 type StepUpdateEvent struct {
@@ -135,6 +146,18 @@ func NewSessionStateEvent(sessionID, state, message string) SessionStateEvent {
 		Event:   NewBaseEvent(EventTypeSessionState, sessionID),
 		State:   state,
 		Message: message,
+	}
+}
+
+func NewAgentStateEvent(sessionID, state, message string, awaitInput bool, command, step, tool string) AgentStateEvent {
+	return AgentStateEvent{
+		Event:      NewBaseEvent(EventTypeAgentState, sessionID),
+		State:      state,
+		Message:    message,
+		AwaitInput: awaitInput,
+		Command:    command,
+		Step:       step,
+		Tool:       tool,
 	}
 }
 

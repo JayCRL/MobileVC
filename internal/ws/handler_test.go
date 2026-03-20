@@ -20,6 +20,7 @@ type stubRunner struct {
 	events   []any
 	writeCh  chan []byte
 	writeErr error
+	holdOpen bool
 }
 
 func newStubRunner(events ...any) *stubRunner {
@@ -29,9 +30,18 @@ func newStubRunner(events ...any) *stubRunner {
 	}
 }
 
+func newHoldingStubRunner(events ...any) *stubRunner {
+	runner := newStubRunner(events...)
+	runner.holdOpen = true
+	return runner
+}
+
 func (s *stubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
 	for _, event := range s.events {
 		sink(event)
+	}
+	if !s.holdOpen {
+		return nil
 	}
 	<-ctx.Done()
 	return nil
@@ -53,6 +63,68 @@ func (s *stubRunner) Close() error {
 	return nil
 }
 
+func newTestConn(t *testing.T, h *Handler) *websocket.Conn {
+	t.Helper()
+	server := httptest.NewServer(h)
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/?token=test"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	return conn
+}
+
+func readEventMap(t *testing.T, conn *websocket.Conn) map[string]any {
+	t.Helper()
+	var event map[string]any
+	if err := conn.ReadJSON(&event); err != nil {
+		t.Fatalf("read event: %v", err)
+	}
+	return event
+}
+
+func readInitialEvents(t *testing.T, conn *websocket.Conn) (map[string]any, map[string]any) {
+	t.Helper()
+	first := readEventMap(t, conn)
+	second := readEventMap(t, conn)
+	return first, second
+}
+
+func requireEventType(t *testing.T, event map[string]any, want string) {
+	t.Helper()
+	if event["type"] != want {
+		t.Fatalf("expected %s event, got %#v", want, event)
+	}
+}
+
+func requireAgentState(t *testing.T, event map[string]any, wantState string, wantAwait bool) {
+	t.Helper()
+	requireEventType(t, event, protocol.EventTypeAgentState)
+	if event["state"] != wantState {
+		t.Fatalf("expected agent state %q, got %#v", wantState, event)
+	}
+	await, _ := event["awaitInput"].(bool)
+	if await != wantAwait {
+		t.Fatalf("expected awaitInput=%v, got %#v", wantAwait, event)
+	}
+}
+
+func readUntilType(t *testing.T, conn *websocket.Conn, want string) map[string]any {
+	t.Helper()
+	for i := 0; i < 12; i++ {
+		event := readEventMap(t, conn)
+		if event["type"] == want {
+			return event
+		}
+	}
+	t.Fatalf("did not receive %s event", want)
+	return nil
+}
+
 func TestHandlerExecFlow(t *testing.T) {
 	execRunner := newStubRunner(
 		protocol.NewLogEvent("ignored", "hello from runner", "stdout"),
@@ -62,25 +134,10 @@ func TestHandlerExecFlow(t *testing.T) {
 	h := NewHandler("test")
 	h.NewExecRunner = func() runner.Runner { return execRunner }
 
-	server := httptest.NewServer(h)
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/?token=test"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial websocket: %v", err)
-	}
-	defer conn.Close()
-
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-
-	var initial protocol.SessionStateEvent
-	if err := conn.ReadJSON(&initial); err != nil {
-		t.Fatalf("read initial event: %v", err)
-	}
-	if initial.Type != protocol.EventTypeSessionState {
-		t.Fatalf("expected session state event, got %#v", initial)
-	}
+	conn := newTestConn(t, h)
+	first, second := readInitialEvents(t, conn)
+	requireEventType(t, first, protocol.EventTypeSessionState)
+	requireAgentState(t, second, "IDLE", false)
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "exec"},
@@ -89,46 +146,26 @@ func TestHandlerExecFlow(t *testing.T) {
 		t.Fatalf("write exec request: %v", err)
 	}
 
-	for i := 0; i < 4; i++ {
-		var event map[string]any
-		if err := conn.ReadJSON(&event); err != nil {
-			t.Fatalf("read event: %v", err)
-		}
-		if event["type"] == protocol.EventTypeLog && event["msg"] == "hello from runner" {
-			if event["stream"] != "stdout" {
-				t.Fatalf("expected stdout stream, got %#v", event)
-			}
-			return
-		}
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	if event := readUntilType(t, conn, protocol.EventTypeLog); event["msg"] != "hello from runner" || event["stream"] != "stdout" {
+		t.Fatalf("expected stdout log event, got %#v", event)
 	}
-
-	t.Fatal("did not receive expected log event")
+	if event := readUntilType(t, conn, protocol.EventTypeSessionState); event["state"] != "closed" {
+		t.Fatalf("expected closed session event, got %#v", event)
+	}
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "IDLE", false)
 }
 
 func TestHandlerPtyInputFlow(t *testing.T) {
-	ptyRunner := newStubRunner(
+	ptyRunner := newHoldingStubRunner(
 		protocol.NewPromptRequestEvent("ignored", "Proceed? [y/N]", []string{"y", "n"}),
 	)
 
 	h := NewHandler("test")
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 
-	server := httptest.NewServer(h)
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/?token=test"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial websocket: %v", err)
-	}
-	defer conn.Close()
-
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-
-	var initial protocol.SessionStateEvent
-	if err := conn.ReadJSON(&initial); err != nil {
-		t.Fatalf("read initial event: %v", err)
-	}
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "exec"},
@@ -138,15 +175,9 @@ func TestHandlerPtyInputFlow(t *testing.T) {
 		t.Fatalf("write exec request: %v", err)
 	}
 
-	for {
-		var event map[string]any
-		if err := conn.ReadJSON(&event); err != nil {
-			t.Fatalf("read event: %v", err)
-		}
-		if event["type"] == protocol.EventTypePromptRequest {
-			break
-		}
-	}
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
 
 	if err := conn.WriteJSON(protocol.InputRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "input"},
@@ -163,6 +194,64 @@ func TestHandlerPtyInputFlow(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("did not receive input payload")
 	}
+
+	requireAgentState(t, readEventMap(t, conn), "THINKING", false)
+}
+
+func TestHandlerEmitsAgentStateForToolEventsAndFinish(t *testing.T) {
+	ptyRunner := newStubRunner(
+		protocol.NewStepUpdateEvent("ignored", "Reading internal/ws/handler.go", "running", "internal/ws/handler.go"),
+		protocol.NewFileDiffEvent("ignored", "internal/ws/handler.go", "Updating internal/ws/handler.go", "diff --git a/internal/ws/handler.go b/internal/ws/handler.go", "go"),
+	)
+
+	h := NewHandler("test")
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypeStepUpdate)
+	toolEvent := readUntilType(t, conn, protocol.EventTypeAgentState)
+	requireAgentState(t, toolEvent, "RUNNING_TOOL", false)
+	if toolEvent["step"] != "Reading internal/ws/handler.go" {
+		t.Fatalf("expected step in agent state, got %#v", toolEvent)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeFileDiff)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "RUNNING_TOOL", false)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "IDLE", false)
+}
+
+func TestHandlerClaudeSessionStartsInWaitInput(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(
+		protocol.NewLogEvent("ignored", "Welcome back!", "stdout"),
+	)
+
+	h := NewHandler("test")
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypeLog)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
 }
 
 func TestHandlerInputWithoutRunner(t *testing.T) {
@@ -182,6 +271,10 @@ func TestHandlerInputWithoutRunner(t *testing.T) {
 	var initial protocol.SessionStateEvent
 	if err := conn.ReadJSON(&initial); err != nil {
 		t.Fatalf("read initial event: %v", err)
+	}
+	var initialAgent map[string]any
+	if err := conn.ReadJSON(&initialAgent); err != nil {
+		t.Fatalf("read initial agent event: %v", err)
 	}
 
 	if err := conn.WriteJSON(protocol.InputRequestEvent{
@@ -206,7 +299,7 @@ func TestHandlerInputWithoutRunner(t *testing.T) {
 }
 
 func TestHandlerInputRejectedForExecRunner(t *testing.T) {
-	execRunner := newStubRunner()
+	execRunner := newHoldingStubRunner()
 	execRunner.writeErr = runner.ErrInputNotSupported
 
 	h := NewHandler("test")
