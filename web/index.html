@@ -145,6 +145,7 @@
         <div class="rounded-full border border-zinc-800 px-3 py-1.5 text-xs text-zinc-400">
           会话 <span id="sessionText">-</span>
         </div>
+        <div id="runtimeMetaBadge" class="hidden rounded-full border border-violet-800 bg-violet-950/40 px-3 py-1.5 text-xs text-violet-200"></div>
         <button id="reconnectBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">重连</button>
       </div>
       <div class="mt-3 flex items-center gap-2">
@@ -155,9 +156,13 @@
       <div id="stepPanel" class="mt-3 hidden rounded-2xl border border-zinc-800 bg-zinc-950/70 px-3 py-2">
         <div class="mb-2 flex items-center justify-between gap-3">
           <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">当前步骤</p>
-          <span id="stepStatusText" class="text-[11px] uppercase tracking-wide text-zinc-500">running</span>
+          <div class="flex items-center gap-2">
+            <button id="stepSkillBtn" class="hidden rounded-2xl border border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800">更多 Skill</button>
+            <span id="stepStatusText" class="text-[11px] uppercase tracking-wide text-zinc-500">running</span>
+          </div>
         </div>
         <p id="stepText" class="text-sm text-zinc-200"></p>
+        <div id="stepMetaText" class="mt-2 text-xs text-zinc-400"></div>
         <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
           <div id="stepBar" class="relative h-full rounded-full bg-blue-500/80"></div>
         </div>
@@ -176,8 +181,10 @@
           <div class="min-w-0">
             <p id="diffTitle" class="truncate text-sm font-semibold text-zinc-100">Diff 预览</p>
             <p id="diffPathText" class="mt-1 break-all text-xs text-zinc-400"></p>
+            <p id="diffMetaText" class="mt-1 text-[11px] text-violet-300"></p>
           </div>
           <div class="flex shrink-0 items-center gap-2">
+            <button id="diffSkillBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">更多 Skill</button>
             <button id="copyDiffBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">复制</button>
             <button id="closeDiffBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
           </div>
@@ -187,6 +194,11 @@
         <pre id="diffContent" class="overflow-x-auto whitespace-pre-wrap break-words rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4 font-mono text-xs leading-6 text-zinc-100"></pre>
       </div>
     </div>
+  </div>
+
+  <div id="contextSkillMenu" class="pointer-events-none fixed z-[60] min-w-52 rounded-2xl border border-zinc-800 bg-zinc-950/98 p-2 opacity-0 shadow-2xl transition">
+    <div id="contextSkillMenuTitle" class="px-3 py-2 text-[11px] uppercase tracking-wide text-zinc-500"></div>
+    <div id="contextSkillMenuItems" class="space-y-1"></div>
   </div>
 
   <div id="bottomDock" class="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-4xl px-3 pb-3 sm:px-4">
@@ -213,10 +225,7 @@
   </div>
 
   <script>
-    marked.setOptions({
-      breaks: true,
-      gfm: true
-    });
+    marked.setOptions({ breaks: true, gfm: true });
 
     const chatContainer = document.getElementById('chatContainer');
     const commandForm = document.getElementById('commandForm');
@@ -232,6 +241,7 @@
     const statusText = document.getElementById('statusText');
     const sessionText = document.getElementById('sessionText');
     const reconnectBtn = document.getElementById('reconnectBtn');
+    const runtimeMetaBadge = document.getElementById('runtimeMetaBadge');
     const retokenBtn = document.getElementById('retokenBtn');
     const actionPanel = document.getElementById('actionPanel');
     const openSidebarBtn = document.getElementById('openSidebarBtn');
@@ -247,97 +257,91 @@
     const sidebarRefreshBtn = document.getElementById('sidebarRefreshBtn');
     const stepPanel = document.getElementById('stepPanel');
     const stepText = document.getElementById('stepText');
+    const stepMetaText = document.getElementById('stepMetaText');
     const stepStatusText = document.getElementById('stepStatusText');
     const stepBar = document.getElementById('stepBar');
+    const stepSkillBtn = document.getElementById('stepSkillBtn');
     const diffModal = document.getElementById('diffModal');
     const diffTitle = document.getElementById('diffTitle');
     const diffPathText = document.getElementById('diffPathText');
+    const diffMetaText = document.getElementById('diffMetaText');
     const diffContent = document.getElementById('diffContent');
     const copyDiffBtn = document.getElementById('copyDiffBtn');
     const closeDiffBtn = document.getElementById('closeDiffBtn');
+    const diffSkillBtn = document.getElementById('diffSkillBtn');
+    const contextSkillMenu = document.getElementById('contextSkillMenu');
+    const contextSkillMenuTitle = document.getElementById('contextSkillMenuTitle');
+    const contextSkillMenuItems = document.getElementById('contextSkillMenuItems');
     const appShell = document.getElementById('appShell');
     const bottomDock = document.getElementById('bottomDock');
 
-    let token = localStorage.getItem('vibe_token') || '';
-    let ws = null;
-    let connected = false;
-    let running = false;
-    let awaitingInput = false;
-    let agentState = 'IDLE';
-    let agentStateMessage = '';
-    let sessionId = '';
-    let currentPromptOptions = [];
-    let currentCwd = '.';
-    let sidebarOpen = false;
-    let currentItems = [];
-    let currentStep = '';
-    let currentStepStatus = 'running';
-    let highlightedFilePath = '';
-    let diffModalOpen = false;
-    let currentDiff = null;
-    let viewMode = 'structured';
-    let logEntries = [];
-    let rawTerminalByStream = { stdout: '', stderr: '' };
-    let lastPromptMessage = '';
-    let claudeInteractiveActive = false;
+    const appState = {
+      token: localStorage.getItem('vibe_token') || '',
+      ws: null,
+      connection: { connected: false, running: false },
+      session: { id: '', claudeInteractiveActive: false, lastPromptMessage: '' },
+      view: { mode: 'structured' },
+      workspace: { cwd: '.', items: [], sidebarOpen: false, highlightedFilePath: '' },
+      prompt: { awaitingInput: false, options: [], message: '' }
+    };
 
+    const runtimeState = {
+      meta: {
+        source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '',
+        resumeSessionId: '', contextId: '', contextTitle: '', targetText: ''
+      },
+      agentState: 'IDLE',
+      agentStateMessage: '',
+      activeContextType: '',
+      skillMenu: { open: false, contextType: '', contextId: '', anchorRect: null, items: [] }
+    };
+
+    const projectionState = {
+      currentDiff: null,
+      currentStep: null,
+      latestError: null,
+      contexts: { diff: null, step: null, error: null },
+      logEntries: [],
+      rawTerminalByStream: { stdout: '', stderr: '' }
+    };
 
     function syncBottomSpacing() {
       const dockHeight = bottomDock ? bottomDock.offsetHeight : 0;
-      if (appShell) {
-        appShell.style.paddingBottom = `${Math.max(dockHeight + 24, 160)}px`;
-      }
+      if (appShell) appShell.style.paddingBottom = `${Math.max(dockHeight + 24, 160)}px`;
     }
 
     function updateViewModeButtons() {
       const activeClass = 'border-blue-700 bg-blue-950/50 text-blue-100';
       const inactiveClass = 'border-zinc-700 text-zinc-100';
-      structuredViewBtn.className = `rounded-2xl border px-3 py-2 text-xs hover:bg-zinc-800 ${viewMode === 'structured' ? activeClass : inactiveClass}`;
-      rawTerminalViewBtn.className = `rounded-2xl border px-3 py-2 text-xs hover:bg-zinc-800 ${viewMode === 'raw-terminal' ? activeClass : inactiveClass}`;
+      structuredViewBtn.className = `rounded-2xl border px-3 py-2 text-xs hover:bg-zinc-800 ${appState.view.mode === 'structured' ? activeClass : inactiveClass}`;
+      rawTerminalViewBtn.className = `rounded-2xl border px-3 py-2 text-xs hover:bg-zinc-800 ${appState.view.mode === 'raw-terminal' ? activeClass : inactiveClass}`;
     }
 
     function setViewMode(mode) {
       if (mode !== 'structured' && mode !== 'raw-terminal') return;
-      if (viewMode === mode) return;
-      viewMode = mode;
+      if (appState.view.mode === mode) return;
+      appState.view.mode = mode;
       updateViewModeButtons();
       renderLogPane();
     }
 
-    function updateStatus() {
-      const agentStatusMap = {
-        IDLE: '已连接 / 空闲',
-        THINKING: '思考中',
-        WAIT_INPUT: '等待输入',
-        RUNNING_TOOL: '执行工具中'
+    function updateRuntimeMeta(payload = {}) {
+      runtimeState.meta = {
+        source: payload.source || runtimeState.meta.source || '',
+        skillName: payload.skillName || runtimeState.meta.skillName || '',
+        target: payload.target || runtimeState.meta.target || '',
+        targetType: payload.targetType || runtimeState.meta.targetType || '',
+        targetPath: payload.targetPath || runtimeState.meta.targetPath || '',
+        resultView: payload.resultView || runtimeState.meta.resultView || '',
+        resumeSessionId: payload.resumeSessionId || runtimeState.meta.resumeSessionId || '',
+        contextId: payload.contextId || runtimeState.meta.contextId || '',
+        contextTitle: payload.contextTitle || runtimeState.meta.contextTitle || '',
+        targetText: payload.targetText || runtimeState.meta.targetText || ''
       };
-      const effectiveStatus = connected ? (agentStatusMap[agentState] || (running ? '运行中' : '已连接')) : '未连接';
-      statusText.textContent = effectiveStatus;
-      const dotColor = !connected
-        ? 'bg-red-500'
-        : agentState === 'WAIT_INPUT'
-          ? 'bg-blue-400'
-          : agentState === 'RUNNING_TOOL'
-            ? 'bg-violet-400'
-            : agentState === 'THINKING'
-              ? 'bg-amber-400'
-              : 'bg-emerald-500';
-      statusDot.className = 'h-2.5 w-2.5 rounded-full ' + dotColor;
-      sessionText.textContent = sessionId || '-';
-      workspacePath.textContent = `工作区：${currentCwd || '.'}`;
-      sidebarPath.textContent = currentCwd || '.';
-      runBtn.disabled = !connected || running;
-      commandInput.disabled = !connected || running;
-      sendInputBtn.disabled = !connected || !awaitingInput;
-      inputField.disabled = !connected || !awaitingInput;
-      sidebarRefreshBtn.disabled = !connected;
-      renderStepPanel();
-      renderActionPanel();
-      syncBottomSpacing();
     }
 
     function setSidebarOpen(open) {
-      sidebarOpen = open;
+      appState.workspace.sidebarOpen = open;
       sidebar.classList.toggle('-translate-x-full', !open);
       sidebarOverlay.classList.toggle('opacity-0', !open);
       sidebarOverlay.classList.toggle('pointer-events-none', !open);
@@ -345,24 +349,6 @@
 
     function scrollToBottom() {
       window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-    }
-
-    function renderStepPanel() {
-      const hasStep = Boolean(currentStep);
-      stepPanel.classList.toggle('hidden', !hasStep);
-      stepText.textContent = currentStep || '';
-      stepStatusText.textContent = currentStepStatus || 'running';
-      if (!hasStep) {
-        stepBar.className = 'relative h-full rounded-full bg-blue-500/80';
-        return;
-      }
-      if (currentStepStatus === 'done') {
-        stepBar.className = 'relative h-full w-full rounded-full bg-emerald-500';
-      } else if (currentStepStatus === 'info') {
-        stepBar.className = 'relative h-full w-1/2 rounded-full bg-sky-500';
-      } else {
-        stepBar.className = 'step-running relative h-full w-full rounded-full bg-blue-500/80';
-      }
     }
 
     function normalizeOption(option) {
@@ -380,17 +366,12 @@
     }
 
     function effectivePromptOptions(message, options) {
-      if (shouldUseProceedCTA(message, options)) {
-        return ['yes', 'no'];
-      }
+      if (shouldUseProceedCTA(message, options)) return ['yes', 'no'];
       return Array.isArray(options) ? options.map(normalizeOption) : [];
     }
 
     function highlightDiffLine(line) {
-      const escaped = String(line || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
+      const escaped = String(line || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       if (escaped.startsWith('+') && !escaped.startsWith('+++')) return `<div class="diff-added px-3">${escaped}</div>`;
       if (escaped.startsWith('-') && !escaped.startsWith('---')) return `<div class="diff-removed px-3">${escaped}</div>`;
       if (escaped.startsWith('@@') || escaped.startsWith('diff --git') || escaped.startsWith('*** ') || escaped.startsWith('---') || escaped.startsWith('+++')) {
@@ -399,69 +380,315 @@
       return `<div class="px-3 text-zinc-200">${escaped || '&nbsp;'}</div>`;
     }
 
-    function setCurrentStep(message, status = 'running', target = '') {
-      currentStep = String(message || '').trim();
-      currentStepStatus = status || 'running';
-      if (target) {
-        highlightedFilePath = target;
-        renderFileList();
-      }
-      renderStepPanel();
-    }
-
-    function clearCurrentStep() {
-      currentStep = '';
-      currentStepStatus = 'running';
-      renderStepPanel();
-    }
-
-    function openDiffModal(diffPayload) {
-      currentDiff = diffPayload;
-      diffModalOpen = true;
-      diffTitle.textContent = diffPayload?.title || 'Diff 预览';
-      diffPathText.textContent = diffPayload?.path || '';
-      diffContent.innerHTML = String(diffPayload?.diff || '')
-        .split('\n')
-        .map(highlightDiffLine)
-        .join('');
-      diffModal.classList.remove('pointer-events-none', 'opacity-0');
-      if (diffPayload?.path) {
-        highlightedFilePath = diffPayload.path;
-        renderFileList();
-      }
-    }
-
-    function closeDiffModal() {
-      diffModalOpen = false;
-      diffModal.classList.add('pointer-events-none', 'opacity-0');
-    }
-
     function basename(path) {
       return String(path || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    }
+
+    function formatTime(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return '';
+      return date.toLocaleTimeString();
+    }
+
+    function formatSize(size) {
+      if (!size) return '';
+      if (size < 1024) return `${size} B`;
+      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+      if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+      return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
+    }
+
+    function joinPath(base, name) {
+      if (!base || base === '.' || base === '/') return `${base === '/' ? '/' : ''}${name}`;
+      const normalized = base.replace(/[\\/]+$/, '');
+      return `${normalized}/${name}`;
+    }
+
+    function parentPath(path) {
+      if (!path || path === '.' || path === '/' || /^[A-Za-z]:[\\/]?$/.test(path)) return path;
+      const normalized = path.replace(/[\\/]+$/, '');
+      const index = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+      if (index <= 0) {
+        if (/^[A-Za-z]:/.test(normalized)) return normalized.slice(0, 2) + '\\';
+        return '/';
+      }
+      return normalized.slice(0, index);
+    }
+
+    function buildDiffContextFromPayload(payload = {}) {
+      const id = payload.contextId || `diff:${payload.path || payload.title || Date.now()}`;
+      return {
+        id,
+        type: 'diff',
+        title: payload.title || payload.contextTitle || 'Diff 预览',
+        path: payload.path || payload.targetPath || runtimeState.meta.targetPath || '',
+        diff: payload.diff || '',
+        lang: payload.lang || '',
+        source: payload.source || runtimeState.meta.source || '',
+        skillName: payload.skillName || runtimeState.meta.skillName || '',
+        resultView: payload.resultView || runtimeState.meta.resultView || 'review-card',
+        summary: payload.summary || payload.title || payload.path || '当前 Diff'
+      };
+    }
+
+    function buildStepContextFromPayload(payload = {}) {
+      const message = payload.msg || payload.message || payload.step || '';
+      const targetPath = payload.targetPath || payload.target || runtimeState.meta.targetPath || '';
+      const target = payload.target || targetPath;
+      const tool = payload.tool || '';
+      const command = payload.command || '';
+      return {
+        id: payload.contextId || `step:${payload.timestamp || message || Date.now()}`,
+        type: 'step',
+        message,
+        status: payload.status || 'running',
+        target,
+        targetPath,
+        tool,
+        command,
+        source: payload.source || runtimeState.meta.source || '',
+        skillName: payload.skillName || runtimeState.meta.skillName || '',
+        resultView: payload.resultView || runtimeState.meta.resultView || 'review-card',
+        timestamp: payload.timestamp || '',
+        title: payload.contextTitle || message || '当前步骤'
+      };
+    }
+
+    function buildErrorContextFromPayload(payload = {}) {
+      return {
+        id: payload.contextId || `error:${payload.timestamp || payload.msg || Date.now()}`,
+        type: 'error',
+        message: payload.msg || payload.message || 'unknown error',
+        stack: payload.stack || '',
+        code: payload.code || '',
+        targetPath: payload.targetPath || runtimeState.meta.targetPath || '',
+        relatedStep: payload.step || projectionState.currentStep?.message || '',
+        command: payload.command || '',
+        source: payload.source || runtimeState.meta.source || '',
+        skillName: payload.skillName || runtimeState.meta.skillName || '',
+        resultView: payload.resultView || runtimeState.meta.resultView || 'review-card',
+        timestamp: payload.timestamp || '',
+        title: payload.contextTitle || payload.msg || '最近错误'
+      };
+    }
+
+    function setActiveContext(type) {
+      runtimeState.activeContextType = type || '';
+    }
+
+    function getContextByType(type) {
+      return projectionState.contexts[type] || null;
+    }
+
+    function renderRuntimeMetaBadge() {
+      const parts = [];
+      if (runtimeState.meta.source) parts.push(`来源 ${runtimeState.meta.source}`);
+      if (runtimeState.meta.skillName) parts.push(`skill ${runtimeState.meta.skillName}`);
+      if (runtimeState.meta.contextTitle) parts.push(runtimeState.meta.contextTitle);
+      if (runtimeState.meta.resumeSessionId) parts.push(`resume ${runtimeState.meta.resumeSessionId}`);
+      runtimeMetaBadge.textContent = parts.join(' · ');
+      runtimeMetaBadge.classList.toggle('hidden', parts.length === 0);
+    }
+
+    function renderHeaderStatus() {
+      const agentStatusMap = { IDLE: '已连接 / 空闲', THINKING: '思考中', WAIT_INPUT: '等待输入', RUNNING_TOOL: '执行工具中' };
+      const effectiveStatus = appState.connection.connected
+        ? (agentStatusMap[runtimeState.agentState] || (appState.connection.running ? '运行中' : '已连接'))
+        : '未连接';
+      statusText.textContent = runtimeState.agentStateMessage ? `${effectiveStatus} · ${runtimeState.agentStateMessage}` : effectiveStatus;
+      const dotColor = !appState.connection.connected
+        ? 'bg-red-500'
+        : runtimeState.agentState === 'WAIT_INPUT'
+          ? 'bg-blue-400'
+          : runtimeState.agentState === 'RUNNING_TOOL'
+            ? 'bg-violet-400'
+            : runtimeState.agentState === 'THINKING'
+              ? 'bg-amber-400'
+              : 'bg-emerald-500';
+      statusDot.className = 'h-2.5 w-2.5 rounded-full ' + dotColor;
+      sessionText.textContent = appState.session.id || '-';
+      workspacePath.textContent = `工作区：${appState.workspace.cwd || '.'}`;
+      sidebarPath.textContent = appState.workspace.cwd || '.';
+      runBtn.disabled = !appState.connection.connected || appState.connection.running;
+      commandInput.disabled = !appState.connection.connected || appState.connection.running;
+      sendInputBtn.disabled = !appState.connection.connected || !appState.prompt.awaitingInput;
+      inputField.disabled = !appState.connection.connected || !appState.prompt.awaitingInput;
+      sidebarRefreshBtn.disabled = !appState.connection.connected;
+    }
+
+    function renderStepPanel() {
+      const context = projectionState.contexts.step;
+      const hasStep = Boolean(context && context.message);
+      stepPanel.classList.toggle('hidden', !hasStep);
+      if (!hasStep) {
+        stepText.textContent = '';
+        stepMetaText.textContent = '';
+        stepBar.className = 'relative h-full rounded-full bg-blue-500/80';
+        stepSkillBtn.classList.add('hidden');
+        return;
+      }
+      stepText.textContent = context.message || '';
+      stepStatusText.textContent = context.status || 'running';
+      stepMetaText.textContent = [context.tool ? `tool ${context.tool}` : '', context.targetPath || context.target || '', context.command ? `cmd ${context.command}` : ''].filter(Boolean).join(' · ');
+      stepSkillBtn.classList.toggle('hidden', getSkillMenuItemsForContext('step', context).length === 0);
+      if (context.status === 'done') {
+        stepBar.className = 'relative h-full w-full rounded-full bg-emerald-500';
+      } else if (context.status === 'info') {
+        stepBar.className = 'relative h-full w-1/2 rounded-full bg-sky-500';
+      } else {
+        stepBar.className = 'step-running relative h-full w-full rounded-full bg-blue-500/80';
+      }
+    }
+
+    function renderPromptOptions(options) {
+      promptOptionButtons.innerHTML = '';
+      if (!options || !options.length) return;
+      const proceedCTA = shouldUseProceedCTA(appState.prompt.message, []);
+      options.forEach((option) => {
+        const lower = String(option).toLowerCase();
+        let style = 'border-blue-800 bg-blue-950/40 text-blue-100 hover:bg-blue-900/60';
+        let label = option;
+        if (lower === 'y' || lower === 'yes') {
+          style = proceedCTA ? 'border-emerald-700 bg-emerald-600 text-white hover:bg-emerald-500 text-lg font-semibold px-5 py-3' : 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60';
+          label = proceedCTA ? '🚀 冲！' : option;
+        } else if (lower === 'n' || lower === 'no') {
+          style = proceedCTA ? 'border-red-700 bg-red-600 text-white hover:bg-red-500 text-lg font-semibold px-5 py-3' : 'border-red-800 bg-red-950/40 text-red-100 hover:bg-red-900/60';
+          label = proceedCTA ? '🛑 停下' : option;
+        }
+        promptOptionButtons.appendChild(quickButton(label, () => sendInput(option), style));
+      });
+    }
+
+    function renderPromptCard() {
+      promptText.textContent = appState.prompt.message || '';
+      renderPromptOptions(appState.prompt.options || []);
+      inputCard.classList.toggle('hidden', !appState.prompt.awaitingInput);
+    }
+
+    function renderDiffModal() {
+      const diffPayload = projectionState.currentDiff;
+      diffTitle.textContent = diffPayload?.title || 'Diff 预览';
+      diffPathText.textContent = diffPayload?.path || '';
+      diffMetaText.textContent = [
+        diffPayload?.source ? `来源 ${diffPayload.source}` : '',
+        diffPayload?.skillName ? `skill ${diffPayload.skillName}` : '',
+        diffPayload?.resultView ? `视图 ${diffPayload.resultView}` : ''
+      ].filter(Boolean).join(' · ');
+      diffContent.innerHTML = String(diffPayload?.diff || '').split('\n').map(highlightDiffLine).join('');
+      const hasDiffSkills = getSkillMenuItemsForContext('diff', diffPayload).length > 0;
+      diffSkillBtn.classList.toggle('hidden', !hasDiffSkills);
+    }
+
+    function renderFileList() {
+      fileList.innerHTML = '';
+      if (!appState.workspace.items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-400';
+        empty.textContent = '目录为空';
+        fileList.appendChild(empty);
+        return;
+      }
+      const highlightName = basename(appState.workspace.highlightedFilePath);
+      appState.workspace.items.forEach((item) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        const isHighlighted = !!highlightName && basename(item.name) === highlightName;
+        button.className = 'flex w-full items-center justify-between gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-left hover:bg-zinc-800';
+        if (isHighlighted) button.classList.add('file-attention');
+        const left = document.createElement('div');
+        left.className = 'min-w-0';
+        const title = document.createElement('div');
+        title.className = 'truncate text-sm font-medium text-zinc-100';
+        title.textContent = `${item.is_dir ? '📁' : '📄'} ${item.name}`;
+        const meta = document.createElement('div');
+        meta.className = 'mt-1 text-xs text-zinc-400';
+        meta.textContent = item.is_dir ? '文件夹' : (formatSize(item.size) || '文件');
+        left.append(title, meta);
+        button.appendChild(left);
+        if (item.is_dir) {
+          const arrow = document.createElement('div');
+          arrow.className = 'text-xs text-zinc-500';
+          arrow.textContent = '进入';
+          button.appendChild(arrow);
+          button.addEventListener('click', () => requestFSList(joinPath(appState.workspace.cwd, item.name)));
+        } else {
+          const tag = document.createElement('div');
+          tag.className = 'text-xs ' + (isHighlighted ? 'text-blue-300' : 'text-zinc-500');
+          tag.textContent = isHighlighted ? '关注中' : '文件';
+          button.appendChild(tag);
+        }
+        fileList.appendChild(button);
+      });
+    }
+
+    function renderLogPane() {
+      if (appState.view.mode === 'raw-terminal') {
+        renderRawTerminalPane();
+        return;
+      }
+      renderStructuredLogPane();
+    }
+
+    function renderContextSkillMenu() {
+      const menu = runtimeState.skillMenu;
+      contextSkillMenuItems.innerHTML = '';
+      if (!menu.open || !menu.items.length || !menu.anchorRect) {
+        contextSkillMenu.classList.add('pointer-events-none', 'opacity-0');
+        return;
+      }
+      const context = getContextByType(menu.contextType);
+      contextSkillMenuTitle.textContent = `${menu.contextType} skills`;
+      menu.items.forEach((item) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm text-zinc-100 hover:bg-zinc-800';
+        button.innerHTML = `<span>${item.label}</span><span class="text-xs text-zinc-500">${item.name}</span>`;
+        button.addEventListener('click', () => triggerContextSkill(item.name, menu.contextType, context));
+        contextSkillMenuItems.appendChild(button);
+      });
+      const top = Math.min(menu.anchorRect.bottom + 8, window.innerHeight - contextSkillMenu.offsetHeight - 12);
+      const left = Math.min(menu.anchorRect.left, window.innerWidth - 240);
+      contextSkillMenu.style.top = `${Math.max(top, 12)}px`;
+      contextSkillMenu.style.left = `${Math.max(left, 12)}px`;
+      contextSkillMenu.classList.remove('pointer-events-none', 'opacity-0');
+    }
+
+    function updateStatus() {
+      renderHeaderStatus();
+      renderStepPanel();
+      renderPromptCard();
+      renderActionPanel();
+      renderRuntimeMetaBadge();
+      renderContextSkillMenu();
+      syncBottomSpacing();
     }
 
     function appendMessageRow(role, innerNode, options = {}) {
       const row = document.createElement('div');
       row.className = 'flex w-full ' + (role === 'user' ? 'justify-end' : 'justify-start');
-
       const bubble = document.createElement('div');
       bubble.className = role === 'user'
         ? 'max-w-[86%] rounded-[1.4rem] rounded-br-md bg-blue-600 px-4 py-3 text-sm text-white shadow-lg'
         : 'max-w-[90%] rounded-[1.4rem] rounded-bl-md border border-zinc-800 bg-zinc-900/90 px-4 py-3 text-sm text-zinc-100 shadow-lg';
-
       if (options.messageKind) row.dataset.messageKind = options.messageKind;
       if (options.stream) row.dataset.stream = options.stream;
       if (options.bodySelector) row.dataset.bodySelector = options.bodySelector;
-
       bubble.appendChild(innerNode);
       row.appendChild(bubble);
       chatContainer.appendChild(row);
       return row;
     }
 
+    function addMeta(container, label, timestamp) {
+      const meta = document.createElement('div');
+      meta.className = 'mb-2 text-[11px] uppercase tracking-wide text-zinc-500';
+      meta.textContent = `${label}${timestamp ? ` · ${formatTime(timestamp)}` : ''}`;
+      container.appendChild(meta);
+    }
+
     function renderStructuredEntry(entry) {
       if (!entry) return;
-
       if (entry.kind === 'user') {
         const wrapper = document.createElement('div');
         const meta = document.createElement('div');
@@ -474,7 +701,6 @@
         appendMessageRow('user', wrapper);
         return;
       }
-
       if (entry.kind === 'markdown') {
         const wrapper = document.createElement('div');
         addMeta(wrapper, 'assistant', entry.timestamp);
@@ -486,7 +712,6 @@
         enhanceCodeBlocks(wrapper);
         return;
       }
-
       if (entry.kind === 'terminal') {
         const wrapper = document.createElement('div');
         const body = document.createElement('pre');
@@ -494,77 +719,46 @@
         body.className = 'whitespace-pre-wrap break-words font-mono text-sm ' + ((entry.stream || 'stdout') === 'stderr' ? 'text-red-200' : 'text-zinc-100');
         body.textContent = entry.text || '';
         wrapper.appendChild(body);
-        appendMessageRow('assistant', wrapper, {
-          messageKind: 'terminal-log',
-          stream: entry.stream || 'stdout',
-          bodySelector: '[data-terminal-body="true"]'
-        });
+        appendMessageRow('assistant', wrapper, { messageKind: 'terminal-log', stream: entry.stream || 'stdout', bodySelector: '[data-terminal-body="true"]' });
         return;
       }
-
       if (entry.kind === 'error') {
-        addErrorCard(entry.message || 'unknown error', entry.stack || '', entry.timestamp);
+        addErrorCard(entry.context || buildErrorContextFromPayload(entry));
         return;
       }
-
-      if (entry.kind === 'system') {
-        addSystemMessage(entry.message || '', entry.timestamp);
-      }
+      if (entry.kind === 'system') addSystemMessage(entry.message || '', entry.timestamp);
     }
 
     function renderStructuredLogPane() {
       chatContainer.innerHTML = '';
-      logEntries.forEach(renderStructuredEntry);
+      projectionState.logEntries.forEach(renderStructuredEntry);
       scrollToBottom();
     }
 
     function renderRawTerminalPane() {
       chatContainer.innerHTML = '';
-
       const wrapper = document.createElement('div');
       wrapper.className = 'rounded-[1.4rem] border border-zinc-800 bg-zinc-900/90 p-4 shadow-lg';
-
       const meta = document.createElement('div');
       meta.className = 'mb-3 flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-zinc-500';
       meta.innerHTML = '<span>raw terminal</span><span>stdout / stderr merged by panel</span>';
       wrapper.appendChild(meta);
-
       const stdout = document.createElement('pre');
       stdout.className = 'whitespace-pre-wrap break-words font-mono text-sm leading-6 text-zinc-100';
-      stdout.textContent = rawTerminalByStream.stdout || '';
+      stdout.textContent = projectionState.rawTerminalByStream.stdout || '';
       wrapper.appendChild(stdout);
-
-      if (rawTerminalByStream.stderr) {
+      if (projectionState.rawTerminalByStream.stderr) {
         const stderrLabel = document.createElement('div');
         stderrLabel.className = 'mt-4 mb-2 text-[11px] uppercase tracking-wide text-red-300';
         stderrLabel.textContent = 'stderr';
         wrapper.appendChild(stderrLabel);
-
         const stderr = document.createElement('pre');
         stderr.className = 'whitespace-pre-wrap break-words font-mono text-sm leading-6 text-red-200';
-        stderr.textContent = rawTerminalByStream.stderr;
+        stderr.textContent = projectionState.rawTerminalByStream.stderr;
         wrapper.appendChild(stderr);
       }
-
       chatContainer.appendChild(wrapper);
       scrollToBottom();
-    }
-
-    function renderLogPane() {
-      if (viewMode === 'raw-terminal') {
-        renderRawTerminalPane();
-        return;
-      }
-      renderStructuredLogPane();
-    }
-
-    function getLastTerminalBody(stream) {
-      const lastRow = chatContainer.lastElementChild;
-      if (!lastRow) return null;
-      if (lastRow.dataset.messageKind !== 'terminal-log') return null;
-      if ((lastRow.dataset.stream || '') !== (stream || 'stdout')) return null;
-      const selector = lastRow.dataset.bodySelector || '[data-terminal-body="true"]';
-      return lastRow.querySelector(selector);
     }
 
     function addSystemMessage(message, timestamp) {
@@ -575,36 +769,18 @@
       scrollToBottom();
     }
 
-    function formatTime(timestamp) {
-      if (!timestamp) return '';
-      const date = new Date(timestamp);
-      if (Number.isNaN(date.getTime())) return '';
-      return date.toLocaleTimeString();
-    }
-
-    function addMeta(container, label, timestamp) {
-      const meta = document.createElement('div');
-      meta.className = 'mb-2 text-[11px] uppercase tracking-wide text-zinc-500';
-      meta.textContent = `${label}${timestamp ? ` · ${formatTime(timestamp)}` : ''}`;
-      container.appendChild(meta);
-    }
-
     function copyText(text, trigger) {
       if (!text) return;
       const done = () => {
         if (!trigger) return;
         const original = trigger.textContent;
         trigger.textContent = '已复制';
-        setTimeout(() => {
-          trigger.textContent = original;
-        }, 1200);
+        setTimeout(() => { trigger.textContent = original; }, 1200);
       };
-
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done).catch(() => {});
         return;
       }
-
       const area = document.createElement('textarea');
       area.value = text;
       document.body.appendChild(area);
@@ -639,34 +815,22 @@
     }
 
     function addUserBubble(text, label) {
-      logEntries.push({ kind: 'user', message: text, label });
-      if (viewMode === 'structured') {
-        renderLogPane();
-      }
+      projectionState.logEntries.push({ kind: 'user', message: text, label });
+      if (appState.view.mode === 'structured') renderLogPane();
     }
 
     function isTransientTerminalLine(text) {
       const normalized = String(text || '').replace(/^\r+/, '').trim();
       if (!normalized) return false;
-      return normalized.includes('◐ medium · /effort') ||
-        normalized.includes('? for shortcuts') ||
-        normalized.includes('Opus now defaults to 1M context') ||
-        normalized.includes('Try "') ||
-        /^[-─]{20,}$/.test(normalized);
+      return normalized.includes('◐ medium · /effort') || normalized.includes('? for shortcuts') || normalized.includes('Opus now defaults to 1M context') || normalized.includes('Try "') || /^[-─]{20,}$/.test(normalized);
     }
 
     function trimTransientTerminalTail(text) {
       const lines = String(text || '').split('\n');
       while (lines.length) {
         const last = lines[lines.length - 1];
-        if (String(last || '').trim() === '') {
-          lines.pop();
-          continue;
-        }
-        if (isTransientTerminalLine(last)) {
-          lines.pop();
-          continue;
-        }
+        if (String(last || '').trim() === '') { lines.pop(); continue; }
+        if (isTransientTerminalLine(last)) { lines.pop(); continue; }
         break;
       }
       return lines.join('\n');
@@ -676,7 +840,6 @@
       const current = String(existingText || '');
       const incoming = String(incomingText || '');
       if (!incoming) return current;
-
       if (incoming.startsWith('\r')) {
         const replacement = incoming.replace(/^\r+/, '');
         const lines = current.split('\n');
@@ -684,12 +847,10 @@
         lines[lines.length - 1] = replacement;
         return lines.join('\n');
       }
-
       if (isTransientTerminalLine(incoming)) {
         const trimmedCurrent = trimTransientTerminalTail(current);
         return `${trimmedCurrent ? `${trimmedCurrent}\n` : ''}${incoming}`;
       }
-
       return `${current ? `${current}\n` : ''}${incoming}`;
     }
 
@@ -697,60 +858,57 @@
       const effectiveStream = stream || 'stdout';
       const normalizedMessage = String(message || '');
       const isMarkdown = effectiveStream !== 'stderr' && looksLikeAIReply(normalizedMessage) && !normalizedMessage.startsWith('\r');
-
       if (isMarkdown) {
-        logEntries.push({
-          kind: 'markdown',
-          message: normalizedMessage,
-          stream: effectiveStream,
-          timestamp
-        });
+        projectionState.logEntries.push({ kind: 'markdown', message: normalizedMessage, stream: effectiveStream, timestamp });
       } else {
-        const previousEntry = logEntries[logEntries.length - 1];
+        const previousEntry = projectionState.logEntries[projectionState.logEntries.length - 1];
         const nextText = applyTerminalDelta(previousEntry && previousEntry.kind === 'terminal' && previousEntry.stream === effectiveStream ? previousEntry.text : '', normalizedMessage);
         if (previousEntry && previousEntry.kind === 'terminal' && previousEntry.stream === effectiveStream) {
           previousEntry.text = nextText;
           previousEntry.timestamp = timestamp || previousEntry.timestamp;
         } else {
-          logEntries.push({
-            kind: 'terminal',
-            stream: effectiveStream,
-            text: normalizedMessage.startsWith('\r') ? normalizedMessage.replace(/^\r+/, '') : normalizedMessage,
-            timestamp
-          });
+          projectionState.logEntries.push({ kind: 'terminal', stream: effectiveStream, text: normalizedMessage.startsWith('\r') ? normalizedMessage.replace(/^\r+/, '') : normalizedMessage, timestamp });
         }
       }
-
-      rawTerminalByStream[effectiveStream] = applyTerminalDelta(rawTerminalByStream[effectiveStream] || '', normalizedMessage);
+      projectionState.rawTerminalByStream[effectiveStream] = applyTerminalDelta(projectionState.rawTerminalByStream[effectiveStream] || '', normalizedMessage);
     }
 
-
-    function addErrorCard(message, stack, timestamp) {
+    function addErrorCard(errorContext) {
       const wrapper = document.createElement('div');
-      addMeta(wrapper, 'error', timestamp);
-
+      addMeta(wrapper, 'error', errorContext.timestamp);
       const top = document.createElement('div');
       top.className = 'mb-2 flex items-center justify-between gap-3';
-
       const title = document.createElement('div');
       title.className = 'text-sm font-semibold text-red-300';
       title.textContent = 'Error';
-
+      const right = document.createElement('div');
+      right.className = 'flex items-center gap-2';
+      const skillBtn = document.createElement('button');
+      skillBtn.type = 'button';
+      skillBtn.className = 'rounded-xl border border-zinc-800 px-2.5 py-1 text-xs text-zinc-100 hover:bg-zinc-800';
+      skillBtn.textContent = 'Skill';
+      skillBtn.classList.toggle('hidden', getSkillMenuItemsForContext('error', errorContext).length === 0);
+      skillBtn.addEventListener('click', (event) => openContextSkillMenu('error', errorContext.id, event.currentTarget));
       const copyBtn = document.createElement('button');
       copyBtn.type = 'button';
       copyBtn.className = 'rounded-xl border border-red-900 px-2.5 py-1 text-xs text-red-100 hover:bg-red-950/50';
       copyBtn.textContent = '复制';
-      copyBtn.addEventListener('click', () => copyText(stack ? `${message}\n\n${stack}` : message, copyBtn));
-
-      top.append(title, copyBtn);
+      copyBtn.addEventListener('click', () => copyText(errorContext.stack ? `${errorContext.message}\n\n${errorContext.stack}` : errorContext.message, copyBtn));
+      right.append(skillBtn, copyBtn);
+      top.append(title, right);
       wrapper.append(top);
-
       const body = document.createElement('pre');
       body.className = 'whitespace-pre-wrap break-words rounded-2xl border border-red-900/60 bg-red-950/30 p-3 text-sm text-red-100';
-      body.textContent = message || 'unknown error';
+      body.textContent = errorContext.message || 'unknown error';
       wrapper.appendChild(body);
-
-      if (stack) {
+      const meta = [errorContext.code, errorContext.targetPath, errorContext.relatedStep].filter(Boolean).join(' · ');
+      if (meta) {
+        const metaEl = document.createElement('div');
+        metaEl.className = 'mt-2 text-xs text-red-200';
+        metaEl.textContent = meta;
+        wrapper.appendChild(metaEl);
+      }
+      if (errorContext.stack) {
         const details = document.createElement('details');
         details.className = 'mt-3';
         const summary = document.createElement('summary');
@@ -758,11 +916,10 @@
         summary.textContent = '查看 stack';
         const stackBody = document.createElement('pre');
         stackBody.className = 'mt-2 whitespace-pre-wrap break-words rounded-2xl bg-black/20 p-3 text-xs text-red-100';
-        stackBody.textContent = stack;
+        stackBody.textContent = errorContext.stack;
         details.append(summary, stackBody);
         wrapper.appendChild(details);
       }
-
       appendMessageRow('assistant', wrapper);
     }
 
@@ -775,267 +932,308 @@
       return btn;
     }
 
-    function renderActionPanel() {
-      actionPanel.innerHTML = '';
-      actionPanel.appendChild(quickButton('Ctrl+C 中断', () => sendInputRaw('\u0003', '快捷动作'), 'border-red-900 bg-red-950/40 text-red-100 hover:bg-red-900/50'));
-      actionPanel.appendChild(quickButton('清屏', () => {
-        logEntries = [];
-        rawTerminalByStream = { stdout: '', stderr: '' };
-        logEntries.push({ kind: 'system', message: '已清空对话' });
-        renderLogPane();
-      }, 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800'));
-      actionPanel.appendChild(quickButton('文件树', () => setSidebarOpen(true), 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800'));
-      if (currentDiff && diffModalOpen) {
-        actionPanel.appendChild(quickButton('查看 Diff', () => openDiffModal(currentDiff), 'border-violet-800 bg-violet-950/40 text-violet-100 hover:bg-violet-900/60'));
-      }
-
-      if (awaitingInput && currentPromptOptions.length) {
-        currentPromptOptions.forEach((option) => {
-          const lower = String(option).toLowerCase();
-          let style = 'border-blue-800 bg-blue-950/40 text-blue-100 hover:bg-blue-900/60';
-          let label = option;
-          if (lower === 'y' || lower === 'yes') {
-            style = shouldUseProceedCTA(promptText.textContent, [])
-              ? 'border-emerald-700 bg-emerald-600 text-white hover:bg-emerald-500 text-base font-semibold px-5 py-3'
-              : 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60';
-            label = shouldUseProceedCTA(promptText.textContent, []) ? '🚀 冲！' : option;
-          } else if (lower === 'n' || lower === 'no') {
-            style = shouldUseProceedCTA(promptText.textContent, [])
-              ? 'border-red-700 bg-red-600 text-white hover:bg-red-500 text-base font-semibold px-5 py-3'
-              : 'border-red-800 bg-red-950/40 text-red-100 hover:bg-red-900/60';
-            label = shouldUseProceedCTA(promptText.textContent, []) ? '🛑 停下' : option;
-          }
-          actionPanel.appendChild(quickButton(label, () => sendInput(option), style));
-        });
-      }
+    function getGlobalActions() {
+      return [
+        quickButton('Ctrl+C 中断', () => sendInputRaw('\u0003', '快捷动作'), 'border-red-900 bg-red-950/40 text-red-100 hover:bg-red-900/50'),
+        quickButton('清屏', () => {
+          projectionState.logEntries = [];
+          projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
+          projectionState.logEntries.push({ kind: 'system', message: '已清空对话' });
+          renderLogPane();
+        }, 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800'),
+        quickButton('文件树', () => setSidebarOpen(true), 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800')
+      ];
     }
 
-    function renderPromptOptions(options) {
-      promptOptionButtons.innerHTML = '';
-      if (!options || !options.length) return;
-      const proceedCTA = shouldUseProceedCTA(promptText.textContent, []);
-      options.forEach((option) => {
+    function getPromptReplyActions() {
+      if (!appState.prompt.awaitingInput || !appState.prompt.options.length) return [];
+      return appState.prompt.options.map((option) => {
         const lower = String(option).toLowerCase();
+        const proceedCTA = shouldUseProceedCTA(appState.prompt.message, []);
         let style = 'border-blue-800 bg-blue-950/40 text-blue-100 hover:bg-blue-900/60';
         let label = option;
         if (lower === 'y' || lower === 'yes') {
-          style = proceedCTA
-            ? 'border-emerald-700 bg-emerald-600 text-white hover:bg-emerald-500 text-lg font-semibold px-5 py-3'
-            : 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60';
+          style = proceedCTA ? 'border-emerald-700 bg-emerald-600 text-white hover:bg-emerald-500 text-base font-semibold px-5 py-3' : 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60';
           label = proceedCTA ? '🚀 冲！' : option;
         } else if (lower === 'n' || lower === 'no') {
-          style = proceedCTA
-            ? 'border-red-700 bg-red-600 text-white hover:bg-red-500 text-lg font-semibold px-5 py-3'
-            : 'border-red-800 bg-red-950/40 text-red-100 hover:bg-red-900/60';
+          style = proceedCTA ? 'border-red-700 bg-red-600 text-white hover:bg-red-500 text-base font-semibold px-5 py-3' : 'border-red-800 bg-red-950/40 text-red-100 hover:bg-red-900/60';
           label = proceedCTA ? '🛑 停下' : option;
         }
-        promptOptionButtons.appendChild(quickButton(label, () => sendInput(option), style));
+        return quickButton(label, () => sendInput(option), style);
       });
     }
 
-    function formatSize(size) {
-      if (!size) return '';
-      if (size < 1024) return `${size} B`;
-      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-      if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
-      return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
-    }
-
-    function renderFileList() {
-      fileList.innerHTML = '';
-
-      if (!currentItems.length) {
-        const empty = document.createElement('div');
-        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-400';
-        empty.textContent = '目录为空';
-        fileList.appendChild(empty);
-        return;
+    function getRuntimeContextActions() {
+      const actions = [];
+      const diff = projectionState.contexts.diff;
+      const step = projectionState.contexts.step;
+      const error = projectionState.contexts.error;
+      if (diff) {
+        actions.push(quickButton('最近 Diff', () => openDiffModal(diff), 'border-violet-800 bg-violet-950/40 text-violet-100 hover:bg-violet-900/60'));
+        if (getSkillMenuItemsForContext('diff', diff).length) {
+          actions.push(quickButton('Diff Skills', (event) => openContextSkillMenu('diff', diff.id, event.currentTarget), 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60'));
+        }
       }
-
-      const highlightName = basename(highlightedFilePath);
-
-      currentItems.forEach((item) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        const isHighlighted = !!highlightName && basename(item.name) === highlightName;
-        button.className = 'flex w-full items-center justify-between gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-left hover:bg-zinc-800';
-        if (isHighlighted) {
-          button.classList.add('file-attention');
-        }
-
-        const left = document.createElement('div');
-        left.className = 'min-w-0';
-
-        const title = document.createElement('div');
-        title.className = 'truncate text-sm font-medium text-zinc-100';
-        title.textContent = `${item.is_dir ? '📁' : '📄'} ${item.name}`;
-
-        const meta = document.createElement('div');
-        meta.className = 'mt-1 text-xs text-zinc-400';
-        meta.textContent = item.is_dir ? '文件夹' : (formatSize(item.size) || '文件');
-
-        left.append(title, meta);
-        button.appendChild(left);
-
-        if (item.is_dir) {
-          const arrow = document.createElement('div');
-          arrow.className = 'text-xs text-zinc-500';
-          arrow.textContent = '进入';
-          button.appendChild(arrow);
-          button.addEventListener('click', () => requestFSList(joinPath(currentCwd, item.name)));
-        } else {
-          const tag = document.createElement('div');
-          tag.className = 'text-xs ' + (isHighlighted ? 'text-blue-300' : 'text-zinc-500');
-          tag.textContent = isHighlighted ? '关注中' : '文件';
-          button.appendChild(tag);
-        }
-
-        fileList.appendChild(button);
-      });
-    }
-
-    function joinPath(base, name) {
-      if (!base || base === '.' || base === '/') return `${base === '/' ? '/' : ''}${name}`;
-      const normalized = base.replace(/[\\/]+$/, '');
-      return `${normalized}/${name}`;
-    }
-
-    function parentPath(path) {
-      if (!path || path === '.' || path === '/' || /^[A-Za-z]:[\\/]?$/.test(path)) return path;
-      const normalized = path.replace(/[\\/]+$/, '');
-      const index = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
-      if (index <= 0) {
-        if (/^[A-Za-z]:/.test(normalized)) {
-          return normalized.slice(0, 2) + '\\';
-        }
-        return '/';
+      if (step && getSkillMenuItemsForContext('step', step).length) {
+        actions.push(quickButton('Step Skills', (event) => openContextSkillMenu('step', step.id, event.currentTarget), 'border-sky-800 bg-sky-950/40 text-sky-100 hover:bg-sky-900/60'));
       }
-      return normalized.slice(0, index);
+      if (error && getSkillMenuItemsForContext('error', error).length) {
+        actions.push(quickButton('Error Skills', (event) => openContextSkillMenu('error', error.id, event.currentTarget), 'border-red-900 bg-red-950/40 text-red-100 hover:bg-red-900/60'));
+      }
+      return actions;
     }
 
+    function renderActionPanel() {
+      actionPanel.innerHTML = '';
+      [...getGlobalActions(), ...getRuntimeContextActions(), ...getPromptReplyActions()].forEach((button) => actionPanel.appendChild(button));
+    }
 
     function openInputCard(message, options) {
-      awaitingInput = true;
-      currentPromptOptions = Array.isArray(options) && options.length ? effectivePromptOptions(message, options) : currentPromptOptions;
-      promptText.textContent = message || '等待输入';
-      renderPromptOptions(currentPromptOptions);
-      inputCard.classList.remove('hidden');
+      appState.prompt.awaitingInput = true;
+      appState.prompt.message = message || '等待输入';
+      appState.prompt.options = Array.isArray(options) && options.length ? effectivePromptOptions(message, options) : appState.prompt.options;
+      renderPromptCard();
       updateStatus();
       inputField.focus();
     }
 
     function closeInputCard() {
-      awaitingInput = false;
-      currentPromptOptions = [];
-      promptText.textContent = '';
-      promptOptionButtons.innerHTML = '';
-      inputCard.classList.add('hidden');
+      appState.prompt.awaitingInput = false;
+      appState.prompt.options = [];
+      appState.prompt.message = '';
+      renderPromptCard();
       updateStatus();
     }
 
     function applyAgentState(payload) {
-      agentState = payload.state || 'IDLE';
-      agentStateMessage = payload.msg || '';
-      running = agentState !== 'IDLE';
-
+      updateRuntimeMeta(payload);
+      runtimeState.agentState = payload.state || 'IDLE';
+      runtimeState.agentStateMessage = payload.msg || '';
+      appState.connection.running = runtimeState.agentState !== 'IDLE';
       if (payload.step) {
-        setCurrentStep(payload.step, agentState === 'RUNNING_TOOL' ? 'running' : currentStepStatus, '');
-      } else if (agentState === 'IDLE') {
-        clearCurrentStep();
+        projectionState.currentStep = buildStepContextFromPayload({ ...payload, msg: payload.step, status: runtimeState.agentState === 'RUNNING_TOOL' ? 'running' : 'info' });
+        projectionState.contexts.step = projectionState.currentStep;
+        if (projectionState.currentStep.targetPath) appState.workspace.highlightedFilePath = projectionState.currentStep.targetPath;
+      } else if (runtimeState.agentState === 'IDLE') {
+        projectionState.currentStep = null;
+        projectionState.contexts.step = null;
       }
-
       if (payload.awaitInput) {
-        openInputCard(agentStateMessage || promptText.textContent || '等待输入', currentPromptOptions);
+        openInputCard(runtimeState.agentStateMessage || appState.prompt.message || '等待输入', appState.prompt.options);
       } else {
         closeInputCard();
       }
     }
 
-    function handleIncomingEvent(payload) {
-      if (payload.sessionId) sessionId = payload.sessionId;
+    function getSkillMenuItemsForContext(type, context) {
+      if (!context) return [];
+      if (type === 'diff') {
+        if (!context.diff) return [];
+        return [
+          { name: 'review', label: '代码审查' },
+          { name: 'security-review', label: '安全审查' },
+          { name: 'simplify', label: '简化方案' }
+        ];
+      }
+      if (type === 'step') {
+        const items = [
+          { name: 'explain-step', label: '解释步骤' },
+          { name: 'next-step', label: '推断下一步' }
+        ];
+        if (context.targetPath || projectionState.contexts.diff?.diff) items.push({ name: 'review', label: '关联审查' });
+        return items;
+      }
+      if (type === 'error') {
+        return [{ name: 'debug', label: '调试分析' }];
+      }
+      return [];
+    }
 
+    function openContextSkillMenu(contextType, contextId, anchorEl) {
+      const context = getContextByType(contextType);
+      if (!context || context.id !== contextId) return;
+      runtimeState.skillMenu = {
+        open: true,
+        contextType,
+        contextId,
+        anchorRect: anchorEl?.getBoundingClientRect?.() || null,
+        items: getSkillMenuItemsForContext(contextType, context)
+      };
+      setActiveContext(contextType);
+      renderContextSkillMenu();
+    }
+
+    function closeContextSkillMenu() {
+      runtimeState.skillMenu = { open: false, contextType: '', contextId: '', anchorRect: null, items: [] };
+      renderContextSkillMenu();
+    }
+
+    function buildSkillRequest(name, contextType, context) {
+      const base = {
+        action: 'skill_exec',
+        name,
+        cwd: appState.workspace.cwd,
+        targetType: contextType,
+        targetPath: context.targetPath || context.path || runtimeState.meta.targetPath || '',
+        targetTitle: context.title || context.message || context.summary || '',
+        resultView: context.resultView || 'review-card',
+        contextId: context.id || '',
+        contextTitle: context.title || context.message || context.summary || ''
+      };
+      if (contextType === 'diff') {
+        return { ...base, targetDiff: context.diff || '' };
+      }
+      if (contextType === 'step') {
+        const targetText = [context.message, context.target ? `target: ${context.target}` : '', context.targetPath ? `path: ${context.targetPath}` : '', context.tool ? `tool: ${context.tool}` : '', context.command ? `command: ${context.command}` : ''].filter(Boolean).join('\n');
+        if (name === 'review' && projectionState.contexts.diff?.diff) {
+          return {
+            ...base,
+            targetType: 'diff',
+            targetPath: projectionState.contexts.diff.path || context.targetPath || '',
+            targetTitle: projectionState.contexts.diff.title || context.title || '关联 Diff',
+            contextTitle: context.title || context.message || '当前步骤',
+            targetDiff: projectionState.contexts.diff.diff || ''
+          };
+        }
+        return { ...base, targetText };
+      }
+      if (contextType === 'error') {
+        const targetText = [context.message, context.code ? `code: ${context.code}` : '', context.relatedStep ? `step: ${context.relatedStep}` : '', context.command ? `command: ${context.command}` : ''].filter(Boolean).join('\n');
+        return { ...base, targetText, targetStack: context.stack || '' };
+      }
+      return base;
+    }
+
+    function triggerContextSkill(name, contextType, context) {
+      if (!context) return;
+      const request = buildSkillRequest(name, contextType, context);
+      updateRuntimeMeta({
+        source: 'skill-center',
+        skillName: name,
+        targetType: request.targetType || contextType,
+        targetPath: request.targetPath || '',
+        resultView: request.resultView || 'review-card',
+        contextId: request.contextId || '',
+        contextTitle: request.contextTitle || request.targetTitle || '',
+        targetText: request.targetText || ''
+      });
+      closeContextSkillMenu();
+      sendJson(request);
+      updateStatus();
+    }
+
+    function triggerSkill(name) {
+      const diff = projectionState.contexts.diff;
+      if (!diff) return;
+      triggerContextSkill(name, 'diff', diff);
+    }
+
+    function openDiffModal(diffPayload) {
+      projectionState.currentDiff = diffPayload;
+      renderDiffModal();
+      diffModal.classList.remove('pointer-events-none', 'opacity-0');
+      if (diffPayload?.path) {
+        appState.workspace.highlightedFilePath = diffPayload.path;
+        renderFileList();
+      }
+      setActiveContext('diff');
+    }
+
+    function closeDiffModal() {
+      diffModal.classList.add('pointer-events-none', 'opacity-0');
+    }
+
+    function handleIncomingEvent(payload) {
+      if (payload.sessionId) appState.session.id = payload.sessionId;
+      updateRuntimeMeta(payload);
       switch (payload.type) {
         case 'session_state':
           if (payload.state === 'closed') {
-            running = false;
-            if (claudeInteractiveActive) {
-              break;
-            }
+            appState.connection.running = false;
+            if (appState.session.claudeInteractiveActive) break;
           }
-          logEntries.push({ kind: 'system', message: payload.msg || payload.state || 'session update', timestamp: payload.timestamp });
+          projectionState.logEntries.push({ kind: 'system', message: payload.msg || payload.state || 'session update', timestamp: payload.timestamp });
           renderLogPane();
           break;
         case 'agent_state':
-          claudeInteractiveActive = payload.command === 'claude' && payload.state !== 'IDLE';
+          appState.session.claudeInteractiveActive = payload.command === 'claude' && payload.state !== 'IDLE';
           applyAgentState(payload);
           break;
         case 'log':
           ingestLogMessage(payload.msg || '', payload.stream || 'stdout', payload.timestamp);
           renderLogPane();
           break;
-        case 'error':
-          logEntries.push({ kind: 'error', message: payload.msg || 'unknown error', stack: payload.stack || '', timestamp: payload.timestamp });
+        case 'error': {
+          const errorContext = buildErrorContextFromPayload(payload);
+          projectionState.latestError = errorContext;
+          projectionState.contexts.error = errorContext;
+          projectionState.logEntries.push({ kind: 'error', context: errorContext, timestamp: payload.timestamp });
+          setActiveContext('error');
           renderLogPane();
           break;
+        }
         case 'prompt_request':
-          if ((payload.msg || '等待输入') === lastPromptMessage && agentState === 'WAIT_INPUT') {
-            break;
+          if ((payload.msg || '等待输入') === appState.session.lastPromptMessage && runtimeState.agentState === 'WAIT_INPUT') break;
+          appState.session.lastPromptMessage = payload.msg || '等待输入';
+          appState.prompt.options = effectivePromptOptions(payload.msg || '等待输入', payload.options || []);
+          appState.prompt.message = payload.msg || '等待输入';
+          renderPromptCard();
+          if (runtimeState.agentState === 'WAIT_INPUT') inputCard.classList.remove('hidden');
+          break;
+        case 'step_update': {
+          const stepContext = buildStepContextFromPayload(payload);
+          projectionState.currentStep = stepContext;
+          projectionState.contexts.step = stepContext;
+          if (stepContext.targetPath) {
+            appState.workspace.highlightedFilePath = stepContext.targetPath;
+            if (!runtimeState.meta.targetPath) runtimeState.meta.targetPath = stepContext.targetPath;
+            renderFileList();
           }
-          lastPromptMessage = payload.msg || '等待输入';
-          currentPromptOptions = effectivePromptOptions(payload.msg || '等待输入', payload.options || []);
-          promptText.textContent = payload.msg || '等待输入';
-          renderPromptOptions(currentPromptOptions);
-          if (agentState === 'WAIT_INPUT') {
-            inputCard.classList.remove('hidden');
-          }
+          setActiveContext('step');
           break;
-        case 'step_update':
-          setCurrentStep(payload.msg || '', payload.status || 'running', payload.target || '');
+        }
+        case 'file_diff': {
+          const diffContext = buildDiffContextFromPayload(payload);
+          projectionState.currentDiff = diffContext;
+          projectionState.contexts.diff = diffContext;
+          setActiveContext('diff');
+          openDiffModal(diffContext);
           break;
-        case 'file_diff':
-          currentDiff = {
-            title: payload.title || 'Diff 预览',
-            path: payload.path || '',
-            diff: payload.diff || '',
-            lang: payload.lang || ''
-          };
-          openDiffModal(currentDiff);
-          break;
+        }
         case 'fs_list_result':
-          currentCwd = payload.current_path || currentCwd;
-          currentItems = Array.isArray(payload.items) ? payload.items : [];
+          appState.workspace.cwd = payload.current_path || appState.workspace.cwd;
+          appState.workspace.items = Array.isArray(payload.items) ? payload.items : [];
           renderFileList();
           break;
         default:
-          logEntries.push({ kind: 'system', message: `收到未处理事件 ${payload.type || 'unknown'}`, timestamp: payload.timestamp });
+          projectionState.logEntries.push({ kind: 'system', message: `收到未处理事件 ${payload.type || 'unknown'}`, timestamp: payload.timestamp });
           renderLogPane();
           break;
       }
-
       updateStatus();
     }
 
     function getWsUrl() {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      return `${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+      return `${protocol}//${location.host}/ws?token=${encodeURIComponent(appState.token)}`;
     }
 
     function ensureToken(forcePrompt = false) {
-      if (!forcePrompt && token) return true;
-      const next = window.prompt('Enter token', token || '');
+      if (!forcePrompt && appState.token) return true;
+      const next = window.prompt('Enter token', appState.token || '');
       if (!next) return false;
-      token = next.trim();
-      localStorage.setItem('vibe_token', token);
+      appState.token = next.trim();
+      localStorage.setItem('vibe_token', appState.token);
       return true;
     }
 
     function sendJson(data) {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        logEntries.push({ kind: 'error', message: 'WebSocket 未连接。', stack: '' });
+      if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
+        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: 'WebSocket 未连接。' }) });
         renderLogPane();
         return false;
       }
-      ws.send(JSON.stringify(data));
+      appState.ws.send(JSON.stringify(data));
       return true;
     }
 
@@ -1045,75 +1243,76 @@
 
     function connect(forcePrompt = false) {
       if (!ensureToken(forcePrompt)) {
-        logEntries.push({ kind: 'error', message: '缺少 token，无法连接服务。', stack: '' });
+        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: '缺少 token，无法连接服务。' }) });
         renderLogPane();
         return;
       }
-
-      if (ws) {
-        ws.onopen = null;
-        ws.onclose = null;
-        ws.onerror = null;
-        ws.onmessage = null;
-        ws.close();
+      if (appState.ws) {
+        appState.ws.onopen = null;
+        appState.ws.onclose = null;
+        appState.ws.onerror = null;
+        appState.ws.onmessage = null;
+        appState.ws.close();
       }
-
-      connected = false;
-      running = false;
-      agentState = 'IDLE';
-      agentStateMessage = '';
-      logEntries = [];
-      rawTerminalByStream = { stdout: '', stderr: '' };
-      lastPromptMessage = '';
-      claudeInteractiveActive = false;
+      appState.connection.connected = false;
+      appState.connection.running = false;
+      runtimeState.agentState = 'IDLE';
+      runtimeState.agentStateMessage = '';
+      runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '' };
+      projectionState.logEntries = [];
+      projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
+      projectionState.currentDiff = null;
+      projectionState.currentStep = null;
+      projectionState.latestError = null;
+      projectionState.contexts = { diff: null, step: null, error: null };
+      appState.session.lastPromptMessage = '';
+      appState.session.claudeInteractiveActive = false;
       closeInputCard();
+      closeContextSkillMenu();
       updateStatus();
-      logEntries.push({ kind: 'system', message: '正在连接 WebSocket' });
+      projectionState.logEntries.push({ kind: 'system', message: '正在连接 WebSocket' });
       renderLogPane();
-
       try {
-        ws = new WebSocket(getWsUrl());
+        appState.ws = new WebSocket(getWsUrl());
       } catch (err) {
-        logEntries.push({ kind: 'error', message: `创建 WebSocket 失败：${err.message || err}`, stack: '' });
+        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: `创建 WebSocket 失败：${err.message || err}` }) });
         renderLogPane();
         return;
       }
-
-      ws.onopen = () => {
-        connected = true;
+      appState.ws.onopen = () => {
+        appState.connection.connected = true;
         updateStatus();
-        logEntries.push({ kind: 'system', message: 'WebSocket 已连接' });
+        projectionState.logEntries.push({ kind: 'system', message: 'WebSocket 已连接' });
         renderLogPane();
         requestFSList('.');
       };
-
-      ws.onclose = () => {
-        connected = false;
-        running = false;
-        agentState = 'IDLE';
-        agentStateMessage = '';
-        clearCurrentStep();
+      appState.ws.onclose = () => {
+        appState.connection.connected = false;
+        appState.connection.running = false;
+        runtimeState.agentState = 'IDLE';
+        runtimeState.agentStateMessage = '';
+        runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '' };
+        projectionState.currentStep = null;
+        projectionState.contexts.step = null;
         closeInputCard();
+        closeContextSkillMenu();
         updateStatus();
-        logEntries.push({ kind: 'error', message: '连接已关闭，请检查 token 或服务状态。', stack: '' });
+        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: '连接已关闭，请检查 token 或服务状态。' }) });
         renderLogPane();
       };
-
-      ws.onerror = () => {
-        logEntries.push({ kind: 'error', message: 'WebSocket 连接错误，请检查 token 或服务状态。', stack: '' });
+      appState.ws.onerror = () => {
+        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: 'WebSocket 连接错误，请检查 token 或服务状态。' }) });
         renderLogPane();
       };
-
-      ws.onmessage = (event) => {
+      appState.ws.onmessage = (event) => {
         let payload;
         try {
           payload = JSON.parse(event.data);
         } catch (err) {
-          logEntries.push({ kind: 'error', message: `收到无法解析的消息：${err.message || err}`, stack: '' });
+          projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: `收到无法解析的消息：${err.message || err}` }) });
           renderLogPane();
           return;
         }
-
         handleIncomingEvent(payload);
       };
     }
@@ -1122,9 +1321,9 @@
       if (!raw) return;
       if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n` })) return;
       addUserBubble(raw === '\u0003' ? 'Ctrl+C' : raw.replace(/\n$/, ''), label);
-      if (claudeInteractiveActive) {
-        agentState = 'THINKING';
-        agentStateMessage = '思考中';
+      if (appState.session.claudeInteractiveActive) {
+        runtimeState.agentState = 'THINKING';
+        runtimeState.agentStateMessage = '思考中';
         updateStatus();
       }
       inputField.value = '';
@@ -1134,13 +1333,14 @@
     function runCommand(command) {
       const cmd = (command || '').trim();
       if (!cmd) return;
-      if (!connected) {
-        logEntries.push({ kind: 'error', message: '当前未连接，无法运行命令。', stack: '' });
+      if (!appState.connection.connected) {
+        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: '当前未连接，无法运行命令。' }) });
         renderLogPane();
         return;
       }
-      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: currentCwd })) return;
-      addUserBubble(`${cmd}\n@ ${currentCwd || '.'}`, '命令');
+      updateRuntimeMeta({ source: 'command', skillName: '', resultView: '', targetType: '', targetPath: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '' });
+      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: appState.workspace.cwd, source: 'command' })) return;
+      addUserBubble(`${cmd}\n@ ${appState.workspace.cwd || '.'}`, '命令');
       updateStatus();
       commandInput.value = '';
       setSidebarOpen(false);
@@ -1156,27 +1356,42 @@
       event.preventDefault();
       runCommand(commandInput.value);
     });
-
     inputForm.addEventListener('submit', (event) => {
       event.preventDefault();
       sendInput();
     });
-
     structuredViewBtn.addEventListener('click', () => setViewMode('structured'));
     rawTerminalViewBtn.addEventListener('click', () => setViewMode('raw-terminal'));
     reconnectBtn.addEventListener('click', () => connect(false));
     retokenBtn.addEventListener('click', () => connect(true));
     openSidebarBtn.addEventListener('click', () => setSidebarOpen(true));
     closeSidebarBtn.addEventListener('click', () => setSidebarOpen(false));
-    copyDiffBtn.addEventListener('click', () => copyText(currentDiff?.diff || '', copyDiffBtn));
+    copyDiffBtn.addEventListener('click', () => copyText(projectionState.currentDiff?.diff || '', copyDiffBtn));
     closeDiffBtn.addEventListener('click', () => closeDiffModal());
+    diffSkillBtn.addEventListener('click', (event) => {
+      const diff = projectionState.contexts.diff;
+      if (diff) openContextSkillMenu('diff', diff.id, event.currentTarget);
+    });
+    stepSkillBtn.addEventListener('click', (event) => {
+      const step = projectionState.contexts.step;
+      if (step) openContextSkillMenu('step', step.id, event.currentTarget);
+    });
     diffModal.addEventListener('click', (event) => {
       if (event.target === diffModal) closeDiffModal();
     });
-    window.addEventListener('resize', syncBottomSpacing);
+    window.addEventListener('resize', () => {
+      syncBottomSpacing();
+      renderContextSkillMenu();
+    });
+    window.addEventListener('click', (event) => {
+      if (!runtimeState.skillMenu.open) return;
+      if (contextSkillMenu.contains(event.target)) return;
+      if (event.target === diffSkillBtn || event.target === stepSkillBtn) return;
+      closeContextSkillMenu();
+    });
     sidebarOverlay.addEventListener('click', () => setSidebarOpen(false));
-    sidebarRefreshBtn.addEventListener('click', () => requestFSList(currentCwd || '.'));
-    sidebarUpBtn.addEventListener('click', () => requestFSList(parentPath(currentCwd || '.')));
+    sidebarRefreshBtn.addEventListener('click', () => requestFSList(appState.workspace.cwd || '.'));
+    sidebarUpBtn.addEventListener('click', () => requestFSList(parentPath(appState.workspace.cwd || '.')));
 
     updateStatus();
     updateViewModeButtons();

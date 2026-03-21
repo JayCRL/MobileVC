@@ -35,6 +35,9 @@ type Controller struct {
 	currentState   ControllerState
 	currentCommand string
 	lastStep       string
+	lastTool       string
+	resumeSession  string
+	activeMeta     protocol.RuntimeMeta
 }
 
 func NewController(sessionID string) *Controller {
@@ -47,16 +50,23 @@ func NewController(sessionID string) *Controller {
 func (c *Controller) InitialEvent() protocol.AgentStateEvent {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.newAgentStateEvent("空闲", false, "", "")
+	return c.newAgentStateEvent("空闲", false)
 }
 
-func (c *Controller) OnExecStart(command string) []any {
+func (c *Controller) OnExecStart(command string, meta protocol.RuntimeMeta) []any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.currentCommand = command
 	c.currentState = ControllerStateThinking
 	c.lastStep = ""
-	return []any{c.newAgentStateEvent("思考中", false, "", "")}
+	c.lastTool = ""
+	c.activeMeta = meta
+	c.resumeSession = extractResumeSessionID(command, meta.ResumeSessionID)
+	message := "思考中"
+	if meta.SkillName != "" {
+		message = "执行 skill：" + meta.SkillName
+	}
+	return []any{c.newAgentStateEvent(message, false)}
 }
 
 func (c *Controller) OnRunnerEvent(event any) []any {
@@ -69,28 +79,43 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		if message == "" {
 			message = "等待输入"
 		}
-		return []any{c.newAgentStateEvent(message, true, c.lastStep, "")}
+		if e.ResumeSessionID != "" {
+			c.resumeSession = e.ResumeSessionID
+		}
+		return []any{c.newAgentStateEvent(message, true)}
 	case protocol.StepUpdateEvent:
 		if e.Message != "" {
 			c.lastStep = e.Message
 		}
 		c.currentState = ControllerStateRunningTool
+		c.lastTool = e.Target
 		message := e.Message
 		if message == "" {
 			message = "执行工具中"
 		}
-		return []any{c.newAgentStateEvent(message, false, c.lastStep, "")}
+		return []any{c.newAgentStateEvent(message, false)}
 	case protocol.FileDiffEvent:
-		message := "执行工具中"
+		message := "查看代码改动"
 		if e.Title != "" {
 			message = e.Title
 		}
 		c.currentState = ControllerStateRunningTool
-		return []any{c.newAgentStateEvent(message, false, c.lastStep, "")}
+		if e.Path != "" {
+			c.lastTool = e.Path
+		}
+		return []any{c.newAgentStateEvent(message, false)}
 	case protocol.LogEvent:
+		if e.ResumeSessionID != "" {
+			c.resumeSession = e.ResumeSessionID
+		}
 		if isClaudeCommand(c.currentCommand) && c.currentState == ControllerStateThinking && strings.TrimSpace(e.Message) != "" {
 			c.currentState = ControllerStateWaitInput
-			return []any{c.newAgentStateEvent("Claude 会话已就绪，可继续输入", true, c.lastStep, "")}
+			return []any{c.newAgentStateEvent("Claude 会话已就绪，可继续输入", true)}
+		}
+		return nil
+	case protocol.SessionStateEvent:
+		if e.ResumeSessionID != "" {
+			c.resumeSession = e.ResumeSessionID
 		}
 		return nil
 	default:
@@ -98,24 +123,43 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 	}
 }
 
-func (c *Controller) OnInputSent() []any {
+func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" {
+		c.activeMeta = protocol.MergeRuntimeMeta(c.activeMeta, meta)
+	}
 	c.currentState = ControllerStateThinking
-	return []any{c.newAgentStateEvent("思考中", false, c.lastStep, "")}
+	return []any{c.newAgentStateEvent("思考中", false)}
 }
 
-func (c *Controller) OnCommandFinished() []any {
+func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.currentState = ControllerStateIdle
 	c.currentCommand = ""
 	c.lastStep = ""
-	return []any{c.newAgentStateEvent("空闲", false, "", "")}
+	c.lastTool = ""
+	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" {
+		c.activeMeta = protocol.MergeRuntimeMeta(c.activeMeta, meta)
+	}
+	return []any{c.newAgentStateEvent("空闲", false)}
 }
 
-func (c *Controller) newAgentStateEvent(message string, awaitInput bool, step, tool string) protocol.AgentStateEvent {
-	return protocol.NewAgentStateEvent(c.sessionID, string(c.currentState), message, awaitInput, c.currentCommand, step, tool)
+func (c *Controller) newAgentStateEvent(message string, awaitInput bool) protocol.AgentStateEvent {
+	event := protocol.NewAgentStateEvent(c.sessionID, string(c.currentState), message, awaitInput, c.currentCommand, c.lastStep, c.lastTool)
+	event.RuntimeMeta = protocol.MergeRuntimeMeta(c.activeMeta, protocol.RuntimeMeta{ResumeSessionID: c.resumeSession})
+	return event
+}
+
+func extractResumeSessionID(command string, fallback string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	for i := 0; i < len(fields); i++ {
+		if fields[i] == "--resume" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return fallback
 }
 
 func isClaudeCommand(command string) bool {

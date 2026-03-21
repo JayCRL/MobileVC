@@ -2,7 +2,6 @@ package ws
 
 import (
 	"context"
-	"errors"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -200,7 +199,7 @@ func TestHandlerPtyInputFlow(t *testing.T) {
 
 func TestHandlerEmitsAgentStateForToolEventsAndFinish(t *testing.T) {
 	ptyRunner := newStubRunner(
-		protocol.NewStepUpdateEvent("ignored", "Reading internal/ws/handler.go", "running", "internal/ws/handler.go"),
+		protocol.NewStepUpdateEvent("ignored", "Reading internal/ws/handler.go", "running", "internal/ws/handler.go", "reading", "Reading internal/ws/handler.go"),
 		protocol.NewFileDiffEvent("ignored", "internal/ws/handler.go", "Updating internal/ws/handler.go", "diff --git a/internal/ws/handler.go b/internal/ws/handler.go", "go"),
 	)
 
@@ -499,8 +498,45 @@ func TestHandlerUnknownMode(t *testing.T) {
 	}
 }
 
-func TestHandlerMapsInputNotSupportedError(t *testing.T) {
-	if !errors.Is(runner.ErrInputNotSupported, runner.ErrInputNotSupported) {
-		t.Fatal("expected sentinel error")
+func TestHandlerSkillExecUsesUnifiedRuntimeFlow(t *testing.T) {
+	execRunner := newStubRunner(
+		protocol.NewLogEvent("ignored", "skill review output", "stdout"),
+		protocol.NewSessionStateEvent("ignored", "closed", "command finished"),
+	)
+
+	h := NewHandler("test")
+	h.NewExecRunner = func() runner.Runner { return execRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.SkillRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "skill_exec"},
+		Name:        "review",
+		CWD:         ".",
+		TargetType:  "current-diff",
+		TargetPath:  "internal/ws/handler.go",
+		TargetTitle: "当前 Diff",
+		TargetDiff:  "diff --git a/internal/ws/handler.go b/internal/ws/handler.go",
+	}); err != nil {
+		t.Fatalf("write skill request: %v", err)
 	}
+
+	thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
+	requireAgentState(t, thinking, "THINKING", false)
+	if thinking["skillName"] != "review" {
+		t.Fatalf("expected skillName in agent state, got %#v", thinking)
+	}
+	if thinking["source"] != "skill-center" {
+		t.Fatalf("expected source in agent state, got %#v", thinking)
+	}
+	logEvent := readUntilType(t, conn, protocol.EventTypeLog)
+	if logEvent["skillName"] != "review" || logEvent["source"] != "skill-center" {
+		t.Fatalf("expected runtime meta on log event, got %#v", logEvent)
+	}
+	finalState := readUntilType(t, conn, protocol.EventTypeAgentState)
+	if finalState["state"] == "WAIT_INPUT" {
+		finalState = readUntilType(t, conn, protocol.EventTypeAgentState)
+	}
+	requireAgentState(t, finalState, "IDLE", false)
 }

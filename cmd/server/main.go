@@ -23,7 +23,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.Dir("./web")))
 
 	addr := ":" + cfg.Port
-	log.Printf("server listening on %s", addr)
+	log.Printf("server listening on %s (runtime default=%s/%s debug=%v enhanced=%v)", addr, cfg.Runtime.DefaultCommand, cfg.Runtime.DefaultMode, cfg.Runtime.Debug, cfg.Runtime.EnhancedProjection)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}

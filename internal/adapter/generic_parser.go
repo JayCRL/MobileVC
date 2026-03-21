@@ -93,7 +93,8 @@ func (p *GenericParser) parseLine(line string, sessionID string, stream string) 
 		return nil
 	}
 	if message, status, target, ok := p.detectStepUpdate(line); ok {
-		return []any{protocol.NewStepUpdateEvent(sessionID, message, status, target)}
+		tool, command := detectStepToolAndCommand(message)
+		return []any{protocol.NewStepUpdateEvent(sessionID, message, status, target, tool, command)}
 	}
 	return []any{protocol.NewLogEvent(sessionID, line, stream)}
 }
@@ -280,6 +281,19 @@ func (p *GenericParser) detectStepUpdate(line string) (string, string, string, b
 		target = matches[1]
 	}
 	return trimmed, status, target, true
+}
+
+func detectStepToolAndCommand(message string) (string, string) {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return "", ""
+	}
+	parts := strings.Fields(trimmed)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	tool := strings.ToLower(parts[0])
+	return tool, trimmed
 }
 
 func (p *GenericParser) lastNonEmptyLine(lines []string) string {

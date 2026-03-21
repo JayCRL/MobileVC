@@ -18,7 +18,9 @@ import (
 
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
+	runtimepkg "mobilevc/internal/runtime"
 	"mobilevc/internal/session"
+	"mobilevc/internal/skills"
 )
 
 type Handler struct {
@@ -26,6 +28,7 @@ type Handler struct {
 	NewExecRunner func() runner.Runner
 	NewPtyRunner  func() runner.Runner
 	Upgrader      websocket.Upgrader
+	SkillLauncher *skills.Launcher
 }
 
 func NewHandler(authToken string) *Handler {
@@ -37,6 +40,7 @@ func NewHandler(authToken string) *Handler {
 		NewPtyRunner: func() runner.Runner {
 			return runner.NewPtyRunner()
 		},
+		SkillLauncher: skills.NewLauncher(),
 		Upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -65,7 +69,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	sessionID := fmt.Sprintf("session-%d", time.Now().UTC().UnixNano())
-	controller := session.NewController(sessionID)
+	runtimeSvc := runtimepkg.NewService(sessionID, runtimepkg.Dependencies{
+		NewExecRunner: h.NewExecRunner,
+		NewPtyRunner:  h.NewPtyRunner,
+	})
 	writeCh := make(chan any, 128)
 	writeErrCh := make(chan error, 1)
 	var writerWG sync.WaitGroup
@@ -91,28 +98,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	var runnerMu sync.Mutex
-	var activeRunner runner.Runner
-	var activeSessionID string
-
-	cleanup := func() {
-		runnerMu.Lock()
-		current := activeRunner
-		activeRunner = nil
-		activeSessionID = ""
-		runnerMu.Unlock()
-		if current != nil {
-			_ = current.Close()
-		}
+	emit := func(event any) {
+		runtimepkg.Enqueue(ctx, writeCh, event)
 	}
+
 	defer func() {
 		cancel()
-		cleanup()
+		runtimeSvc.Cleanup()
 		writerWG.Wait()
 	}()
 
-	enqueueEvent(ctx, writeCh, protocol.NewSessionStateEvent(sessionID, string(session.StateActive), "connected"))
-	enqueueEvent(ctx, writeCh, controller.InitialEvent())
+	emit(protocol.NewSessionStateEvent(sessionID, string(session.StateActive), "connected"))
+	emit(runtimeSvc.InitialEvent())
 
 	for {
 		select {
@@ -133,13 +130,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if messageType != websocket.TextMessage {
-			enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, "only text messages are supported", ""))
+			emit(protocol.NewErrorEvent(sessionID, "only text messages are supported", ""))
 			continue
 		}
 
 		var clientEvent protocol.ClientEvent
 		if err := json.Unmarshal(payload, &clientEvent); err != nil {
-			enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid json: %v", err), ""))
+			emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid json: %v", err), ""))
 			continue
 		}
 
@@ -147,139 +144,110 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "exec":
 			var reqEvent protocol.ExecRequestEvent
 			if err := json.Unmarshal(payload, &reqEvent); err != nil {
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid exec request: %v", err), ""))
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid exec request: %v", err), ""))
 				continue
 			}
 			if strings.TrimSpace(reqEvent.Command) == "" {
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, "cmd is required", ""))
+				emit(protocol.NewErrorEvent(sessionID, "cmd is required", ""))
 				continue
 			}
-
-			mode, err := parseMode(reqEvent.Mode)
+			mode, err := runtimepkg.ParseMode(reqEvent.Mode)
 			if err != nil {
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, err.Error(), ""))
+				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 				continue
 			}
-
-			runnerMu.Lock()
-			if activeRunner != nil {
-				runnerMu.Unlock()
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, "another command is already running", ""))
-				continue
+			err = runtimeSvc.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
+				Command: reqEvent.Command,
+				CWD:     reqEvent.CWD,
+				Mode:    mode,
+				RuntimeMeta: protocol.RuntimeMeta{
+					Source:       fallback(reqEvent.Source, "command"),
+					SkillName:    reqEvent.SkillName,
+					Target:       reqEvent.Target,
+					TargetType:   reqEvent.TargetType,
+					TargetPath:   reqEvent.TargetPath,
+					ResultView:   reqEvent.ResultView,
+					ContextID:    reqEvent.ContextID,
+					ContextTitle: reqEvent.ContextTitle,
+					TargetText:   reqEvent.TargetText,
+				},
+			}, emit)
+			if err != nil {
+				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
-
-			currentRunner := h.newRunner(mode)
-			activeRunner = currentRunner
-			activeSessionID = sessionID
-			runnerMu.Unlock()
-
-			for _, event := range controller.OnExecStart(reqEvent.Command) {
-				enqueueEvent(ctx, writeCh, event)
-			}
-
-			go func(req protocol.ExecRequestEvent, selected runner.Runner, selectedMode runner.Mode) {
-				err := selected.Run(ctx, runner.ExecRequest{
-					SessionID: sessionID,
-					Command:   req.Command,
-					CWD:       req.CWD,
-					Mode:      selectedMode,
-				}, func(event any) {
-					enqueueEvent(ctx, writeCh, event)
-					for _, mapped := range controller.OnRunnerEvent(event) {
-						enqueueEvent(ctx, writeCh, mapped)
-					}
-				})
-				if err != nil {
-					log.Printf("runner finished with error: %v", err)
-				}
-
-				runnerMu.Lock()
-				if activeRunner == selected {
-					activeRunner = nil
-					activeSessionID = ""
-				}
-				runnerMu.Unlock()
-
-				for _, event := range controller.OnCommandFinished() {
-					enqueueEvent(ctx, writeCh, event)
-				}
-			}(reqEvent, currentRunner, mode)
 		case "input":
 			var inputEvent protocol.InputRequestEvent
 			if err := json.Unmarshal(payload, &inputEvent); err != nil {
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid input request: %v", err), ""))
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid input request: %v", err), ""))
 				continue
 			}
 			if inputEvent.Data == "" {
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, "input data is required", ""))
+				emit(protocol.NewErrorEvent(sessionID, "input data is required", ""))
 				continue
 			}
-
-			runnerMu.Lock()
-			currentRunner := activeRunner
-			currentSessionID := activeSessionID
-			runnerMu.Unlock()
-
-			if currentRunner == nil || currentSessionID == "" {
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, "no active runner", ""))
-				continue
-			}
-
-			if err := currentRunner.Write(ctx, []byte(inputEvent.Data)); err != nil {
+			if err := runtimeSvc.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: inputEvent.Data}, emit); err != nil {
 				message := err.Error()
 				if errors.Is(err, runner.ErrInputNotSupported) {
 					message = "input is only supported for pty sessions"
 				}
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, message, ""))
-			} else {
-				for _, event := range controller.OnInputSent() {
-					enqueueEvent(ctx, writeCh, event)
-				}
+				emit(protocol.NewErrorEvent(sessionID, message, ""))
+			}
+		case "skill_exec":
+			var skillEvent protocol.SkillRequestEvent
+			if err := json.Unmarshal(payload, &skillEvent); err != nil {
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid skill request: %v", err), ""))
+				continue
+			}
+			if h.SkillLauncher == nil {
+				emit(protocol.NewErrorEvent(sessionID, "skill launcher is unavailable", ""))
+				continue
+			}
+			execReq, err := h.SkillLauncher.BuildRequest(
+				skillEvent.Name,
+				fallback(skillEvent.CWD, "."),
+				skillEvent.TargetType,
+				skillEvent.TargetPath,
+				skillEvent.TargetTitle,
+				skillEvent.TargetDiff,
+				skillEvent.ContextID,
+				skillEvent.ContextTitle,
+				skillEvent.TargetText,
+				skillEvent.TargetStack,
+			)
+			if err != nil {
+				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+				continue
+			}
+			if err := runtimeSvc.Execute(ctx, sessionID, execReq, emit); err != nil {
+				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
 		case "fs_list":
 			var fsListReq protocol.FSListRequestEvent
 			if err := json.Unmarshal(payload, &fsListReq); err != nil {
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid fs_list request: %v", err), ""))
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid fs_list request: %v", err), ""))
 				continue
 			}
-
 			result, err := listDirectory(sessionID, fsListReq.Path)
 			if err != nil {
-				enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, fmt.Sprintf("list directory: %v", err), ""))
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("list directory: %v", err), ""))
 				continue
 			}
-			enqueueEvent(ctx, writeCh, result)
+			emit(result)
 		default:
-			enqueueEvent(ctx, writeCh, protocol.NewErrorEvent(sessionID, fmt.Sprintf("unknown action: %s", clientEvent.Action), ""))
+			emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("unknown action: %s", clientEvent.Action), ""))
 		}
 	}
 }
 
-func (h *Handler) newRunner(mode runner.Mode) runner.Runner {
-	switch mode {
-	case runner.ModePTY:
-		if h.NewPtyRunner != nil {
-			return h.NewPtyRunner()
-		}
-	default:
-		if h.NewExecRunner != nil {
-			return h.NewExecRunner()
-		}
+func fallback(value, defaultValue string) string {
+	if strings.TrimSpace(value) == "" {
+		return defaultValue
 	}
-	return runner.NewExecRunner()
+	return value
 }
 
 func parseMode(raw string) (runner.Mode, error) {
-	mode := runner.Mode(strings.TrimSpace(raw))
-	if mode == "" {
-		return runner.ModeExec, nil
-	}
-	switch mode {
-	case runner.ModeExec, runner.ModePTY:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("unknown mode: %s", raw)
-	}
+	return runtimepkg.ParseMode(raw)
 }
 
 func listDirectory(sessionID, rawPath string) (protocol.FSListResultEvent, error) {
@@ -319,18 +287,4 @@ func listDirectory(sessionID, rawPath string) (protocol.FSListResultEvent, error
 	})
 
 	return protocol.NewFSListResultEvent(sessionID, absPath, items), nil
-}
-
-func enqueueEvent(ctx context.Context, writeCh chan<- any, event any) {
-	select {
-	case <-ctx.Done():
-		return
-	default:
-	}
-
-	select {
-	case <-ctx.Done():
-		return
-	case writeCh <- event:
-	}
 }

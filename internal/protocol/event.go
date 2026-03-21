@@ -14,10 +14,24 @@ const (
 	EventTypeFileDiff      = "file_diff"
 )
 
+type RuntimeMeta struct {
+	Source          string `json:"source,omitempty"`
+	SkillName       string `json:"skillName,omitempty"`
+	Target          string `json:"target,omitempty"`
+	TargetType      string `json:"targetType,omitempty"`
+	TargetPath      string `json:"targetPath,omitempty"`
+	ResultView      string `json:"resultView,omitempty"`
+	ResumeSessionID string `json:"resumeSessionId,omitempty"`
+	ContextID       string `json:"contextId,omitempty"`
+	ContextTitle    string `json:"contextTitle,omitempty"`
+	TargetText      string `json:"targetText,omitempty"`
+}
+
 type Event struct {
 	Type      string    `json:"type"`
 	Timestamp time.Time `json:"timestamp"`
 	SessionID string    `json:"sessionId,omitempty"`
+	RuntimeMeta
 }
 
 type ClientEvent struct {
@@ -29,11 +43,29 @@ type ExecRequestEvent struct {
 	Command string `json:"cmd"`
 	CWD     string `json:"cwd,omitempty"`
 	Mode    string `json:"mode,omitempty"`
+	RuntimeMeta
 }
 
 type InputRequestEvent struct {
 	ClientEvent
 	Data string `json:"data"`
+}
+
+type SkillRequestEvent struct {
+	ClientEvent
+	Name         string `json:"name"`
+	Engine       string `json:"engine,omitempty"`
+	CWD          string `json:"cwd,omitempty"`
+	Target       string `json:"target,omitempty"`
+	TargetType   string `json:"targetType,omitempty"`
+	TargetPath   string `json:"targetPath,omitempty"`
+	TargetDiff   string `json:"targetDiff,omitempty"`
+	TargetTitle  string `json:"targetTitle,omitempty"`
+	ResultView   string `json:"resultView,omitempty"`
+	ContextID    string `json:"contextId,omitempty"`
+	ContextTitle string `json:"contextTitle,omitempty"`
+	TargetText   string `json:"targetText,omitempty"`
+	TargetStack  string `json:"targetStack,omitempty"`
 }
 
 type FSListRequestEvent struct {
@@ -55,9 +87,12 @@ type ProgressEvent struct {
 
 type ErrorEvent struct {
 	Event
-	Message string `json:"msg"`
-	Stack   string `json:"stack,omitempty"`
-	Code    string `json:"code,omitempty"`
+	Message    string `json:"msg"`
+	Stack      string `json:"stack,omitempty"`
+	Code       string `json:"code,omitempty"`
+	TargetPath string `json:"targetPath,omitempty"`
+	Step       string `json:"step,omitempty"`
+	Command    string `json:"command,omitempty"`
 }
 
 type PromptRequestEvent struct {
@@ -87,6 +122,8 @@ type StepUpdateEvent struct {
 	Message string `json:"msg,omitempty"`
 	Status  string `json:"status,omitempty"`
 	Target  string `json:"target,omitempty"`
+	Tool    string `json:"tool,omitempty"`
+	Command string `json:"command,omitempty"`
 }
 
 type FileDiffEvent struct {
@@ -161,12 +198,14 @@ func NewAgentStateEvent(sessionID, state, message string, awaitInput bool, comma
 	}
 }
 
-func NewStepUpdateEvent(sessionID, message, status, target string) StepUpdateEvent {
+func NewStepUpdateEvent(sessionID, message, status, target, tool, command string) StepUpdateEvent {
 	return StepUpdateEvent{
 		Event:   NewBaseEvent(EventTypeStepUpdate, sessionID),
 		Message: message,
 		Status:  status,
 		Target:  target,
+		Tool:    tool,
+		Command: command,
 	}
 }
 
@@ -185,5 +224,77 @@ func NewFSListResultEvent(sessionID, currentPath string, items []FSItem) FSListR
 		Event:       NewBaseEvent(EventTypeFSListResult, sessionID),
 		CurrentPath: currentPath,
 		Items:       items,
+	}
+}
+
+func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
+	merged := base
+	if overlay.Source != "" {
+		merged.Source = overlay.Source
+	}
+	if overlay.SkillName != "" {
+		merged.SkillName = overlay.SkillName
+	}
+	if overlay.Target != "" {
+		merged.Target = overlay.Target
+	}
+	if overlay.TargetType != "" {
+		merged.TargetType = overlay.TargetType
+	}
+	if overlay.TargetPath != "" {
+		merged.TargetPath = overlay.TargetPath
+	}
+	if overlay.ResultView != "" {
+		merged.ResultView = overlay.ResultView
+	}
+	if overlay.ResumeSessionID != "" {
+		merged.ResumeSessionID = overlay.ResumeSessionID
+	}
+	if overlay.ContextID != "" {
+		merged.ContextID = overlay.ContextID
+	}
+	if overlay.ContextTitle != "" {
+		merged.ContextTitle = overlay.ContextTitle
+	}
+	if overlay.TargetText != "" {
+		merged.TargetText = overlay.TargetText
+	}
+	return merged
+}
+
+func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
+	switch e := event.(type) {
+	case Event:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case LogEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case ProgressEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case ErrorEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case PromptRequestEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case SessionStateEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case AgentStateEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case StepUpdateEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case FileDiffEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case FSListResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	default:
+		return event
 	}
 }

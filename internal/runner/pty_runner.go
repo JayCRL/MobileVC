@@ -478,11 +478,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			r.mu.Lock()
 			r.claudeSessionID = envelope.SessionID
 			r.mu.Unlock()
+			sendEvent(sink, protocol.ApplyRuntimeMeta(protocol.NewSessionStateEvent(sessionID, string(session.StateActive), "Claude 会话已续接"), protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID}))
 		}
 		switch envelope.Type {
 		case "result":
 			if strings.TrimSpace(envelope.Result) != "" {
-				sendEvent(sink, protocol.NewLogEvent(sessionID, envelope.Result, "stdout"))
+				sendEvent(sink, protocol.ApplyRuntimeMeta(protocol.NewLogEvent(sessionID, envelope.Result, "stdout"), protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID}))
 			}
 		}
 	}
