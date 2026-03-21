@@ -6,9 +6,10 @@ import (
 )
 
 type ExecuteRequest struct {
-	Command string
-	CWD     string
-	Mode    runner.Mode
+	Command        string
+	CWD            string
+	Mode           runner.Mode
+	PermissionMode string
 	protocol.RuntimeMeta
 }
 

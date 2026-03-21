@@ -16,7 +16,7 @@ func NewLauncher() *Launcher {
 	return &Launcher{registry: Builtins()}
 }
 
-func (l *Launcher) BuildRequest(name, cwd, targetType, targetPath, targetTitle, targetDiff, contextID, contextTitle, targetText, targetStack string) (runtime.ExecuteRequest, error) {
+func (l *Launcher) BuildRequest(name, engine, cwd, targetType, targetPath, targetTitle, targetDiff, contextID, contextTitle, targetText, targetStack string) (runtime.ExecuteRequest, error) {
 	def, ok := l.registry[strings.TrimSpace(name)]
 	if !ok {
 		return runtime.ExecuteRequest{}, fmt.Errorf("unknown skill: %s", name)
@@ -39,8 +39,13 @@ func (l *Launcher) BuildRequest(name, cwd, targetType, targetPath, targetTitle, 
 		return runtime.ExecuteRequest{}, err
 	}
 
+	aiCmd := "claude"
+	if strings.TrimSpace(engine) == "gemini" {
+		aiCmd = "gemini"
+	}
+
 	return runtime.ExecuteRequest{
-		Command: "claude " + quotePrompt(prompt),
+		Command: aiCmd + " " + quotePrompt(prompt),
 		CWD:     cwd,
 		Mode:    runner.ModeExec,
 		RuntimeMeta: MetaForSkill(

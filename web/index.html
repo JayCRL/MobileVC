@@ -139,19 +139,28 @@
       </div>
       <div class="mt-3 flex flex-wrap items-center gap-2 text-sm text-zinc-300">
         <div class="flex items-center gap-2 rounded-full border border-zinc-800 px-3 py-1.5">
-          <span id="statusDot" class="h-2.5 w-2.5 rounded-full bg-red-500"></span>
+          <span id="statusDot" class="h-2.5 w-2.5 rounded-full bg-red-500 transition-colors duration-300"></span>
           <span id="statusText">未连接</span>
         </div>
         <div class="rounded-full border border-zinc-800 px-3 py-1.5 text-xs text-zinc-400">
           会话 <span id="sessionText">-</span>
         </div>
         <div id="runtimeMetaBadge" class="hidden rounded-full border border-violet-800 bg-violet-950/40 px-3 py-1.5 text-xs text-violet-200"></div>
+        <button id="resumeSessionBtn" class="hidden rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100 hover:bg-emerald-900/60">恢复会话</button>
         <button id="reconnectBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">重连</button>
       </div>
       <div class="mt-3 flex items-center gap-2">
         <span class="text-xs uppercase tracking-wide text-zinc-500">视图</span>
         <button id="structuredViewBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">结构化视图</button>
         <button id="rawTerminalViewBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">原始终端</button>
+        <span class="text-xs uppercase tracking-wide text-zinc-500 ml-2">权限</span>
+        <select id="permissionModeSelect" class="rounded-2xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 outline-none">
+          <option value="acceptEdits">自动接受编辑 (推荐)</option>
+          <option value="auto">全自动</option>
+          <option value="bypassPermissions">跳过全部权限</option>
+          <option value="plan">仅规划</option>
+          <option value="">默认 (需手动授权)</option>
+        </select>
       </div>
       <div id="stepPanel" class="mt-3 hidden rounded-2xl border border-zinc-800 bg-zinc-950/70 px-3 py-2">
         <div class="mb-2 flex items-center justify-between gap-3">
@@ -218,7 +227,7 @@
       </section>
 
       <form id="commandForm" class="flex gap-2">
-        <input id="commandInput" type="text" autocomplete="off" placeholder="例如：claude、python、bash，或直接输入命令" class="min-w-0 flex-1 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600" />
+        <input id="commandInput" type="text" autocomplete="off" placeholder="例如：gemini、claude、python，或直接输入命令" class="min-w-0 flex-1 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600" />
         <button id="runBtn" type="submit" class="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-700">运行</button>
       </form>
     </section>
@@ -274,12 +283,26 @@
     const contextSkillMenuItems = document.getElementById('contextSkillMenuItems');
     const appShell = document.getElementById('appShell');
     const bottomDock = document.getElementById('bottomDock');
+    const resumeSessionBtn = document.getElementById('resumeSessionBtn');
+    const permissionModeSelect = document.getElementById('permissionModeSelect');
+
+    // restore saved permission mode (default to acceptEdits)
+    permissionModeSelect.value = localStorage.getItem('vibe_permissionMode') || 'acceptEdits';
+    permissionModeSelect.addEventListener('change', () => {
+      localStorage.setItem('vibe_permissionMode', permissionModeSelect.value);
+    });
+
+    // dedup state for frontend events
+    const dedupState = {
+      lastLogMsg: '', lastLogStream: '', lastLogTime: 0,
+      lastStepMsg: '', lastStepStatus: ''
+    };
 
     const appState = {
       token: localStorage.getItem('vibe_token') || '',
       ws: null,
       connection: { connected: false, running: false },
-      session: { id: '', claudeInteractiveActive: false, lastPromptMessage: '' },
+      session: { id: '', claudeInteractiveActive: false, activeAI: 'claude', lastPromptMessage: '' },
       view: { mode: 'structured' },
       workspace: { cwd: '.', items: [], sidebarOpen: false, highlightedFilePath: '' },
       prompt: { awaitingInput: false, options: [], message: '' }
@@ -515,6 +538,10 @@
       sendInputBtn.disabled = !appState.connection.connected || !appState.prompt.awaitingInput;
       inputField.disabled = !appState.connection.connected || !appState.prompt.awaitingInput;
       sidebarRefreshBtn.disabled = !appState.connection.connected;
+      // resume button visibility
+      const savedResumeId = runtimeState.meta.resumeSessionId || localStorage.getItem('vibe_resumeSessionId') || '';
+      const showResume = savedResumeId && runtimeState.agentState === 'IDLE' && appState.connection.connected;
+      resumeSessionBtn.classList.toggle('hidden', !showResume);
     }
 
     function renderStepPanel() {
@@ -769,6 +796,14 @@
       scrollToBottom();
     }
 
+    function addRuntimeLog(label, detail, timestamp) {
+      const entry = { kind: 'system', message: `${label}${detail ? ': ' + detail : ''}`, timestamp };
+      projectionState.logEntries.push(entry);
+      if (appState.view.mode === 'structured') {
+        addSystemMessage(entry.message, timestamp);
+      }
+    }
+
     function copyText(text, trigger) {
       if (!text) return;
       const done = () => {
@@ -822,7 +857,8 @@
     function isTransientTerminalLine(text) {
       const normalized = String(text || '').replace(/^\r+/, '').trim();
       if (!normalized) return false;
-      return normalized.includes('◐ medium · /effort') || normalized.includes('? for shortcuts') || normalized.includes('Opus now defaults to 1M context') || normalized.includes('Try "') || /^[-─]{20,}$/.test(normalized);
+      // 仅过滤极简旋转图标，还原真实终端内容显示
+      return /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(normalized) && normalized.length === 1;
     }
 
     function trimTransientTerminalTail(text) {
@@ -840,13 +876,18 @@
       const current = String(existingText || '');
       const incoming = String(incomingText || '');
       if (!incoming) return current;
+      
+      // 只要有 \r 开头，就代表终端在执行“回车重写”动作
       if (incoming.startsWith('\r')) {
         const replacement = incoming.replace(/^\r+/, '');
         const lines = current.split('\n');
         if (!lines.length) return replacement;
+        
+        // 彻底解决“刷屏”：直接覆盖最后一行，这是 PTY 的物理行为
         lines[lines.length - 1] = replacement;
         return lines.join('\n');
       }
+      
       if (isTransientTerminalLine(incoming)) {
         const trimmedCurrent = trimTransientTerminalTail(current);
         return `${trimmedCurrent ? `${trimmedCurrent}\n` : ''}${incoming}`;
@@ -933,7 +974,7 @@
     }
 
     function getGlobalActions() {
-      return [
+      const actions = [
         quickButton('Ctrl+C 中断', () => sendInputRaw('\u0003', '快捷动作'), 'border-red-900 bg-red-950/40 text-red-100 hover:bg-red-900/50'),
         quickButton('清屏', () => {
           projectionState.logEntries = [];
@@ -943,6 +984,12 @@
         }, 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800'),
         quickButton('文件树', () => setSidebarOpen(true), 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800')
       ];
+      // 会话恢复快捷按钮
+      const resumeId = runtimeState.meta.resumeSessionId || localStorage.getItem('vibe_resumeSessionId') || '';
+      if (resumeId && runtimeState.agentState === 'IDLE' && appState.connection.connected) {
+        actions.push(quickButton('继续对话', () => resumeSession(resumeId), 'border-emerald-700 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60'));
+      }
+      return actions;
     }
 
     function getPromptReplyActions() {
@@ -1072,6 +1119,7 @@
       const base = {
         action: 'skill_exec',
         name,
+        engine: appState.session.activeAI,
         cwd: appState.workspace.cwd,
         targetType: contextType,
         targetPath: context.targetPath || context.path || runtimeState.meta.targetPath || '',
@@ -1107,6 +1155,7 @@
     function triggerContextSkill(name, contextType, context) {
       if (!context) return;
       const request = buildSkillRequest(name, contextType, context);
+      addRuntimeLog('触发 Skill', name);
       updateRuntimeMeta({
         source: 'skill-center',
         skillName: name,
@@ -1155,14 +1204,41 @@
           projectionState.logEntries.push({ kind: 'system', message: payload.msg || payload.state || 'session update', timestamp: payload.timestamp });
           renderLogPane();
           break;
-        case 'agent_state':
-          appState.session.claudeInteractiveActive = payload.command === 'claude' && payload.state !== 'IDLE';
+        case 'agent_state': {
+          const cmd = payload.command || '';
+          const isAI = cmd === 'claude' || cmd === 'gemini';
+          appState.session.claudeInteractiveActive = isAI && payload.state !== 'IDLE';
+          if (isAI) {
+            appState.session.activeAI = cmd;
+          }
+          // runtime log on state transitions
+          if (payload.state === 'IDLE' && runtimeState.agentState !== 'IDLE') {
+            const resumeId = payload.resumeSessionId || runtimeState.meta.resumeSessionId;
+            if (resumeId) {
+              localStorage.setItem('vibe_resumeSessionId', resumeId);
+            }
+            addRuntimeLog('命令完成', payload.msg || '', payload.timestamp);
+          } else if (payload.state === 'THINKING' && runtimeState.agentState === 'IDLE') {
+            addRuntimeLog('执行命令', cmd || '', payload.timestamp);
+          }
+          if (payload.resumeSessionId) {
+            localStorage.setItem('vibe_resumeSessionId', payload.resumeSessionId);
+          }
           applyAgentState(payload);
           break;
-        case 'log':
-          ingestLogMessage(payload.msg || '', payload.stream || 'stdout', payload.timestamp);
+        }
+        case 'log': {
+          const now = Date.now();
+          const msg = payload.msg || '';
+          const stream = payload.stream || 'stdout';
+          if (msg === dedupState.lastLogMsg && stream === dedupState.lastLogStream && (now - dedupState.lastLogTime) < 200) break;
+          dedupState.lastLogMsg = msg;
+          dedupState.lastLogStream = stream;
+          dedupState.lastLogTime = now;
+          ingestLogMessage(msg, stream, payload.timestamp);
           renderLogPane();
           break;
+        }
         case 'error': {
           const errorContext = buildErrorContextFromPayload(payload);
           projectionState.latestError = errorContext;
@@ -1181,6 +1257,11 @@
           if (runtimeState.agentState === 'WAIT_INPUT') inputCard.classList.remove('hidden');
           break;
         case 'step_update': {
+          const stepMsg = payload.msg || payload.message || '';
+          const stepStatus = payload.status || '';
+          if (stepMsg === dedupState.lastStepMsg && stepStatus === dedupState.lastStepStatus) break;
+          dedupState.lastStepMsg = stepMsg;
+          dedupState.lastStepStatus = stepStatus;
           const stepContext = buildStepContextFromPayload(payload);
           projectionState.currentStep = stepContext;
           projectionState.contexts.step = stepContext;
@@ -1258,7 +1339,7 @@
       appState.connection.running = false;
       runtimeState.agentState = 'IDLE';
       runtimeState.agentStateMessage = '';
-      runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '' };
+      runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: localStorage.getItem('vibe_resumeSessionId') || '', contextId: '', contextTitle: '', targetText: '' };
       projectionState.logEntries = [];
       projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
       projectionState.currentDiff = null;
@@ -1330,6 +1411,15 @@
       inputField.focus();
     }
 
+    function resumeSession(sessionId) {
+      if (!sessionId || !appState.connection.connected) return;
+      addRuntimeLog('恢复会话', sessionId);
+      updateRuntimeMeta({ source: 'command', resumeSessionId: sessionId });
+      sendJson({ action: 'exec', mode: 'pty', cmd: `claude --resume ${sessionId}`, cwd: appState.workspace.cwd, source: 'command', permissionMode: permissionModeSelect.value || undefined });
+      addUserBubble(`恢复会话 ${sessionId}`, '恢复');
+      updateStatus();
+    }
+
     function runCommand(command) {
       const cmd = (command || '').trim();
       if (!cmd) return;
@@ -1339,7 +1429,7 @@
         return;
       }
       updateRuntimeMeta({ source: 'command', skillName: '', resultView: '', targetType: '', targetPath: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '' });
-      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: appState.workspace.cwd, source: 'command' })) return;
+      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: appState.workspace.cwd, source: 'command', permissionMode: permissionModeSelect.value || undefined })) return;
       addUserBubble(`${cmd}\n@ ${appState.workspace.cwd || '.'}`, '命令');
       updateStatus();
       commandInput.value = '';
@@ -1364,6 +1454,10 @@
     rawTerminalViewBtn.addEventListener('click', () => setViewMode('raw-terminal'));
     reconnectBtn.addEventListener('click', () => connect(false));
     retokenBtn.addEventListener('click', () => connect(true));
+    resumeSessionBtn.addEventListener('click', () => {
+      const resumeId = runtimeState.meta.resumeSessionId || localStorage.getItem('vibe_resumeSessionId') || '';
+      if (resumeId) resumeSession(resumeId);
+    });
     openSidebarBtn.addEventListener('click', () => setSidebarOpen(true));
     closeSidebarBtn.addEventListener('click', () => setSidebarOpen(false));
     copyDiffBtn.addEventListener('click', () => copyText(projectionState.currentDiff?.diff || '', copyDiffBtn));

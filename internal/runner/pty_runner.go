@@ -34,6 +34,7 @@ type PtyRunner struct {
 	pendingCWD      string
 	sink            EventSink
 	claudeSessionID string
+	permissionMode  string
 }
 
 type claudeShellOnceWriter struct {
@@ -96,11 +97,12 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.closed = false
 		r.processDone = make(chan struct{})
 		r.processErr = nil
+		r.permissionMode = req.PermissionMode
 		r.mu.Unlock()
 		defer r.clear()
 
 		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
+		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "AI 会话已就绪，可继续输入", nil))
 
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
@@ -192,9 +194,17 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
 		return errors.New("no active pty session")
 	}
 
+	// 关键修复：对于交互式 AI 工具，确保发送 \r\n 触发执行
+	finalData := data
+	if isAICommandName(req.Command) && len(data) > 0 && data[len(data)-1] == '\n' {
+		if len(data) == 1 || data[len(data)-2] != '\r' {
+			finalData = append(data[:len(data)-1], '\r', '\n')
+		}
+	}
+
 	writeDone := make(chan error, 1)
 	go func() {
-		_, err := writer.Write(data)
+		_, err := writer.Write(finalData)
 		writeDone <- err
 	}()
 
@@ -272,7 +282,7 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	defer stdin.Close()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
+	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "AI 会话已就绪，可继续输入", nil))
 
 	var readWG sync.WaitGroup
 	readWG.Add(2)
@@ -312,6 +322,14 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 		if writer == nil || closed {
 			return errors.New("no active pty session")
 		}
+		// Avoid infinite recursion: if writer is still a claudeShellOnceWriter,
+		// treat this as a new lazy-start cycle instead of calling Write again.
+		if _, ok := writer.(*claudeShellOnceWriter); ok {
+			r.mu.Lock()
+			r.lazyStart = true
+			r.mu.Unlock()
+			return r.startClaudeStreamOnFirstInput(ctx, req, cwd, sink, firstInput)
+		}
 		_, err := writer.Write(firstInput)
 		return err
 	}
@@ -325,9 +343,10 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 
 	r.mu.Lock()
 	resumeSessionID := r.claudeSessionID
+	permMode := r.permissionMode
 	r.mu.Unlock()
 
-	cmd := newClaudePromptCommand(ctx, req.Command, text, resumeSessionID)
+	cmd := newClaudePromptCommand(ctx, req.Command, text, resumeSessionID, permMode)
 	cmd.Dir = cwd
 
 	stdout, err := cmd.StdoutPipe()
@@ -383,7 +402,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 		r.processDone = make(chan struct{})
 		r.processErr = nil
 		r.mu.Unlock()
-		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
+		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "AI 会话已就绪，可继续输入", nil))
 		r.finishLazyProcess(nil, sink, req.SessionID)
 	}()
 
@@ -476,9 +495,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		}
 		if envelope.SessionID != "" {
 			r.mu.Lock()
+			changed := r.claudeSessionID != envelope.SessionID
 			r.claudeSessionID = envelope.SessionID
 			r.mu.Unlock()
-			sendEvent(sink, protocol.ApplyRuntimeMeta(protocol.NewSessionStateEvent(sessionID, string(session.StateActive), "Claude 会话已续接"), protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID}))
+			if changed {
+				sendEvent(sink, protocol.ApplyRuntimeMeta(protocol.NewSessionStateEvent(sessionID, string(session.StateActive), "AI 会话已续接"), protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID}))
+			}
 		}
 		switch envelope.Type {
 		case "result":
@@ -563,15 +585,40 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 
 		n, err := reader.Read(buf)
 		if n > 0 {
-			chunk := adapter.StripANSI(string(buf[:n]))
+			rawChunk := string(buf[:n])
+			chunk := adapter.StripANSI(rawChunk)
+			
+			// 如果 chunk 以 \r 开头，代表它是对当前行的重写
+			// 我们需要保留这个 \r 给前端
+			if strings.HasPrefix(rawChunk, "\r") && !strings.HasPrefix(chunk, "\r") {
+				chunk = "\r" + chunk
+			}
+			
 			pending += chunk
 
 			for {
-				idx := strings.IndexByte(pending, '\n')
+				// 同时查找 \n 和 \r
+				idxN := strings.IndexByte(pending, '\n')
+				idxR := strings.IndexByte(pending, '\r')
+				
+				idx := -1
+				isR := false
+				if idxN >= 0 && (idxR < 0 || idxN < idxR) {
+					idx = idxN
+				} else if idxR >= 0 {
+					idx = idxR
+					isR = true
+				}
+
 				if idx < 0 {
 					break
 				}
-				line := strings.TrimSuffix(pending[:idx], "\r")
+				
+				line := pending[:idx]
+				if isR {
+					line = "\r" + line // 给前端打标记，这是覆盖行
+				}
+				
 				for _, event := range parser.ParseLine(line, sessionID, stream) {
 					sendEvent(sink, event)
 				}
@@ -626,21 +673,23 @@ func isPromptText(text string) bool {
 		return false
 	}
 
-	for _, suffix := range []string{"[y/N]", "[Y/n]", "(y/n)", "(Y/n)"} {
+	for _, suffix := range []string{"[y/N]", "[Y/n]", "(y/n)", "(Y/n)", " (y/n)"} {
 		if strings.Contains(trimmed, suffix) || strings.HasSuffix(trimmed, suffix) {
 			return true
 		}
 	}
 
 	lower := strings.ToLower(trimmed)
+	// Gemini CLI 使用 ">" 作为提示符
+	if trimmed == ">" || strings.HasSuffix(trimmed, " >") || strings.HasSuffix(trimmed, "\n>") {
+		return true
+	}
+
 	if strings.HasSuffix(trimmed, "?") || strings.HasSuffix(trimmed, ":") || strings.HasSuffix(trimmed, ">") {
-		for _, keyword := range []string{"continue", "confirm", "password", "input", "select", "proceed", "approve", "yes/no"} {
+		for _, keyword := range []string{"continue", "confirm", "password", "input", "select", "proceed", "approve", "yes/no", "message"} {
 			if strings.Contains(lower, keyword) {
 				return true
 			}
-		}
-		if strings.HasSuffix(trimmed, ">") {
-			return true
 		}
 	}
 

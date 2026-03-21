@@ -40,9 +40,10 @@ type ClientEvent struct {
 
 type ExecRequestEvent struct {
 	ClientEvent
-	Command string `json:"cmd"`
-	CWD     string `json:"cwd,omitempty"`
-	Mode    string `json:"mode,omitempty"`
+	Command        string `json:"cmd"`
+	CWD            string `json:"cwd,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	PermissionMode string `json:"permissionMode,omitempty"`
 	RuntimeMeta
 }
 

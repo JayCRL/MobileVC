@@ -20,10 +20,11 @@ const (
 var ErrInputNotSupported = errors.New("input not supported")
 
 type ExecRequest struct {
-	Command   string
-	CWD       string
-	SessionID string
-	Mode      Mode
+	Command        string
+	CWD            string
+	SessionID      string
+	Mode           Mode
+	PermissionMode string
 }
 
 type EventSink func(event any)
@@ -67,17 +68,17 @@ func newShellCommand(ctx context.Context, command string, mode Mode) *exec.Cmd {
 				wrappedParts = append(wrappedParts, shellEscapeForBash(arg))
 			}
 			cmd := exec.CommandContext(ctx, spec.gitBash, "-lc", strings.Join(wrappedParts, " "))
-			cmd.Env = shellEnvironment(spec)
+			cmd.Env = shellEnvironment(spec, command)
 			return cmd
 		}
 		args := append([]string{cliEntry}, claudeCommandArgs(command)...)
 		cmd := exec.CommandContext(ctx, nodeEntry, args...)
-		cmd.Env = shellEnvironment(spec)
+		cmd.Env = shellEnvironment(spec, command)
 		return cmd
 	}
 	preparedCommand := prepareShellCommand(command, spec, mode)
 	cmd := exec.CommandContext(ctx, spec.path, append(spec.args, preparedCommand)...)
-	cmd.Env = shellEnvironment(spec)
+	cmd.Env = shellEnvironment(spec, command)
 	return cmd
 }
 
@@ -85,11 +86,11 @@ func newClaudeStreamCommand(ctx context.Context, command string) *exec.Cmd {
 	spec := getShellSpec()
 	preparedCommand := buildClaudeStreamJSONCommand(command)
 	cmd := exec.CommandContext(ctx, spec.path, append(spec.args, preparedCommand)...)
-	cmd.Env = shellEnvironment(spec)
+	cmd.Env = shellEnvironment(spec, command)
 	return cmd
 }
 
-func newClaudePromptCommand(ctx context.Context, command string, prompt string, resumeSessionID string) *exec.Cmd {
+func newClaudePromptCommand(ctx context.Context, command string, prompt string, resumeSessionID string, permissionMode string) *exec.Cmd {
 	spec := getShellSpec()
 	if spec.claudeNode != "" && spec.claudeCLI != "" {
 		nodeEntry := spec.claudeNode
@@ -110,14 +111,27 @@ func newClaudePromptCommand(ctx context.Context, command string, prompt string, 
 		if resumeSessionID != "" {
 			args = append(args, "--resume", resumeSessionID)
 		}
-		args = append(args, "--print", "--verbose", "--output-format", "stream-json", prompt)
+		args = append(args, "--print", "--verbose", "--output-format", "stream-json")
+		args = appendPermissionMode(args, permissionMode)
+		args = append(args, prompt)
 		cmd := exec.CommandContext(ctx, nodeEntry, args...)
-		cmd.Env = shellEnvironment(spec)
+		cmd.Env = shellEnvironment(spec, command)
 		return cmd
 	}
 	preparedCommand := buildClaudePromptCommand(command, prompt, resumeSessionID)
+	// permission-mode must be before prompt (positional arg)
+	idx := strings.LastIndex(preparedCommand, shellEscapeForBash(prompt))
+	if idx > 0 && permissionMode != "" {
+		before := preparedCommand[:idx]
+		after := preparedCommand[idx:]
+		if !strings.Contains(strings.ToLower(before), "--permission-mode") {
+			preparedCommand = before + "--permission-mode " + permissionMode + " " + after
+		}
+	} else {
+		preparedCommand = appendPermissionModeToCommand(preparedCommand, permissionMode)
+	}
 	cmd := exec.CommandContext(ctx, spec.path, append(spec.args, preparedCommand)...)
-	cmd.Env = shellEnvironment(spec)
+	cmd.Env = shellEnvironment(spec, command)
 	return cmd
 }
 
@@ -133,7 +147,7 @@ func prepareShellCommand(command string, spec shellSpec, mode Mode) string {
 }
 
 func shouldWrapWithWinPTY(command string) bool {
-	return isClaudeCommandName(command)
+	return isAICommandName(command)
 }
 
 func isClaudeCommandName(command string) bool {
@@ -141,12 +155,27 @@ func isClaudeCommandName(command string) bool {
 	if trimmed == "" {
 		return false
 	}
-	first := strings.Fields(trimmed)
-	if len(first) == 0 {
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
 		return false
 	}
-	head := strings.ToLower(first[0])
+	head := strings.ToLower(fields[0])
 	return head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe" || head == "claude.cmd" || head == "claude.ps1"
+}
+
+func isAICommandName(command string) bool {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		return false
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return false
+	}
+	head := strings.ToLower(fields[0])
+	isClaude := head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe" || head == "claude.cmd" || head == "claude.ps1"
+	isGemini := head == "gemini" || strings.HasSuffix(head, "/gemini") || strings.HasSuffix(head, `\\gemini`) || head == "gemini.exe" || head == "gemini.cmd" || head == "gemini.ps1"
+	return isClaude || isGemini
 }
 
 func claudeCommandArgs(command string) []string {
@@ -200,6 +229,28 @@ func buildClaudePromptCommand(command string, prompt string, resumeSessionID str
 	}
 	parts = append(parts, shellEscapeForBash(prompt))
 	return strings.Join(parts, " ")
+}
+
+func appendPermissionMode(args []string, permissionMode string) []string {
+	if permissionMode == "" {
+		return args
+	}
+	for _, a := range args {
+		if a == "--permission-mode" {
+			return args
+		}
+	}
+	return append(args, "--permission-mode", permissionMode)
+}
+
+func appendPermissionModeToCommand(command string, permissionMode string) string {
+	if permissionMode == "" {
+		return command
+	}
+	if strings.Contains(strings.ToLower(command), "--permission-mode") {
+		return command
+	}
+	return command + " --permission-mode " + permissionMode
 }
 
 func shellEscapeForBash(path string) string {
@@ -269,12 +320,13 @@ func getShellSpec() shellSpec {
 	return shellSpec{path: "sh", args: []string{"-lc"}}
 }
 
-func shellEnvironment(spec shellSpec) []string {
+func shellEnvironment(spec shellSpec, command string) []string {
 	env := os.Environ()
 	if runtime.GOOS == "windows" && spec.gitBash != "" {
 		env = upsertEnv(env, "CLAUDE_CODE_GIT_BASH_PATH", spec.gitBash)
 	}
-	if runtime.GOOS == "windows" && spec.claudeCLI != "" {
+	// 仅对真正的 claude 命令注入 FORCE_TTY 相关的变量
+	if runtime.GOOS == "windows" && spec.claudeCLI != "" && isClaudeCommandName(command) {
 		env = upsertEnv(env, "MOBILEVC_FORCE_TTY", "1")
 	}
 	env = upsertEnv(env, "FORCE_COLOR", "1")

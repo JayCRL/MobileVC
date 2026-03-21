@@ -157,9 +157,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			err = runtimeSvc.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
-				Command: reqEvent.Command,
-				CWD:     reqEvent.CWD,
-				Mode:    mode,
+				Command:        reqEvent.Command,
+				CWD:            reqEvent.CWD,
+				Mode:           mode,
+				PermissionMode: reqEvent.PermissionMode,
 				RuntimeMeta: protocol.RuntimeMeta{
 					Source:       fallback(reqEvent.Source, "command"),
 					SkillName:    reqEvent.SkillName,
@@ -204,6 +205,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			execReq, err := h.SkillLauncher.BuildRequest(
 				skillEvent.Name,
+				skillEvent.Engine,
 				fallback(skillEvent.CWD, "."),
 				skillEvent.TargetType,
 				skillEvent.TargetPath,

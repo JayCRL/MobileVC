@@ -99,10 +99,11 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 	}
 	go func() {
 		err := selected.Run(ctx, runner.ExecRequest{
-			SessionID: sessionID,
-			Command:   req.Command,
-			CWD:       req.CWD,
-			Mode:      req.Mode,
+			SessionID:      sessionID,
+			Command:        req.Command,
+			CWD:            req.CWD,
+			Mode:           req.Mode,
+			PermissionMode: req.PermissionMode,
 		}, func(event any) {
 			mappedEvent := protocol.ApplyRuntimeMeta(event, req.RuntimeMeta)
 			emit(mappedEvent)

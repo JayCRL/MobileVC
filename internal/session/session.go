@@ -3,6 +3,7 @@ package session
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"mobilevc/internal/protocol"
 )
@@ -38,6 +39,13 @@ type Controller struct {
 	lastTool       string
 	resumeSession  string
 	activeMeta     protocol.RuntimeMeta
+
+	// dedup fields
+	lastLogMsg    string
+	lastLogTime   time.Time
+	lastStepMsg   string
+	lastStepStatus string
+	lastPromptMsg string
 }
 
 func NewController(sessionID string) *Controller {
@@ -72,8 +80,13 @@ func (c *Controller) OnExecStart(command string, meta protocol.RuntimeMeta) []an
 func (c *Controller) OnRunnerEvent(event any) []any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	now := time.Now()
 	switch e := event.(type) {
 	case protocol.PromptRequestEvent:
+		if e.Message == c.lastPromptMsg && c.currentState == ControllerStateWaitInput {
+			return nil
+		}
+		c.lastPromptMsg = e.Message
 		c.currentState = ControllerStateWaitInput
 		message := e.Message
 		if message == "" {
@@ -84,6 +97,11 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		}
 		return []any{c.newAgentStateEvent(message, true)}
 	case protocol.StepUpdateEvent:
+		if e.Message == c.lastStepMsg && (e.Status == c.lastStepStatus || e.Status == "") {
+			return nil
+		}
+		c.lastStepMsg = e.Message
+		c.lastStepStatus = e.Status
 		if e.Message != "" {
 			c.lastStep = e.Message
 		}
@@ -108,9 +126,15 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		if e.ResumeSessionID != "" {
 			c.resumeSession = e.ResumeSessionID
 		}
-		if isClaudeCommand(c.currentCommand) && c.currentState == ControllerStateThinking && strings.TrimSpace(e.Message) != "" {
+		// dedup: skip identical log within 300ms
+		if e.Message == c.lastLogMsg && now.Sub(c.lastLogTime) < 300*time.Millisecond {
+			return nil
+		}
+		c.lastLogMsg = e.Message
+		c.lastLogTime = now
+		if isAICommand(c.currentCommand) && c.currentState == ControllerStateThinking && isAIPrompt(e.Message) {
 			c.currentState = ControllerStateWaitInput
-			return []any{c.newAgentStateEvent("Claude 会话已就绪，可继续输入", true)}
+			return []any{c.newAgentStateEvent("AI 会话已就绪，可继续输入", true)}
 		}
 		return nil
 	case protocol.SessionStateEvent:
@@ -140,10 +164,18 @@ func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
 	c.currentCommand = ""
 	c.lastStep = ""
 	c.lastTool = ""
+	c.lastLogMsg = ""
+	c.lastStepMsg = ""
+	c.lastStepStatus = ""
+	c.lastPromptMsg = ""
 	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" {
 		c.activeMeta = protocol.MergeRuntimeMeta(c.activeMeta, meta)
 	}
-	return []any{c.newAgentStateEvent("空闲", false)}
+	message := "空闲"
+	if c.resumeSession != "" {
+		message = "会话已暂停，可继续对话"
+	}
+	return []any{c.newAgentStateEvent(message, false)}
 }
 
 func (c *Controller) newAgentStateEvent(message string, awaitInput bool) protocol.AgentStateEvent {
@@ -162,11 +194,25 @@ func extractResumeSessionID(command string, fallback string) string {
 	return fallback
 }
 
-func isClaudeCommand(command string) bool {
+func isAIPrompt(message string) bool {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return false
+	}
+	// 匹配 Gemini 的多种提示符状态
+	return strings.Contains(trimmed, ">   Type your message") || 
+	       trimmed == ">" || 
+	       strings.HasSuffix(trimmed, " >") || 
+	       strings.HasSuffix(trimmed, "\n>")
+}
+
+func isAICommand(command string) bool {
 	fields := strings.Fields(strings.TrimSpace(command))
 	if len(fields) == 0 {
 		return false
 	}
 	head := strings.ToLower(fields[0])
-	return head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe"
+	isClaude := head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe"
+	isGemini := head == "gemini" || strings.HasSuffix(head, "/gemini") || strings.HasSuffix(head, `\\gemini`) || head == "gemini.exe"
+	return isClaude || isGemini
 }
