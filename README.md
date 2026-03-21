@@ -64,23 +64,25 @@ It is designed for quick mobile access to trusted local or LAN development envir
 - Supports Claude Code and Gemini session handling.
 - Includes structured stream processing, multi-turn continuation, `--resume` session reuse, and permission mode for AI tool approvals.
 - Auto-detects AI prompt states and transitions the session controller accordingly.
+- Real-time activity panel showing current tool name, target file, elapsed time, and estimated remaining time.
+- Session completion summary with duration, turn count, and cost statistics.
+- Dynamic permission mode switching during an active session.
 - 支持 Claude Code 与 Gemini 的会话处理。
 - 包含结构化流处理、多轮连续对话、`--resume` 会话复用，以及 AI 工具审批的 permission mode。
 - 自动识别 AI 提示符状态，驱动会话控制器状态切换。
+- 实时活动面板，展示当前工具名称、目标文件、已用时间与预计剩余时间。
+- 会话完成摘要，包含耗时、轮数与费用统计。
+- 支持在活跃会话中动态切换 permission mode。
 
 ### 7. Skill Center | 技能中心
 - Built-in skills: `review`, `simplify`, `debug`, `security-review`, `explain-step`, `next-step`.
 - Invoke AI-powered analysis on diffs, steps, or errors from the frontend.
 - Extensible skill registry with structured prompt building and result routing.
+- Skills can be sent as input to an already-running AI session, enabling in-session skill invocation.
 - 内置技能：`review`、`simplify`、`debug`、`security-review`、`explain-step`、`next-step`。
 - 从前端对 diff、step 或 error 发起 AI 驱动的分析。
 - 可扩展的技能注册表，支持结构化 prompt 构建与结果路由。
-
-### 8. Step and diff overlays | Step 与 Diff 增强层
-- Display step updates in the top panel.
-- Surface file diffs in a modal overlay.
-- 在顶部展示 step 更新。
-- 通过弹窗展示文件 diff。
+- 技能可作为输入发送到已运行的 AI 会话中，实现会话内技能调用。
 
 ### 8. Step and diff overlays | Step 与 Diff 增强层
 - Display step updates in the top panel.
@@ -318,6 +320,11 @@ gofmt -w ./cmd/server/main.go ./internal/protocol/event.go ./internal/ws/handler
 - Skill Center with built-in skills: review, simplify, debug, security-review, explain-step, next-step
 - Session controller state machine with AI prompt detection and event deduplication
 - RuntimeMeta propagation for skill context and result routing
+- Real-time activity panel with tool name, target, elapsed time, and ETA
+- Claude stream JSON parsing for assistant/user/result messages with tool-use step tracking
+- Session completion summary (duration, turns, cost)
+- Dynamic permission mode switching during active sessions
+- In-session skill invocation: skills sent as input to running AI sessions
 - 面向手机的本地 CLI Web 控制台
 - `exec` 与 `pty` 双执行模式，支持 permission mode
 - 工作区文件树与 cwd 切换
@@ -329,6 +336,11 @@ gofmt -w ./cmd/server/main.go ./internal/protocol/event.go ./internal/ws/handler
 - 技能中心，内置技能：review、simplify、debug、security-review、explain-step、next-step
 - 会话控制器状态机，支持 AI 提示符检测与事件去重
 - RuntimeMeta 全链路传播，用于技能上下文与结果路由
+- 实时活动面板，显示工具名称、目标文件、已用时间与预计剩余时间
+- Claude 流式 JSON 解析，支持 assistant/user/result 消息与工具调用步骤追踪
+- 会话完成摘要（耗时、轮数、费用）
+- 活跃会话中动态切换 permission mode
+- 会话内技能调用：技能作为输入发送到运行中的 AI 会话
 
 ### Planned / not fully landed yet | 规划中 / 尚未完全落地
 - Persistent session storage

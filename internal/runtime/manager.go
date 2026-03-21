@@ -49,6 +49,18 @@ func (m *manager) finish(run runner.Runner) {
 	}
 }
 
+func (m *manager) isRunning() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.activeRunner != nil
+}
+
+func (m *manager) updateMeta(fn func(*protocol.RuntimeMeta)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	fn(&m.activeMeta)
+}
+
 func (m *manager) closeActive() {
 	m.mu.Lock()
 	current := m.activeRunner
@@ -137,6 +149,23 @@ func (s *Service) SendInput(ctx context.Context, sessionID string, req InputRequ
 		emit(event)
 	}
 	return nil
+}
+
+func (s *Service) IsRunning() bool {
+	return s.manager.isRunning()
+}
+
+func (s *Service) UpdatePermissionMode(mode string) {
+	s.manager.updateMeta(func(m *protocol.RuntimeMeta) {
+		// permissionMode is not in RuntimeMeta; update via runner
+	})
+	r, _, _ := s.manager.current()
+	if r == nil {
+		return
+	}
+	if pr, ok := r.(interface{ SetPermissionMode(string) }); ok {
+		pr.SetPermissionMode(mode)
+	}
 }
 
 func (s *Service) newRunner(mode runner.Mode) runner.Runner {

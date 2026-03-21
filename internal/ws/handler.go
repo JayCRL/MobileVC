@@ -186,6 +186,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(sessionID, "input data is required", ""))
 				continue
 			}
+			// update permission mode if provided
+			if pm := inputEvent.PermissionMode; pm != "" {
+				runtimeSvc.UpdatePermissionMode(pm)
+			}
 			if err := runtimeSvc.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: inputEvent.Data}, emit); err != nil {
 				message := err.Error()
 				if errors.Is(err, runner.ErrInputNotSupported) {
@@ -218,6 +222,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			)
 			if err != nil {
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+				continue
+			}
+			// If a command is already running (e.g. Claude interactive session),
+			// send the skill prompt as input instead of starting a new command.
+			if runtimeSvc.IsRunning() {
+				prompt := h.SkillLauncher.ExtractPrompt(execReq.Command)
+				if prompt != "" {
+					if sendErr := runtimeSvc.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: prompt + "\n"}, emit); sendErr != nil {
+						emit(protocol.NewErrorEvent(sessionID, sendErr.Error(), ""))
+					}
+				} else {
+					emit(protocol.NewErrorEvent(sessionID, "无法在当前会话中执行 skill：prompt 为空", ""))
+				}
 				continue
 			}
 			if err := runtimeSvc.Execute(ctx, sessionID, execReq, emit); err != nil {

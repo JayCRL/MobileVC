@@ -49,7 +49,8 @@ type ExecRequestEvent struct {
 
 type InputRequestEvent struct {
 	ClientEvent
-	Data string `json:"data"`
+	Data           string `json:"data"`
+	PermissionMode string `json:"permissionMode,omitempty"`
 }
 
 type SkillRequestEvent struct {

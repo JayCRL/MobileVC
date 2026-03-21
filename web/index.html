@@ -212,6 +212,15 @@
 
   <div id="bottomDock" class="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-4xl px-3 pb-3 sm:px-4">
     <section class="rounded-3xl border border-zinc-800 bg-zinc-900/92 p-3 shadow-2xl backdrop-blur">
+      <div id="activitySummary" class="hidden mb-2 flex items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
+        <span id="activityIcon" class="text-base">🤖</span>
+        <span id="activityTool" class="font-medium text-zinc-100"></span>
+        <span id="activityTarget" class="truncate text-zinc-400"></span>
+        <span class="ml-auto flex items-center gap-2 shrink-0">
+          <span id="activityTimer" class="tabular-nums text-zinc-400"></span>
+          <span id="activityEstimate" class="text-zinc-500"></span>
+        </span>
+      </div>
       <div id="actionPanel" class="action-scrollbar mb-3 flex gap-2 overflow-x-auto pb-1"></div>
 
       <section id="inputCard" class="mb-3 hidden rounded-2xl border border-blue-900/70 bg-blue-950/20 p-3">
@@ -297,6 +306,126 @@
       lastLogMsg: '', lastLogStream: '', lastLogTime: 0,
       lastStepMsg: '', lastStepStatus: ''
     };
+
+    const activitySummary = document.getElementById('activitySummary');
+    const activityIcon = document.getElementById('activityIcon');
+    const activityTool = document.getElementById('activityTool');
+    const activityTarget = document.getElementById('activityTarget');
+    const activityTimer = document.getElementById('activityTimer');
+    const activityEstimate = document.getElementById('activityEstimate');
+
+    const claudeActivity = {
+      active: false,
+      startTime: 0,
+      turnStartTime: 0,
+      turns: [],
+      currentTool: '',
+      currentTarget: '',
+      totalCost: 0,
+      timerInterval: null,
+    };
+
+    const toolIcons = {
+      Read: '\u{1F4D6}', Edit: '\u{270F}\u{FE0F}', Write: '\u{1F4DD}',
+      Bash: '\u{1F4BB}', Grep: '\u{1F50D}', Glob: '\u{1F4C1}',
+      WebFetch: '\u{1F310}', WebSearch: '\u{1F310}',
+      TaskCreate: '\u{1F4CB}', TaskUpdate: '\u{1F4CB}',
+      NotebookEdit: '\u{1F4D3}', Agent: '\u{1F916}',
+    };
+
+    function formatDuration(ms) {
+      if (ms < 1000) return '<1s';
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      return m + 'm' + (s % 60) + 's';
+    }
+
+    function getAvgTurnDuration() {
+      const completed = claudeActivity.turns.filter(t => t.endMs > 0);
+      if (!completed.length) return 0;
+      const total = completed.reduce((sum, t) => sum + (t.endMs - t.startMs), 0);
+      return total / completed.length;
+    }
+
+    function startActivityTimer() {
+      stopActivityTimer();
+      claudeActivity.active = true;
+      claudeActivity.startTime = Date.now();
+      claudeActivity.turns = [];
+      claudeActivity.timerInterval = setInterval(updateActivityDisplay, 1000);
+      updateActivityDisplay();
+    }
+
+    function stopActivityTimer() {
+      claudeActivity.active = false;
+      if (claudeActivity.timerInterval) {
+        clearInterval(claudeActivity.timerInterval);
+        claudeActivity.timerInterval = null;
+      }
+    }
+
+    function onToolStart(toolName, target) {
+      claudeActivity.currentTool = toolName;
+      claudeActivity.currentTarget = target || '';
+      claudeActivity.turnStartTime = Date.now();
+      claudeActivity.turns.push({ tool: toolName, target, startMs: Date.now(), endMs: 0 });
+      if (!claudeActivity.active) startActivityTimer();
+      updateActivityDisplay();
+    }
+
+    function onToolDone(target) {
+      const last = claudeActivity.turns[claudeActivity.turns.length - 1];
+      if (last && last.endMs === 0) {
+        last.endMs = Date.now();
+      }
+      claudeActivity.currentTool = '';
+      claudeActivity.currentTarget = '';
+      updateActivityDisplay();
+    }
+
+    function onClaudeFinish(summaryMsg) {
+      stopActivityTimer();
+      claudeActivity.currentTool = '';
+      claudeActivity.currentTarget = '';
+      if (summaryMsg) {
+        activitySummary.classList.remove('hidden');
+        activityIcon.textContent = '\u{2705}';
+        activityTool.textContent = '\u{5B8C}\u{6210}';
+        activityTarget.textContent = '';
+        const elapsed = claudeActivity.startTime ? Date.now() - claudeActivity.startTime : 0;
+        activityTimer.textContent = elapsed ? formatDuration(elapsed) : '';
+        activityEstimate.textContent = summaryMsg;
+        syncBottomSpacing();
+        setTimeout(() => { activitySummary.classList.add('hidden'); syncBottomSpacing(); }, 8000);
+      } else {
+        activitySummary.classList.add('hidden');
+      }
+    }
+
+    function updateActivityDisplay() {
+      if (!claudeActivity.active && !claudeActivity.currentTool) {
+        activitySummary.classList.add('hidden');
+        return;
+      }
+      activitySummary.classList.remove('hidden');
+      const tool = claudeActivity.currentTool;
+      activityIcon.textContent = (tool && toolIcons[tool]) || '\u{1F916}';
+      activityTool.textContent = tool || '\u{601D}\u{8003}\u{4E2D}';
+      const target = claudeActivity.currentTarget;
+      activityTarget.textContent = target ? '\u{2192} ' + (target.length > 40 ? '...' + target.slice(-37) : target) : '';
+      const elapsed = claudeActivity.startTime ? Date.now() - claudeActivity.startTime : 0;
+      activityTimer.textContent = '\u{5DF2}\u{7528} ' + formatDuration(elapsed);
+      const avg = getAvgTurnDuration();
+      if (avg > 0 && tool) {
+        const turnElapsed = Date.now() - claudeActivity.turnStartTime;
+        const remaining = Math.max(0, avg - turnElapsed);
+        activityEstimate.textContent = '\u{00B7} \u{9884}\u{8BA1} ~' + formatDuration(remaining);
+      } else {
+        activityEstimate.textContent = '';
+      }
+      syncBottomSpacing();
+    }
 
     const appState = {
       token: localStorage.getItem('vibe_token') || '',
@@ -1211,15 +1340,17 @@
           if (isAI) {
             appState.session.activeAI = cmd;
           }
-          // runtime log on state transitions
+          // activity tracking
           if (payload.state === 'IDLE' && runtimeState.agentState !== 'IDLE') {
             const resumeId = payload.resumeSessionId || runtimeState.meta.resumeSessionId;
             if (resumeId) {
               localStorage.setItem('vibe_resumeSessionId', resumeId);
             }
             addRuntimeLog('命令完成', payload.msg || '', payload.timestamp);
+            onClaudeFinish(payload.msg || '');
           } else if (payload.state === 'THINKING' && runtimeState.agentState === 'IDLE') {
             addRuntimeLog('执行命令', cmd || '', payload.timestamp);
+            if (isAI) startActivityTimer();
           }
           if (payload.resumeSessionId) {
             localStorage.setItem('vibe_resumeSessionId', payload.resumeSessionId);
@@ -1271,6 +1402,12 @@
             renderFileList();
           }
           setActiveContext('step');
+          // Claude activity tracking
+          if (stepStatus === 'done') {
+            onToolDone(stepContext.target || stepContext.targetPath);
+          } else {
+            onToolStart(stepMsg, stepContext.target || stepContext.targetPath);
+          }
           break;
         }
         case 'file_diff': {
@@ -1279,6 +1416,14 @@
           projectionState.contexts.diff = diffContext;
           setActiveContext('diff');
           openDiffModal(diffContext);
+          break;
+        }
+        case 'progress': {
+          const msg = payload.msg || '';
+          if (msg) addRuntimeLog('统计', msg, payload.timestamp);
+          if (payload.percent === 100) {
+            onClaudeFinish(msg);
+          }
           break;
         }
         case 'fs_list_result':
@@ -1400,7 +1545,7 @@
 
     function sendInputRaw(raw, label = '输入') {
       if (!raw) return;
-      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n` })) return;
+      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n`, permissionMode: permissionModeSelect.value || undefined })) return;
       addUserBubble(raw === '\u0003' ? 'Ctrl+C' : raw.replace(/\n$/, ''), label);
       if (appState.session.claudeInteractiveActive) {
         runtimeState.agentState = 'THINKING';

@@ -145,3 +145,41 @@ func quotePrompt(prompt string) string {
 	escaped = strings.ReplaceAll(escaped, "\n", `\n`)
 	return `"` + escaped + `"`
 }
+
+// ExtractPrompt extracts the prompt text from a command string built by BuildRequest.
+// The command is in the form: `claude "escaped prompt"` — we extract and unescape the quoted part.
+func (l *Launcher) ExtractPrompt(command string) string {
+	trimmed := strings.TrimSpace(command)
+	// Find the first quoted segment
+	idx := strings.IndexByte(trimmed, '"')
+	if idx < 0 {
+		return ""
+	}
+	rest := trimmed[idx+1:]
+	// Find closing quote (handle escaped quotes)
+	var result strings.Builder
+	i := 0
+	for i < len(rest) {
+		if rest[i] == '\\' && i+1 < len(rest) {
+			switch rest[i+1] {
+			case '"':
+				result.WriteByte('"')
+			case 'n':
+				result.WriteByte('\n')
+			case '\\':
+				result.WriteByte('\\')
+			default:
+				result.WriteByte(rest[i])
+				result.WriteByte(rest[i+1])
+			}
+			i += 2
+			continue
+		}
+		if rest[i] == '"' {
+			break
+		}
+		result.WriteByte(rest[i])
+		i++
+	}
+	return result.String()
+}

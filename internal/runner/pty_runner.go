@@ -235,6 +235,12 @@ func (r *PtyRunner) Close() error {
 	return nil
 }
 
+func (r *PtyRunner) SetPermissionMode(mode string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.permissionMode = mode
+}
+
 func (r *PtyRunner) clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -427,6 +433,25 @@ func shouldUseClaudeStreamJSON(command string) bool {
 	return isClaudeCommandName(command)
 }
 
+func extractToolTarget(toolName string, rawInput json.RawMessage) string {
+	if len(rawInput) == 0 {
+		return ""
+	}
+	var input map[string]any
+	if err := json.Unmarshal(rawInput, &input); err != nil {
+		return ""
+	}
+	// Try common field names for file paths
+	for _, key := range []string{"file_path", "path", "pattern", "command", "query", "url"} {
+		if v, ok := input[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
 type claudeStreamWriter struct {
 	writer io.Writer
 }
@@ -463,14 +488,23 @@ func (w *claudeStreamWriter) Close() error {
 }
 
 type claudeStreamEnvelope struct {
-	Type      string `json:"type"`
-	Subtype   string `json:"subtype,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	Result    string `json:"result,omitempty"`
-	Message   struct {
+	Type      string  `json:"type"`
+	Subtype   string  `json:"subtype,omitempty"`
+	SessionID string  `json:"session_id,omitempty"`
+	Result    string  `json:"result,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
+	NumTurns  int     `json:"num_turns,omitempty"`
+	TotalCost float64 `json:"total_cost_usd,omitempty"`
+	ToolUseResult *struct {
+		Type     string `json:"type,omitempty"`
+		FilePath string `json:"filePath,omitempty"`
+	} `json:"tool_use_result,omitempty"`
+	Message struct {
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text,omitempty"`
+			Type  string          `json:"type"`
+			Text  string          `json:"text,omitempty"`
+			Name  string          `json:"name,omitempty"`
+			Input json.RawMessage `json:"input,omitempty"`
 		} `json:"content"`
 	} `json:"message"`
 }
@@ -503,9 +537,44 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			}
 		}
 		switch envelope.Type {
+		case "assistant":
+			for _, block := range envelope.Message.Content {
+				switch block.Type {
+				case "tool_use":
+					target := extractToolTarget(block.Name, block.Input)
+					sendEvent(sink, protocol.NewStepUpdateEvent(sessionID, block.Name, "running", target, block.Name, ""))
+				case "text":
+					if text := strings.TrimSpace(block.Text); text != "" {
+						sendEvent(sink, protocol.ApplyRuntimeMeta(
+							protocol.NewLogEvent(sessionID, text, "stdout"),
+							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+						))
+					}
+				}
+			}
+		case "user":
+			if envelope.ToolUseResult != nil {
+				target := envelope.ToolUseResult.FilePath
+				status := "done"
+				message := envelope.ToolUseResult.Type
+				if message == "" {
+					message = "tool completed"
+				}
+				sendEvent(sink, protocol.NewStepUpdateEvent(sessionID, message, status, target, "", ""))
+			}
 		case "result":
-			if strings.TrimSpace(envelope.Result) != "" {
-				sendEvent(sink, protocol.ApplyRuntimeMeta(protocol.NewLogEvent(sessionID, envelope.Result, "stdout"), protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID}))
+			if text := strings.TrimSpace(envelope.Result); text != "" {
+				sendEvent(sink, protocol.ApplyRuntimeMeta(
+					protocol.NewLogEvent(sessionID, text, "stdout"),
+					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+				))
+			}
+			if envelope.DurationMs > 0 || envelope.TotalCost > 0 {
+				sendEvent(sink, protocol.ProgressEvent{
+					Event:   protocol.NewBaseEvent(protocol.EventTypeProgress, sessionID),
+					Message: fmt.Sprintf("耗时 %.1fs · %d 轮 · $%.4f", float64(envelope.DurationMs)/1000, envelope.NumTurns, envelope.TotalCost),
+					Percent: 100,
+				})
 			}
 		}
 	}
