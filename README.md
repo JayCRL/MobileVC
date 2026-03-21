@@ -30,9 +30,11 @@ A lightweight Go server bridges your local shell, AI CLI tools (Claude Code / Ge
 ### AI Session | AI 会话
 - **Claude Code & Gemini** — structured stream parsing, multi-turn continuation, `--resume` session reuse
 - **Permission mode** — approve/reject AI tool calls; dynamically switch mode during a live session (auto-edit, full-auto, plan-only, manual)
-- **Activity panel** — real-time display of current tool name, target file, elapsed time, and ETA
+- **Activity panel** — real-time display of current tool name, target file, elapsed time, ETA, and animated tool icon
+- **Smart activity timer** — auto-reset on each user turn, auto-stop on prompt request; no stale timers across interactions
+- **Tool error detection** — recognize Claude internal `tool_result` errors and surface retry status without exposing raw failures
 - **Session summary** — duration, turn count, and cost statistics on completion
-- **Claude stream parsing** — JSON parsing for assistant/user/result messages with tool-use step tracking
+- **Claude stream parsing** — JSON parsing for assistant/user/result messages with tool-use step tracking and error-aware routing
 
 ### Skill Center | 技能中心
 - **Built-in skills** — `review`, `simplify`, `debug`, `security-review`, `explain-step`, `next-step`
@@ -42,6 +44,7 @@ A lightweight Go server bridges your local shell, AI CLI tools (Claude Code / Ge
 
 ### UI | 界面
 - **Step & diff overlays** — step updates in top panel, file diffs in modal
+- **Animated tool icons** — CSS-animated indicators for active tool execution
 - **Mobile-first SPA** — plain HTML + JS, Tailwind CSS, `marked`, `highlight.js`
 
 ---

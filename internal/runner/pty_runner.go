@@ -501,10 +501,12 @@ type claudeStreamEnvelope struct {
 	} `json:"tool_use_result,omitempty"`
 	Message struct {
 		Content []struct {
-			Type  string          `json:"type"`
-			Text  string          `json:"text,omitempty"`
-			Name  string          `json:"name,omitempty"`
-			Input json.RawMessage `json:"input,omitempty"`
+			Type    string          `json:"type"`
+			Text    string          `json:"text,omitempty"`
+			Name    string          `json:"name,omitempty"`
+			Input   json.RawMessage `json:"input,omitempty"`
+			Content string          `json:"content,omitempty"`
+			IsError bool            `json:"is_error,omitempty"`
 		} `json:"content"`
 	} `json:"message"`
 }
@@ -553,6 +555,15 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				}
 			}
 		case "user":
+			// Check message content for tool_result errors (Claude internal retries)
+			for _, block := range envelope.Message.Content {
+				if block.Type == "tool_result" && block.IsError {
+					// These are Claude's internal tool retry errors — don't expose to user
+					// but update step status to show tool had an issue
+					sendEvent(sink, protocol.NewStepUpdateEvent(sessionID, "tool retry", "info", "", "", ""))
+					continue
+				}
+			}
 			if envelope.ToolUseResult != nil {
 				target := envelope.ToolUseResult.FilePath
 				status := "done"

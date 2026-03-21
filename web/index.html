@@ -84,6 +84,14 @@
       0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.12); }
       50% { box-shadow: 0 0 0 6px rgba(59,130,246,0.22); }
     }
+    @keyframes crab-crawl {
+      0%, 100% { transform: translateX(-4px); }
+      50% { transform: translateX(4px); }
+    }
+    .crab-icon {
+      display: inline-block;
+      animation: crab-crawl 1.2s ease-in-out infinite;
+    }
     @keyframes step-flow {
       0% { transform: translateX(-100%); }
       100% { transform: translateX(220%); }
@@ -357,6 +365,13 @@
       updateActivityDisplay();
     }
 
+    function resetTaskTimer() {
+      claudeActivity.startTime = Date.now();
+      claudeActivity.turns = [];
+      if (!claudeActivity.active) startActivityTimer();
+      updateActivityDisplay();
+    }
+
     function stopActivityTimer() {
       claudeActivity.active = false;
       if (claudeActivity.timerInterval) {
@@ -410,7 +425,8 @@
       }
       activitySummary.classList.remove('hidden');
       const tool = claudeActivity.currentTool;
-      activityIcon.textContent = (tool && toolIcons[tool]) || '\u{1F916}';
+      const iconChar = (tool && toolIcons[tool]) || '\u{1F980}';
+      activityIcon.innerHTML = '<span class="crab-icon">' + iconChar + '</span>';
       activityTool.textContent = tool || '\u{601D}\u{8003}\u{4E2D}';
       const target = claudeActivity.currentTarget;
       activityTarget.textContent = target ? '\u{2192} ' + (target.length > 40 ? '...' + target.slice(-37) : target) : '';
@@ -1350,7 +1366,6 @@
             onClaudeFinish(payload.msg || '');
           } else if (payload.state === 'THINKING' && runtimeState.agentState === 'IDLE') {
             addRuntimeLog('执行命令', cmd || '', payload.timestamp);
-            if (isAI) startActivityTimer();
           }
           if (payload.resumeSessionId) {
             localStorage.setItem('vibe_resumeSessionId', payload.resumeSessionId);
@@ -1384,6 +1399,11 @@
           appState.session.lastPromptMessage = payload.msg || '等待输入';
           appState.prompt.options = effectivePromptOptions(payload.msg || '等待输入', payload.options || []);
           appState.prompt.message = payload.msg || '等待输入';
+          // Stop activity timer when Claude is ready for next input
+          if (claudeActivity.active) {
+            const elapsed = claudeActivity.startTime ? Date.now() - claudeActivity.startTime : 0;
+            onClaudeFinish(elapsed ? formatDuration(elapsed) : '');
+          }
           renderPromptCard();
           if (runtimeState.agentState === 'WAIT_INPUT') inputCard.classList.remove('hidden');
           break;
@@ -1550,6 +1570,7 @@
       if (appState.session.claudeInteractiveActive) {
         runtimeState.agentState = 'THINKING';
         runtimeState.agentStateMessage = '思考中';
+        resetTaskTimer();
         updateStatus();
       }
       inputField.value = '';
