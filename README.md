@@ -1,16 +1,16 @@
 # MobileVC
 
-> Mobile-first local runtime panel for Shell and Claude Code.
+> Mobile-first local runtime panel for Shell, Claude Code, and AI-powered skills.
 >
-> 面向手机浏览器的本地运行时面板，用于访问 Shell 与 Claude Code。
+> 面向手机浏览器的本地运行时面板，用于访问 Shell、Claude Code 与 AI 驱动的技能中心。
 
 ## Overview | 项目简介
 
 **MobileVC** is a local-first web console that exposes your desktop command-line environment to a phone browser through a lightweight Go server and WebSocket connection.
-It is designed for quick mobile access to trusted local or LAN development environments, with support for interactive PTY sessions, structured runtime events, workspace switching, and Claude-oriented session handling.
+It is designed for quick mobile access to trusted local or LAN development environments, with support for interactive PTY sessions, structured runtime events, workspace switching, AI session handling (Claude Code and Gemini), and a built-in Skill Center for code review, debugging, and security analysis.
 
 **MobileVC** 是一个本地优先的 Web 控制台，通过轻量 Go 服务和 WebSocket，将桌面上的命令行环境映射到手机浏览器。
-它面向可信的本机或局域网开发场景，支持交互式 PTY 会话、结构化运行时事件、工作区切换，以及面向 Claude 的会话处理能力。
+它面向可信的本机或局域网开发场景，支持交互式 PTY 会话、结构化运行时事件、工作区切换、AI 会话处理（Claude Code 与 Gemini），以及内置的技能中心（Skill Center），提供代码审查、调试分析和安全审计等能力。
 
 ## Why MobileVC | 为什么做这个项目
 
@@ -19,12 +19,14 @@ It is designed for quick mobile access to trusted local or LAN development envir
 - Keep the runtime on your own machine.
 - Handle interactive prompts and long-running terminal workflows more naturally on mobile.
 - Bridge Claude Code and shell-based tooling into a mobile-friendly UI.
+- Run AI-driven skills (review, debug, simplify) directly from the mobile panel.
 
 **中文**
 - 不依赖完整远程桌面，也能在手机浏览器中使用本地 CLI。
 - 运行时仍留在你自己的电脑上，本地优先。
 - 更自然地处理交互提示和长时间运行的终端任务。
 - 将 Claude Code 与 Shell 工具桥接到适合手机操作的 UI 中。
+- 在手机面板中直接运行 AI 驱动的技能（审查、调试、简化）。
 
 ## Highlights | 核心特性
 
@@ -58,19 +60,35 @@ It is designed for quick mobile access to trusted local or LAN development envir
 - 在手机端浏览目录。
 - 执行命令前可切换工作目录。
 
-### 6. Claude session enhancements | Claude 会话增强
-- Supports Claude-oriented runtime handling.
-- Includes structured stream processing, multi-turn continuation, and `--resume` session reuse.
-- 支持面向 Claude 的运行时处理。
-- 包含结构化流处理、多轮连续对话和 `--resume` 会话复用。
+### 6. AI session handling | AI 会话处理
+- Supports Claude Code and Gemini session handling.
+- Includes structured stream processing, multi-turn continuation, `--resume` session reuse, and permission mode for AI tool approvals.
+- Auto-detects AI prompt states and transitions the session controller accordingly.
+- 支持 Claude Code 与 Gemini 的会话处理。
+- 包含结构化流处理、多轮连续对话、`--resume` 会话复用，以及 AI 工具审批的 permission mode。
+- 自动识别 AI 提示符状态，驱动会话控制器状态切换。
 
-### 7. Step and diff overlays | Step 与 Diff 增强层
+### 7. Skill Center | 技能中心
+- Built-in skills: `review`, `simplify`, `debug`, `security-review`, `explain-step`, `next-step`.
+- Invoke AI-powered analysis on diffs, steps, or errors from the frontend.
+- Extensible skill registry with structured prompt building and result routing.
+- 内置技能：`review`、`simplify`、`debug`、`security-review`、`explain-step`、`next-step`。
+- 从前端对 diff、step 或 error 发起 AI 驱动的分析。
+- 可扩展的技能注册表，支持结构化 prompt 构建与结果路由。
+
+### 8. Step and diff overlays | Step 与 Diff 增强层
 - Display step updates in the top panel.
 - Surface file diffs in a modal overlay.
 - 在顶部展示 step 更新。
 - 通过弹窗展示文件 diff。
 
-### 8. Lightweight frontend | 轻量前端
+### 8. Step and diff overlays | Step 与 Diff 增强层
+- Display step updates in the top panel.
+- Surface file diffs in a modal overlay.
+- 在顶部展示 step 更新。
+- 通过弹窗展示文件 diff。
+
+### 9. Lightweight frontend | 轻量前端
 - Single-page frontend built with plain HTML and JavaScript.
 - Tailwind CSS, Markdown rendering, and syntax highlighting included.
 - 前端为单页应用，基于原生 HTML 与 JavaScript。
@@ -102,9 +120,11 @@ Go HTTP Server (cmd/server)
     ↓
 WS Handler / Protocol Layer
     ↓
+Runtime Service + Skill Center
+    ↓
 Runner Layer (exec / pty)
     ↓
-Shell / Claude Code / CLI tools
+Shell / Claude Code / Gemini / CLI tools
 ```
 
 ### Backend modules | 后端模块
@@ -126,16 +146,24 @@ Shell / Claude Code / CLI tools
   WebSocket 鉴权、action 分发与 runner 生命周期管理。
 
 - `internal/runner`
-  Command execution core for `exec` and `pty`, including Claude-oriented runtime handling.
-  `exec`/`pty` 执行核心，并包含面向 Claude 的运行时处理逻辑。
+  Command execution core for `exec` and `pty`, with permission mode support for AI tool approvals.
+  `exec`/`pty` 执行核心，支持 AI 工具审批的 permission mode。
+
+- `internal/runtime`
+  Runtime service layer: runner lifecycle management, session coordination, and event routing.
+  运行时服务层：runner 生命周期管理、会话协调与事件路由。
+
+- `internal/skills`
+  Skill Center: built-in skill registry, structured prompt builder, and AI-driven analysis launcher.
+  技能中心：内置技能注册表、结构化 prompt 构建器与 AI 驱动的分析启动器。
 
 - `internal/adapter`
   ANSI cleanup, error aggregation, output adaptation.
   ANSI 清理、错误聚合、输出适配。
 
 - `internal/session`
-  Session and agent state modeling.
-  会话与 agent 状态建模。
+  Session controller with state machine (IDLE, THINKING, WAIT_INPUT, RUNNING_TOOL), AI prompt detection, and event deduplication.
+  会话控制器，包含状态机（IDLE、THINKING、WAIT_INPUT、RUNNING_TOOL）、AI 提示符检测与事件去重。
 
 - `internal/store`
   Storage abstraction reserved for future persistence.
@@ -157,7 +185,9 @@ MobileVC/
 │  ├─ config/
 │  ├─ protocol/
 │  ├─ runner/
+│  ├─ runtime/
 │  ├─ session/
+│  ├─ skills/
 │  ├─ store/
 │  └─ ws/
 ├─ web/
@@ -184,12 +214,14 @@ MobileVC/
 ### Client → Server | 前端上行
 - `exec`
 - `input`
+- `skill`
 - `fs_list`
 
 ### Server → Client | 后端下行
 - `session_state`
 - `agent_state`
 - `log`
+- `progress`
 - `error`
 - `prompt_request`
 - `step_update`
@@ -276,19 +308,27 @@ gofmt -w ./cmd/server/main.go ./internal/protocol/event.go ./internal/ws/handler
 
 ### Implemented | 已实现
 - Mobile-first web console for local CLI access
-- `exec` and `pty` command execution
+- `exec` and `pty` command execution with permission mode support
 - Workspace file tree and cwd switching
 - Structured view and raw terminal view
 - Prompt request / input response loop
 - Step panel and diff modal
-- Claude-oriented stream handling and session continuation on supported setups
+- AI session handling for Claude Code and Gemini (stream processing, multi-turn, `--resume`)
+- Runtime service layer with runner lifecycle management and event routing
+- Skill Center with built-in skills: review, simplify, debug, security-review, explain-step, next-step
+- Session controller state machine with AI prompt detection and event deduplication
+- RuntimeMeta propagation for skill context and result routing
 - 面向手机的本地 CLI Web 控制台
-- `exec` 与 `pty` 双执行模式
+- `exec` 与 `pty` 双执行模式，支持 permission mode
 - 工作区文件树与 cwd 切换
 - 结构化视图与原始终端双视图
 - prompt_request / input 交互闭环
 - step 面板与 diff 弹窗
-- 支持环境下的 Claude 定向流处理与连续会话能力
+- Claude Code 与 Gemini 的 AI 会话处理（流处理、多轮对话、`--resume`）
+- 运行时服务层，包含 runner 生命周期管理与事件路由
+- 技能中心，内置技能：review、simplify、debug、security-review、explain-step、next-step
+- 会话控制器状态机，支持 AI 提示符检测与事件去重
+- RuntimeMeta 全链路传播，用于技能上下文与结果路由
 
 ### Planned / not fully landed yet | 规划中 / 尚未完全落地
 - Persistent session storage
@@ -346,21 +386,23 @@ Use it on your own machine or inside a trusted LAN.
 - [ ] Session persistence
 - [ ] Security hardening
 - [ ] Multi-session management
+- [ ] Custom skill registration (user-defined skills)
 - [ ] 文件预览
 - [ ] 后端显式输出格式（`text` / `markdown`）
 - [ ] 更强的 prompt 检测
 - [ ] 会话持久化
 - [ ] 安全加固
 - [ ] 多会话管理
+- [ ] 自定义技能注册（用户自定义 skill）
 
 ## Project Positioning | 项目定位
 
 **EN**
-MobileVC focuses on the runtime layer first: reliable command execution, interactive CLI handling, mobile usability, and Claude-oriented session plumbing.
+MobileVC focuses on the runtime layer first: reliable command execution, interactive CLI handling, mobile usability, AI session plumbing (Claude Code and Gemini), and a Skill Center for AI-driven code analysis.
 It is a strong fit for personal workflows, local experiments, and phone-accessible development operations.
 
 **中文**
-MobileVC 当前优先聚焦运行时层：稳定的命令执行、交互式 CLI 处理、移动端可用性，以及面向 Claude 的会话桥接能力。
+MobileVC 当前优先聚焦运行时层：稳定的命令执行、交互式 CLI 处理、移动端可用性、AI 会话桥接能力（Claude Code 与 Gemini），以及用于 AI 驱动代码分析的技能中心。
 它适合个人工作流、本地实验，以及可从手机访问的开发操作场景。
 
 ## License | 许可证
