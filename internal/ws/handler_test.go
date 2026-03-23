@@ -12,14 +12,17 @@ import (
 
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
+	"mobilevc/internal/store"
 )
 
 type stubRunner struct {
-	mu       sync.Mutex
-	events   []any
-	writeCh  chan []byte
-	writeErr error
-	holdOpen bool
+	mu                 sync.Mutex
+	events             []any
+	writeCh            chan []byte
+	writeErr           error
+	holdOpen           bool
+	lastPermissionMode string
+	permissionModes    []string
 }
 
 func newStubRunner(events ...any) *stubRunner {
@@ -60,6 +63,13 @@ func (s *stubRunner) Write(ctx context.Context, data []byte) error {
 
 func (s *stubRunner) Close() error {
 	return nil
+}
+
+func (s *stubRunner) SetPermissionMode(mode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastPermissionMode = mode
+	s.permissionModes = append(s.permissionModes, mode)
 }
 
 func newTestConn(t *testing.T, h *Handler) *websocket.Conn {
@@ -112,9 +122,94 @@ func requireAgentState(t *testing.T, event map[string]any, wantState string, wan
 	}
 }
 
+type switchableStubRunner struct {
+	mu       sync.Mutex
+	writeCh  chan []byte
+	sink     runner.EventSink
+	req      runner.ExecRequest
+	started  chan struct{}
+	closed   chan struct{}
+	closeErr error
+}
+
+func newSwitchableStubRunner() *switchableStubRunner {
+	return &switchableStubRunner{
+		writeCh: make(chan []byte, 8),
+		started: make(chan struct{}),
+		closed:  make(chan struct{}),
+	}
+}
+
+func (s *switchableStubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
+	s.mu.Lock()
+	s.req = req
+	s.sink = sink
+	s.mu.Unlock()
+	close(s.started)
+	<-ctx.Done()
+	return s.closeErr
+}
+
+func (s *switchableStubRunner) Write(ctx context.Context, data []byte) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.writeCh <- append([]byte(nil), data...):
+		return nil
+	}
+}
+
+func (s *switchableStubRunner) Close() error {
+	select {
+	case <-s.closed:
+	default:
+		close(s.closed)
+	}
+	return nil
+}
+
+func (s *switchableStubRunner) Emit(event any) {
+	s.mu.Lock()
+	sink := s.sink
+	s.mu.Unlock()
+	if sink != nil {
+		sink(event)
+	}
+}
+
+func (s *switchableStubRunner) WaitStarted(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not start")
+	}
+}
+
+func (s *switchableStubRunner) WaitClosed(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner was not closed")
+	}
+}
+
+func readInitialSessionID(t *testing.T, conn *websocket.Conn) string {
+	t.Helper()
+	first, second := readInitialEvents(t, conn)
+	requireEventType(t, first, protocol.EventTypeSessionState)
+	requireAgentState(t, second, "IDLE", false)
+	sessionID, _ := first["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("expected initial session id, got %#v", first)
+	}
+	return sessionID
+}
+
 func readUntilType(t *testing.T, conn *websocket.Conn, want string) map[string]any {
 	t.Helper()
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 20; i++ {
 		event := readEventMap(t, conn)
 		if event["type"] == want {
 			return event
@@ -122,6 +217,54 @@ func readUntilType(t *testing.T, conn *websocket.Conn, want string) map[string]a
 	}
 	t.Fatalf("did not receive %s event", want)
 	return nil
+}
+
+func readUntilSessionHistory(t *testing.T, conn *websocket.Conn) map[string]any {
+	t.Helper()
+	return readUntilType(t, conn, protocol.EventTypeSessionHistory)
+}
+
+func readUntilSessionCreated(t *testing.T, conn *websocket.Conn) map[string]any {
+	t.Helper()
+	return readUntilType(t, conn, protocol.EventTypeSessionCreated)
+}
+
+func sessionLogTexts(record store.SessionRecord) []string {
+	out := make([]string, 0, len(record.Projection.LogEntries))
+	for _, entry := range record.Projection.LogEntries {
+		switch entry.Kind {
+		case "markdown", "system", "user":
+			if strings.TrimSpace(entry.Message) != "" {
+				out = append(out, entry.Message)
+			}
+		case "terminal":
+			if strings.TrimSpace(entry.Text) != "" {
+				out = append(out, entry.Text)
+			}
+		case "error":
+			if entry.Context != nil && strings.TrimSpace(entry.Context.Message) != "" {
+				out = append(out, entry.Context.Message)
+			}
+		case "step":
+			if entry.Context != nil && strings.TrimSpace(entry.Context.Message) != "" {
+				out = append(out, entry.Context.Message)
+			}
+		case "diff":
+			if entry.Context != nil && strings.TrimSpace(entry.Context.Title) != "" {
+				out = append(out, entry.Context.Title)
+			}
+		}
+	}
+	return out
+}
+
+func containsText(items []string, want string) bool {
+	for _, item := range items {
+		if strings.Contains(item, want) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestHandlerExecFlow(t *testing.T) {
@@ -540,6 +683,71 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	if thinking["source"] != "review-decision" {
 		t.Fatalf("expected review-decision source, got %#v", thinking)
 	}
+	if thinking["permissionMode"] != "acceptEdits" {
+		t.Fatalf("expected acceptEdits permission mode, got %#v", thinking)
+	}
+}
+
+func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
+	h := NewHandler("test")
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty", PermissionMode: "acceptEdits"}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.PermissionModeUpdateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "set_permission_mode"}, PermissionMode: "default"}); err != nil {
+		t.Fatalf("write permission mode request: %v", err)
+	}
+
+	state := readUntilType(t, conn, protocol.EventTypeAgentState)
+	if state["permissionMode"] != "default" {
+		t.Fatalf("expected updated permission mode, got %#v", state)
+	}
+	if ptyRunner.lastPermissionMode != "default" {
+		t.Fatalf("expected runner permission mode to update, got %q", ptyRunner.lastPermissionMode)
+	}
+}
+
+func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
+	h := NewHandler("test")
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "claude",
+		Mode:           "pty",
+		PermissionMode: "acceptEdits",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.PermissionModeUpdateRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "set_permission_mode"},
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write set_permission_mode request: %v", err)
+	}
+
+	state := readUntilType(t, conn, protocol.EventTypeAgentState)
+	if state["permissionMode"] != "default" {
+		t.Fatalf("expected permissionMode to be default, got %#v", state)
+	}
+	if ptyRunner.lastPermissionMode != "default" {
+		t.Fatalf("expected runner permission mode to update, got %q", ptyRunner.lastPermissionMode)
+	}
 }
 
 func TestHandlerReviewDecisionWithoutRunner(t *testing.T) {
@@ -554,6 +762,43 @@ func TestHandlerReviewDecisionWithoutRunner(t *testing.T) {
 	event := readUntilType(t, conn, protocol.EventTypeError)
 	if event["msg"] != "当前没有可交互会话，请先恢复会话后再审核 diff" {
 		t.Fatalf("unexpected error event: %#v", event)
+	}
+}
+
+func TestHandlerReviewDecisionRejectsAcceptOutsideAcceptEdits(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
+	h := NewHandler("test")
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty", PermissionMode: "default"}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.ReviewDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "review_decision"},
+		Decision:       "accept",
+		ContextID:      "diff:1",
+		ContextTitle:   "最近 Diff",
+		TargetPath:     "internal/ws/handler.go",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write review decision request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "当前 permission mode 不是 acceptEdits，不能直接 accept diff" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		t.Fatalf("expected no review payload to runner, got %q", string(payload))
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
@@ -738,45 +983,325 @@ func TestHandlerSlashCommandExecMappings(t *testing.T) {
 	}
 }
 
-func TestHandlerSkillExecUsesUnifiedRuntimeFlow(t *testing.T) {
-	execRunner := newStubRunner(
-		protocol.NewLogEvent("ignored", "skill review output", "stdout"),
-		protocol.NewSessionStateEvent("ignored", "closed", "command finished"),
-	)
+func TestHandlerSessionDeleteRemovesHistorySessionFromList(t *testing.T) {
+	h := NewHandler("test")
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: "session-a"}); err != nil {
+		t.Fatalf("write session create request: %v", err)
+	}
+	createdA := readUntilSessionCreated(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	summaryA, ok := createdA["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", createdA)
+	}
+	sessionA, _ := summaryA["id"].(string)
+	if sessionA == "" {
+		t.Fatalf("expected session A id, got %#v", createdA)
+	}
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: "session-b"}); err != nil {
+		t.Fatalf("write session create request: %v", err)
+	}
+	createdB := readUntilSessionCreated(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	summaryB, ok := createdB["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", createdB)
+	}
+	sessionB, _ := summaryB["id"].(string)
+	if sessionB == "" || sessionB == sessionA {
+		t.Fatalf("expected distinct session B id, got %q", sessionB)
+	}
+
+	if err := conn.WriteJSON(protocol.SessionDeleteRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_delete"}, SessionID: sessionA}); err != nil {
+		t.Fatalf("write session delete request: %v", err)
+	}
+
+	listEvent := readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	items, ok := listEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected session list items, got %#v", listEvent)
+	}
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["id"] == sessionA {
+			t.Fatalf("expected deleted session removed from list, got %#v", items)
+		}
+	}
+	if _, err := h.SessionStore.GetSession(context.Background(), sessionA); err == nil {
+		t.Fatal("expected deleted history session lookup to fail")
+	}
+	if _, err := h.SessionStore.GetSession(context.Background(), sessionB); err != nil {
+		t.Fatalf("expected current session to remain, got %v", err)
+	}
+}
+
+func TestHandlerSessionDeleteCurrentSessionCleansRuntimeAndFallsBack(t *testing.T) {
+	runnerA := newSwitchableStubRunner()
+	firstRunner := runnerA
+	runnerB := newSwitchableStubRunner()
+	h := NewHandler("test")
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner {
+		if runnerA != nil {
+			r := runnerA
+			runnerA = nil
+			return r
+		}
+		return runnerB
+	}
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: "session-a"}); err != nil {
+		t.Fatalf("write initial session create request: %v", err)
+	}
+	createdA := readUntilSessionCreated(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	summaryA, ok := createdA["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", createdA)
+	}
+	sessionA, _ := summaryA["id"].(string)
+	if sessionA == "" {
+		t.Fatalf("expected session A id, got %#v", createdA)
+	}
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty"}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: "session-b"}); err != nil {
+		t.Fatalf("write session create request: %v", err)
+	}
+	createdB := readUntilSessionCreated(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	summaryB, ok := createdB["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", createdB)
+	}
+	sessionB, _ := summaryB["id"].(string)
+	if sessionB == "" || sessionB == sessionA {
+		t.Fatalf("expected distinct session B id, got %q", sessionB)
+	}
+	firstRunner.WaitClosed(t)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty"}); err != nil {
+		t.Fatalf("write exec request for session B: %v", err)
+	}
+	runnerB.WaitStarted(t)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+
+	if err := conn.WriteJSON(protocol.SessionDeleteRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_delete"}, SessionID: sessionB}); err != nil {
+		t.Fatalf("write session delete request: %v", err)
+	}
+
+	listEvent := readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	items, ok := listEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected session list items, got %#v", listEvent)
+	}
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["id"] == sessionB {
+			t.Fatalf("expected deleted current session removed from list, got %#v", items)
+		}
+	}
+	history := readUntilSessionHistory(t, conn)
+	if history["sessionId"] != sessionA {
+		t.Fatalf("expected fallback history for session A, got %#v", history)
+	}
+	runnerB.WaitClosed(t)
+	if _, err := h.SessionStore.GetSession(context.Background(), sessionB); err == nil {
+		t.Fatal("expected deleted current session lookup to fail")
+	}
+
+	runnerB.Emit(protocol.NewLogEvent("ignored", "late output from deleted session B", "stdout"))
+	runnerB.Emit(protocol.NewStepUpdateEvent("ignored", "late step from deleted session B", "running", "internal/ws/handler.go", "reading", "claude"))
+
+	recordA, err := h.SessionStore.GetSession(context.Background(), sessionA)
+	if err != nil {
+		t.Fatalf("get session A: %v", err)
+	}
+	textsA := sessionLogTexts(recordA)
+	if containsText(textsA, "late output from deleted session B") || containsText(textsA, "late step from deleted session B") {
+		t.Fatalf("did not expect deleted session events to leak into fallback session, got %#v", textsA)
+	}
+}
+
+func TestHandlerSessionLoadKeepsOldRunnerEventsInOriginalSessionProjection(t *testing.T) {
+	runnerA := newSwitchableStubRunner()
+	firstRunner := runnerA
+	runnerB := newSwitchableStubRunner()
 
 	h := NewHandler("test")
-	h.NewExecRunner = func() runner.Runner { return execRunner }
+	h.NewPtyRunner = func() runner.Runner {
+		if runnerA != nil {
+			r := runnerA
+			runnerA = nil
+			return r
+		}
+		return runnerB
+	}
 
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
 
-	if err := conn.WriteJSON(protocol.SkillRequestEvent{
-		ClientEvent: protocol.ClientEvent{Action: "skill_exec"},
-		Name:        "review",
-		CWD:         ".",
-		TargetType:  "current-diff",
-		TargetPath:  "internal/ws/handler.go",
-		TargetTitle: "当前 Diff",
-		TargetDiff:  "diff --git a/internal/ws/handler.go b/internal/ws/handler.go",
-	}); err != nil {
-		t.Fatalf("write skill request: %v", err)
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: "session-a"}); err != nil {
+		t.Fatalf("write initial session create request: %v", err)
+	}
+	createdA := readUntilSessionCreated(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	summaryA, ok := createdA["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", createdA)
+	}
+	sessionA, _ := summaryA["id"].(string)
+	if sessionA == "" {
+		t.Fatalf("expected initial session id, got %#v", createdA)
 	}
 
-	thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
-	requireAgentState(t, thinking, "THINKING", false)
-	if thinking["skillName"] != "review" {
-		t.Fatalf("expected skillName in agent state, got %#v", thinking)
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
 	}
-	if thinking["source"] != "skill-center" {
-		t.Fatalf("expected source in agent state, got %#v", thinking)
+	firstRunner.WaitStarted(t)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: "session-b"}); err != nil {
+		t.Fatalf("write session create request: %v", err)
 	}
+	created := readUntilSessionCreated(t, conn)
+	summary, ok := created["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", created)
+	}
+	sessionB, _ := summary["id"].(string)
+	if sessionB == "" || sessionB == sessionA {
+		t.Fatalf("expected new session id, got %q", sessionB)
+	}
+	firstRunner.WaitClosed(t)
+
+	firstRunner.Emit(protocol.NewLogEvent("ignored", "late output from session A", "stdout"))
+	firstRunner.Emit(protocol.NewStepUpdateEvent("ignored", "late step from session A", "running", "internal/ws/handler.go", "reading", "claude"))
+
+	recordA, err := h.SessionStore.GetSession(context.Background(), sessionA)
+	if err != nil {
+		t.Fatalf("get session A: %v", err)
+	}
+	recordB, err := h.SessionStore.GetSession(context.Background(), sessionB)
+	if err != nil {
+		t.Fatalf("get session B: %v", err)
+	}
+
+	textsA := sessionLogTexts(recordA)
+	textsB := sessionLogTexts(recordB)
+	if !containsText(textsA, "late output from session A") {
+		t.Fatalf("expected late output in session A projection, got %#v", textsA)
+	}
+	if !containsText(textsA, "late step from session A") {
+		t.Fatalf("expected late step in session A projection, got %#v", textsA)
+	}
+	if containsText(textsB, "late output from session A") || containsText(textsB, "late step from session A") {
+		t.Fatalf("did not expect session A events in session B projection, got %#v", textsB)
+	}
+}
+
+func TestHandlerSessionLoadCleansUpPreviousRuntime(t *testing.T) {
+	runnerA := newSwitchableStubRunner()
+	firstRunner := runnerA
+	runnerB := newSwitchableStubRunner()
+
+	h := NewHandler("test")
+	h.NewPtyRunner = func() runner.Runner {
+		if runnerA != nil {
+			r := runnerA
+			runnerA = nil
+			return r
+		}
+		return runnerB
+	}
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: "session-a"}); err != nil {
+		t.Fatalf("write initial session create request: %v", err)
+	}
+	createdA := readUntilSessionCreated(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	summaryA, ok := createdA["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", createdA)
+	}
+	sessionA, _ := summaryA["id"].(string)
+	if sessionA == "" {
+		t.Fatalf("expected initial session id, got %#v", createdA)
+	}
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: "session-b"}); err != nil {
+		t.Fatalf("write session create request: %v", err)
+	}
+	created := readUntilSessionCreated(t, conn)
+	summary, ok := created["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", created)
+	}
+	sessionB, _ := summary["id"].(string)
+	if sessionB == "" || sessionB == sessionA {
+		t.Fatalf("expected new session id, got %q", sessionB)
+	}
+	firstRunner.WaitClosed(t)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request for session B: %v", err)
+	}
+	runnerB.WaitStarted(t)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+
+	runnerB.Emit(protocol.NewLogEvent("ignored", "live output from session B", "stdout"))
 	logEvent := readUntilType(t, conn, protocol.EventTypeLog)
-	if logEvent["skillName"] != "review" || logEvent["source"] != "skill-center" {
-		t.Fatalf("expected runtime meta on log event, got %#v", logEvent)
+	if logEvent["msg"] != "live output from session B" {
+		t.Fatalf("unexpected log event payload: %#v", logEvent)
 	}
-	finalState := readUntilType(t, conn, protocol.EventTypeAgentState)
-	if finalState["state"] == "WAIT_INPUT" {
-		finalState = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_load"}, SessionID: sessionA}); err != nil {
+		t.Fatalf("write session load request: %v", err)
 	}
-	requireAgentState(t, finalState, "IDLE", false)
+	history := readUntilSessionHistory(t, conn)
+	if history["sessionId"] != sessionA {
+		t.Fatalf("expected session history for session A, got %#v", history)
+	}
+	runnerB.WaitClosed(t)
 }

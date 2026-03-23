@@ -25,7 +25,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		Port:      getEnv("PORT", "8080"),
+		Port:      getEnv("PORT", "8001"),
 		AuthToken: os.Getenv("AUTH_TOKEN"),
 		Runtime: RuntimeConfig{
 			DefaultCommand:         getEnv("RUNTIME_DEFAULT_COMMAND", "claude"),

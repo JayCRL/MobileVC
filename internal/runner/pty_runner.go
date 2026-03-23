@@ -98,6 +98,13 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		}
 	}
 
+	if shouldUseClaudeResumeStreamJSON(req.Command) {
+		r.mu.Lock()
+		r.permissionMode = req.PermissionMode
+		r.mu.Unlock()
+		return r.runClaudeStream(ctx, req, cwd, sink)
+	}
+
 	if shouldUseClaudeStreamJSON(req.Command) {
 		r.mu.Lock()
 		r.lazyStart = true
@@ -267,7 +274,7 @@ func (r *PtyRunner) clear() {
 }
 
 func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd string, sink EventSink) error {
-	cmd := newClaudeStreamCommand(ctx, req.Command)
+	cmd := newClaudeStreamCommand(ctx, req.Command, r.claudeSessionID, r.permissionMode)
 	cmd.Dir = cwd
 
 	stdin, err := cmd.StdinPipe()
@@ -366,6 +373,9 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 
 	r.mu.Lock()
 	resumeSessionID := r.claudeSessionID
+	if resumeSessionID == "" {
+		resumeSessionID = extractResumeArg(req.Command)
+	}
 	permMode := r.permissionMode
 	r.mu.Unlock()
 
@@ -449,6 +459,19 @@ func (r *PtyRunner) finishLazyProcess(err error, sink EventSink, sessionID strin
 
 func shouldUseClaudeStreamJSON(command string) bool {
 	return isClaudeCommandName(command)
+}
+
+func shouldUseClaudeResumeStreamJSON(command string) bool {
+	if !isClaudeCommandName(command) {
+		return false
+	}
+	fields := strings.Fields(strings.TrimSpace(command))
+	for i := 0; i < len(fields); i++ {
+		if fields[i] == "--resume" && i+1 < len(fields) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractToolTarget(toolName string, rawInput json.RawMessage) string {
@@ -544,7 +567,6 @@ func (r *PtyRunner) emitFileDiffIfNeeded(sessionID, fallbackTarget string, sink 
 			continue
 		}
 		sendEvent(sink, diffEvent)
-		return
 	}
 }
 
@@ -696,6 +718,16 @@ func appendUniqueString(values []string, value string) []string {
 	return append(values, value)
 }
 
+func extractResumeArg(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	for i := 0; i < len(fields); i++ {
+		if fields[i] == "--resume" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
 type claudeStreamWriter struct {
 	writer io.Writer
 }
@@ -836,6 +868,9 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, os.ErrClosed) || errors.Is(err, io.EOF) || strings.Contains(strings.ToLower(err.Error()), "file already closed") || strings.Contains(strings.ToLower(err.Error()), "use of closed file") {
+			return
+		}
 		sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read claude stream: %v", err), ""))
 	}
 }
