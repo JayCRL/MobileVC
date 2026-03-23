@@ -197,6 +197,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
 			}
+		case "review_decision":
+			var reviewEvent protocol.ReviewDecisionRequestEvent
+			if err := json.Unmarshal(payload, &reviewEvent); err != nil {
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid review decision request: %v", err), ""))
+				continue
+			}
+			decision := strings.TrimSpace(strings.ToLower(reviewEvent.Decision))
+			if decision != "accept" && decision != "revert" && decision != "revise" {
+				emit(protocol.NewErrorEvent(sessionID, "review decision must be one of: accept, revert, revise", ""))
+				continue
+			}
+			if pm := reviewEvent.PermissionMode; pm != "" {
+				runtimeSvc.UpdatePermissionMode(pm)
+			}
+			prompt, err := buildReviewDecisionPrompt(decision, reviewEvent)
+			if err != nil {
+				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+				continue
+			}
+			if err := runtimeSvc.SendInput(ctx, sessionID, runtimepkg.InputRequest{
+				Data: prompt,
+				RuntimeMeta: protocol.RuntimeMeta{
+					Source:       "review-decision",
+					ContextID:    reviewEvent.ContextID,
+					ContextTitle: reviewEvent.ContextTitle,
+					TargetPath:   reviewEvent.TargetPath,
+					TargetText:   decision,
+				},
+			}, emit); err != nil {
+				message := err.Error()
+				if errors.Is(err, runner.ErrInputNotSupported) {
+					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
+				} else if strings.Contains(message, "no active runner") {
+					message = "当前没有可交互会话，请先恢复会话后再审核 diff"
+				}
+				emit(protocol.NewErrorEvent(sessionID, message, ""))
+			}
 		case "skill_exec":
 			var skillEvent protocol.SkillRequestEvent
 			if err := json.Unmarshal(payload, &skillEvent); err != nil {
@@ -207,37 +244,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(sessionID, "skill launcher is unavailable", ""))
 				continue
 			}
-			execReq, err := h.SkillLauncher.BuildRequest(
-				skillEvent.Name,
-				skillEvent.Engine,
-				fallback(skillEvent.CWD, "."),
-				skillEvent.TargetType,
-				skillEvent.TargetPath,
-				skillEvent.TargetTitle,
-				skillEvent.TargetDiff,
-				skillEvent.ContextID,
-				skillEvent.ContextTitle,
-				skillEvent.TargetText,
-				skillEvent.TargetStack,
-			)
+			if err := executeSkillRequest(ctx, sessionID, skillEvent, runtimeSvc, h.SkillLauncher, emit); err != nil {
+				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+			}
+		case "runtime_info":
+			var infoReq protocol.RuntimeInfoRequestEvent
+			if err := json.Unmarshal(payload, &infoReq); err != nil {
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid runtime_info request: %v", err), ""))
+				continue
+			}
+			result, err := runtimepkg.BuildRuntimeInfoResult(sessionID, infoReq.Query, fallback(infoReq.CWD, "."), runtimeSvc)
 			if err != nil {
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 				continue
 			}
-			// If a command is already running (e.g. Claude interactive session),
-			// send the skill prompt as input instead of starting a new command.
-			if runtimeSvc.IsRunning() {
-				prompt := h.SkillLauncher.ExtractPrompt(execReq.Command)
-				if prompt != "" {
-					if sendErr := runtimeSvc.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: prompt + "\n"}, emit); sendErr != nil {
-						emit(protocol.NewErrorEvent(sessionID, sendErr.Error(), ""))
-					}
-				} else {
-					emit(protocol.NewErrorEvent(sessionID, "无法在当前会话中执行 skill：prompt 为空", ""))
-				}
+			emit(result)
+		case "slash_command":
+			var slashReq protocol.SlashCommandRequestEvent
+			if err := json.Unmarshal(payload, &slashReq); err != nil {
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid slash_command request: %v", err), ""))
 				continue
 			}
-			if err := runtimeSvc.Execute(ctx, sessionID, execReq, emit); err != nil {
+			if err := handleSlashCommand(ctx, sessionID, slashReq, runtimeSvc, h.SkillLauncher, emit); err != nil {
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
 		case "fs_list":
@@ -249,6 +277,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			result, err := listDirectory(sessionID, fsListReq.Path)
 			if err != nil {
 				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("list directory: %v", err), ""))
+				continue
+			}
+			emit(result)
+		case "fs_read":
+			var fsReadReq protocol.FSReadRequestEvent
+			if err := json.Unmarshal(payload, &fsReadReq); err != nil {
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid fs_read request: %v", err), ""))
+				continue
+			}
+			result, err := readFile(sessionID, fsReadReq.Path)
+			if err != nil {
+				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("read file: %v", err), ""))
 				continue
 			}
 			emit(result)
@@ -267,6 +307,30 @@ func fallback(value, defaultValue string) string {
 
 func parseMode(raw string) (runner.Mode, error) {
 	return runtimepkg.ParseMode(raw)
+}
+
+func buildReviewDecisionPrompt(decision string, req protocol.ReviewDecisionRequestEvent) (string, error) {
+	decision = strings.TrimSpace(strings.ToLower(decision))
+	if decision == "" {
+		return "", fmt.Errorf("review decision is required")
+	}
+	subject := strings.TrimSpace(req.TargetPath)
+	if subject == "" {
+		subject = strings.TrimSpace(req.ContextTitle)
+	}
+	if subject == "" {
+		subject = "当前 diff"
+	}
+	switch decision {
+	case "accept":
+		return fmt.Sprintf("请接受刚刚展示的 diff 变更，并继续保存当前修改。目标：%s\n", subject), nil
+	case "revert":
+		return fmt.Sprintf("请撤回刚刚展示的 diff 变更，不要保留这次修改。目标：%s\n", subject), nil
+	case "revise":
+		return fmt.Sprintf("请基于刚刚展示的 diff 继续调整并重新修改。目标：%s\n", subject), nil
+	default:
+		return "", fmt.Errorf("review decision must be one of: accept, revert, revise")
+	}
 }
 
 func listDirectory(sessionID, rawPath string) (protocol.FSListResultEvent, error) {
@@ -306,4 +370,32 @@ func listDirectory(sessionID, rawPath string) (protocol.FSListResultEvent, error
 	})
 
 	return protocol.NewFSListResultEvent(sessionID, absPath, items), nil
+}
+
+func readFile(sessionID, rawPath string) (protocol.FSReadResultEvent, error) {
+	target := strings.TrimSpace(rawPath)
+	if target == "" {
+		return protocol.FSReadResultEvent{}, fmt.Errorf("path is required")
+	}
+
+	cleanTarget := filepath.Clean(target)
+	absPath, err := filepath.Abs(cleanTarget)
+	if err != nil {
+		return protocol.FSReadResultEvent{}, err
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return protocol.FSReadResultEvent{}, err
+	}
+	if info.IsDir() {
+		return protocol.FSReadResultEvent{}, fmt.Errorf("path is a directory")
+	}
+
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		return protocol.FSReadResultEvent{}, err
+	}
+
+	return protocol.NewFSReadResultEvent(sessionID, absPath, string(content), info.Size()), nil
 }

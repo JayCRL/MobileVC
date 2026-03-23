@@ -73,6 +73,16 @@ func (m *manager) closeActive() {
 	}
 }
 
+func (m *manager) snapshot() Snapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return Snapshot{
+		Running:       m.activeRunner != nil,
+		ActiveMeta:    m.activeMeta,
+		ActiveSession: m.activeSession,
+	}
+}
+
 type Service struct {
 	controller *session.Controller
 	manager    *manager
@@ -145,7 +155,11 @@ func (s *Service) SendInput(ctx context.Context, sessionID string, req InputRequ
 		}
 		return err
 	}
-	for _, event := range s.controller.OnInputSent(meta) {
+	effectiveMeta := meta
+	if req.RuntimeMeta.Source != "" || req.RuntimeMeta.SkillName != "" || req.RuntimeMeta.ResumeSessionID != "" || req.RuntimeMeta.ContextID != "" || req.RuntimeMeta.ContextTitle != "" || req.RuntimeMeta.TargetText != "" || req.RuntimeMeta.TargetPath != "" {
+		effectiveMeta = protocol.MergeRuntimeMeta(effectiveMeta, req.RuntimeMeta)
+	}
+	for _, event := range s.controller.OnInputSent(effectiveMeta) {
 		emit(event)
 	}
 	return nil
@@ -155,9 +169,13 @@ func (s *Service) IsRunning() bool {
 	return s.manager.isRunning()
 }
 
+func (s *Service) RuntimeSnapshot() Snapshot {
+	return s.manager.snapshot()
+}
+
 func (s *Service) UpdatePermissionMode(mode string) {
 	s.manager.updateMeta(func(m *protocol.RuntimeMeta) {
-		// permissionMode is not in RuntimeMeta; update via runner
+		m.TargetText = m.TargetText
 	})
 	r, _, _ := s.manager.current()
 	if r == nil {

@@ -19,6 +19,20 @@ func Builtins() map[string]Definition {
 			ResultView:  "review-card",
 			TargetType:  "diff",
 		},
+		"analyze": {
+			Name:        "analyze",
+			Description: "分析当前上下文",
+			Prompt:      "请分析下面的上下文，优先给出问题归因、当前状态判断、最值得执行的下一步，以及必要时的验证建议。",
+			ResultView:  "review-card",
+			TargetType:  "diff",
+		},
+		"doctor": {
+			Name:        "doctor",
+			Description: "诊断当前上下文",
+			Prompt:      "请基于下面的上下文做诊断，输出最可能的问题类别、建议检查项、推荐执行顺序，以及需要人工确认的风险点。",
+			ResultView:  "review-card",
+			TargetType:  "error",
+		},
 		"simplify": {
 			Name:        "simplify",
 			Description: "简化当前 diff",

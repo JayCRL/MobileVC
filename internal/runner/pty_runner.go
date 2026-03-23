@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -32,9 +33,18 @@ type PtyRunner struct {
 	processErr      error
 	pendingReq      ExecRequest
 	pendingCWD      string
+	currentDir      string
 	sink            EventSink
 	claudeSessionID string
 	permissionMode  string
+	lastToolName    string
+	lastToolTarget  string
+	fileSnapshots   map[string]fileSnapshot
+}
+
+type fileSnapshot struct {
+	exists  bool
+	content string
 }
 
 type claudeShellOnceWriter struct {
@@ -93,6 +103,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.lazyStart = true
 		r.pendingReq = req
 		r.pendingCWD = cwd
+		r.currentDir = cwd
 		r.sink = sink
 		r.closed = false
 		r.processDone = make(chan struct{})
@@ -102,7 +113,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		defer r.clear()
 
 		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "AI 会话已就绪，可继续输入", nil))
+		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
@@ -133,6 +144,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 	r.writer = interactive.writer
 	r.closer = interactive.closer
 	r.cmd = cmd
+	r.currentDir = cwd
 	r.closed = false
 	r.mu.Unlock()
 	defer r.clear()
@@ -247,6 +259,10 @@ func (r *PtyRunner) clear() {
 	r.writer = nil
 	r.closer = nil
 	r.cmd = nil
+	r.currentDir = ""
+	r.lastToolName = ""
+	r.lastToolTarget = ""
+	r.fileSnapshots = nil
 	r.closed = true
 }
 
@@ -282,6 +298,7 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	r.writer = &claudeStreamWriter{writer: stdin}
 	r.closer = stdin
 	r.cmd = cmd
+	r.currentDir = cwd
 	r.closed = false
 	r.mu.Unlock()
 	defer r.clear()
@@ -372,6 +389,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 
 	r.mu.Lock()
 	r.cmd = cmd
+	r.currentDir = cwd
 	r.closed = false
 	r.writer = &claudeShellOnceWriter{runner: r}
 	r.mu.Unlock()
@@ -441,8 +459,11 @@ func extractToolTarget(toolName string, rawInput json.RawMessage) string {
 	if err := json.Unmarshal(rawInput, &input); err != nil {
 		return ""
 	}
-	// Try common field names for file paths
-	for _, key := range []string{"file_path", "path", "pattern", "command", "query", "url"} {
+	keys := []string{"file_path", "path", "pattern", "command", "query", "url"}
+	if isFileMutationTool(toolName) {
+		keys = []string{"file_path", "path", "notebook_path", "cell_id", "pattern", "command", "query", "url"}
+	}
+	for _, key := range keys {
 		if v, ok := input[key]; ok {
 			if s, ok := v.(string); ok && s != "" {
 				return s
@@ -450,6 +471,229 @@ func extractToolTarget(toolName string, rawInput json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+func isFileMutationTool(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "edit", "write", "multiedit", "notebookedit":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *PtyRunner) noteToolUse(toolName, target string) {
+	r.mu.Lock()
+	r.lastToolName = strings.TrimSpace(toolName)
+	r.lastToolTarget = strings.TrimSpace(target)
+	shouldSnapshot := isFileMutationTool(toolName)
+	cwd := r.currentDir
+	if shouldSnapshot {
+		if r.fileSnapshots == nil {
+			r.fileSnapshots = make(map[string]fileSnapshot)
+		}
+	}
+	r.mu.Unlock()
+	if !shouldSnapshot {
+		return
+	}
+	resolved := resolveToolPath(cwd, target)
+	if resolved == "" {
+		return
+	}
+	snapshot := captureFileSnapshot(resolved)
+	r.mu.Lock()
+	if r.fileSnapshots == nil {
+		r.fileSnapshots = make(map[string]fileSnapshot)
+	}
+	r.fileSnapshots[resolved] = snapshot
+	r.mu.Unlock()
+}
+
+func (r *PtyRunner) emitFileDiffIfNeeded(sessionID, fallbackTarget string, sink EventSink) {
+	r.mu.Lock()
+	toolName := r.lastToolName
+	toolTarget := r.lastToolTarget
+	cwd := r.currentDir
+	var snapshots map[string]fileSnapshot
+	if len(r.fileSnapshots) > 0 {
+		snapshots = make(map[string]fileSnapshot, len(r.fileSnapshots))
+		for k, v := range r.fileSnapshots {
+			snapshots[k] = v
+		}
+	}
+	if isFileMutationTool(toolName) {
+		r.lastToolName = ""
+		r.lastToolTarget = ""
+		r.fileSnapshots = nil
+	}
+	r.mu.Unlock()
+	if !isFileMutationTool(toolName) {
+		return
+	}
+	candidates := uniqueNonEmptyStrings(
+		resolveToolPath(cwd, fallbackTarget),
+		resolveToolPath(cwd, toolTarget),
+	)
+	for path := range snapshots {
+		candidates = appendUniqueString(candidates, path)
+	}
+	for _, absolutePath := range candidates {
+		diffEvent, ok := buildFileDiffEvent(sessionID, cwd, absolutePath, snapshots[absolutePath])
+		if !ok {
+			continue
+		}
+		sendEvent(sink, diffEvent)
+		return
+	}
+}
+
+func resolveToolPath(cwd, target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	if filepath.IsAbs(target) {
+		return filepath.Clean(target)
+	}
+	if cwd == "" {
+		return filepath.Clean(target)
+	}
+	return filepath.Clean(filepath.Join(cwd, target))
+}
+
+func captureFileSnapshot(path string) fileSnapshot {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fileSnapshot{}
+		}
+		return fileSnapshot{}
+	}
+	return fileSnapshot{exists: true, content: string(content)}
+}
+
+func buildFileDiffEvent(sessionID, cwd, absolutePath string, before fileSnapshot) (protocol.FileDiffEvent, bool) {
+	after, err := os.ReadFile(absolutePath)
+	afterExists := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return protocol.FileDiffEvent{}, false
+	}
+	afterContent := string(after)
+	if before.exists == afterExists && before.content == afterContent {
+		return protocol.FileDiffEvent{}, false
+	}
+	relPath := displayPath(cwd, absolutePath)
+	diff := buildUnifiedDiff(relPath, before, fileSnapshot{exists: afterExists, content: afterContent})
+	if strings.TrimSpace(diff) == "" {
+		return protocol.FileDiffEvent{}, false
+	}
+	title := "Updating " + relPath
+	if !before.exists && afterExists {
+		title = "Creating " + relPath
+	} else if before.exists && !afterExists {
+		title = "Deleting " + relPath
+	}
+	lang := strings.TrimPrefix(filepath.Ext(relPath), ".")
+	return protocol.NewFileDiffEvent(sessionID, relPath, title, diff, lang), true
+}
+
+func displayPath(cwd, absolutePath string) string {
+	if cwd != "" {
+		if rel, err := filepath.Rel(cwd, absolutePath); err == nil && rel != "" && rel != "." {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.ToSlash(absolutePath)
+}
+
+func buildUnifiedDiff(path string, before, after fileSnapshot) string {
+	beforeLines := splitLinesPreserveEmpty(before.content)
+	afterLines := splitLinesPreserveEmpty(after.content)
+	var b strings.Builder
+	b.WriteString("diff --git a/")
+	b.WriteString(path)
+	b.WriteString(" b/")
+	b.WriteString(path)
+	b.WriteByte('\n')
+	if !before.exists && after.exists {
+		b.WriteString("new file mode 100644\n")
+		b.WriteString("--- /dev/null\n")
+		b.WriteString("+++ b/")
+		b.WriteString(path)
+		b.WriteByte('\n')
+		b.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@\n", len(afterLines)))
+		for _, line := range afterLines {
+			b.WriteString("+")
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+		return strings.TrimRight(b.String(), "\n")
+	}
+	if before.exists && !after.exists {
+		b.WriteString("deleted file mode 100644\n")
+		b.WriteString("--- a/")
+		b.WriteString(path)
+		b.WriteByte('\n')
+		b.WriteString("+++ /dev/null\n")
+		b.WriteString(fmt.Sprintf("@@ -1,%d +0,0 @@\n", len(beforeLines)))
+		for _, line := range beforeLines {
+			b.WriteString("-")
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+		return strings.TrimRight(b.String(), "\n")
+	}
+	b.WriteString("--- a/")
+	b.WriteString(path)
+	b.WriteByte('\n')
+	b.WriteString("+++ b/")
+	b.WriteString(path)
+	b.WriteByte('\n')
+	b.WriteString(fmt.Sprintf("@@ -1,%d +1,%d @@\n", len(beforeLines), len(afterLines)))
+	for _, line := range beforeLines {
+		b.WriteString("-")
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	for _, line := range afterLines {
+		b.WriteString("+")
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func splitLinesPreserveEmpty(content string) []string {
+	if content == "" {
+		return nil
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+func uniqueNonEmptyStrings(values ...string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = appendUniqueString(result, value)
+	}
+	return result
+}
+
+func appendUniqueString(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 type claudeStreamWriter struct {
@@ -488,13 +732,13 @@ func (w *claudeStreamWriter) Close() error {
 }
 
 type claudeStreamEnvelope struct {
-	Type      string  `json:"type"`
-	Subtype   string  `json:"subtype,omitempty"`
-	SessionID string  `json:"session_id,omitempty"`
-	Result    string  `json:"result,omitempty"`
-	DurationMs int64  `json:"duration_ms,omitempty"`
-	NumTurns  int     `json:"num_turns,omitempty"`
-	TotalCost float64 `json:"total_cost_usd,omitempty"`
+	Type          string  `json:"type"`
+	Subtype       string  `json:"subtype,omitempty"`
+	SessionID     string  `json:"session_id,omitempty"`
+	Result        string  `json:"result,omitempty"`
+	DurationMs    int64   `json:"duration_ms,omitempty"`
+	NumTurns      int     `json:"num_turns,omitempty"`
+	TotalCost     float64 `json:"total_cost_usd,omitempty"`
 	ToolUseResult *struct {
 		Type     string `json:"type,omitempty"`
 		FilePath string `json:"filePath,omitempty"`
@@ -544,6 +788,7 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				switch block.Type {
 				case "tool_use":
 					target := extractToolTarget(block.Name, block.Input)
+					r.noteToolUse(block.Name, target)
 					sendEvent(sink, protocol.NewStepUpdateEvent(sessionID, block.Name, "running", target, block.Name, ""))
 				case "text":
 					if text := strings.TrimSpace(block.Text); text != "" {
@@ -572,6 +817,7 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 					message = "tool completed"
 				}
 				sendEvent(sink, protocol.NewStepUpdateEvent(sessionID, message, status, target, "", ""))
+				r.emitFileDiffIfNeeded(sessionID, target, sink)
 			}
 		case "result":
 			if text := strings.TrimSpace(envelope.Result); text != "" {
@@ -667,49 +913,60 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 		if n > 0 {
 			rawChunk := string(buf[:n])
 			chunk := adapter.StripANSI(rawChunk)
-			
+
 			// 如果 chunk 以 \r 开头，代表它是对当前行的重写
 			// 我们需要保留这个 \r 给前端
 			if strings.HasPrefix(rawChunk, "\r") && !strings.HasPrefix(chunk, "\r") {
 				chunk = "\r" + chunk
 			}
-			
+
 			pending += chunk
 
 			for {
 				// 同时查找 \n 和 \r
 				idxN := strings.IndexByte(pending, '\n')
 				idxR := strings.IndexByte(pending, '\r')
-				
+
 				idx := -1
-				isR := false
+				isBareR := false
+				consume := 1
 				if idxN >= 0 && (idxR < 0 || idxN < idxR) {
 					idx = idxN
 				} else if idxR >= 0 {
 					idx = idxR
-					isR = true
+					if idx+1 < len(pending) && pending[idx+1] == '\n' {
+						consume = 2
+					} else {
+						isBareR = true
+					}
 				}
 
 				if idx < 0 {
 					break
 				}
-				
+
 				line := pending[:idx]
-				if isR {
+				if isBareR {
 					line = "\r" + line // 给前端打标记，这是覆盖行
 				}
-				
+
 				for _, event := range parser.ParseLine(line, sessionID, stream) {
 					sendEvent(sink, event)
 				}
-				pending = pending[idx+1:]
+				pending = pending[idx+consume:]
 				emittedTail = ""
 				promptSent = false
 			}
 
 			trimmedPending := strings.TrimSuffix(pending, "\r")
 			if trimmedPending != "" {
-				if detectPrompt && isPromptText(trimmedPending) {
+				liveTailPrompt := detectPrompt && isLiveTailPromptText(trimmedPending)
+				if shouldFlushParserBeforeLiveTail(trimmedPending, liveTailPrompt) {
+					for _, event := range parser.Flush(sessionID, stream) {
+						sendEvent(sink, event)
+					}
+				}
+				if liveTailPrompt {
 					if !promptSent {
 						sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, trimmedPending, promptOptions(trimmedPending)))
 						promptSent = true
@@ -735,7 +992,7 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 
 	pending = strings.TrimSuffix(pending, "\r")
 	if pending != "" {
-		if detectPrompt && isPromptText(pending) && !promptSent {
+		if detectPrompt && isLiveTailPromptText(pending) && !promptSent {
 			sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, pending, promptOptions(pending)))
 		} else if pending != emittedTail {
 			sendEvent(sink, protocol.NewLogEvent(sessionID, pending, stream))
@@ -745,6 +1002,18 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 	for _, event := range parser.Flush(sessionID, stream) {
 		sendEvent(sink, event)
 	}
+}
+
+func shouldFlushParserBeforeLiveTail(text string, isPrompt bool) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	return isPrompt || strings.HasPrefix(trimmed, "diff --git ") || strings.HasPrefix(trimmed, "*** ")
+}
+
+func parserHasPendingDiff(parser interface{ HasPendingDiff() bool }) bool {
+	return parser != nil && parser.HasPendingDiff()
 }
 
 func isPromptText(text string) bool {
@@ -760,6 +1029,10 @@ func isPromptText(text string) bool {
 	}
 
 	lower := strings.ToLower(trimmed)
+	if isLiveTailPromptText(trimmed) {
+		return true
+	}
+
 	// Gemini CLI 使用 ">" 作为提示符
 	if trimmed == ">" || strings.HasSuffix(trimmed, " >") || strings.HasSuffix(trimmed, "\n>") {
 		return true
@@ -768,6 +1041,45 @@ func isPromptText(text string) bool {
 	if strings.HasSuffix(trimmed, "?") || strings.HasSuffix(trimmed, ":") || strings.HasSuffix(trimmed, ">") {
 		for _, keyword := range []string{"continue", "confirm", "password", "input", "select", "proceed", "approve", "yes/no", "message"} {
 			if strings.Contains(lower, keyword) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func isLiveTailPromptText(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+
+	lower := strings.ToLower(trimmed)
+
+	for _, suffix := range []string{"[y/N]", "[Y/n]", "(y/n)", "(Y/n)", "[yes/no]", "(yes/no)"} {
+		if strings.HasSuffix(trimmed, suffix) {
+			return true
+		}
+	}
+
+	if strings.HasSuffix(trimmed, ">") {
+		base := strings.TrimSpace(strings.TrimSuffix(lower, ">"))
+		if base == "decision" || strings.HasSuffix(base, " decision") || strings.HasSuffix(base, " input") {
+			return true
+		}
+	}
+
+	if strings.HasSuffix(trimmed, ":") {
+		base := strings.TrimSpace(strings.TrimSuffix(lower, ":"))
+		if base == "password" || strings.HasPrefix(base, "enter ") || strings.HasPrefix(base, "input ") || strings.HasPrefix(base, "select ") {
+			return true
+		}
+	}
+
+	if strings.HasSuffix(trimmed, "?") {
+		for _, prefix := range []string{"continue", "proceed", "confirm", "approve"} {
+			if strings.HasPrefix(lower, prefix) {
 				return true
 			}
 		}

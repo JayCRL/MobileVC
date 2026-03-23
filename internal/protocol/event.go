@@ -3,15 +3,17 @@ package protocol
 import "time"
 
 const (
-	EventTypeLog           = "log"
-	EventTypeProgress      = "progress"
-	EventTypeError         = "error"
-	EventTypePromptRequest = "prompt_request"
-	EventTypeSessionState  = "session_state"
-	EventTypeAgentState    = "agent_state"
-	EventTypeFSListResult  = "fs_list_result"
-	EventTypeStepUpdate    = "step_update"
-	EventTypeFileDiff      = "file_diff"
+	EventTypeLog               = "log"
+	EventTypeProgress          = "progress"
+	EventTypeError             = "error"
+	EventTypePromptRequest     = "prompt_request"
+	EventTypeSessionState      = "session_state"
+	EventTypeAgentState        = "agent_state"
+	EventTypeFSListResult      = "fs_list_result"
+	EventTypeFSReadResult      = "fs_read_result"
+	EventTypeStepUpdate        = "step_update"
+	EventTypeFileDiff          = "file_diff"
+	EventTypeRuntimeInfoResult = "runtime_info_result"
 )
 
 type RuntimeMeta struct {
@@ -53,6 +55,15 @@ type InputRequestEvent struct {
 	PermissionMode string `json:"permissionMode,omitempty"`
 }
 
+type ReviewDecisionRequestEvent struct {
+	ClientEvent
+	Decision       string `json:"decision"`
+	ContextID      string `json:"contextId,omitempty"`
+	ContextTitle   string `json:"contextTitle,omitempty"`
+	TargetPath     string `json:"targetPath,omitempty"`
+	PermissionMode string `json:"permissionMode,omitempty"`
+}
+
 type SkillRequestEvent struct {
 	ClientEvent
 	Name         string `json:"name"`
@@ -73,6 +84,41 @@ type SkillRequestEvent struct {
 type FSListRequestEvent struct {
 	ClientEvent
 	Path string `json:"path,omitempty"`
+}
+
+type FSReadRequestEvent struct {
+	ClientEvent
+	Path string `json:"path,omitempty"`
+}
+
+type RuntimeInfoRequestEvent struct {
+	ClientEvent
+	Query string `json:"query,omitempty"`
+	CWD   string `json:"cwd,omitempty"`
+}
+
+type SlashCommandRequestEvent struct {
+	ClientEvent
+	Command        string `json:"command"`
+	CWD            string `json:"cwd,omitempty"`
+	Engine         string `json:"engine,omitempty"`
+	PermissionMode string `json:"permissionMode,omitempty"`
+	TargetType     string `json:"targetType,omitempty"`
+	TargetPath     string `json:"targetPath,omitempty"`
+	TargetDiff     string `json:"targetDiff,omitempty"`
+	TargetTitle    string `json:"targetTitle,omitempty"`
+	ContextID      string `json:"contextId,omitempty"`
+	ContextTitle   string `json:"contextTitle,omitempty"`
+	TargetText     string `json:"targetText,omitempty"`
+	TargetStack    string `json:"targetStack,omitempty"`
+}
+
+type RuntimeInfoItem struct {
+	Label     string `json:"label"`
+	Value     string `json:"value,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Available bool   `json:"available"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 type LogEvent struct {
@@ -146,6 +192,22 @@ type FSListResultEvent struct {
 	Event
 	CurrentPath string   `json:"current_path"`
 	Items       []FSItem `json:"items"`
+}
+
+type FSReadResultEvent struct {
+	Event
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	Size    int64  `json:"size"`
+}
+
+type RuntimeInfoResultEvent struct {
+	Event
+	Query       string            `json:"query,omitempty"`
+	Title       string            `json:"title,omitempty"`
+	Items       []RuntimeInfoItem `json:"items,omitempty"`
+	Unavailable bool              `json:"unavailable,omitempty"`
+	Message     string            `json:"msg,omitempty"`
 }
 
 func NewBaseEvent(eventType, sessionID string) Event {
@@ -229,6 +291,26 @@ func NewFSListResultEvent(sessionID, currentPath string, items []FSItem) FSListR
 	}
 }
 
+func NewFSReadResultEvent(sessionID, path, content string, size int64) FSReadResultEvent {
+	return FSReadResultEvent{
+		Event:   NewBaseEvent(EventTypeFSReadResult, sessionID),
+		Path:    path,
+		Content: content,
+		Size:    size,
+	}
+}
+
+func NewRuntimeInfoResultEvent(sessionID, query, title, message string, unavailable bool, items []RuntimeInfoItem) RuntimeInfoResultEvent {
+	return RuntimeInfoResultEvent{
+		Event:       NewBaseEvent(EventTypeRuntimeInfoResult, sessionID),
+		Query:       query,
+		Title:       title,
+		Message:     message,
+		Unavailable: unavailable,
+		Items:       items,
+	}
+}
+
 func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
 	merged := base
 	if overlay.Source != "" {
@@ -294,6 +376,12 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case FSListResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case FSReadResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case RuntimeInfoResultEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	default:

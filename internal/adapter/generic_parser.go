@@ -44,6 +44,7 @@ func (p *GenericParser) Detect(dir string) bool {
 
 func (p *GenericParser) ParseLine(line string, sessionID string, stream string) []any {
 	trimmed := strings.TrimRight(line, "\r\n")
+	trimmed = strings.TrimLeft(trimmed, "\r")
 	return p.parseLine(trimmed, sessionID, stream)
 }
 
@@ -108,6 +109,10 @@ func (p *GenericParser) Flush(sessionID string, stream string) []any {
 		events = append(events, p.flushBufferedDiff(sessionID)...)
 	}
 	return events
+}
+
+func (p *GenericParser) HasPendingDiff() bool {
+	return p.diffing && len(p.diffBuffer) > 0
 }
 
 func (p *GenericParser) startErrorBuffer(kind, firstLine string) {

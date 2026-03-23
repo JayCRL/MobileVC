@@ -2,497 +2,454 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MobileVC Vibe Coding</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>MobileVC</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
   <style>
-    .markdown-body {
-      color: #f4f4f5;
-      font-size: 0.95rem;
-      line-height: 1.7;
+    :root {
+      color-scheme: dark;
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
+    body { background: #09090b; color: #f4f4f5; }
+    .scrollbar-none::-webkit-scrollbar { display: none; }
+    .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+    .markdown-body { color: #f4f4f5; font-size: 0.95rem; line-height: 1.7; }
     .markdown-body > *:first-child { margin-top: 0; }
     .markdown-body > *:last-child { margin-bottom: 0; }
-    .markdown-body h1, .markdown-body h2, .markdown-body h3 {
-      margin: 1rem 0 0.5rem;
-      font-weight: 700;
-      line-height: 1.3;
-    }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3 { margin: 1rem 0 0.5rem; font-weight: 700; line-height: 1.3; }
     .markdown-body h1 { font-size: 1.25rem; }
     .markdown-body h2 { font-size: 1.1rem; }
     .markdown-body h3 { font-size: 1rem; }
-    .markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body pre, .markdown-body blockquote {
-      margin: 0.75rem 0;
-    }
-    .markdown-body ul, .markdown-body ol {
-      padding-left: 1.25rem;
-    }
-    .markdown-body code:not(pre code) {
-      background: rgba(255,255,255,0.08);
-      border-radius: 0.4rem;
-      padding: 0.12rem 0.35rem;
-      font-size: 0.9em;
-    }
-    .markdown-body pre {
-      position: relative;
-      overflow-x: auto;
-      border-radius: 0.9rem;
-      border: 1px solid rgba(255,255,255,0.08);
-      background: #0f172a;
-      padding: 1rem;
-    }
-    .markdown-body pre code {
-      background: transparent;
-      padding: 0;
-      font-size: 0.88rem;
-    }
-    .markdown-body blockquote {
-      border-left: 3px solid rgba(96,165,250,0.7);
-      padding-left: 0.9rem;
-      color: #d4d4d8;
-    }
+    .markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body pre, .markdown-body blockquote { margin: 0.75rem 0; }
+    .markdown-body ul, .markdown-body ol { padding-left: 1.25rem; }
+    .markdown-body code:not(pre code) { background: rgba(255,255,255,0.08); border-radius: 0.4rem; padding: 0.12rem 0.35rem; font-size: 0.9em; }
+    .markdown-body pre { position: relative; overflow-x: auto; border-radius: 0.9rem; border: 1px solid rgba(255,255,255,0.08); background: #0f172a; padding: 1rem; }
+    .markdown-body pre code { background: transparent; padding: 0; font-size: 0.88rem; }
+    .markdown-body blockquote { border-left: 3px solid rgba(96,165,250,0.7); padding-left: 0.9rem; color: #d4d4d8; }
     .code-copy-btn {
-      position: absolute;
-      top: 0.75rem;
-      right: 0.75rem;
-      border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(24,24,27,0.9);
-      color: #fafafa;
-      border-radius: 0.6rem;
-      padding: 0.35rem 0.5rem;
-      font-size: 0.75rem;
-      line-height: 1;
+      position: absolute; top: 0.75rem; right: 0.75rem; border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(24,24,27,0.9); color: #fafafa; border-radius: 0.6rem; padding: 0.35rem 0.5rem; font-size: 0.75rem; line-height: 1;
     }
-    .code-copy-btn:hover {
-      background: rgba(39,39,42,0.95);
-    }
-    .action-scrollbar::-webkit-scrollbar,
-    .sidebar-scrollbar::-webkit-scrollbar,
-    .diff-scrollbar::-webkit-scrollbar {
-      display: none;
-    }
-    .action-scrollbar,
-    .sidebar-scrollbar,
-    .diff-scrollbar {
-      -ms-overflow-style: none;
-      scrollbar-width: none;
-    }
-    @keyframes pulse-file {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.12); }
-      50% { box-shadow: 0 0 0 6px rgba(59,130,246,0.22); }
-    }
-    @keyframes crab-crawl {
-      0%, 100% { transform: translateX(-4px); }
-      50% { transform: translateX(4px); }
-    }
-    .crab-icon {
-      display: inline-block;
-      animation: crab-crawl 1.2s ease-in-out infinite;
-    }
-    @keyframes step-flow {
-      0% { transform: translateX(-100%); }
-      100% { transform: translateX(220%); }
-    }
-    .file-attention {
-      border-color: rgba(96,165,250,0.9);
-      background: rgba(30,41,59,0.95);
-      animation: pulse-file 1.8s ease-in-out infinite;
-    }
-    .step-running::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      width: 38%;
-      background: linear-gradient(90deg, transparent, rgba(96,165,250,0.95), transparent);
-      animation: step-flow 1.4s linear infinite;
-    }
+    .code-copy-btn:hover { background: rgba(39,39,42,0.95); }
     .diff-added { background: rgba(34,197,94,0.13); color: #dcfce7; }
     .diff-removed { background: rgba(248,113,113,0.13); color: #fee2e2; }
     .diff-meta { color: #93c5fd; }
+    .line-row:hover { background: rgba(255,255,255,0.03); }
+    .bubble-shadow { box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
+    .glass { background: rgba(24,24,27,0.88); backdrop-filter: blur(20px); }
+    .crab-track {
+      overflow: hidden;
+      position: relative;
+    }
+    .crab-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .crab-left {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      min-width: 0;
+    }
+    .crab-runner {
+      display: inline-flex;
+      align-items: center;
+      animation: crab-walk 2.4s ease-in-out infinite;
+      will-change: transform;
+    }
+    .crab-status-label {
+      color: #e4e4e7;
+      white-space: nowrap;
+    }
+    .crab-tool-label {
+      font-size: 10px;
+      line-height: 1;
+      color: #a1a1aa;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    @keyframes crab-walk {
+      0% { transform: translateX(-10px); }
+      50% { transform: translateX(10px); }
+      100% { transform: translateX(-10px); }
+    }
+    .spinner {
+      width: 1rem; height: 1rem; border-radius: 999px; border: 2px solid rgba(255,255,255,0.16); border-top-color: #60a5fa;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
-<body class="min-h-screen bg-zinc-950 text-zinc-100">
+<body class="min-h-screen">
   <div id="sidebarOverlay" class="pointer-events-none fixed inset-0 z-40 bg-black/60 opacity-0 transition-opacity duration-300"></div>
-  <aside id="sidebar" class="sidebar-scrollbar fixed inset-y-0 left-0 z-50 w-[86vw] max-w-sm -translate-x-full overflow-y-auto border-r border-zinc-800 bg-zinc-950/98 p-4 shadow-2xl transition-transform duration-300">
+  <aside id="sidebar" class="scrollbar-none fixed inset-y-0 left-0 z-50 w-[84vw] max-w-sm -translate-x-full overflow-y-auto border-r border-zinc-800 bg-zinc-950/98 p-4 shadow-2xl transition-transform duration-300">
     <div class="mb-4 flex items-start justify-between gap-3">
       <div class="min-w-0">
-        <p class="text-sm font-semibold text-zinc-100">工作区文件树</p>
-        <p id="sidebarPath" class="mt-1 break-all text-xs text-zinc-400">.</p>
+        <div class="text-sm font-semibold text-zinc-100">文件抽屉</div>
+        <div id="sidebarPath" class="mt-1 break-all text-xs text-zinc-400">.</div>
       </div>
       <button id="closeSidebarBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
     </div>
     <div class="mb-3 flex gap-2">
-      <button id="sidebarUpBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">⬅ 上一级</button>
+      <button id="sidebarUpBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">上一级</button>
       <button id="sidebarRefreshBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">刷新</button>
     </div>
     <div id="fileList" class="space-y-2"></div>
   </aside>
 
-  <div id="appShell" class="mx-auto flex min-h-screen w-full max-w-4xl flex-col px-3 pt-3 sm:px-4">
-    <header class="sticky top-0 z-20 mb-3 rounded-3xl border border-zinc-800 bg-zinc-900/88 px-4 py-3 shadow-xl backdrop-blur">
-      <div class="flex items-start justify-between gap-3">
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-2">
+  <div id="appShell" class="mx-auto min-h-screen w-full max-w-4xl">
+    <section id="authView" class="hidden min-h-screen px-4 py-6">
+      <div class="mx-auto flex min-h-[calc(100vh-3rem)] max-w-md items-center justify-center">
+        <div class="w-full rounded-[2rem] border border-zinc-800 bg-zinc-900/92 p-6 shadow-2xl">
+          <div class="mb-6">
+            <div class="text-2xl font-semibold text-zinc-100">MobileVC</div>
+            <div class="mt-2 text-sm text-zinc-400">输入 token 后进入移动优先工作台。已保存 token 时会自动尝试连接。</div>
+          </div>
+          <form id="authForm" class="space-y-3">
+            <input id="tokenInput" type="password" autocomplete="off" placeholder="输入 AUTH_TOKEN" class="w-full rounded-3xl border border-zinc-800 bg-zinc-950 px-4 py-4 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-blue-700" />
+            <button id="authSubmitBtn" type="submit" class="flex w-full items-center justify-center gap-2 rounded-3xl bg-blue-600 px-4 py-4 text-sm font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-700">
+              <span id="authSpinner" class="spinner hidden"></span>
+              <span id="authSubmitText">进入工作台</span>
+            </button>
+          </form>
+          <div id="authStatus" class="mt-4 hidden rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 text-sm text-zinc-300"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="chatView" class="hidden min-h-screen px-3 pb-[calc(8.5rem+var(--safe-bottom))] pt-3 sm:px-4">
+      <header class="glass sticky top-0 z-20 mb-3 rounded-[1.8rem] border border-zinc-800 px-4 py-3 shadow-xl">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex min-w-0 items-center gap-2">
             <button id="openSidebarBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-base text-zinc-100 hover:bg-zinc-800">📁</button>
             <div class="min-w-0">
-              <h1 class="truncate text-lg font-semibold tracking-tight">MobileVC</h1>
-              <p id="workspacePath" class="mt-1 truncate text-sm text-zinc-400">工作区：.</p>
+              <div id="projectTitleText" class="truncate text-sm font-semibold text-zinc-100">MobileVC</div>
+              <div id="workspacePath" class="truncate text-xs text-zinc-400">.</div>
             </div>
           </div>
-        </div>
-        <button id="retokenBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">Token</button>
-      </div>
-      <div class="mt-3 flex flex-wrap items-center gap-2 text-sm text-zinc-300">
-        <div class="flex items-center gap-2 rounded-full border border-zinc-800 px-3 py-1.5">
-          <span id="statusDot" class="h-2.5 w-2.5 rounded-full bg-red-500 transition-colors duration-300"></span>
-          <span id="statusText">未连接</span>
-        </div>
-        <div class="rounded-full border border-zinc-800 px-3 py-1.5 text-xs text-zinc-400">
-          会话 <span id="sessionText">-</span>
-        </div>
-        <div id="runtimeMetaBadge" class="hidden rounded-full border border-violet-800 bg-violet-950/40 px-3 py-1.5 text-xs text-violet-200"></div>
-        <button id="resumeSessionBtn" class="hidden rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100 hover:bg-emerald-900/60">恢复会话</button>
-        <button id="reconnectBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">重连</button>
-      </div>
-      <div class="mt-3 flex items-center gap-2">
-        <span class="text-xs uppercase tracking-wide text-zinc-500">视图</span>
-        <button id="structuredViewBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">结构化视图</button>
-        <button id="rawTerminalViewBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">原始终端</button>
-        <span class="text-xs uppercase tracking-wide text-zinc-500 ml-2">权限</span>
-        <select id="permissionModeSelect" class="rounded-2xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 outline-none">
-          <option value="acceptEdits">自动接受编辑 (推荐)</option>
-          <option value="auto">全自动</option>
-          <option value="bypassPermissions">跳过全部权限</option>
-          <option value="plan">仅规划</option>
-          <option value="">默认 (需手动授权)</option>
-        </select>
-      </div>
-      <div id="stepPanel" class="mt-3 hidden rounded-2xl border border-zinc-800 bg-zinc-950/70 px-3 py-2">
-        <div class="mb-2 flex items-center justify-between gap-3">
-          <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">当前步骤</p>
           <div class="flex items-center gap-2">
-            <button id="stepSkillBtn" class="hidden rounded-2xl border border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800">更多 Skill</button>
-            <span id="stepStatusText" class="text-[11px] uppercase tracking-wide text-zinc-500">running</span>
+            <button id="diffBadgeBtn" class="relative rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">
+              Diff
+              <span id="diffBadgeDot" class="absolute -right-1 -top-1 hidden min-w-4 rounded-full bg-red-500 px-1 text-[10px] leading-4 text-white">1</span>
+            </button>
+            <button id="terminalBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">日志</button>
           </div>
         </div>
-        <p id="stepText" class="text-sm text-zinc-200"></p>
-        <div id="stepMetaText" class="mt-2 text-xs text-zinc-400"></div>
-        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
-          <div id="stepBar" class="relative h-full rounded-full bg-blue-500/80"></div>
+        <div class="mt-3 flex items-center justify-between gap-2 text-sm text-zinc-300">
+          <button id="statusDetailBtn" class="flex items-center gap-2 rounded-full border border-zinc-800 px-3 py-1.5 text-left hover:bg-zinc-800/70">
+            <span id="statusDot" class="h-2.5 w-2.5 rounded-full bg-red-500"></span>
+            <span id="statusText">未连接</span>
+          </button>
+          <div class="flex items-center gap-2">
+            <div id="runtimeMetaBadge" class="hidden rounded-full border border-violet-800 bg-violet-950/40 px-3 py-1.5 text-[11px] text-violet-200"></div>
+            <button id="resumeSessionBtn" class="hidden rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100 hover:bg-emerald-900/60">恢复</button>
+            <button id="retokenBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">Token</button>
+            <button id="reconnectBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">重连</button>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <div id="chatContainer" class="space-y-3"></div>
+      </main>
+
+      <div id="chatComposerDock" class="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-4xl px-3 pb-[calc(0.75rem+var(--safe-bottom))] sm:px-4">
+        <div class="glass rounded-[1.8rem] border border-zinc-800 p-3 shadow-2xl">
+          <div id="statusActivity" class="crab-track hidden mb-2 px-1 py-1 text-[11px] text-zinc-200">
+            <div class="crab-row">
+              <div class="crab-left min-w-0">
+                <div class="crab-runner">
+                  <span>🦀</span>
+                </div>
+                <span class="crab-status-label">执行中</span>
+                <span id="statusToolLabel" class="crab-tool-label"></span>
+              </div>
+              <span id="statusTimer">0s</span>
+            </div>
+          </div>
+          <div id="chatInputHint" class="mb-2 hidden rounded-2xl border border-blue-900/70 bg-blue-950/20 px-3 py-2 text-xs text-blue-100"></div>
+          <form id="chatComposer" class="flex items-end gap-2">
+            <input id="chatInput" type="text" autocomplete="off" placeholder="输入命令，如 claude、/build、pwd" class="min-w-0 flex-1 rounded-3xl border border-zinc-800 bg-zinc-950 px-4 py-4 text-base text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-blue-700 sm:text-sm" />
+            <button id="chatSendBtn" type="submit" class="rounded-3xl bg-blue-600 px-5 py-4 text-sm font-medium text-white hover:bg-blue-500">发送</button>
+          </form>
         </div>
       </div>
-    </header>
-
-    <main class="flex-1">
-      <div id="chatContainer" class="space-y-3"></div>
-    </main>
+    </section>
   </div>
 
-  <div id="diffModal" class="pointer-events-none fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-3 pb-3 pt-10 opacity-0 transition duration-200 sm:items-center sm:p-6">
-    <div id="diffModalCard" class="diff-scrollbar max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-zinc-800 bg-zinc-950 shadow-2xl">
-      <div class="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur">
-        <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0">
-            <p id="diffTitle" class="truncate text-sm font-semibold text-zinc-100">Diff 预览</p>
-            <p id="diffPathText" class="mt-1 break-all text-xs text-zinc-400"></p>
-            <p id="diffMetaText" class="mt-1 text-[11px] text-violet-300"></p>
-          </div>
-          <div class="flex shrink-0 items-center gap-2">
-            <button id="diffSkillBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">更多 Skill</button>
-            <button id="copyDiffBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">复制</button>
-            <button id="closeDiffBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
-          </div>
+  <div id="singleFileView" class="pointer-events-none fixed inset-0 z-[55] flex flex-col bg-zinc-950 opacity-0 transition duration-200">
+    <div class="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+      <div class="flex min-w-0 items-center gap-2">
+        <button id="closeFileViewBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">返回</button>
+        <div class="min-w-0">
+          <div id="fileViewTitle" class="truncate text-sm font-semibold text-zinc-100">文件</div>
+          <div id="fileViewPath" class="truncate text-xs text-zinc-400"></div>
         </div>
       </div>
-      <div class="px-4 py-4">
-        <pre id="diffContent" class="overflow-x-auto whitespace-pre-wrap break-words rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4 font-mono text-xs leading-6 text-zinc-100"></pre>
+      <button id="fileViewRevertBtn" class="rounded-2xl border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-100 hover:bg-red-900/60">撤销</button>
+    </div>
+
+    <div id="fileLoadingBar" class="hidden border-b border-zinc-800 px-4 py-2 text-xs text-blue-200">
+      <div class="flex items-center gap-2"><span class="spinner"></span><span>正在加载文件内容…</span></div>
+    </div>
+
+    <div id="fileCodeContainer" class="scrollbar-none flex-1 overflow-auto px-3 py-3 sm:px-4"></div>
+
+    <div id="fileReviewBar" class="hidden border-t border-zinc-800 bg-zinc-950/96 px-4 py-3">
+      <div class="mb-2 text-xs text-zinc-400">当前文件存在待确认 diff</div>
+      <div class="flex gap-2">
+        <button id="fileAcceptBtn" class="flex-1 rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-3 text-sm text-emerald-100 hover:bg-emerald-900/60">同意</button>
+        <button id="fileRevertBtn" class="flex-1 rounded-2xl border border-red-800 bg-red-950/40 px-3 py-3 text-sm text-red-100 hover:bg-red-900/60">撤销</button>
+        <button id="fileReviseBtn" class="flex-1 rounded-2xl border border-amber-700 bg-amber-950/40 px-3 py-3 text-sm text-amber-100 hover:bg-amber-900/60">继续调整</button>
       </div>
+    </div>
+
+    <form id="fileComposer" class="border-t border-zinc-800 bg-zinc-950/98 px-4 pb-[calc(1rem+var(--safe-bottom))] pt-3">
+      <div class="mb-2 text-xs text-zinc-500">当前文件定向指令</div>
+      <div class="flex items-end gap-2">
+        <input id="fileInput" type="text" autocomplete="off" placeholder="例如：解释这个文件的改动，或继续修改当前文件" class="min-w-0 flex-1 rounded-3xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-base text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-blue-700 sm:text-sm" />
+        <button id="fileVoiceBtn" type="button" class="rounded-full border border-zinc-700 px-4 py-4 text-lg text-zinc-200 hover:bg-zinc-800">🎙</button>
+        <button id="fileSendBtn" type="submit" class="rounded-3xl bg-blue-600 px-5 py-4 text-sm font-medium text-white hover:bg-blue-500">发送</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="statusDetailPanel" class="pointer-events-none fixed inset-0 z-40 flex items-end bg-black/50 opacity-0 transition">
+    <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <div>
+          <div class="text-sm font-semibold text-zinc-100">连接状态详情</div>
+          <div class="text-xs text-zinc-500">当前会话、上下文与路径</div>
+        </div>
+        <button id="closeStatusDetailBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+      </div>
+      <div id="statusDetailContent" class="space-y-2"></div>
     </div>
   </div>
 
-  <div id="contextSkillMenu" class="pointer-events-none fixed z-[60] min-w-52 rounded-2xl border border-zinc-800 bg-zinc-950/98 p-2 opacity-0 shadow-2xl transition">
-    <div id="contextSkillMenuTitle" class="px-3 py-2 text-[11px] uppercase tracking-wide text-zinc-500"></div>
-    <div id="contextSkillMenuItems" class="space-y-1"></div>
-  </div>
-
-  <div id="bottomDock" class="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-4xl px-3 pb-3 sm:px-4">
-    <section class="rounded-3xl border border-zinc-800 bg-zinc-900/92 p-3 shadow-2xl backdrop-blur">
-      <div id="activitySummary" class="hidden mb-2 flex items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
-        <span id="activityIcon" class="text-base">🤖</span>
-        <span id="activityTool" class="font-medium text-zinc-100"></span>
-        <span id="activityTarget" class="truncate text-zinc-400"></span>
-        <span class="ml-auto flex items-center gap-2 shrink-0">
-          <span id="activityTimer" class="tabular-nums text-zinc-400"></span>
-          <span id="activityEstimate" class="text-zinc-500"></span>
-        </span>
-      </div>
-      <div id="actionPanel" class="action-scrollbar mb-3 flex gap-2 overflow-x-auto pb-1"></div>
-
-      <section id="inputCard" class="mb-3 hidden rounded-2xl border border-blue-900/70 bg-blue-950/20 p-3">
-        <div class="mb-2">
-          <p class="text-sm font-semibold text-blue-200">等待输入</p>
-          <p id="promptText" class="mt-1 text-sm text-zinc-300"></p>
+  <div id="terminalDrawer" class="pointer-events-none fixed inset-0 z-40 flex items-end bg-black/50 opacity-0 transition">
+    <div id="terminalDrawerSheet" class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl" style="height: 320px;">
+      <div id="terminalDrawerHandle" class="mx-auto mb-3 h-1.5 w-14 rounded-full bg-zinc-700"></div>
+      <div id="terminalDrawerScroll" class="scrollbar-none max-h-full overflow-y-auto overscroll-contain">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <div>
+            <div class="text-sm font-semibold text-zinc-100">运行日志</div>
+            <div class="text-xs text-zinc-500">stdout / stderr 原始投影</div>
+          </div>
+          <button id="closeTerminalDrawerBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
         </div>
-        <div id="promptOptionButtons" class="mb-3 flex flex-wrap gap-2"></div>
-        <form id="inputForm" class="flex gap-2">
-          <input id="inputField" type="text" autocomplete="off" placeholder="输入要回复的内容" class="min-w-0 flex-1 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600" />
-          <button id="sendInputBtn" type="submit" class="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-500">发送</button>
-        </form>
-      </section>
-
-      <form id="commandForm" class="flex gap-2">
-        <input id="commandInput" type="text" autocomplete="off" placeholder="例如：gemini、claude、python，或直接输入命令" class="min-w-0 flex-1 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600" />
-        <button id="runBtn" type="submit" class="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-700">运行</button>
-      </form>
-    </section>
+        <div id="terminalDrawerContent"></div>
+      </div>
+    </div>
   </div>
 
   <script>
     marked.setOptions({ breaks: true, gfm: true });
 
-    const chatContainer = document.getElementById('chatContainer');
-    const commandForm = document.getElementById('commandForm');
-    const commandInput = document.getElementById('commandInput');
-    const runBtn = document.getElementById('runBtn');
-    const inputCard = document.getElementById('inputCard');
-    const inputForm = document.getElementById('inputForm');
-    const inputField = document.getElementById('inputField');
-    const sendInputBtn = document.getElementById('sendInputBtn');
-    const promptText = document.getElementById('promptText');
-    const promptOptionButtons = document.getElementById('promptOptionButtons');
-    const statusDot = document.getElementById('statusDot');
-    const statusText = document.getElementById('statusText');
-    const sessionText = document.getElementById('sessionText');
-    const reconnectBtn = document.getElementById('reconnectBtn');
-    const runtimeMetaBadge = document.getElementById('runtimeMetaBadge');
-    const retokenBtn = document.getElementById('retokenBtn');
-    const actionPanel = document.getElementById('actionPanel');
-    const openSidebarBtn = document.getElementById('openSidebarBtn');
-    const closeSidebarBtn = document.getElementById('closeSidebarBtn');
-    const structuredViewBtn = document.getElementById('structuredViewBtn');
-    const rawTerminalViewBtn = document.getElementById('rawTerminalViewBtn');
+    const STORAGE_KEYS = {
+      token: 'vibe_token',
+      permissionMode: 'vibe_permissionMode',
+      resumeSessionId: 'vibe_resume_session_id',
+      fastMode: 'vibe_fast_mode'
+    };
+
+    function storageGet(key, fallback = '') {
+      const value = localStorage.getItem(key);
+      return value == null ? fallback : value;
+    }
+    function storageSet(key, value) {
+      if (value == null || value === '') localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    }
+
+    const authView = document.getElementById('authView');
+    const chatView = document.getElementById('chatView');
+    const tokenInput = document.getElementById('tokenInput');
+    const authForm = document.getElementById('authForm');
+    const authSubmitBtn = document.getElementById('authSubmitBtn');
+    const authSubmitText = document.getElementById('authSubmitText');
+    const authSpinner = document.getElementById('authSpinner');
+    const authStatus = document.getElementById('authStatus');
+
     const sidebar = document.getElementById('sidebar');
     const sidebarOverlay = document.getElementById('sidebarOverlay');
-    const workspacePath = document.getElementById('workspacePath');
+    const openSidebarBtn = document.getElementById('openSidebarBtn');
+    const closeSidebarBtn = document.getElementById('closeSidebarBtn');
     const sidebarPath = document.getElementById('sidebarPath');
-    const fileList = document.getElementById('fileList');
     const sidebarUpBtn = document.getElementById('sidebarUpBtn');
     const sidebarRefreshBtn = document.getElementById('sidebarRefreshBtn');
-    const stepPanel = document.getElementById('stepPanel');
-    const stepText = document.getElementById('stepText');
-    const stepMetaText = document.getElementById('stepMetaText');
-    const stepStatusText = document.getElementById('stepStatusText');
-    const stepBar = document.getElementById('stepBar');
-    const stepSkillBtn = document.getElementById('stepSkillBtn');
-    const diffModal = document.getElementById('diffModal');
-    const diffTitle = document.getElementById('diffTitle');
-    const diffPathText = document.getElementById('diffPathText');
-    const diffMetaText = document.getElementById('diffMetaText');
-    const diffContent = document.getElementById('diffContent');
-    const copyDiffBtn = document.getElementById('copyDiffBtn');
-    const closeDiffBtn = document.getElementById('closeDiffBtn');
-    const diffSkillBtn = document.getElementById('diffSkillBtn');
-    const contextSkillMenu = document.getElementById('contextSkillMenu');
-    const contextSkillMenuTitle = document.getElementById('contextSkillMenuTitle');
-    const contextSkillMenuItems = document.getElementById('contextSkillMenuItems');
-    const appShell = document.getElementById('appShell');
-    const bottomDock = document.getElementById('bottomDock');
+    const fileList = document.getElementById('fileList');
+
+    const chatContainer = document.getElementById('chatContainer');
+    const chatComposer = document.getElementById('chatComposer');
+    const chatInput = document.getElementById('chatInput');
+    const chatSendBtn = document.getElementById('chatSendBtn');
+    const chatInputHint = document.getElementById('chatInputHint');
+    const projectTitleText = document.getElementById('projectTitleText');
+    const workspacePath = document.getElementById('workspacePath');
+    const runtimeMetaBadge = document.getElementById('runtimeMetaBadge');
+    const statusActivity = document.getElementById('statusActivity');
+    const statusTimer = document.getElementById('statusTimer');
+    const statusToolLabel = document.getElementById('statusToolLabel');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const statusDetailBtn = document.getElementById('statusDetailBtn');
+    const retokenBtn = document.getElementById('retokenBtn');
+    const reconnectBtn = document.getElementById('reconnectBtn');
     const resumeSessionBtn = document.getElementById('resumeSessionBtn');
-    const permissionModeSelect = document.getElementById('permissionModeSelect');
+    const diffBadgeBtn = document.getElementById('diffBadgeBtn');
+    const diffBadgeDot = document.getElementById('diffBadgeDot');
+    const terminalBtn = document.getElementById('terminalBtn');
 
-    // restore saved permission mode (default to acceptEdits)
-    permissionModeSelect.value = localStorage.getItem('vibe_permissionMode') || 'acceptEdits';
-    permissionModeSelect.addEventListener('change', () => {
-      localStorage.setItem('vibe_permissionMode', permissionModeSelect.value);
-    });
+    const singleFileView = document.getElementById('singleFileView');
+    const closeFileViewBtn = document.getElementById('closeFileViewBtn');
+    const fileViewTitle = document.getElementById('fileViewTitle');
+    const fileViewPath = document.getElementById('fileViewPath');
+    const fileCodeContainer = document.getElementById('fileCodeContainer');
+    const fileComposer = document.getElementById('fileComposer');
+    const fileInput = document.getElementById('fileInput');
+    const fileVoiceBtn = document.getElementById('fileVoiceBtn');
+    const fileSendBtn = document.getElementById('fileSendBtn');
+    const fileLoadingBar = document.getElementById('fileLoadingBar');
+    const fileReviewBar = document.getElementById('fileReviewBar');
+    const fileAcceptBtn = document.getElementById('fileAcceptBtn');
+    const fileRevertBtn = document.getElementById('fileRevertBtn');
+    const fileReviseBtn = document.getElementById('fileReviseBtn');
+    const fileViewRevertBtn = document.getElementById('fileViewRevertBtn');
 
-    // dedup state for frontend events
-    const dedupState = {
-      lastLogMsg: '', lastLogStream: '', lastLogTime: 0,
-      lastStepMsg: '', lastStepStatus: ''
-    };
+    const statusDetailPanel = document.getElementById('statusDetailPanel');
+    const statusDetailContent = document.getElementById('statusDetailContent');
+    const closeStatusDetailBtn = document.getElementById('closeStatusDetailBtn');
 
-    const activitySummary = document.getElementById('activitySummary');
-    const activityIcon = document.getElementById('activityIcon');
-    const activityTool = document.getElementById('activityTool');
-    const activityTarget = document.getElementById('activityTarget');
-    const activityTimer = document.getElementById('activityTimer');
-    const activityEstimate = document.getElementById('activityEstimate');
-
-    const claudeActivity = {
-      active: false,
-      startTime: 0,
-      turnStartTime: 0,
-      turns: [],
-      currentTool: '',
-      currentTarget: '',
-      totalCost: 0,
-      timerInterval: null,
-    };
-
-    const toolIcons = {
-      Read: '\u{1F4D6}', Edit: '\u{270F}\u{FE0F}', Write: '\u{1F4DD}',
-      Bash: '\u{1F4BB}', Grep: '\u{1F50D}', Glob: '\u{1F4C1}',
-      WebFetch: '\u{1F310}', WebSearch: '\u{1F310}',
-      TaskCreate: '\u{1F4CB}', TaskUpdate: '\u{1F4CB}',
-      NotebookEdit: '\u{1F4D3}', Agent: '\u{1F916}',
-    };
-
-    function formatDuration(ms) {
-      if (ms < 1000) return '<1s';
-      const s = Math.floor(ms / 1000);
-      if (s < 60) return s + 's';
-      const m = Math.floor(s / 60);
-      return m + 'm' + (s % 60) + 's';
-    }
-
-    function getAvgTurnDuration() {
-      const completed = claudeActivity.turns.filter(t => t.endMs > 0);
-      if (!completed.length) return 0;
-      const total = completed.reduce((sum, t) => sum + (t.endMs - t.startMs), 0);
-      return total / completed.length;
-    }
-
-    function startActivityTimer() {
-      stopActivityTimer();
-      claudeActivity.active = true;
-      claudeActivity.startTime = Date.now();
-      claudeActivity.turns = [];
-      claudeActivity.timerInterval = setInterval(updateActivityDisplay, 1000);
-      updateActivityDisplay();
-    }
-
-    function resetTaskTimer() {
-      claudeActivity.startTime = Date.now();
-      claudeActivity.turns = [];
-      if (!claudeActivity.active) startActivityTimer();
-      updateActivityDisplay();
-    }
-
-    function stopActivityTimer() {
-      claudeActivity.active = false;
-      if (claudeActivity.timerInterval) {
-        clearInterval(claudeActivity.timerInterval);
-        claudeActivity.timerInterval = null;
-      }
-    }
-
-    function onToolStart(toolName, target) {
-      claudeActivity.currentTool = toolName;
-      claudeActivity.currentTarget = target || '';
-      claudeActivity.turnStartTime = Date.now();
-      claudeActivity.turns.push({ tool: toolName, target, startMs: Date.now(), endMs: 0 });
-      if (!claudeActivity.active) startActivityTimer();
-      updateActivityDisplay();
-    }
-
-    function onToolDone(target) {
-      const last = claudeActivity.turns[claudeActivity.turns.length - 1];
-      if (last && last.endMs === 0) {
-        last.endMs = Date.now();
-      }
-      claudeActivity.currentTool = '';
-      claudeActivity.currentTarget = '';
-      updateActivityDisplay();
-    }
-
-    function onClaudeFinish(summaryMsg) {
-      stopActivityTimer();
-      claudeActivity.currentTool = '';
-      claudeActivity.currentTarget = '';
-      if (summaryMsg) {
-        activitySummary.classList.remove('hidden');
-        activityIcon.textContent = '\u{2705}';
-        activityTool.textContent = '\u{5B8C}\u{6210}';
-        activityTarget.textContent = '';
-        const elapsed = claudeActivity.startTime ? Date.now() - claudeActivity.startTime : 0;
-        activityTimer.textContent = elapsed ? formatDuration(elapsed) : '';
-        activityEstimate.textContent = summaryMsg;
-        syncBottomSpacing();
-        setTimeout(() => { activitySummary.classList.add('hidden'); syncBottomSpacing(); }, 8000);
-      } else {
-        activitySummary.classList.add('hidden');
-      }
-    }
-
-    function updateActivityDisplay() {
-      if (!claudeActivity.active && !claudeActivity.currentTool) {
-        activitySummary.classList.add('hidden');
-        return;
-      }
-      activitySummary.classList.remove('hidden');
-      const tool = claudeActivity.currentTool;
-      const iconChar = (tool && toolIcons[tool]) || '\u{1F980}';
-      activityIcon.innerHTML = '<span class="crab-icon">' + iconChar + '</span>';
-      activityTool.textContent = tool || '\u{601D}\u{8003}\u{4E2D}';
-      const target = claudeActivity.currentTarget;
-      activityTarget.textContent = target ? '\u{2192} ' + (target.length > 40 ? '...' + target.slice(-37) : target) : '';
-      const elapsed = claudeActivity.startTime ? Date.now() - claudeActivity.startTime : 0;
-      activityTimer.textContent = '\u{5DF2}\u{7528} ' + formatDuration(elapsed);
-      const avg = getAvgTurnDuration();
-      if (avg > 0 && tool) {
-        const turnElapsed = Date.now() - claudeActivity.turnStartTime;
-        const remaining = Math.max(0, avg - turnElapsed);
-        activityEstimate.textContent = '\u{00B7} \u{9884}\u{8BA1} ~' + formatDuration(remaining);
-      } else {
-        activityEstimate.textContent = '';
-      }
-      syncBottomSpacing();
-    }
+    const terminalDrawer = document.getElementById('terminalDrawer');
+    const terminalDrawerSheet = document.getElementById('terminalDrawerSheet');
+    const terminalDrawerHandle = document.getElementById('terminalDrawerHandle');
+    const terminalDrawerScroll = document.getElementById('terminalDrawerScroll');
+    const terminalDrawerContent = document.getElementById('terminalDrawerContent');
+    const closeTerminalDrawerBtn = document.getElementById('closeTerminalDrawerBtn');
 
     const appState = {
-      token: localStorage.getItem('vibe_token') || '',
+      auth: { token: storageGet(STORAGE_KEYS.token, ''), validating: false, error: '' },
       ws: null,
       connection: { connected: false, running: false },
-      session: { id: '', claudeInteractiveActive: false, activeAI: 'claude', lastPromptMessage: '' },
-      view: { mode: 'structured' },
-      workspace: { cwd: '.', items: [], sidebarOpen: false, highlightedFilePath: '' },
-      prompt: { awaitingInput: false, options: [], message: '' }
+      session: { id: '', claudeInteractiveActive: false, activeAI: 'claude', fastMode: storageGet(STORAGE_KEYS.fastMode, '') === '1' },
+      view: { current: 'auth', drawerOpen: false },
+      workspace: { cwd: '.', items: [], highlightedFilePath: '' },
+      prompt: { awaitingInput: false, options: [], message: '' },
+      file: { activePath: '', content: '', loading: false, pendingReview: false },
+      ui: {
+        terminalDrawerOpen: false,
+        statusDetailOpen: false,
+        drawers: { terminal: { height: 320, minHeight: 240, maxHeight: 0, openHeight: 320, pointerId: null, dragging: false, startY: 0, startHeight: 0 } }
+      }
     };
 
     const runtimeState = {
-      meta: {
-        source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '',
-        resumeSessionId: '', contextId: '', contextTitle: '', targetText: ''
-      },
+      meta: { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '' },
       agentState: 'IDLE',
-      agentStateMessage: '',
-      activeContextType: '',
-      skillMenu: { open: false, contextType: '', contextId: '', anchorRect: null, items: [] }
+      agentStateMessage: ''
+    };
+
+    const activityState = {
+      startedAt: 0,
+      timerId: null
     };
 
     const projectionState = {
       currentDiff: null,
       currentStep: null,
       latestError: null,
+      latestRuntimeInfo: null,
       contexts: { diff: null, step: null, error: null },
       logEntries: [],
       rawTerminalByStream: { stdout: '', stderr: '' }
     };
 
-    function syncBottomSpacing() {
-      const dockHeight = bottomDock ? bottomDock.offsetHeight : 0;
-      if (appShell) appShell.style.paddingBottom = `${Math.max(dockHeight + 24, 160)}px`;
+    const dedupState = { lastLogMsg: '', lastLogStream: '', lastLogTime: 0, lastStepMsg: '', lastStepStatus: '' };
+
+    function basename(path) {
+      return String(path || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    }
+    function joinPath(base, name) {
+      if (!base || base === '.' || base === '/') return `${base === '/' ? '/' : ''}${name}`;
+      return `${String(base).replace(/[\\/]+$/, '')}/${name}`;
+    }
+    function parentPath(path) {
+      if (!path || path === '.' || path === '/' || /^[A-Za-z]:[\\/]?$/.test(path)) return path || '.';
+      const normalized = String(path).replace(/[\\/]+$/, '');
+      const index = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+      if (index <= 0) return '/';
+      return normalized.slice(0, index);
+    }
+    function formatTime(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return '';
+      return date.toLocaleTimeString();
+    }
+    function formatSize(size) {
+      if (!size) return '';
+      if (size < 1024) return `${size} B`;
+      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+      if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+      return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
+    }
+    function escapeHtml(text) {
+      return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function highlightDiffLine(line) {
+      const escaped = escapeHtml(line || '');
+      if (escaped.startsWith('+') && !escaped.startsWith('+++')) return `<div class="diff-added px-3 py-0.5">${escaped}</div>`;
+      if (escaped.startsWith('-') && !escaped.startsWith('---')) return `<div class="diff-removed px-3 py-0.5">${escaped}</div>`;
+      if (escaped.startsWith('@@') || escaped.startsWith('diff --git') || escaped.startsWith('*** ') || escaped.startsWith('---') || escaped.startsWith('+++')) return `<div class="diff-meta px-3 py-0.5">${escaped}</div>`;
+      return `<div class="px-3 py-0.5 text-zinc-200">${escaped || '&nbsp;'}</div>`;
     }
 
-    function updateViewModeButtons() {
-      const activeClass = 'border-blue-700 bg-blue-950/50 text-blue-100';
-      const inactiveClass = 'border-zinc-700 text-zinc-100';
-      structuredViewBtn.className = `rounded-2xl border px-3 py-2 text-xs hover:bg-zinc-800 ${appState.view.mode === 'structured' ? activeClass : inactiveClass}`;
-      rawTerminalViewBtn.className = `rounded-2xl border px-3 py-2 text-xs hover:bg-zinc-800 ${appState.view.mode === 'raw-terminal' ? activeClass : inactiveClass}`;
+    function getWsUrl() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${location.host}/ws?token=${encodeURIComponent(appState.auth.token)}`;
     }
-
-    function setViewMode(mode) {
-      if (mode !== 'structured' && mode !== 'raw-terminal') return;
-      if (appState.view.mode === mode) return;
-      appState.view.mode = mode;
-      updateViewModeButtons();
-      renderLogPane();
+    function setView(name) {
+      appState.view.current = name;
+      authView.classList.toggle('hidden', name !== 'auth');
+      chatView.classList.toggle('hidden', name !== 'chat');
+      renderSingleFileView();
     }
-
+    function setSidebarOpen(open) {
+      appState.view.drawerOpen = open;
+      sidebar.classList.toggle('-translate-x-full', !open);
+      sidebarOverlay.classList.toggle('opacity-0', !open);
+      sidebarOverlay.classList.toggle('pointer-events-none', !open);
+    }
+    function setSingleFileOpen(open) {
+      singleFileView.classList.toggle('pointer-events-none', !open);
+      singleFileView.classList.toggle('opacity-0', !open);
+    }
+    function setAuthStatus(message, isError = false) {
+      authStatus.textContent = message || '';
+      authStatus.classList.toggle('hidden', !message);
+      authStatus.className = `mt-4 rounded-2xl border px-4 py-3 text-sm ${isError ? 'border-red-900 bg-red-950/30 text-red-100' : 'border-zinc-800 bg-zinc-950/70 text-zinc-300'}`;
+    }
+    function setAuthLoading(loading, message = '') {
+      appState.auth.validating = loading;
+      authSubmitBtn.disabled = loading;
+      authSpinner.classList.toggle('hidden', !loading);
+      authSubmitText.textContent = loading ? (message || '连接中…') : '进入工作台';
+    }
+    function sendJson(data) {
+      if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
+        appendErrorMessage('WebSocket 未连接。');
+        return false;
+      }
+      appState.ws.send(JSON.stringify(data));
+      return true;
+    }
     function updateRuntimeMeta(payload = {}) {
       runtimeState.meta = {
         source: payload.source || runtimeState.meta.source || '',
@@ -507,469 +464,170 @@
         targetText: payload.targetText || runtimeState.meta.targetText || ''
       };
     }
+    function requestFSList(path) { return sendJson({ action: 'fs_list', path }); }
+    function requestFSRead(path) { return sendJson({ action: 'fs_read', path }); }
 
-    function setSidebarOpen(open) {
-      appState.workspace.sidebarOpen = open;
-      sidebar.classList.toggle('-translate-x-full', !open);
-      sidebarOverlay.classList.toggle('opacity-0', !open);
-      sidebarOverlay.classList.toggle('pointer-events-none', !open);
-    }
-
-    function scrollToBottom() {
-      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-    }
-
-    function normalizeOption(option) {
-      const lower = String(option).toLowerCase();
-      if (lower === 'y') return 'yes';
-      if (lower === 'n') return 'no';
-      return String(option);
-    }
-
-    function shouldUseProceedCTA(message, options) {
-      const text = String(message || '').toLowerCase();
-      const hasProceed = text.includes('should i proceed') || /\bproceed\b/.test(text);
-      if (!hasProceed) return false;
-      return !Array.isArray(options) || !options.length;
-    }
-
-    function effectivePromptOptions(message, options) {
-      if (shouldUseProceedCTA(message, options)) return ['yes', 'no'];
-      return Array.isArray(options) ? options.map(normalizeOption) : [];
-    }
-
-    function highlightDiffLine(line) {
-      const escaped = String(line || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      if (escaped.startsWith('+') && !escaped.startsWith('+++')) return `<div class="diff-added px-3">${escaped}</div>`;
-      if (escaped.startsWith('-') && !escaped.startsWith('---')) return `<div class="diff-removed px-3">${escaped}</div>`;
-      if (escaped.startsWith('@@') || escaped.startsWith('diff --git') || escaped.startsWith('*** ') || escaped.startsWith('---') || escaped.startsWith('+++')) {
-        return `<div class="diff-meta px-3">${escaped}</div>`;
+    function connect(forcePrompt = false) {
+      if (forcePrompt) appState.auth.token = '';
+      const nextToken = String(tokenInput.value || appState.auth.token || '').trim();
+      if (!nextToken) {
+        setView('auth');
+        setAuthStatus('请输入 token。', true);
+        return;
       }
-      return `<div class="px-3 text-zinc-200">${escaped || '&nbsp;'}</div>`;
-    }
-
-    function basename(path) {
-      return String(path || '').split(/[\\/]/).filter(Boolean).pop() || '';
-    }
-
-    function formatTime(timestamp) {
-      if (!timestamp) return '';
-      const date = new Date(timestamp);
-      if (Number.isNaN(date.getTime())) return '';
-      return date.toLocaleTimeString();
-    }
-
-    function formatSize(size) {
-      if (!size) return '';
-      if (size < 1024) return `${size} B`;
-      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-      if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
-      return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
-    }
-
-    function joinPath(base, name) {
-      if (!base || base === '.' || base === '/') return `${base === '/' ? '/' : ''}${name}`;
-      const normalized = base.replace(/[\\/]+$/, '');
-      return `${normalized}/${name}`;
-    }
-
-    function parentPath(path) {
-      if (!path || path === '.' || path === '/' || /^[A-Za-z]:[\\/]?$/.test(path)) return path;
-      const normalized = path.replace(/[\\/]+$/, '');
-      const index = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
-      if (index <= 0) {
-        if (/^[A-Za-z]:/.test(normalized)) return normalized.slice(0, 2) + '\\';
-        return '/';
+      appState.auth.token = nextToken;
+      storageSet(STORAGE_KEYS.token, appState.auth.token);
+      tokenInput.value = appState.auth.token;
+      setAuthLoading(true, '验证中…');
+      setAuthStatus('正在连接服务…');
+      if (appState.ws) {
+        appState.ws.onopen = null;
+        appState.ws.onclose = null;
+        appState.ws.onerror = null;
+        appState.ws.onmessage = null;
+        appState.ws.close();
       }
-      return normalized.slice(0, index);
-    }
-
-    function buildDiffContextFromPayload(payload = {}) {
-      const id = payload.contextId || `diff:${payload.path || payload.title || Date.now()}`;
-      return {
-        id,
-        type: 'diff',
-        title: payload.title || payload.contextTitle || 'Diff 预览',
-        path: payload.path || payload.targetPath || runtimeState.meta.targetPath || '',
-        diff: payload.diff || '',
-        lang: payload.lang || '',
-        source: payload.source || runtimeState.meta.source || '',
-        skillName: payload.skillName || runtimeState.meta.skillName || '',
-        resultView: payload.resultView || runtimeState.meta.resultView || 'review-card',
-        summary: payload.summary || payload.title || payload.path || '当前 Diff'
+      try {
+        appState.ws = new WebSocket(getWsUrl());
+      } catch (err) {
+        setAuthLoading(false);
+        setAuthStatus(`创建 WebSocket 失败：${err.message || err}`, true);
+        return;
+      }
+      appState.ws.onopen = () => {
+        appState.connection.connected = true;
+        setAuthLoading(false);
+        setAuthStatus('连接成功。');
+        setView('chat');
+        appendSystemMessage('连接成功');
+        requestFSList(appState.workspace.cwd || '.');
+        renderApp();
+      };
+      appState.ws.onclose = () => {
+        const wasConnected = appState.connection.connected;
+        appState.connection.connected = false;
+        appState.connection.running = false;
+        appState.prompt = { awaitingInput: false, options: [], message: '' };
+        runtimeState.agentState = 'IDLE';
+        runtimeState.agentStateMessage = '';
+        runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '' };
+        if (wasConnected) appendErrorMessage('连接已关闭，请检查 token 或服务状态。');
+        if (!appState.auth.token) {
+          setView('auth');
+          setAuthStatus('连接已关闭。', true);
+        }
+        renderApp();
+      };
+      appState.ws.onerror = () => {
+        setAuthLoading(false);
+        if (!appState.connection.connected) {
+          setView('auth');
+          setAuthStatus('连接失败，请检查 token 或服务状态。', true);
+        } else {
+          appendErrorMessage('WebSocket 连接错误，请检查服务状态。');
+        }
+      };
+      appState.ws.onmessage = (event) => {
+        let payload;
+        try { payload = JSON.parse(event.data); }
+        catch (err) {
+          appendErrorMessage(`收到无法解析的消息：${err.message || err}`);
+          return;
+        }
+        handleIncomingEvent(payload);
       };
     }
 
     function buildStepContextFromPayload(payload = {}) {
       const message = payload.msg || payload.message || payload.step || '';
       const targetPath = payload.targetPath || payload.target || runtimeState.meta.targetPath || '';
-      const target = payload.target || targetPath;
-      const tool = payload.tool || '';
-      const command = payload.command || '';
       return {
         id: payload.contextId || `step:${payload.timestamp || message || Date.now()}`,
         type: 'step',
         message,
         status: payload.status || 'running',
-        target,
+        target: payload.target || targetPath,
         targetPath,
-        tool,
-        command,
-        source: payload.source || runtimeState.meta.source || '',
-        skillName: payload.skillName || runtimeState.meta.skillName || '',
-        resultView: payload.resultView || runtimeState.meta.resultView || 'review-card',
+        tool: payload.tool || '',
+        command: payload.command || '',
         timestamp: payload.timestamp || '',
         title: payload.contextTitle || message || '当前步骤'
       };
     }
-
     function buildErrorContextFromPayload(payload = {}) {
       return {
         id: payload.contextId || `error:${payload.timestamp || payload.msg || Date.now()}`,
-        type: 'error',
         message: payload.msg || payload.message || 'unknown error',
         stack: payload.stack || '',
         code: payload.code || '',
         targetPath: payload.targetPath || runtimeState.meta.targetPath || '',
         relatedStep: payload.step || projectionState.currentStep?.message || '',
         command: payload.command || '',
-        source: payload.source || runtimeState.meta.source || '',
-        skillName: payload.skillName || runtimeState.meta.skillName || '',
-        resultView: payload.resultView || runtimeState.meta.resultView || 'review-card',
         timestamp: payload.timestamp || '',
         title: payload.contextTitle || payload.msg || '最近错误'
       };
     }
-
-    function setActiveContext(type) {
-      runtimeState.activeContextType = type || '';
-    }
-
-    function getContextByType(type) {
-      return projectionState.contexts[type] || null;
-    }
-
-    function renderRuntimeMetaBadge() {
-      const parts = [];
-      if (runtimeState.meta.source) parts.push(`来源 ${runtimeState.meta.source}`);
-      if (runtimeState.meta.skillName) parts.push(`skill ${runtimeState.meta.skillName}`);
-      if (runtimeState.meta.contextTitle) parts.push(runtimeState.meta.contextTitle);
-      if (runtimeState.meta.resumeSessionId) parts.push(`resume ${runtimeState.meta.resumeSessionId}`);
-      runtimeMetaBadge.textContent = parts.join(' · ');
-      runtimeMetaBadge.classList.toggle('hidden', parts.length === 0);
-    }
-
-    function renderHeaderStatus() {
-      const agentStatusMap = { IDLE: '已连接 / 空闲', THINKING: '思考中', WAIT_INPUT: '等待输入', RUNNING_TOOL: '执行工具中' };
-      const effectiveStatus = appState.connection.connected
-        ? (agentStatusMap[runtimeState.agentState] || (appState.connection.running ? '运行中' : '已连接'))
-        : '未连接';
-      statusText.textContent = runtimeState.agentStateMessage ? `${effectiveStatus} · ${runtimeState.agentStateMessage}` : effectiveStatus;
-      const dotColor = !appState.connection.connected
-        ? 'bg-red-500'
-        : runtimeState.agentState === 'WAIT_INPUT'
-          ? 'bg-blue-400'
-          : runtimeState.agentState === 'RUNNING_TOOL'
-            ? 'bg-violet-400'
-            : runtimeState.agentState === 'THINKING'
-              ? 'bg-amber-400'
-              : 'bg-emerald-500';
-      statusDot.className = 'h-2.5 w-2.5 rounded-full ' + dotColor;
-      sessionText.textContent = appState.session.id || '-';
-      workspacePath.textContent = `工作区：${appState.workspace.cwd || '.'}`;
-      sidebarPath.textContent = appState.workspace.cwd || '.';
-      runBtn.disabled = !appState.connection.connected || appState.connection.running;
-      commandInput.disabled = !appState.connection.connected || appState.connection.running;
-      sendInputBtn.disabled = !appState.connection.connected || !appState.prompt.awaitingInput;
-      inputField.disabled = !appState.connection.connected || !appState.prompt.awaitingInput;
-      sidebarRefreshBtn.disabled = !appState.connection.connected;
-      // resume button visibility
-      const savedResumeId = runtimeState.meta.resumeSessionId || localStorage.getItem('vibe_resumeSessionId') || '';
-      const showResume = savedResumeId && runtimeState.agentState === 'IDLE' && appState.connection.connected;
-      resumeSessionBtn.classList.toggle('hidden', !showResume);
-    }
-
-    function renderStepPanel() {
-      const context = projectionState.contexts.step;
-      const hasStep = Boolean(context && context.message);
-      stepPanel.classList.toggle('hidden', !hasStep);
-      if (!hasStep) {
-        stepText.textContent = '';
-        stepMetaText.textContent = '';
-        stepBar.className = 'relative h-full rounded-full bg-blue-500/80';
-        stepSkillBtn.classList.add('hidden');
-        return;
-      }
-      stepText.textContent = context.message || '';
-      stepStatusText.textContent = context.status || 'running';
-      stepMetaText.textContent = [context.tool ? `tool ${context.tool}` : '', context.targetPath || context.target || '', context.command ? `cmd ${context.command}` : ''].filter(Boolean).join(' · ');
-      stepSkillBtn.classList.toggle('hidden', getSkillMenuItemsForContext('step', context).length === 0);
-      if (context.status === 'done') {
-        stepBar.className = 'relative h-full w-full rounded-full bg-emerald-500';
-      } else if (context.status === 'info') {
-        stepBar.className = 'relative h-full w-1/2 rounded-full bg-sky-500';
-      } else {
-        stepBar.className = 'step-running relative h-full w-full rounded-full bg-blue-500/80';
-      }
-    }
-
-    function renderPromptOptions(options) {
-      promptOptionButtons.innerHTML = '';
-      if (!options || !options.length) return;
-      const proceedCTA = shouldUseProceedCTA(appState.prompt.message, []);
-      options.forEach((option) => {
-        const lower = String(option).toLowerCase();
-        let style = 'border-blue-800 bg-blue-950/40 text-blue-100 hover:bg-blue-900/60';
-        let label = option;
-        if (lower === 'y' || lower === 'yes') {
-          style = proceedCTA ? 'border-emerald-700 bg-emerald-600 text-white hover:bg-emerald-500 text-lg font-semibold px-5 py-3' : 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60';
-          label = proceedCTA ? '🚀 冲！' : option;
-        } else if (lower === 'n' || lower === 'no') {
-          style = proceedCTA ? 'border-red-700 bg-red-600 text-white hover:bg-red-500 text-lg font-semibold px-5 py-3' : 'border-red-800 bg-red-950/40 text-red-100 hover:bg-red-900/60';
-          label = proceedCTA ? '🛑 停下' : option;
-        }
-        promptOptionButtons.appendChild(quickButton(label, () => sendInput(option), style));
-      });
-    }
-
-    function renderPromptCard() {
-      promptText.textContent = appState.prompt.message || '';
-      renderPromptOptions(appState.prompt.options || []);
-      inputCard.classList.toggle('hidden', !appState.prompt.awaitingInput);
-    }
-
-    function renderDiffModal() {
-      const diffPayload = projectionState.currentDiff;
-      diffTitle.textContent = diffPayload?.title || 'Diff 预览';
-      diffPathText.textContent = diffPayload?.path || '';
-      diffMetaText.textContent = [
-        diffPayload?.source ? `来源 ${diffPayload.source}` : '',
-        diffPayload?.skillName ? `skill ${diffPayload.skillName}` : '',
-        diffPayload?.resultView ? `视图 ${diffPayload.resultView}` : ''
-      ].filter(Boolean).join(' · ');
-      diffContent.innerHTML = String(diffPayload?.diff || '').split('\n').map(highlightDiffLine).join('');
-      const hasDiffSkills = getSkillMenuItemsForContext('diff', diffPayload).length > 0;
-      diffSkillBtn.classList.toggle('hidden', !hasDiffSkills);
-    }
-
-    function renderFileList() {
-      fileList.innerHTML = '';
-      if (!appState.workspace.items.length) {
-        const empty = document.createElement('div');
-        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-400';
-        empty.textContent = '目录为空';
-        fileList.appendChild(empty);
-        return;
-      }
-      const highlightName = basename(appState.workspace.highlightedFilePath);
-      appState.workspace.items.forEach((item) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        const isHighlighted = !!highlightName && basename(item.name) === highlightName;
-        button.className = 'flex w-full items-center justify-between gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-left hover:bg-zinc-800';
-        if (isHighlighted) button.classList.add('file-attention');
-        const left = document.createElement('div');
-        left.className = 'min-w-0';
-        const title = document.createElement('div');
-        title.className = 'truncate text-sm font-medium text-zinc-100';
-        title.textContent = `${item.is_dir ? '📁' : '📄'} ${item.name}`;
-        const meta = document.createElement('div');
-        meta.className = 'mt-1 text-xs text-zinc-400';
-        meta.textContent = item.is_dir ? '文件夹' : (formatSize(item.size) || '文件');
-        left.append(title, meta);
-        button.appendChild(left);
-        if (item.is_dir) {
-          const arrow = document.createElement('div');
-          arrow.className = 'text-xs text-zinc-500';
-          arrow.textContent = '进入';
-          button.appendChild(arrow);
-          button.addEventListener('click', () => requestFSList(joinPath(appState.workspace.cwd, item.name)));
-        } else {
-          const tag = document.createElement('div');
-          tag.className = 'text-xs ' + (isHighlighted ? 'text-blue-300' : 'text-zinc-500');
-          tag.textContent = isHighlighted ? '关注中' : '文件';
-          button.appendChild(tag);
-        }
-        fileList.appendChild(button);
-      });
-    }
-
-    function renderLogPane() {
-      if (appState.view.mode === 'raw-terminal') {
-        renderRawTerminalPane();
-        return;
-      }
-      renderStructuredLogPane();
-    }
-
-    function renderContextSkillMenu() {
-      const menu = runtimeState.skillMenu;
-      contextSkillMenuItems.innerHTML = '';
-      if (!menu.open || !menu.items.length || !menu.anchorRect) {
-        contextSkillMenu.classList.add('pointer-events-none', 'opacity-0');
-        return;
-      }
-      const context = getContextByType(menu.contextType);
-      contextSkillMenuTitle.textContent = `${menu.contextType} skills`;
-      menu.items.forEach((item) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm text-zinc-100 hover:bg-zinc-800';
-        button.innerHTML = `<span>${item.label}</span><span class="text-xs text-zinc-500">${item.name}</span>`;
-        button.addEventListener('click', () => triggerContextSkill(item.name, menu.contextType, context));
-        contextSkillMenuItems.appendChild(button);
-      });
-      const top = Math.min(menu.anchorRect.bottom + 8, window.innerHeight - contextSkillMenu.offsetHeight - 12);
-      const left = Math.min(menu.anchorRect.left, window.innerWidth - 240);
-      contextSkillMenu.style.top = `${Math.max(top, 12)}px`;
-      contextSkillMenu.style.left = `${Math.max(left, 12)}px`;
-      contextSkillMenu.classList.remove('pointer-events-none', 'opacity-0');
-    }
-
-    function updateStatus() {
-      renderHeaderStatus();
-      renderStepPanel();
-      renderPromptCard();
-      renderActionPanel();
-      renderRuntimeMetaBadge();
-      renderContextSkillMenu();
-      syncBottomSpacing();
-    }
-
-    function appendMessageRow(role, innerNode, options = {}) {
-      const row = document.createElement('div');
-      row.className = 'flex w-full ' + (role === 'user' ? 'justify-end' : 'justify-start');
-      const bubble = document.createElement('div');
-      bubble.className = role === 'user'
-        ? 'max-w-[86%] rounded-[1.4rem] rounded-br-md bg-blue-600 px-4 py-3 text-sm text-white shadow-lg'
-        : 'max-w-[90%] rounded-[1.4rem] rounded-bl-md border border-zinc-800 bg-zinc-900/90 px-4 py-3 text-sm text-zinc-100 shadow-lg';
-      if (options.messageKind) row.dataset.messageKind = options.messageKind;
-      if (options.stream) row.dataset.stream = options.stream;
-      if (options.bodySelector) row.dataset.bodySelector = options.bodySelector;
-      bubble.appendChild(innerNode);
-      row.appendChild(bubble);
-      chatContainer.appendChild(row);
-      return row;
-    }
-
-    function addMeta(container, label, timestamp) {
-      const meta = document.createElement('div');
-      meta.className = 'mb-2 text-[11px] uppercase tracking-wide text-zinc-500';
-      meta.textContent = `${label}${timestamp ? ` · ${formatTime(timestamp)}` : ''}`;
-      container.appendChild(meta);
-    }
-
-    function renderStructuredEntry(entry) {
-      if (!entry) return;
-      if (entry.kind === 'user') {
-        const wrapper = document.createElement('div');
-        const meta = document.createElement('div');
-        meta.className = 'mb-2 text-[11px] uppercase tracking-wide text-blue-100/80';
-        meta.textContent = entry.label || '输入';
-        const body = document.createElement('pre');
-        body.className = 'whitespace-pre-wrap break-words text-sm';
-        body.textContent = entry.message || '';
-        wrapper.append(meta, body);
-        appendMessageRow('user', wrapper);
-        return;
-      }
-      if (entry.kind === 'markdown') {
-        const wrapper = document.createElement('div');
-        addMeta(wrapper, 'assistant', entry.timestamp);
-        const content = document.createElement('div');
-        content.className = 'markdown-body';
-        content.innerHTML = marked.parse(entry.message || '');
-        wrapper.appendChild(content);
-        appendMessageRow('assistant', wrapper, { messageKind: 'markdown-log', stream: entry.stream || 'stdout' });
-        enhanceCodeBlocks(wrapper);
-        return;
-      }
-      if (entry.kind === 'terminal') {
-        const wrapper = document.createElement('div');
-        const body = document.createElement('pre');
-        body.dataset.terminalBody = 'true';
-        body.className = 'whitespace-pre-wrap break-words font-mono text-sm ' + ((entry.stream || 'stdout') === 'stderr' ? 'text-red-200' : 'text-zinc-100');
-        body.textContent = entry.text || '';
-        wrapper.appendChild(body);
-        appendMessageRow('assistant', wrapper, { messageKind: 'terminal-log', stream: entry.stream || 'stdout', bodySelector: '[data-terminal-body="true"]' });
-        return;
-      }
-      if (entry.kind === 'error') {
-        addErrorCard(entry.context || buildErrorContextFromPayload(entry));
-        return;
-      }
-      if (entry.kind === 'system') addSystemMessage(entry.message || '', entry.timestamp);
-    }
-
-    function renderStructuredLogPane() {
-      chatContainer.innerHTML = '';
-      projectionState.logEntries.forEach(renderStructuredEntry);
-      scrollToBottom();
-    }
-
-    function renderRawTerminalPane() {
-      chatContainer.innerHTML = '';
-      const wrapper = document.createElement('div');
-      wrapper.className = 'rounded-[1.4rem] border border-zinc-800 bg-zinc-900/90 p-4 shadow-lg';
-      const meta = document.createElement('div');
-      meta.className = 'mb-3 flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-zinc-500';
-      meta.innerHTML = '<span>raw terminal</span><span>stdout / stderr merged by panel</span>';
-      wrapper.appendChild(meta);
-      const stdout = document.createElement('pre');
-      stdout.className = 'whitespace-pre-wrap break-words font-mono text-sm leading-6 text-zinc-100';
-      stdout.textContent = projectionState.rawTerminalByStream.stdout || '';
-      wrapper.appendChild(stdout);
-      if (projectionState.rawTerminalByStream.stderr) {
-        const stderrLabel = document.createElement('div');
-        stderrLabel.className = 'mt-4 mb-2 text-[11px] uppercase tracking-wide text-red-300';
-        stderrLabel.textContent = 'stderr';
-        wrapper.appendChild(stderrLabel);
-        const stderr = document.createElement('pre');
-        stderr.className = 'whitespace-pre-wrap break-words font-mono text-sm leading-6 text-red-200';
-        stderr.textContent = projectionState.rawTerminalByStream.stderr;
-        wrapper.appendChild(stderr);
-      }
-      chatContainer.appendChild(wrapper);
-      scrollToBottom();
-    }
-
-    function addSystemMessage(message, timestamp) {
-      const row = document.createElement('div');
-      row.className = 'py-1 text-center text-xs text-zinc-500';
-      row.textContent = `[系统] ${message}${timestamp ? ` · ${formatTime(timestamp)}` : ''}`;
-      chatContainer.appendChild(row);
-      scrollToBottom();
-    }
-
-    function addRuntimeLog(label, detail, timestamp) {
-      const entry = { kind: 'system', message: `${label}${detail ? ': ' + detail : ''}`, timestamp };
-      projectionState.logEntries.push(entry);
-      if (appState.view.mode === 'structured') {
-        addSystemMessage(entry.message, timestamp);
-      }
-    }
-
-    function copyText(text, trigger) {
-      if (!text) return;
-      const done = () => {
-        if (!trigger) return;
-        const original = trigger.textContent;
-        trigger.textContent = '已复制';
-        setTimeout(() => { trigger.textContent = original; }, 1200);
+    function buildDiffContextFromPayload(payload = {}) {
+      const path = payload.path || payload.targetPath || runtimeState.meta.targetPath || '';
+      return {
+        id: payload.contextId || `diff:${payload.timestamp || path || Date.now()}`,
+        path,
+        title: payload.title || payload.contextTitle || basename(path) || '最近改动',
+        diff: payload.diff || '',
+        lang: payload.lang || '',
+        pendingReview: true,
+        timestamp: payload.timestamp || '',
+        source: payload.source || runtimeState.meta.source || '',
+        skillName: payload.skillName || runtimeState.meta.skillName || ''
       };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done).catch(() => {});
-        return;
-      }
-      const area = document.createElement('textarea');
-      area.value = text;
-      document.body.appendChild(area);
-      area.select();
-      document.execCommand('copy');
-      area.remove();
-      done();
     }
 
+    function appendUserMessage(text, label = '输入') {
+      projectionState.logEntries.push({ kind: 'user', message: text, label, timestamp: new Date().toISOString() });
+      renderChatStream();
+    }
+    function appendSystemMessage(message, timestamp = new Date().toISOString()) {
+      if (!message || /^(command started|AI 会话已续接)$/i.test(String(message).trim())) return;
+      projectionState.logEntries.push({ kind: 'system', message, timestamp });
+      renderChatStream();
+    }
+    function appendErrorMessage(message) {
+      projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: message }) });
+      renderChatStream();
+    }
+    function appendMarkdownMessage(message, timestamp, stream) {
+      if (looksLikeFrontendToolResultNoise(message)) return;
+      projectionState.logEntries.push({ kind: 'markdown', message, timestamp, stream });
+      renderChatStream();
+    }
+    function appendTerminalMessage(text, timestamp, stream) {
+      if (shouldSuppressTerminalNoise(text)) return;
+      const previous = projectionState.logEntries[projectionState.logEntries.length - 1];
+      if (previous && previous.kind === 'terminal' && previous.stream === stream) {
+        previous.text = `${previous.text || ''}${previous.text ? '\n' : ''}${text}`;
+        previous.timestamp = timestamp || previous.timestamp;
+      } else {
+        projectionState.logEntries.push({ kind: 'terminal', text, timestamp, stream });
+      }
+      projectionState.rawTerminalByStream[stream || 'stdout'] = `${projectionState.rawTerminalByStream[stream || 'stdout'] || ''}${projectionState.rawTerminalByStream[stream || 'stdout'] ? '\n' : ''}${text}`;
+      renderChatStream();
+      renderTerminalDrawer();
+    }
+
+    function looksLikeFrontendToolResultNoise(message) {
+      const text = String(message || '').trim();
+      if (!text.startsWith('{') || !text.includes('tool_result')) return false;
+      return text.includes('Invalid pages parameter') || text.includes('tool_use_id') || text.includes('session_id');
+    }
+    function looksLikeMarkdown(message) {
+      if (!message) return false;
+      if (looksLikeFrontendToolResultNoise(message)) return false;
+      return /```|^#{1,6}\s|^>\s|^[-*+]\s|^\d+\.\s|\[[^\]]+\]\([^\)]+\)|\|.+\|/m.test(message) || message.length > 180;
+    }
+    function shouldSuppressTerminalNoise(text) {
+      const value = String(text || '').trim();
+      return !value || looksLikeFrontendToolResultNoise(value);
+    }
     function enhanceCodeBlocks(root) {
       root.querySelectorAll('pre code').forEach((code) => {
         hljs.highlightElement(code);
@@ -983,358 +641,415 @@
         pre.appendChild(btn);
       });
     }
-
-    function looksLikeMarkdown(message) {
-      if (!message) return false;
-      return /```|^#{1,6}\s|^>\s|^[-*+]\s|^\d+\.\s|\[[^\]]+\]\([^)]+\)|\|.+\|/.test(message) || message.includes('## ') || message.includes('### ');
+    function copyText(text, trigger) {
+      if (!text) return;
+      const done = () => {
+        if (!trigger) return;
+        const origin = trigger.textContent;
+        trigger.textContent = '已复制';
+        setTimeout(() => { trigger.textContent = origin; }, 1200);
+      };
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done).catch(() => {});
     }
 
-    function looksLikeAIReply(message) {
-      if (!message) return false;
-      return looksLikeMarkdown(message) || message.includes('```') || message.length > 180;
+    function formatElapsedSeconds(ms) {
+      const sec = Math.max(0, Math.floor((ms || 0) / 1000));
+      return `${sec}s`;
     }
-
-    function addUserBubble(text, label) {
-      projectionState.logEntries.push({ kind: 'user', message: text, label });
-      if (appState.view.mode === 'structured') renderLogPane();
+    function startActivityTimer() {
+      if (!activityState.startedAt) activityState.startedAt = Date.now();
+      if (activityState.timerId) return;
+      activityState.timerId = window.setInterval(() => {
+        statusTimer.textContent = formatElapsedSeconds(Date.now() - activityState.startedAt);
+      }, 1000);
+      statusTimer.textContent = formatElapsedSeconds(Date.now() - activityState.startedAt);
     }
-
-    function isTransientTerminalLine(text) {
-      const normalized = String(text || '').replace(/^\r+/, '').trim();
-      if (!normalized) return false;
-      // 仅过滤极简旋转图标，还原真实终端内容显示
-      return /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(normalized) && normalized.length === 1;
-    }
-
-    function trimTransientTerminalTail(text) {
-      const lines = String(text || '').split('\n');
-      while (lines.length) {
-        const last = lines[lines.length - 1];
-        if (String(last || '').trim() === '') { lines.pop(); continue; }
-        if (isTransientTerminalLine(last)) { lines.pop(); continue; }
-        break;
+    function stopActivityTimer() {
+      activityState.startedAt = 0;
+      if (activityState.timerId) {
+        clearInterval(activityState.timerId);
+        activityState.timerId = null;
       }
-      return lines.join('\n');
+      statusTimer.textContent = '0s';
+      statusToolLabel.textContent = '';
     }
-
-    function applyTerminalDelta(existingText, incomingText) {
-      const current = String(existingText || '');
-      const incoming = String(incomingText || '');
-      if (!incoming) return current;
-      
-      // 只要有 \r 开头，就代表终端在执行“回车重写”动作
-      if (incoming.startsWith('\r')) {
-        const replacement = incoming.replace(/^\r+/, '');
-        const lines = current.split('\n');
-        if (!lines.length) return replacement;
-        
-        // 彻底解决“刷屏”：直接覆盖最后一行，这是 PTY 的物理行为
-        lines[lines.length - 1] = replacement;
-        return lines.join('\n');
-      }
-      
-      if (isTransientTerminalLine(incoming)) {
-        const trimmedCurrent = trimTransientTerminalTail(current);
-        return `${trimmedCurrent ? `${trimmedCurrent}\n` : ''}${incoming}`;
-      }
-      return `${current ? `${current}\n` : ''}${incoming}`;
+    function currentToolLabel() {
+      return projectionState.currentStep?.tool || runtimeState.meta.skillName || runtimeState.meta.source || '';
     }
-
-    function ingestLogMessage(message, stream, timestamp) {
-      const effectiveStream = stream || 'stdout';
-      const normalizedMessage = String(message || '');
-      const isMarkdown = effectiveStream !== 'stderr' && looksLikeAIReply(normalizedMessage) && !normalizedMessage.startsWith('\r');
-      if (isMarkdown) {
-        projectionState.logEntries.push({ kind: 'markdown', message: normalizedMessage, stream: effectiveStream, timestamp });
+    function renderActivityState() {
+      const active = appState.connection.connected && (runtimeState.agentState === 'THINKING' || runtimeState.agentState === 'RUNNING_TOOL');
+      statusActivity.classList.toggle('hidden', !active);
+      statusToolLabel.textContent = active && currentToolLabel() ? currentToolLabel() : '';
+      if (active) startActivityTimer();
+      else stopActivityTimer();
+    }
+    function compactAgentMessage() {
+      if (!appState.connection.connected) return '未连接';
+      if (runtimeState.agentState === 'WAIT_INPUT') return '等待输入';
+      if (runtimeState.agentState === 'RUNNING_TOOL') return '执行中';
+      if (runtimeState.agentState === 'THINKING') return '思考中';
+      return '已连接';
+    }
+    function renderRuntimeMetaBadge() {
+      const parts = [];
+      if (runtimeState.meta.contextTitle) parts.push(runtimeState.meta.contextTitle);
+      else if (runtimeState.meta.targetPath) parts.push(basename(runtimeState.meta.targetPath));
+      runtimeMetaBadge.textContent = parts.join(' · ');
+      runtimeMetaBadge.classList.toggle('hidden', parts.length === 0);
+    }
+    function renderHeaderStatus() {
+      statusText.textContent = compactAgentMessage();
+      statusDot.className = 'h-2.5 w-2.5 rounded-full ' + (!appState.connection.connected ? 'bg-red-500' : runtimeState.agentState === 'WAIT_INPUT' ? 'bg-blue-400' : runtimeState.agentState === 'RUNNING_TOOL' ? 'bg-violet-400' : runtimeState.agentState === 'THINKING' ? 'bg-amber-400' : 'bg-emerald-500');
+      projectTitleText.textContent = '全局聊天';
+      workspacePath.textContent = appState.workspace.cwd || '.';
+      const resumeId = runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '');
+      resumeSessionBtn.classList.toggle('hidden', !(resumeId && appState.connection.connected && runtimeState.agentState === 'IDLE'));
+      const replyMode = appState.prompt.awaitingInput || runtimeState.agentState === 'WAIT_INPUT';
+      chatInput.placeholder = replyMode ? '继续回复当前会话' : '输入命令，如 claude、/build、pwd';
+      chatSendBtn.textContent = replyMode ? '回复' : '发送';
+      chatInput.disabled = !appState.connection.connected;
+      chatSendBtn.disabled = !appState.connection.connected;
+      if (replyMode) {
+        chatInputHint.textContent = projectionState.contexts.diff?.pendingReview ? '等待审核或继续输入' : 'AI 会话已就绪，可继续输入';
+        chatInputHint.classList.remove('hidden');
       } else {
-        const previousEntry = projectionState.logEntries[projectionState.logEntries.length - 1];
-        const nextText = applyTerminalDelta(previousEntry && previousEntry.kind === 'terminal' && previousEntry.stream === effectiveStream ? previousEntry.text : '', normalizedMessage);
-        if (previousEntry && previousEntry.kind === 'terminal' && previousEntry.stream === effectiveStream) {
-          previousEntry.text = nextText;
-          previousEntry.timestamp = timestamp || previousEntry.timestamp;
-        } else {
-          projectionState.logEntries.push({ kind: 'terminal', stream: effectiveStream, text: normalizedMessage.startsWith('\r') ? normalizedMessage.replace(/^\r+/, '') : normalizedMessage, timestamp });
-        }
+        chatInputHint.classList.add('hidden');
       }
-      projectionState.rawTerminalByStream[effectiveStream] = applyTerminalDelta(projectionState.rawTerminalByStream[effectiveStream] || '', normalizedMessage);
+      renderActivityState();
     }
-
-    function addErrorCard(errorContext) {
-      const wrapper = document.createElement('div');
-      addMeta(wrapper, 'error', errorContext.timestamp);
-      const top = document.createElement('div');
-      top.className = 'mb-2 flex items-center justify-between gap-3';
-      const title = document.createElement('div');
-      title.className = 'text-sm font-semibold text-red-300';
-      title.textContent = 'Error';
-      const right = document.createElement('div');
-      right.className = 'flex items-center gap-2';
-      const skillBtn = document.createElement('button');
-      skillBtn.type = 'button';
-      skillBtn.className = 'rounded-xl border border-zinc-800 px-2.5 py-1 text-xs text-zinc-100 hover:bg-zinc-800';
-      skillBtn.textContent = 'Skill';
-      skillBtn.classList.toggle('hidden', getSkillMenuItemsForContext('error', errorContext).length === 0);
-      skillBtn.addEventListener('click', (event) => openContextSkillMenu('error', errorContext.id, event.currentTarget));
-      const copyBtn = document.createElement('button');
-      copyBtn.type = 'button';
-      copyBtn.className = 'rounded-xl border border-red-900 px-2.5 py-1 text-xs text-red-100 hover:bg-red-950/50';
-      copyBtn.textContent = '复制';
-      copyBtn.addEventListener('click', () => copyText(errorContext.stack ? `${errorContext.message}\n\n${errorContext.stack}` : errorContext.message, copyBtn));
-      right.append(skillBtn, copyBtn);
-      top.append(title, right);
-      wrapper.append(top);
-      const body = document.createElement('pre');
-      body.className = 'whitespace-pre-wrap break-words rounded-2xl border border-red-900/60 bg-red-950/30 p-3 text-sm text-red-100';
-      body.textContent = errorContext.message || 'unknown error';
-      wrapper.appendChild(body);
-      const meta = [errorContext.code, errorContext.targetPath, errorContext.relatedStep].filter(Boolean).join(' · ');
-      if (meta) {
-        const metaEl = document.createElement('div');
-        metaEl.className = 'mt-2 text-xs text-red-200';
-        metaEl.textContent = meta;
-        wrapper.appendChild(metaEl);
-      }
-      if (errorContext.stack) {
-        const details = document.createElement('details');
-        details.className = 'mt-3';
-        const summary = document.createElement('summary');
-        summary.className = 'cursor-pointer text-xs text-red-200';
-        summary.textContent = '查看 stack';
-        const stackBody = document.createElement('pre');
-        stackBody.className = 'mt-2 whitespace-pre-wrap break-words rounded-2xl bg-black/20 p-3 text-xs text-red-100';
-        stackBody.textContent = errorContext.stack;
-        details.append(summary, stackBody);
-        wrapper.appendChild(details);
-      }
-      appendMessageRow('assistant', wrapper);
-    }
-
-    function quickButton(label, onClick, className = '') {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'shrink-0 rounded-2xl border px-3 py-2 text-sm ' + className;
-      btn.textContent = label;
-      btn.addEventListener('click', onClick);
-      return btn;
-    }
-
-    function getGlobalActions() {
-      const actions = [
-        quickButton('Ctrl+C 中断', () => sendInputRaw('\u0003', '快捷动作'), 'border-red-900 bg-red-950/40 text-red-100 hover:bg-red-900/50'),
-        quickButton('清屏', () => {
-          projectionState.logEntries = [];
-          projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
-          projectionState.logEntries.push({ kind: 'system', message: '已清空对话' });
-          renderLogPane();
-        }, 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800'),
-        quickButton('文件树', () => setSidebarOpen(true), 'border-zinc-700 bg-zinc-950 text-zinc-100 hover:bg-zinc-800')
-      ];
-      // 会话恢复快捷按钮
-      const resumeId = runtimeState.meta.resumeSessionId || localStorage.getItem('vibe_resumeSessionId') || '';
-      if (resumeId && runtimeState.agentState === 'IDLE' && appState.connection.connected) {
-        actions.push(quickButton('继续对话', () => resumeSession(resumeId), 'border-emerald-700 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60'));
-      }
-      return actions;
-    }
-
-    function getPromptReplyActions() {
-      if (!appState.prompt.awaitingInput || !appState.prompt.options.length) return [];
-      return appState.prompt.options.map((option) => {
-        const lower = String(option).toLowerCase();
-        const proceedCTA = shouldUseProceedCTA(appState.prompt.message, []);
-        let style = 'border-blue-800 bg-blue-950/40 text-blue-100 hover:bg-blue-900/60';
-        let label = option;
-        if (lower === 'y' || lower === 'yes') {
-          style = proceedCTA ? 'border-emerald-700 bg-emerald-600 text-white hover:bg-emerald-500 text-base font-semibold px-5 py-3' : 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60';
-          label = proceedCTA ? '🚀 冲！' : option;
-        } else if (lower === 'n' || lower === 'no') {
-          style = proceedCTA ? 'border-red-700 bg-red-600 text-white hover:bg-red-500 text-base font-semibold px-5 py-3' : 'border-red-800 bg-red-950/40 text-red-100 hover:bg-red-900/60';
-          label = proceedCTA ? '🛑 停下' : option;
-        }
-        return quickButton(label, () => sendInput(option), style);
-      });
-    }
-
-    function getRuntimeContextActions() {
-      const actions = [];
+    function renderDiffBadge() {
       const diff = projectionState.contexts.diff;
-      const step = projectionState.contexts.step;
-      const error = projectionState.contexts.error;
-      if (diff) {
-        actions.push(quickButton('最近 Diff', () => openDiffModal(diff), 'border-violet-800 bg-violet-950/40 text-violet-100 hover:bg-violet-900/60'));
-        if (getSkillMenuItemsForContext('diff', diff).length) {
-          actions.push(quickButton('Diff Skills', (event) => openContextSkillMenu('diff', diff.id, event.currentTarget), 'border-emerald-800 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/60'));
-        }
-      }
-      if (step && getSkillMenuItemsForContext('step', step).length) {
-        actions.push(quickButton('Step Skills', (event) => openContextSkillMenu('step', step.id, event.currentTarget), 'border-sky-800 bg-sky-950/40 text-sky-100 hover:bg-sky-900/60'));
-      }
-      if (error && getSkillMenuItemsForContext('error', error).length) {
-        actions.push(quickButton('Error Skills', (event) => openContextSkillMenu('error', error.id, event.currentTarget), 'border-red-900 bg-red-950/40 text-red-100 hover:bg-red-900/60'));
-      }
-      return actions;
+      const show = !!(diff && diff.pendingReview);
+      diffBadgeDot.classList.toggle('hidden', !show);
+      diffBadgeDot.textContent = show ? '1' : '';
     }
-
-    function renderActionPanel() {
-      actionPanel.innerHTML = '';
-      [...getGlobalActions(), ...getRuntimeContextActions(), ...getPromptReplyActions()].forEach((button) => actionPanel.appendChild(button));
-    }
-
-    function openInputCard(message, options) {
-      appState.prompt.awaitingInput = true;
-      appState.prompt.message = message || '等待输入';
-      appState.prompt.options = Array.isArray(options) && options.length ? effectivePromptOptions(message, options) : appState.prompt.options;
-      renderPromptCard();
-      updateStatus();
-      inputField.focus();
-    }
-
-    function closeInputCard() {
-      appState.prompt.awaitingInput = false;
-      appState.prompt.options = [];
-      appState.prompt.message = '';
-      renderPromptCard();
-      updateStatus();
-    }
-
-    function applyAgentState(payload) {
-      updateRuntimeMeta(payload);
-      runtimeState.agentState = payload.state || 'IDLE';
-      runtimeState.agentStateMessage = payload.msg || '';
-      appState.connection.running = runtimeState.agentState !== 'IDLE';
-      if (payload.step) {
-        projectionState.currentStep = buildStepContextFromPayload({ ...payload, msg: payload.step, status: runtimeState.agentState === 'RUNNING_TOOL' ? 'running' : 'info' });
-        projectionState.contexts.step = projectionState.currentStep;
-        if (projectionState.currentStep.targetPath) appState.workspace.highlightedFilePath = projectionState.currentStep.targetPath;
-      } else if (runtimeState.agentState === 'IDLE') {
-        projectionState.currentStep = null;
-        projectionState.contexts.step = null;
-      }
-      if (payload.awaitInput) {
-        openInputCard(runtimeState.agentStateMessage || appState.prompt.message || '等待输入', appState.prompt.options);
-      } else {
-        closeInputCard();
-      }
-    }
-
-    function getSkillMenuItemsForContext(type, context) {
-      if (!context) return [];
-      if (type === 'diff') {
-        if (!context.diff) return [];
-        return [
-          { name: 'review', label: '代码审查' },
-          { name: 'security-review', label: '安全审查' },
-          { name: 'simplify', label: '简化方案' }
-        ];
-      }
-      if (type === 'step') {
-        const items = [
-          { name: 'explain-step', label: '解释步骤' },
-          { name: 'next-step', label: '推断下一步' }
-        ];
-        if (context.targetPath || projectionState.contexts.diff?.diff) items.push({ name: 'review', label: '关联审查' });
-        return items;
-      }
-      if (type === 'error') {
-        return [{ name: 'debug', label: '调试分析' }];
-      }
-      return [];
-    }
-
-    function openContextSkillMenu(contextType, contextId, anchorEl) {
-      const context = getContextByType(contextType);
-      if (!context || context.id !== contextId) return;
-      runtimeState.skillMenu = {
-        open: true,
-        contextType,
-        contextId,
-        anchorRect: anchorEl?.getBoundingClientRect?.() || null,
-        items: getSkillMenuItemsForContext(contextType, context)
-      };
-      setActiveContext(contextType);
-      renderContextSkillMenu();
-    }
-
-    function closeContextSkillMenu() {
-      runtimeState.skillMenu = { open: false, contextType: '', contextId: '', anchorRect: null, items: [] };
-      renderContextSkillMenu();
-    }
-
-    function buildSkillRequest(name, contextType, context) {
-      const base = {
-        action: 'skill_exec',
-        name,
-        engine: appState.session.activeAI,
-        cwd: appState.workspace.cwd,
-        targetType: contextType,
-        targetPath: context.targetPath || context.path || runtimeState.meta.targetPath || '',
-        targetTitle: context.title || context.message || context.summary || '',
-        resultView: context.resultView || 'review-card',
-        contextId: context.id || '',
-        contextTitle: context.title || context.message || context.summary || ''
-      };
-      if (contextType === 'diff') {
-        return { ...base, targetDiff: context.diff || '' };
-      }
-      if (contextType === 'step') {
-        const targetText = [context.message, context.target ? `target: ${context.target}` : '', context.targetPath ? `path: ${context.targetPath}` : '', context.tool ? `tool: ${context.tool}` : '', context.command ? `command: ${context.command}` : ''].filter(Boolean).join('\n');
-        if (name === 'review' && projectionState.contexts.diff?.diff) {
-          return {
-            ...base,
-            targetType: 'diff',
-            targetPath: projectionState.contexts.diff.path || context.targetPath || '',
-            targetTitle: projectionState.contexts.diff.title || context.title || '关联 Diff',
-            contextTitle: context.title || context.message || '当前步骤',
-            targetDiff: projectionState.contexts.diff.diff || ''
-          };
-        }
-        return { ...base, targetText };
-      }
-      if (contextType === 'error') {
-        const targetText = [context.message, context.code ? `code: ${context.code}` : '', context.relatedStep ? `step: ${context.relatedStep}` : '', context.command ? `command: ${context.command}` : ''].filter(Boolean).join('\n');
-        return { ...base, targetText, targetStack: context.stack || '' };
-      }
-      return base;
-    }
-
-    function triggerContextSkill(name, contextType, context) {
-      if (!context) return;
-      const request = buildSkillRequest(name, contextType, context);
-      addRuntimeLog('触发 Skill', name);
-      updateRuntimeMeta({
-        source: 'skill-center',
-        skillName: name,
-        targetType: request.targetType || contextType,
-        targetPath: request.targetPath || '',
-        resultView: request.resultView || 'review-card',
-        contextId: request.contextId || '',
-        contextTitle: request.contextTitle || request.targetTitle || '',
-        targetText: request.targetText || ''
+    function renderStatusDetailPanel() {
+      statusDetailContent.innerHTML = '';
+      [
+        ['cwd', appState.workspace.cwd || '.'],
+        ['sessionId', appState.session.id || '(none)'],
+        ['resumeSessionId', runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '') || '(none)'],
+        ['permissionMode', storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || '(default)'],
+        ['agentState', runtimeState.agentState || 'IDLE'],
+        ['recentDiff', projectionState.contexts.diff?.path || '(none)'],
+        ['recentStep', projectionState.contexts.step?.message || '(none)'],
+        ['recentError', projectionState.contexts.error?.message || '(none)']
+      ].forEach(([label, value]) => {
+        const row = document.createElement('div');
+        row.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-3 py-2';
+        row.innerHTML = `<div class="text-[11px] uppercase tracking-wide text-zinc-500">${label}</div><div class="mt-1 break-all text-sm text-zinc-100">${escapeHtml(value || '(none)')}</div>`;
+        statusDetailContent.appendChild(row);
       });
-      closeContextSkillMenu();
-      sendJson(request);
-      updateStatus();
     }
 
-    function triggerSkill(name) {
+    function renderFileList() {
+      fileList.innerHTML = '';
+      sidebarPath.textContent = appState.workspace.cwd || '.';
+      if (!appState.workspace.items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-400';
+        empty.textContent = '目录为空';
+        fileList.appendChild(empty);
+        return;
+      }
+      appState.workspace.items.forEach((item) => {
+        const path = joinPath(appState.workspace.cwd, item.name);
+        const active = appState.file.activePath === path || appState.workspace.highlightedFilePath === path;
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = `w-full rounded-3xl border px-4 py-3 text-left ${active ? 'border-blue-700 bg-blue-950/20' : 'border-zinc-800 bg-zinc-900/70 hover:bg-zinc-800'}`;
+        row.innerHTML = `
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <div class="truncate text-sm font-medium text-zinc-100">${item.is_dir ? '📁' : '📄'} ${escapeHtml(item.name)}</div>
+              <div class="mt-1 text-xs text-zinc-400">${item.is_dir ? '文件夹' : (formatSize(item.size) || '文件')}</div>
+            </div>
+            <div class="shrink-0 text-xs ${active ? 'text-blue-300' : 'text-zinc-500'}">${item.is_dir ? '进入' : '打开'}</div>
+          </div>`;
+        row.addEventListener('click', () => {
+          if (item.is_dir) requestFSList(path);
+          else openFile(path);
+        });
+        fileList.appendChild(row);
+      });
+    }
+
+    function renderChatStream() {
+      if (appState.view.current !== 'chat') return;
+      chatContainer.innerHTML = '';
+      if (!projectionState.logEntries.length) {
+        const empty = document.createElement('section');
+        empty.className = 'rounded-[1.8rem] border border-zinc-800 bg-zinc-900/80 p-5 text-sm text-zinc-400';
+        empty.innerHTML = '<div class="text-zinc-100 font-semibold">开始聊天</div><div class="mt-2">输入命令、slash command，或在文件页发送当前文件定向指令。</div>';
+        chatContainer.appendChild(empty);
+      }
+      projectionState.logEntries.forEach((entry) => {
+        if (entry.kind === 'system') {
+          const row = document.createElement('div');
+          row.className = 'py-1 text-center text-[11px] text-zinc-600';
+          row.textContent = `${entry.message}${entry.timestamp ? ` · ${formatTime(entry.timestamp)}` : ''}`;
+          chatContainer.appendChild(row);
+          return;
+        }
+        if (entry.kind === 'user') {
+          const row = document.createElement('div');
+          row.className = 'flex justify-end';
+          row.innerHTML = `
+            <div class="bubble-shadow max-w-[86%] rounded-[1.4rem] rounded-br-md bg-blue-600 px-4 py-3 text-sm text-white">
+              <pre class="whitespace-pre-wrap break-words font-sans">${escapeHtml(entry.message || '')}</pre>
+            </div>`;
+          chatContainer.appendChild(row);
+          return;
+        }
+        if (entry.kind === 'markdown') {
+          const row = document.createElement('div');
+          row.className = 'flex justify-start';
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble-shadow max-w-[92%] rounded-[1.4rem] rounded-bl-md border border-zinc-800 bg-zinc-900/92 px-4 py-3 text-sm text-zinc-100';
+          bubble.innerHTML = `<div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">assistant${entry.timestamp ? ` · ${formatTime(entry.timestamp)}` : ''}</div><div class="markdown-body">${marked.parse(entry.message || '')}</div>`;
+          row.appendChild(bubble);
+          chatContainer.appendChild(row);
+          enhanceCodeBlocks(bubble);
+          return;
+        }
+        if (entry.kind === 'terminal') {
+          const row = document.createElement('div');
+          row.className = 'flex justify-start';
+          row.innerHTML = `
+            <div class="bubble-shadow max-w-[92%] rounded-[1.4rem] rounded-bl-md border border-zinc-800 bg-zinc-900/92 px-4 py-3 text-sm ${entry.stream === 'stderr' ? 'text-red-200' : 'text-zinc-100'}">
+              <div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">${escapeHtml(entry.stream || 'stdout')}${entry.timestamp ? ` · ${formatTime(entry.timestamp)}` : ''}</div>
+              <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6">${escapeHtml(entry.text || '')}</pre>
+            </div>`;
+          chatContainer.appendChild(row);
+          return;
+        }
+        if (entry.kind === 'step') {
+          return;
+        }
+        if (entry.kind === 'diff') {
+          const diff = entry.context;
+          const row = document.createElement('div');
+          row.className = 'rounded-[1.4rem] border border-violet-900/70 bg-violet-950/20 px-4 py-4';
+          const preview = String(diff.diff || '').split('\n').slice(0, 12).map(highlightDiffLine).join('');
+          row.innerHTML = `
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="text-[11px] uppercase tracking-wide text-violet-300">文件改动${diff.timestamp ? ` · ${formatTime(diff.timestamp)}` : ''}</div>
+                <div class="mt-2 truncate text-sm font-semibold text-zinc-100">${escapeHtml(diff.title || basename(diff.path) || '最近改动')}</div>
+                <div class="mt-1 break-all text-xs text-zinc-400">${escapeHtml(diff.path || '')}</div>
+              </div>
+              <button data-open-diff class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">查看</button>
+            </div>
+            <div class="mt-3 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/80 py-2 font-mono text-xs leading-6">${preview}</div>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <button data-accept class="rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100 hover:bg-emerald-900/60">同意</button>
+              <button data-revert class="rounded-2xl border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-100 hover:bg-red-900/60">撤销</button>
+              <button data-revise class="rounded-2xl border border-amber-700 bg-amber-950/40 px-3 py-2 text-xs text-amber-100 hover:bg-amber-900/60">继续调整</button>
+            </div>`;
+          row.querySelector('[data-open-diff]').addEventListener('click', () => openDiffContext(diff));
+          row.querySelector('[data-accept]').addEventListener('click', () => sendReviewDecision('accept'));
+          row.querySelector('[data-revert]').addEventListener('click', () => sendReviewDecision('revert'));
+          row.querySelector('[data-revise]').addEventListener('click', () => sendReviewDecision('revise'));
+          chatContainer.appendChild(row);
+          return;
+        }
+        if (entry.kind === 'error') {
+          const context = entry.context;
+          const row = document.createElement('div');
+          row.className = 'flex justify-start';
+          row.innerHTML = `
+            <div class="bubble-shadow max-w-[92%] rounded-[1.4rem] rounded-bl-md border border-red-900/70 bg-red-950/20 px-4 py-3 text-sm text-red-100">
+              <div class="mb-2 text-[11px] uppercase tracking-wide text-red-300">error${context.timestamp ? ` · ${formatTime(context.timestamp)}` : ''}</div>
+              <pre class="whitespace-pre-wrap break-words font-sans">${escapeHtml(context.message || 'unknown error')}</pre>
+              <div class="mt-2 text-xs text-red-200">${escapeHtml([context.code, context.targetPath, context.relatedStep].filter(Boolean).join(' · '))}</div>
+            </div>`;
+          chatContainer.appendChild(row);
+        }
+      });
+      requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }));
+    }
+
+    function renderTerminalDrawer() {
+      terminalDrawerContent.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'rounded-[1.4rem] border border-zinc-800 bg-zinc-900/90 p-4';
+      wrap.innerHTML = `
+        <div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">stdout</div>
+        <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-zinc-100">${escapeHtml(projectionState.rawTerminalByStream.stdout || '')}</pre>
+        <div class="mt-4 mb-2 text-[11px] uppercase tracking-wide text-red-300">stderr</div>
+        <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-red-200">${escapeHtml(projectionState.rawTerminalByStream.stderr || '')}</pre>`;
+      terminalDrawerContent.appendChild(wrap);
+    }
+
+    function renderCodeViewer(content) {
+      const lines = String(content || '').split('\n');
+      return `<div class="overflow-hidden rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80"><div class="font-mono text-xs leading-6">${lines.map((line, index) => `<div class="line-row flex border-b border-zinc-800/50 last:border-b-0"><div class="w-14 shrink-0 select-none border-r border-zinc-800/60 px-3 py-0.5 text-right text-zinc-500">${index + 1}</div><div class="min-w-0 flex-1 overflow-x-auto px-3 py-0.5 text-zinc-100">${escapeHtml(line) || '&nbsp;'}</div></div>`).join('')}</div></div>`;
+    }
+    function renderDiffViewer(diff) {
+      const lines = String(diff || '').split('\n');
+      return `<div class="rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80 py-2 font-mono text-xs leading-6">${lines.map(highlightDiffLine).join('')}</div>`;
+    }
+    function normalizePath(path) {
+      return String(path || '').replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+    }
+    function pathMatches(left, right) {
+      const a = normalizePath(left);
+      const b = normalizePath(right);
+      if (!a || !b) return false;
+      return a === b || a.endsWith('/' + b) || b.endsWith('/' + a);
+    }
+    function currentFileDiff() {
+      const diff = projectionState.contexts.diff;
+      if (!diff || !appState.file.activePath) return null;
+      return pathMatches(diff.path, appState.file.activePath) ? diff : null;
+    }
+    function renderSingleFileView() {
+      const open = !!appState.file.activePath;
+      setSingleFileOpen(open);
+      if (!open) return;
+      fileViewTitle.textContent = basename(appState.file.activePath) || '文件';
+      fileViewPath.textContent = appState.file.activePath || '';
+      fileLoadingBar.classList.toggle('hidden', !appState.file.loading);
+      const diff = currentFileDiff();
+      fileReviewBar.classList.toggle('hidden', !(diff && diff.pendingReview));
+      appState.file.pendingReview = !!(diff && diff.pendingReview);
+      fileViewRevertBtn.classList.toggle('hidden', !(diff && diff.pendingReview));
+      fileCodeContainer.innerHTML = diff ? renderDiffViewer(diff.diff || '') : renderCodeViewer(appState.file.content || '');
+      enhanceCodeBlocks(fileCodeContainer);
+    }
+
+    function openFile(path) {
+      appState.file.activePath = path;
+      appState.file.loading = true;
+      appState.workspace.highlightedFilePath = path;
+      setSidebarOpen(false);
+      renderFileList();
+      renderSingleFileView();
+      requestFSRead(path);
+    }
+    function closeFileView() {
+      appState.file.activePath = '';
+      appState.file.content = '';
+      appState.file.loading = false;
+      renderSingleFileView();
+    }
+    function openDiffContext(diff) {
+      projectionState.currentDiff = diff;
+      if (diff?.path) {
+        appState.workspace.highlightedFilePath = diff.path;
+        renderFileList();
+        openFile(diff.path);
+      }
+    }
+
+    function effectivePromptOptions(message, options) {
+      if (projectionState.contexts.diff?.pendingReview && appState.prompt.awaitingInput && runtimeState.agentState === 'WAIT_INPUT') return ['accept', 'revert', 'revise'];
+      return Array.isArray(options) ? options : [];
+    }
+    function parseSlashCommand(command) {
+      const raw = String(command || '').trim();
+      if (!raw.startsWith('/')) return null;
+      const known = ['/help','/clear','/exit','/quit','/context','/fast','/model','/cost','/doctor','/compact','/init','/memory','/plan','/execute','/review','/analyze','/diff','/build','/test'];
+      const direct = known.find((item) => raw === item || raw.startsWith(item + ' '));
+      if (direct) return { key: direct, raw };
+      if (raw.startsWith('/run ')) return { key: '/run', raw };
+      if (raw.startsWith('/add-dir ')) return { key: '/add-dir', raw };
+      if (raw.startsWith('/git ')) return { key: '/git', raw };
+      if (raw.startsWith('/pr ')) return { key: '/pr', raw };
+      return { key: raw.split(/\s+/)[0], raw };
+    }
+    function resolveSlashContext(command) {
+      const raw = String(command || '').trim();
+      if (raw === '/diff') {
+        const diff = projectionState.contexts.diff;
+        if (!diff) return {};
+        return { targetType: 'diff', targetPath: diff.path || '', targetDiff: diff.diff || '', contextId: diff.id || '', contextTitle: diff.title || '' };
+      }
+      if (raw.startsWith('/review') || raw.startsWith('/analyze')) {
+        const diff = projectionState.contexts.diff;
+        if (diff) return { targetType: 'diff', targetPath: diff.path || '', targetDiff: diff.diff || '', contextId: diff.id || '', contextTitle: diff.title || '' };
+        if (appState.file.activePath) return { targetType: 'file', targetPath: appState.file.activePath, contextTitle: basename(appState.file.activePath) };
+      }
+      return {};
+    }
+    function sendSlashCommand(command) {
+      const contextPayload = resolveSlashContext(command);
+      updateRuntimeMeta({ source: 'slash-command', targetType: contextPayload.targetType || '', targetPath: contextPayload.targetPath || '', contextId: contextPayload.contextId || '', contextTitle: contextPayload.contextTitle || '' });
+      return sendJson({ action: 'slash_command', command, cwd: appState.workspace.cwd || '.', engine: appState.session.activeAI, permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined, ...contextPayload });
+    }
+    function runCommand(command) {
+      const cmd = String(command || '').trim();
+      if (!cmd) return;
+      updateRuntimeMeta({ source: 'command', skillName: '', resultView: '', targetType: '', targetPath: '', contextId: '', contextTitle: '', targetText: '' });
+      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: appState.workspace.cwd || '.', source: 'command', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined })) return;
+      appendUserMessage(`${cmd}\n@ ${appState.workspace.cwd || '.'}`, '命令');
+    }
+    function sendInputRaw(raw, label = '回复') {
+      if (!raw) return;
+      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n`, permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined })) return;
+      appendUserMessage(raw.replace(/\n$/, ''), label);
+    }
+    function sendReviewDecision(decision) {
       const diff = projectionState.contexts.diff;
       if (!diff) return;
-      triggerContextSkill(name, 'diff', diff);
-    }
-
-    function openDiffModal(diffPayload) {
-      projectionState.currentDiff = diffPayload;
-      renderDiffModal();
-      diffModal.classList.remove('pointer-events-none', 'opacity-0');
-      if (diffPayload?.path) {
-        appState.workspace.highlightedFilePath = diffPayload.path;
-        renderFileList();
+      const permissionMode = storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined;
+      if (permissionMode === 'plan' && decision === 'accept') {
+        appendErrorMessage('当前 permission mode 为 plan，不能直接保存修改。');
+        return;
       }
-      setActiveContext('diff');
+      if (!sendJson({ action: 'review_decision', decision, contextId: diff.id || runtimeState.meta.contextId || '', contextTitle: diff.title || runtimeState.meta.contextTitle || '', targetPath: diff.path || runtimeState.meta.targetPath || '', permissionMode })) return;
+      appendUserMessage(`${decision}\n@ ${diff.path || diff.title || '当前 Diff'}`, 'Diff 决策');
+      diff.pendingReview = decision === 'revise';
+      renderDiffBadge();
+      renderSingleFileView();
+      renderChatStream();
     }
-
-    function closeDiffModal() {
-      diffModal.classList.add('pointer-events-none', 'opacity-0');
+    function resumeSession(sessionId) {
+      if (!sessionId || !appState.connection.connected) return;
+      updateRuntimeMeta({ source: 'command', resumeSessionId: sessionId });
+      sendJson({ action: 'exec', mode: 'pty', cmd: `claude --resume ${sessionId}`, cwd: appState.workspace.cwd || '.', source: 'command', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined });
+      appendUserMessage(`恢复会话 ${sessionId}`, '恢复');
+    }
+    function handlePrimarySubmit(rawValue) {
+      const value = String(rawValue || '').trim();
+      if (!value) return;
+      if (appState.prompt.awaitingInput || runtimeState.agentState === 'WAIT_INPUT') {
+        if (['accept', 'revert', 'revise'].includes(value.toLowerCase()) && projectionState.contexts.diff?.pendingReview) {
+          sendReviewDecision(value.toLowerCase());
+          return;
+        }
+        sendInputRaw(value, '回复');
+        return;
+      }
+      const slash = parseSlashCommand(value);
+      if (slash) {
+        if (slash.key === '/clear') {
+          projectionState.logEntries = [];
+          projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
+          renderChatStream();
+          renderTerminalDrawer();
+          return;
+        }
+        if (slash.key === '/exit' || slash.key === '/quit') {
+          appState.ws?.close();
+          return;
+        }
+        if (slash.key === '/fast') {
+          appState.session.fastMode = !appState.session.fastMode;
+          storageSet(STORAGE_KEYS.fastMode, appState.session.fastMode ? '1' : null);
+          appendSystemMessage(appState.session.fastMode ? 'fast mode 标记已开启。' : 'fast mode 标记已关闭。');
+          return;
+        }
+        appendUserMessage(value, 'Slash Command');
+        sendSlashCommand(value);
+        return;
+      }
+      runCommand(value);
+    }
+    function buildFileScopedPrompt(text) {
+      const path = appState.file.activePath || runtimeState.meta.targetPath || '';
+      const title = basename(path) || '当前文件';
+      return [`请只围绕当前文件继续处理。`, `TargetPath: ${path}`, `ContextTitle: ${title}`, `UserIntent: ${text}`].join('\n');
     }
 
     function handleIncomingEvent(payload) {
@@ -1342,35 +1057,26 @@
       updateRuntimeMeta(payload);
       switch (payload.type) {
         case 'session_state':
-          if (payload.state === 'closed') {
-            appState.connection.running = false;
-            if (appState.session.claudeInteractiveActive) break;
-          }
-          projectionState.logEntries.push({ kind: 'system', message: payload.msg || payload.state || 'session update', timestamp: payload.timestamp });
-          renderLogPane();
+          appendSystemMessage(payload.msg || payload.state || 'session update', payload.timestamp);
           break;
         case 'agent_state': {
+          runtimeState.agentState = payload.state || 'IDLE';
+          runtimeState.agentStateMessage = payload.msg || '';
+          appState.connection.running = runtimeState.agentState !== 'IDLE';
           const cmd = payload.command || '';
-          const isAI = cmd === 'claude' || cmd === 'gemini';
+          const isAI = cmd === 'claude' || cmd === 'gemini' || cmd.startsWith('claude ') || cmd.startsWith('gemini ');
           appState.session.claudeInteractiveActive = isAI && payload.state !== 'IDLE';
-          if (isAI) {
-            appState.session.activeAI = cmd;
+          if (isAI) appState.session.activeAI = cmd;
+          if (payload.resumeSessionId) storageSet(STORAGE_KEYS.resumeSessionId, payload.resumeSessionId);
+          if (payload.step) {
+            const stepContext = buildStepContextFromPayload({ ...payload, msg: payload.step, status: runtimeState.agentState === 'RUNNING_TOOL' ? 'running' : 'info' });
+            projectionState.currentStep = stepContext;
+            projectionState.contexts.step = stepContext;
+            if (stepContext.targetPath) appState.workspace.highlightedFilePath = stepContext.targetPath;
+          } else if (payload.state === 'IDLE') {
+            projectionState.currentStep = null;
+            projectionState.contexts.step = null;
           }
-          // activity tracking
-          if (payload.state === 'IDLE' && runtimeState.agentState !== 'IDLE') {
-            const resumeId = payload.resumeSessionId || runtimeState.meta.resumeSessionId;
-            if (resumeId) {
-              localStorage.setItem('vibe_resumeSessionId', resumeId);
-            }
-            addRuntimeLog('命令完成', payload.msg || '', payload.timestamp);
-            onClaudeFinish(payload.msg || '');
-          } else if (payload.state === 'THINKING' && runtimeState.agentState === 'IDLE') {
-            addRuntimeLog('执行命令', cmd || '', payload.timestamp);
-          }
-          if (payload.resumeSessionId) {
-            localStorage.setItem('vibe_resumeSessionId', payload.resumeSessionId);
-          }
-          applyAgentState(payload);
           break;
         }
         case 'log': {
@@ -1381,31 +1087,21 @@
           dedupState.lastLogMsg = msg;
           dedupState.lastLogStream = stream;
           dedupState.lastLogTime = now;
-          ingestLogMessage(msg, stream, payload.timestamp);
-          renderLogPane();
+          if (stream !== 'stderr' && looksLikeMarkdown(msg) && !msg.startsWith('\r')) appendMarkdownMessage(msg, payload.timestamp, stream);
+          else appendTerminalMessage(msg.replace(/^\r+/, ''), payload.timestamp, stream);
           break;
         }
         case 'error': {
           const errorContext = buildErrorContextFromPayload(payload);
           projectionState.latestError = errorContext;
           projectionState.contexts.error = errorContext;
-          projectionState.logEntries.push({ kind: 'error', context: errorContext, timestamp: payload.timestamp });
-          setActiveContext('error');
-          renderLogPane();
+          projectionState.logEntries.push({ kind: 'error', context: errorContext });
           break;
         }
         case 'prompt_request':
-          if ((payload.msg || '等待输入') === appState.session.lastPromptMessage && runtimeState.agentState === 'WAIT_INPUT') break;
-          appState.session.lastPromptMessage = payload.msg || '等待输入';
-          appState.prompt.options = effectivePromptOptions(payload.msg || '等待输入', payload.options || []);
+          appState.prompt.awaitingInput = true;
           appState.prompt.message = payload.msg || '等待输入';
-          // Stop activity timer when Claude is ready for next input
-          if (claudeActivity.active) {
-            const elapsed = claudeActivity.startTime ? Date.now() - claudeActivity.startTime : 0;
-            onClaudeFinish(elapsed ? formatDuration(elapsed) : '');
-          }
-          renderPromptCard();
-          if (runtimeState.agentState === 'WAIT_INPUT') inputCard.classList.remove('hidden');
+          appState.prompt.options = effectivePromptOptions(payload.msg || '', payload.options || []);
           break;
         case 'step_update': {
           const stepMsg = payload.msg || payload.message || '';
@@ -1416,248 +1112,167 @@
           const stepContext = buildStepContextFromPayload(payload);
           projectionState.currentStep = stepContext;
           projectionState.contexts.step = stepContext;
-          if (stepContext.targetPath) {
-            appState.workspace.highlightedFilePath = stepContext.targetPath;
-            if (!runtimeState.meta.targetPath) runtimeState.meta.targetPath = stepContext.targetPath;
-            renderFileList();
-          }
-          setActiveContext('step');
-          // Claude activity tracking
-          if (stepStatus === 'done') {
-            onToolDone(stepContext.target || stepContext.targetPath);
-          } else {
-            onToolStart(stepMsg, stepContext.target || stepContext.targetPath);
-          }
+          projectionState.logEntries.push({ kind: 'step', context: stepContext });
+          if (stepContext.targetPath) appState.workspace.highlightedFilePath = stepContext.targetPath;
           break;
         }
         case 'file_diff': {
           const diffContext = buildDiffContextFromPayload(payload);
           projectionState.currentDiff = diffContext;
           projectionState.contexts.diff = diffContext;
-          setActiveContext('diff');
-          openDiffModal(diffContext);
-          break;
-        }
-        case 'progress': {
-          const msg = payload.msg || '';
-          if (msg) addRuntimeLog('统计', msg, payload.timestamp);
-          if (payload.percent === 100) {
-            onClaudeFinish(msg);
+          projectionState.logEntries.push({ kind: 'diff', context: diffContext });
+          if (diffContext.path) {
+            appState.workspace.highlightedFilePath = diffContext.path;
+            if (appState.file.activePath === diffContext.path) renderSingleFileView();
           }
           break;
         }
+        case 'runtime_info_result':
+          projectionState.latestRuntimeInfo = payload;
+          appendMarkdownMessage([payload.title ? `## ${payload.title}` : '', payload.msg || '', ...(Array.isArray(payload.items) ? payload.items.map((item) => `- ${item.label}: ${item.value || '(none)'}`) : [])].filter(Boolean).join('\n'), payload.timestamp, 'stdout');
+          break;
         case 'fs_list_result':
           appState.workspace.cwd = payload.current_path || appState.workspace.cwd;
           appState.workspace.items = Array.isArray(payload.items) ? payload.items : [];
           renderFileList();
           break;
+        case 'fs_read_result':
+          appState.file.activePath = payload.path || appState.file.activePath;
+          appState.file.content = payload.content || '';
+          appState.file.loading = false;
+          renderSingleFileView();
+          break;
         default:
-          projectionState.logEntries.push({ kind: 'system', message: `收到未处理事件 ${payload.type || 'unknown'}`, timestamp: payload.timestamp });
-          renderLogPane();
+          appendSystemMessage(`收到未处理事件 ${payload.type || 'unknown'}`, payload.timestamp);
           break;
       }
-      updateStatus();
-    }
-
-    function getWsUrl() {
-      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      return `${protocol}//${location.host}/ws?token=${encodeURIComponent(appState.token)}`;
-    }
-
-    function ensureToken(forcePrompt = false) {
-      if (!forcePrompt && appState.token) return true;
-      const next = window.prompt('Enter token', appState.token || '');
-      if (!next) return false;
-      appState.token = next.trim();
-      localStorage.setItem('vibe_token', appState.token);
-      return true;
-    }
-
-    function sendJson(data) {
-      if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
-        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: 'WebSocket 未连接。' }) });
-        renderLogPane();
-        return false;
+      if (runtimeState.agentState !== 'WAIT_INPUT') {
+        appState.prompt.awaitingInput = false;
+        appState.prompt.options = [];
+        if (payload.type !== 'prompt_request') appState.prompt.message = '';
       }
-      appState.ws.send(JSON.stringify(data));
-      return true;
+      renderApp();
     }
 
-    function requestFSList(path) {
-      if (!sendJson({ action: 'fs_list', path })) return;
+    function renderApp() {
+      renderHeaderStatus();
+      renderRuntimeMetaBadge();
+      renderDiffBadge();
+      renderFileList();
+      renderChatStream();
+      renderSingleFileView();
+      renderTerminalDrawer();
+      renderStatusDetailPanel();
     }
 
-    function connect(forcePrompt = false) {
-      if (!ensureToken(forcePrompt)) {
-        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: '缺少 token，无法连接服务。' }) });
-        renderLogPane();
-        return;
-      }
-      if (appState.ws) {
-        appState.ws.onopen = null;
-        appState.ws.onclose = null;
-        appState.ws.onerror = null;
-        appState.ws.onmessage = null;
-        appState.ws.close();
-      }
-      appState.connection.connected = false;
-      appState.connection.running = false;
-      runtimeState.agentState = 'IDLE';
-      runtimeState.agentStateMessage = '';
-      runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: localStorage.getItem('vibe_resumeSessionId') || '', contextId: '', contextTitle: '', targetText: '' };
-      projectionState.logEntries = [];
-      projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
-      projectionState.currentDiff = null;
-      projectionState.currentStep = null;
-      projectionState.latestError = null;
-      projectionState.contexts = { diff: null, step: null, error: null };
-      appState.session.lastPromptMessage = '';
-      appState.session.claudeInteractiveActive = false;
-      closeInputCard();
-      closeContextSkillMenu();
-      updateStatus();
-      projectionState.logEntries.push({ kind: 'system', message: '正在连接 WebSocket' });
-      renderLogPane();
-      try {
-        appState.ws = new WebSocket(getWsUrl());
-      } catch (err) {
-        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: `创建 WebSocket 失败：${err.message || err}` }) });
-        renderLogPane();
-        return;
-      }
-      appState.ws.onopen = () => {
-        appState.connection.connected = true;
-        updateStatus();
-        projectionState.logEntries.push({ kind: 'system', message: 'WebSocket 已连接' });
-        renderLogPane();
-        requestFSList('.');
-      };
-      appState.ws.onclose = () => {
-        appState.connection.connected = false;
-        appState.connection.running = false;
-        runtimeState.agentState = 'IDLE';
-        runtimeState.agentStateMessage = '';
-        runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '' };
-        projectionState.currentStep = null;
-        projectionState.contexts.step = null;
-        closeInputCard();
-        closeContextSkillMenu();
-        updateStatus();
-        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: '连接已关闭，请检查 token 或服务状态。' }) });
-        renderLogPane();
-      };
-      appState.ws.onerror = () => {
-        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: 'WebSocket 连接错误，请检查 token 或服务状态。' }) });
-        renderLogPane();
-      };
-      appState.ws.onmessage = (event) => {
-        let payload;
-        try {
-          payload = JSON.parse(event.data);
-        } catch (err) {
-          projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: `收到无法解析的消息：${err.message || err}` }) });
-          renderLogPane();
+    function setPanelOpen(panel, open) {
+      panel.classList.toggle('pointer-events-none', !open);
+      panel.classList.toggle('opacity-0', !open);
+    }
+    function setTerminalDrawerOpen(open) {
+      appState.ui.terminalDrawerOpen = open;
+      setPanelOpen(terminalDrawer, open);
+    }
+    function setStatusDetailOpen(open) {
+      appState.ui.statusDetailOpen = open;
+      setPanelOpen(statusDetailPanel, open);
+    }
+    function ensureTerminalMetrics() {
+      const drawer = appState.ui.drawers.terminal;
+      drawer.maxHeight = Math.round((window.innerHeight || 800) * 0.75);
+      drawer.height = Math.min(Math.max(drawer.height || drawer.openHeight, drawer.minHeight), drawer.maxHeight);
+      drawer.openHeight = drawer.height;
+      terminalDrawerSheet.style.height = `${drawer.height}px`;
+    }
+    function bindTerminalGesture() {
+      const drawer = appState.ui.drawers.terminal;
+      terminalDrawerHandle.style.touchAction = 'none';
+      terminalDrawerHandle.addEventListener('pointerdown', (event) => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        ensureTerminalMetrics();
+        drawer.dragging = true;
+        drawer.pointerId = event.pointerId;
+        drawer.startY = event.clientY;
+        drawer.startHeight = drawer.height;
+        terminalDrawerHandle.setPointerCapture?.(event.pointerId);
+      });
+      terminalDrawerHandle.addEventListener('pointermove', (event) => {
+        if (!drawer.dragging || drawer.pointerId !== event.pointerId) return;
+        const delta = drawer.startY - event.clientY;
+        drawer.height = Math.min(Math.max(drawer.startHeight + delta, 0), drawer.maxHeight || drawer.startHeight);
+        terminalDrawerSheet.style.height = `${drawer.height}px`;
+      });
+      const finish = (event) => {
+        if (!drawer.dragging || (event && drawer.pointerId !== event.pointerId)) return;
+        drawer.dragging = false;
+        terminalDrawerHandle.releasePointerCapture?.(drawer.pointerId);
+        drawer.pointerId = null;
+        if (drawer.height < Math.max(120, drawer.minHeight * 0.72)) {
+          setTerminalDrawerOpen(false);
           return;
         }
-        handleIncomingEvent(payload);
+        drawer.openHeight = drawer.height;
       };
+      terminalDrawerHandle.addEventListener('pointerup', finish);
+      terminalDrawerHandle.addEventListener('pointercancel', finish);
     }
 
-    function sendInputRaw(raw, label = '输入') {
-      if (!raw) return;
-      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n`, permissionMode: permissionModeSelect.value || undefined })) return;
-      addUserBubble(raw === '\u0003' ? 'Ctrl+C' : raw.replace(/\n$/, ''), label);
-      if (appState.session.claudeInteractiveActive) {
-        runtimeState.agentState = 'THINKING';
-        runtimeState.agentStateMessage = '思考中';
-        resetTaskTimer();
-        updateStatus();
-      }
-      inputField.value = '';
-      inputField.focus();
-    }
-
-    function resumeSession(sessionId) {
-      if (!sessionId || !appState.connection.connected) return;
-      addRuntimeLog('恢复会话', sessionId);
-      updateRuntimeMeta({ source: 'command', resumeSessionId: sessionId });
-      sendJson({ action: 'exec', mode: 'pty', cmd: `claude --resume ${sessionId}`, cwd: appState.workspace.cwd, source: 'command', permissionMode: permissionModeSelect.value || undefined });
-      addUserBubble(`恢复会话 ${sessionId}`, '恢复');
-      updateStatus();
-    }
-
-    function runCommand(command) {
-      const cmd = (command || '').trim();
-      if (!cmd) return;
-      if (!appState.connection.connected) {
-        projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: '当前未连接，无法运行命令。' }) });
-        renderLogPane();
-        return;
-      }
-      updateRuntimeMeta({ source: 'command', skillName: '', resultView: '', targetType: '', targetPath: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '' });
-      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: appState.workspace.cwd, source: 'command', permissionMode: permissionModeSelect.value || undefined })) return;
-      addUserBubble(`${cmd}\n@ ${appState.workspace.cwd || '.'}`, '命令');
-      updateStatus();
-      commandInput.value = '';
-      setSidebarOpen(false);
-    }
-
-    function sendInput(value) {
-      const raw = value != null ? String(value).trim() : inputField.value.trim();
-      if (!raw) return;
-      sendInputRaw(raw, '回复');
-    }
-
-    commandForm.addEventListener('submit', (event) => {
+    authForm.addEventListener('submit', (event) => {
       event.preventDefault();
-      runCommand(commandInput.value);
-    });
-    inputForm.addEventListener('submit', (event) => {
-      event.preventDefault();
-      sendInput();
-    });
-    structuredViewBtn.addEventListener('click', () => setViewMode('structured'));
-    rawTerminalViewBtn.addEventListener('click', () => setViewMode('raw-terminal'));
-    reconnectBtn.addEventListener('click', () => connect(false));
-    retokenBtn.addEventListener('click', () => connect(true));
-    resumeSessionBtn.addEventListener('click', () => {
-      const resumeId = runtimeState.meta.resumeSessionId || localStorage.getItem('vibe_resumeSessionId') || '';
-      if (resumeId) resumeSession(resumeId);
+      connect(false);
     });
     openSidebarBtn.addEventListener('click', () => setSidebarOpen(true));
     closeSidebarBtn.addEventListener('click', () => setSidebarOpen(false));
-    copyDiffBtn.addEventListener('click', () => copyText(projectionState.currentDiff?.diff || '', copyDiffBtn));
-    closeDiffBtn.addEventListener('click', () => closeDiffModal());
-    diffSkillBtn.addEventListener('click', (event) => {
-      const diff = projectionState.contexts.diff;
-      if (diff) openContextSkillMenu('diff', diff.id, event.currentTarget);
-    });
-    stepSkillBtn.addEventListener('click', (event) => {
-      const step = projectionState.contexts.step;
-      if (step) openContextSkillMenu('step', step.id, event.currentTarget);
-    });
-    diffModal.addEventListener('click', (event) => {
-      if (event.target === diffModal) closeDiffModal();
-    });
-    window.addEventListener('resize', () => {
-      syncBottomSpacing();
-      renderContextSkillMenu();
-    });
-    window.addEventListener('click', (event) => {
-      if (!runtimeState.skillMenu.open) return;
-      if (contextSkillMenu.contains(event.target)) return;
-      if (event.target === diffSkillBtn || event.target === stepSkillBtn) return;
-      closeContextSkillMenu();
-    });
     sidebarOverlay.addEventListener('click', () => setSidebarOpen(false));
     sidebarRefreshBtn.addEventListener('click', () => requestFSList(appState.workspace.cwd || '.'));
     sidebarUpBtn.addEventListener('click', () => requestFSList(parentPath(appState.workspace.cwd || '.')));
+    terminalBtn.addEventListener('click', () => setTerminalDrawerOpen(true));
+    closeTerminalDrawerBtn.addEventListener('click', () => setTerminalDrawerOpen(false));
+    statusDetailBtn.addEventListener('click', () => setStatusDetailOpen(true));
+    closeStatusDetailBtn.addEventListener('click', () => setStatusDetailOpen(false));
+    retokenBtn.addEventListener('click', () => { setView('auth'); setAuthStatus('请重新输入 token。'); tokenInput.focus(); });
+    reconnectBtn.addEventListener('click', () => connect(false));
+    resumeSessionBtn.addEventListener('click', () => {
+      const resumeId = runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '') || '';
+      if (resumeId) resumeSession(resumeId);
+    });
+    diffBadgeBtn.addEventListener('click', () => {
+      const diff = projectionState.contexts.diff;
+      if (diff) openDiffContext(diff);
+    });
+    closeFileViewBtn.addEventListener('click', () => closeFileView());
+    fileViewRevertBtn.addEventListener('click', () => sendReviewDecision('revert'));
+    fileAcceptBtn.addEventListener('click', () => sendReviewDecision('accept'));
+    fileRevertBtn.addEventListener('click', () => sendReviewDecision('revert'));
+    fileReviseBtn.addEventListener('click', () => sendReviewDecision('revise'));
+    fileVoiceBtn.addEventListener('click', () => appendSystemMessage('语音入口暂为占位。'));
+    chatComposer.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const value = String(chatInput.value || '').trim();
+      if (!value) return;
+      handlePrimarySubmit(value);
+      chatInput.value = '';
+    });
+    fileComposer.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const value = String(fileInput.value || '').trim();
+      if (!value) return;
+      handlePrimarySubmit(buildFileScopedPrompt(value));
+      fileInput.value = '';
+    });
+    window.addEventListener('resize', ensureTerminalMetrics);
 
-    updateStatus();
-    updateViewModeButtons();
-    renderFileList();
-    renderLogPane();
-    connect(false);
+    tokenInput.value = appState.auth.token;
+    bindTerminalGesture();
+    ensureTerminalMetrics();
+    setView(appState.auth.token ? 'auth' : 'auth');
+    renderApp();
+    if (appState.auth.token) {
+      setAuthStatus('检测到已保存 token，正在自动连接…');
+      connect(false);
+    } else {
+      setAuthStatus('请输入 token 后继续。');
+    }
   </script>
 </body>
 </html>

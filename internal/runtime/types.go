@@ -15,6 +15,7 @@ type ExecuteRequest struct {
 
 type InputRequest struct {
 	Data string
+	protocol.RuntimeMeta
 }
 
 type Dependencies struct {

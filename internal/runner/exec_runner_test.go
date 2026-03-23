@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -111,6 +112,26 @@ func TestBuildClaudePromptCommandIncludesResume(t *testing.T) {
 	lower := strings.ToLower(got)
 	if !strings.Contains(lower, "--resume session-123") {
 		t.Fatalf("expected resume flag in %q", got)
+	}
+}
+
+func TestShellEnvironmentRemovesClaudeCodeForClaudeCommand(t *testing.T) {
+	const key = "CLAUDECODE"
+	old := os.Getenv(key)
+	_ = os.Setenv(key, "1")
+	defer func() {
+		if old == "" {
+			_ = os.Unsetenv(key)
+		} else {
+			_ = os.Setenv(key, old)
+		}
+	}()
+
+	env := shellEnvironment(getShellSpec(), "claude")
+	for _, item := range env {
+		if strings.HasPrefix(strings.ToUpper(item), key+"=") {
+			t.Fatalf("expected %s to be removed for claude command, got %q", key, item)
+		}
 	}
 }
 

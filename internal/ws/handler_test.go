@@ -231,7 +231,7 @@ func TestHandlerEmitsAgentStateForToolEventsAndFinish(t *testing.T) {
 
 func TestHandlerClaudeSessionStartsInWaitInput(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(
-		protocol.NewLogEvent("ignored", "Welcome back!", "stdout"),
+		protocol.NewPromptRequestEvent("ignored", "Claude 会话已就绪，可继续输入", nil),
 	)
 
 	h := NewHandler("test")
@@ -249,7 +249,7 @@ func TestHandlerClaudeSessionStartsInWaitInput(t *testing.T) {
 	}
 
 	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
-	_ = readUntilType(t, conn, protocol.EventTypeLog)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
 	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
 }
 
@@ -495,6 +495,246 @@ func TestHandlerUnknownMode(t *testing.T) {
 			}
 			return
 		}
+	}
+}
+
+func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
+	h := NewHandler("test")
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty"}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.ReviewDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "review_decision"},
+		Decision:       "accept",
+		ContextID:      "diff:1",
+		ContextTitle:   "最近 Diff",
+		TargetPath:     "internal/ws/handler.go",
+		PermissionMode: "acceptEdits",
+	}); err != nil {
+		t.Fatalf("write review decision request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		got := string(payload)
+		if !strings.Contains(got, "请接受刚刚展示的 diff 变更") {
+			t.Fatalf("unexpected review decision payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive review decision payload")
+	}
+
+	thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
+	if thinking["state"] != "THINKING" {
+		t.Fatalf("expected THINKING state, got %#v", thinking)
+	}
+	if thinking["source"] != "review-decision" {
+		t.Fatalf("expected review-decision source, got %#v", thinking)
+	}
+}
+
+func TestHandlerReviewDecisionWithoutRunner(t *testing.T) {
+	h := NewHandler("test")
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ReviewDecisionRequestEvent{ClientEvent: protocol.ClientEvent{Action: "review_decision"}, Decision: "revert"}); err != nil {
+		t.Fatalf("write review decision request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "当前没有可交互会话，请先恢复会话后再审核 diff" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+}
+
+func TestHandlerReviewDecisionRejectsUnknownDecision(t *testing.T) {
+	h := NewHandler("test")
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ReviewDecisionRequestEvent{ClientEvent: protocol.ClientEvent{Action: "review_decision"}, Decision: "shipit"}); err != nil {
+		t.Fatalf("write review decision request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "review decision must be one of: accept, revert, revise" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+}
+
+func TestHandlerRuntimeInfoReturnsContextSnapshot(t *testing.T) {
+	h := NewHandler("test")
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.RuntimeInfoRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "runtime_info"},
+		Query:       "context",
+		CWD:         ".",
+	}); err != nil {
+		t.Fatalf("write runtime_info request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeRuntimeInfoResult)
+	if event["query"] != "context" {
+		t.Fatalf("expected context query, got %#v", event)
+	}
+	items, ok := event["items"].([]any)
+	if !ok || len(items) == 0 {
+		t.Fatalf("expected runtime info items, got %#v", event)
+	}
+}
+
+func TestHandlerRuntimeInfoRejectsUnknownQuery(t *testing.T) {
+	h := NewHandler("test")
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.RuntimeInfoRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "runtime_info"},
+		Query:       "mystery",
+		CWD:         ".",
+	}); err != nil {
+		t.Fatalf("write runtime_info request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "unsupported runtime_info query: mystery" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+}
+
+func TestHandlerSlashCommandRuntimeInfoQueries(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		query   string
+	}{
+		{name: "help", command: "/help", query: "help"},
+		{name: "context", command: "/context", query: "context"},
+		{name: "model", command: "/model", query: "model"},
+		{name: "cost", command: "/cost", query: "cost"},
+		{name: "doctor", command: "/doctor", query: "doctor"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler("test")
+			conn := newTestConn(t, h)
+			_, _ = readInitialEvents(t, conn)
+
+			if err := conn.WriteJSON(protocol.SlashCommandRequestEvent{
+				ClientEvent: protocol.ClientEvent{Action: "slash_command"},
+				Command:     tt.command,
+				CWD:         ".",
+			}); err != nil {
+				t.Fatalf("write slash command request: %v", err)
+			}
+
+			event := readUntilType(t, conn, protocol.EventTypeRuntimeInfoResult)
+			if event["query"] != tt.query {
+				t.Fatalf("expected query %q, got %#v", tt.query, event)
+			}
+		})
+	}
+}
+
+func TestHandlerSlashCommandLocalOnlyCommands(t *testing.T) {
+	tests := []string{"/clear", "/exit", "/quit", "/fast"}
+	for _, command := range tests {
+		t.Run(command, func(t *testing.T) {
+			h := NewHandler("test")
+			conn := newTestConn(t, h)
+			_, _ = readInitialEvents(t, conn)
+
+			if err := conn.WriteJSON(protocol.SlashCommandRequestEvent{
+				ClientEvent: protocol.ClientEvent{Action: "slash_command"},
+				Command:     command,
+			}); err != nil {
+				t.Fatalf("write slash command request: %v", err)
+			}
+
+			event := readUntilType(t, conn, protocol.EventTypeRuntimeInfoResult)
+			items, ok := event["items"].([]any)
+			if !ok || len(items) == 0 {
+				t.Fatalf("expected runtime info items, got %#v", event)
+			}
+			first, ok := items[0].(map[string]any)
+			if !ok || first["status"] != "local-only" {
+				t.Fatalf("expected local-only status, got %#v", event)
+			}
+		})
+	}
+}
+
+func TestHandlerSlashCommandDiffRequiresContext(t *testing.T) {
+	h := NewHandler("test")
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.SlashCommandRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "slash_command"},
+		Command:     "/diff",
+	}); err != nil {
+		t.Fatalf("write slash command request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "/diff requires targetDiff context" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+}
+
+func TestHandlerSlashCommandExecMappings(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "init", command: "/init", want: "claude /init"},
+		{name: "compact", command: "/compact", want: "claude /compact"},
+		{name: "run", command: "/run echo hi", want: "echo hi"},
+		{name: "add-dir", command: "/add-dir /tmp/demo", want: "claude /add-dir /tmp/demo"},
+		{name: "git commit quote", command: "/git commit hello", want: "git commit -m \"hello\""},
+		{name: "test fallback", command: "/test path/to/file", want: "go test ./..."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runnerStub := newHoldingStubRunner()
+			h := NewHandler("test")
+			h.NewPtyRunner = func() runner.Runner { return runnerStub }
+			conn := newTestConn(t, h)
+			_, _ = readInitialEvents(t, conn)
+
+			if err := conn.WriteJSON(protocol.SlashCommandRequestEvent{
+				ClientEvent: protocol.ClientEvent{Action: "slash_command"},
+				Command:     tt.command,
+				CWD:         ".",
+			}); err != nil {
+				t.Fatalf("write slash command request: %v", err)
+			}
+
+			thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
+			if thinking["state"] != "THINKING" {
+				t.Fatalf("expected THINKING state, got %#v", thinking)
+			}
+			select {
+			case <-runnerStub.writeCh:
+				// ignore stray writes
+			default:
+			}
+		})
 	}
 }
 

@@ -30,6 +30,15 @@ type Session struct {
 	State State
 }
 
+type DiffContext struct {
+	ContextID     string `json:"contextId,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Diff          string `json:"diff,omitempty"`
+	Lang          string `json:"lang,omitempty"`
+	PendingReview bool   `json:"pendingReview,omitempty"`
+}
+
 type Controller struct {
 	mu             sync.Mutex
 	sessionID      string
@@ -39,13 +48,14 @@ type Controller struct {
 	lastTool       string
 	resumeSession  string
 	activeMeta     protocol.RuntimeMeta
+	recentDiff     DiffContext
 
 	// dedup fields
-	lastLogMsg    string
-	lastLogTime   time.Time
-	lastStepMsg   string
+	lastLogMsg     string
+	lastLogTime    time.Time
+	lastStepMsg    string
 	lastStepStatus string
-	lastPromptMsg string
+	lastPromptMsg  string
 }
 
 func NewController(sessionID string) *Controller {
@@ -121,6 +131,14 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		if e.Path != "" {
 			c.lastTool = e.Path
 		}
+		c.recentDiff = DiffContext{
+			ContextID:     firstNonEmpty(e.ContextID, e.Path, e.Title),
+			Title:         firstNonEmpty(e.Title, e.ContextTitle, "Diff 预览"),
+			Path:          firstNonEmpty(e.Path, e.TargetPath),
+			Diff:          e.Diff,
+			Lang:          e.Lang,
+			PendingReview: true,
+		}
 		return []any{c.newAgentStateEvent(message, false)}
 	case protocol.LogEvent:
 		if e.ResumeSessionID != "" {
@@ -150,8 +168,16 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" {
+	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" || meta.TargetPath != "" {
 		c.activeMeta = protocol.MergeRuntimeMeta(c.activeMeta, meta)
+	}
+	if meta.Source == "review-decision" && c.recentDiff.PendingReview {
+		switch strings.TrimSpace(meta.TargetText) {
+		case "accept", "revert":
+			c.recentDiff.PendingReview = false
+		case "revise":
+			c.recentDiff.PendingReview = true
+		}
 	}
 	c.currentState = ControllerStateThinking
 	return []any{c.newAgentStateEvent("思考中", false)}
@@ -168,7 +194,7 @@ func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
 	c.lastStepMsg = ""
 	c.lastStepStatus = ""
 	c.lastPromptMsg = ""
-	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" {
+	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" || meta.TargetPath != "" {
 		c.activeMeta = protocol.MergeRuntimeMeta(c.activeMeta, meta)
 	}
 	message := "空闲"
@@ -176,6 +202,12 @@ func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
 		message = "会话已暂停，可继续对话"
 	}
 	return []any{c.newAgentStateEvent(message, false)}
+}
+
+func (c *Controller) RecentDiff() DiffContext {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.recentDiff
 }
 
 func (c *Controller) newAgentStateEvent(message string, awaitInput bool) protocol.AgentStateEvent {
@@ -200,10 +232,10 @@ func isAIPrompt(message string) bool {
 		return false
 	}
 	// 匹配 Gemini 的多种提示符状态
-	return strings.Contains(trimmed, ">   Type your message") || 
-	       trimmed == ">" || 
-	       strings.HasSuffix(trimmed, " >") || 
-	       strings.HasSuffix(trimmed, "\n>")
+	return strings.Contains(trimmed, ">   Type your message") ||
+		trimmed == ">" ||
+		strings.HasSuffix(trimmed, " >") ||
+		strings.HasSuffix(trimmed, "\n>")
 }
 
 func isAICommand(command string) bool {
@@ -215,4 +247,13 @@ func isAICommand(command string) bool {
 	isClaude := head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe"
 	isGemini := head == "gemini" || strings.HasSuffix(head, "/gemini") || strings.HasSuffix(head, `\\gemini`) || head == "gemini.exe"
 	return isClaude || isGemini
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

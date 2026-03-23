@@ -261,6 +261,12 @@ func shellEscapeForBash(path string) string {
 
 func getShellSpec() shellSpec {
 	if runtime.GOOS != "windows" {
+		if zshPath, err := exec.LookPath("zsh"); err == nil && zshPath != "" {
+			return shellSpec{path: zshPath, args: []string{"-lc"}}
+		}
+		if shPath, err := exec.LookPath("sh"); err == nil && shPath != "" {
+			return shellSpec{path: shPath, args: []string{"-lc"}}
+		}
 		return shellSpec{path: "sh", args: []string{"-lc"}}
 	}
 
@@ -322,6 +328,9 @@ func getShellSpec() shellSpec {
 
 func shellEnvironment(spec shellSpec, command string) []string {
 	env := os.Environ()
+	if isClaudeCommandName(command) {
+		env = removeEnv(env, "CLAUDECODE")
+	}
 	if runtime.GOOS == "windows" && spec.gitBash != "" {
 		env = upsertEnv(env, "CLAUDE_CODE_GIT_BASH_PATH", spec.gitBash)
 	}
@@ -344,6 +353,18 @@ func upsertEnv(env []string, key, value string) []string {
 		}
 	}
 	return append(env, prefix+value)
+}
+
+func removeEnv(env []string, key string) []string {
+	prefix := strings.ToUpper(key + "=")
+	filtered := env[:0]
+	for _, item := range env {
+		if strings.HasPrefix(strings.ToUpper(item), prefix) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
 }
 
 func detectGitBashPath() string {

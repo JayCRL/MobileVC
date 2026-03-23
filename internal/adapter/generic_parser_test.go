@@ -90,3 +90,65 @@ func TestGenericParserJavaExceptionStack(t *testing.T) {
 		t.Fatalf("unexpected error message: %s", errorEvent.Message)
 	}
 }
+
+func TestGenericParserFileDiffMetadata(t *testing.T) {
+	parser := NewGenericParser()
+	lines := []string{
+		"diff --git a/internal/ws/handler.go b/internal/ws/handler.go",
+		"--- a/internal/ws/handler.go",
+		"+++ b/internal/ws/handler.go",
+		"@@ -1,1 +1,2 @@",
+		"-old",
+		"+new",
+	}
+
+	var events []any
+	for _, line := range lines {
+		events = parser.ParseLine(line, "s1", "stdout")
+	}
+	events = append(events, parser.Flush("s1", "stdout")...)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	diffEvent, ok := events[0].(protocol.FileDiffEvent)
+	if !ok {
+		t.Fatalf("expected FileDiffEvent, got %T", events[0])
+	}
+	if diffEvent.Path != "internal/ws/handler.go" {
+		t.Fatalf("unexpected diff path: %q", diffEvent.Path)
+	}
+	if diffEvent.Title != "Updating internal/ws/handler.go" {
+		t.Fatalf("unexpected diff title: %q", diffEvent.Title)
+	}
+}
+
+func TestGenericParserFileDiffMetadataWithLeadingCarriageReturn(t *testing.T) {
+	parser := NewGenericParser()
+	lines := []string{
+		"\rdiff --git a/internal/ws/handler.go b/internal/ws/handler.go",
+		"\r--- a/internal/ws/handler.go",
+		"\r+++ b/internal/ws/handler.go",
+		"\r@@ -1,1 +1,2 @@",
+		"\r-old",
+		"\r+new",
+	}
+
+	var events []any
+	for _, line := range lines {
+		events = parser.ParseLine(line, "s1", "stdout")
+	}
+	events = append(events, parser.Flush("s1", "stdout")...)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	diffEvent, ok := events[0].(protocol.FileDiffEvent)
+	if !ok {
+		t.Fatalf("expected FileDiffEvent, got %T", events[0])
+	}
+	if diffEvent.Path != "internal/ws/handler.go" {
+		t.Fatalf("unexpected diff path: %q", diffEvent.Path)
+	}
+	if diffEvent.Title != "Updating internal/ws/handler.go" {
+		t.Fatalf("unexpected diff title: %q", diffEvent.Title)
+	}
+}
