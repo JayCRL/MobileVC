@@ -41,3 +41,33 @@ func TestControllerReviewDecisionClearsPendingReview(t *testing.T) {
 		t.Fatal("expected pending review to be false after accept")
 	}
 }
+
+func TestControllerReviewDecisionReviseKeepsPendingReview(t *testing.T) {
+	controller := NewController("s1")
+	controller.OnRunnerEvent(protocol.FileDiffEvent{
+		Event: protocol.NewBaseEvent(protocol.EventTypeFileDiff, "s1"),
+		Path:  "internal/ws/handler.go",
+		Title: "Updating internal/ws/handler.go",
+		Diff:  "diff --git a/internal/ws/handler.go b/internal/ws/handler.go",
+		Lang:  "go",
+	})
+	controller.OnInputSent(protocol.RuntimeMeta{Source: "review-decision", TargetText: "revise", PermissionMode: "default"})
+	diff := controller.RecentDiff()
+	if !diff.PendingReview {
+		t.Fatal("expected pending review to remain true after revise")
+	}
+	snapshot := controller.Snapshot()
+	if snapshot.ActiveMeta.PermissionMode != "default" {
+		t.Fatalf("expected permission mode to update, got %q", snapshot.ActiveMeta.PermissionMode)
+	}
+}
+
+func TestControllerUpdatePermissionModePersistsToSnapshot(t *testing.T) {
+	controller := NewController("s1")
+	controller.UpdatePermissionMode("default")
+
+	snapshot := controller.Snapshot()
+	if snapshot.ActiveMeta.PermissionMode != "default" {
+		t.Fatalf("expected permission mode to persist in snapshot, got %q", snapshot.ActiveMeta.PermissionMode)
+	}
+}

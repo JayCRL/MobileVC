@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 
 	"mobilevc/internal/protocol"
@@ -149,15 +150,23 @@ func (s *Service) SendInput(ctx context.Context, sessionID string, req InputRequ
 	if currentRunner == nil || currentSessionID == "" {
 		return errors.New("no active runner")
 	}
+	effectiveMeta := meta
+	if req.RuntimeMeta.Source != "" || req.RuntimeMeta.SkillName != "" || req.RuntimeMeta.ResumeSessionID != "" || req.RuntimeMeta.ContextID != "" || req.RuntimeMeta.ContextTitle != "" || req.RuntimeMeta.TargetText != "" || req.RuntimeMeta.TargetPath != "" || req.RuntimeMeta.PermissionMode != "" {
+		effectiveMeta = protocol.MergeRuntimeMeta(effectiveMeta, req.RuntimeMeta)
+		s.manager.updateMeta(func(m *protocol.RuntimeMeta) {
+			*m = effectiveMeta
+		})
+		if req.RuntimeMeta.PermissionMode != "" {
+			if pr, ok := currentRunner.(interface{ SetPermissionMode(string) }); ok {
+				pr.SetPermissionMode(req.RuntimeMeta.PermissionMode)
+			}
+		}
+	}
 	if err := currentRunner.Write(ctx, []byte(req.Data)); err != nil {
 		if errors.Is(err, runner.ErrInputNotSupported) {
 			return runner.ErrInputNotSupported
 		}
 		return err
-	}
-	effectiveMeta := meta
-	if req.RuntimeMeta.Source != "" || req.RuntimeMeta.SkillName != "" || req.RuntimeMeta.ResumeSessionID != "" || req.RuntimeMeta.ContextID != "" || req.RuntimeMeta.ContextTitle != "" || req.RuntimeMeta.TargetText != "" || req.RuntimeMeta.TargetPath != "" {
-		effectiveMeta = protocol.MergeRuntimeMeta(effectiveMeta, req.RuntimeMeta)
 	}
 	for _, event := range s.controller.OnInputSent(effectiveMeta) {
 		emit(event)
@@ -173,16 +182,22 @@ func (s *Service) RuntimeSnapshot() Snapshot {
 	return s.manager.snapshot()
 }
 
+func (s *Service) ControllerSnapshot() session.ControllerSnapshot {
+	return s.controller.Snapshot()
+}
+
 func (s *Service) UpdatePermissionMode(mode string) {
+	trimmed := strings.TrimSpace(mode)
 	s.manager.updateMeta(func(m *protocol.RuntimeMeta) {
-		m.TargetText = m.TargetText
+		m.PermissionMode = trimmed
 	})
+	s.controller.UpdatePermissionMode(trimmed)
 	r, _, _ := s.manager.current()
 	if r == nil {
 		return
 	}
 	if pr, ok := r.(interface{ SetPermissionMode(string) }); ok {
-		pr.SetPermissionMode(mode)
+		pr.SetPermissionMode(trimmed)
 	}
 }
 

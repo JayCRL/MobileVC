@@ -14,6 +14,9 @@ const (
 	EventTypeStepUpdate        = "step_update"
 	EventTypeFileDiff          = "file_diff"
 	EventTypeRuntimeInfoResult = "runtime_info_result"
+	EventTypeSessionCreated    = "session_created"
+	EventTypeSessionListResult = "session_list_result"
+	EventTypeSessionHistory    = "session_history"
 )
 
 type RuntimeMeta struct {
@@ -27,6 +30,10 @@ type RuntimeMeta struct {
 	ContextID       string `json:"contextId,omitempty"`
 	ContextTitle    string `json:"contextTitle,omitempty"`
 	TargetText      string `json:"targetText,omitempty"`
+	Command         string `json:"command,omitempty"`
+	Engine          string `json:"engine,omitempty"`
+	CWD             string `json:"cwd,omitempty"`
+	PermissionMode  string `json:"permissionMode,omitempty"`
 }
 
 type Event struct {
@@ -61,6 +68,11 @@ type ReviewDecisionRequestEvent struct {
 	ContextID      string `json:"contextId,omitempty"`
 	ContextTitle   string `json:"contextTitle,omitempty"`
 	TargetPath     string `json:"targetPath,omitempty"`
+	PermissionMode string `json:"permissionMode,omitempty"`
+}
+
+type PermissionModeUpdateRequestEvent struct {
+	ClientEvent
 	PermissionMode string `json:"permissionMode,omitempty"`
 }
 
@@ -111,6 +123,86 @@ type SlashCommandRequestEvent struct {
 	ContextTitle   string `json:"contextTitle,omitempty"`
 	TargetText     string `json:"targetText,omitempty"`
 	TargetStack    string `json:"targetStack,omitempty"`
+}
+
+type SessionCreateRequestEvent struct {
+	ClientEvent
+	Title string `json:"title,omitempty"`
+}
+
+type SessionLoadRequestEvent struct {
+	ClientEvent
+	SessionID string `json:"sessionId"`
+}
+
+type SessionDeleteRequestEvent struct {
+	ClientEvent
+	SessionID string `json:"sessionId"`
+}
+
+type SessionSummary struct {
+	ID          string      `json:"id"`
+	Title       string      `json:"title"`
+	CreatedAt   string      `json:"createdAt,omitempty"`
+	UpdatedAt   string      `json:"updatedAt,omitempty"`
+	LastPreview string      `json:"lastPreview,omitempty"`
+	EntryCount  int         `json:"entryCount,omitempty"`
+	Runtime     RuntimeMeta `json:"runtime,omitempty"`
+}
+
+type HistoryContext struct {
+	ID            string `json:"id,omitempty"`
+	Type          string `json:"type,omitempty"`
+	Message       string `json:"message,omitempty"`
+	Status        string `json:"status,omitempty"`
+	Target        string `json:"target,omitempty"`
+	TargetPath    string `json:"targetPath,omitempty"`
+	Tool          string `json:"tool,omitempty"`
+	Command       string `json:"command,omitempty"`
+	Timestamp     string `json:"timestamp,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Stack         string `json:"stack,omitempty"`
+	Code          string `json:"code,omitempty"`
+	RelatedStep   string `json:"relatedStep,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Diff          string `json:"diff,omitempty"`
+	Lang          string `json:"lang,omitempty"`
+	PendingReview bool   `json:"pendingReview,omitempty"`
+	Source        string `json:"source,omitempty"`
+	SkillName     string `json:"skillName,omitempty"`
+}
+
+type HistoryLogEntry struct {
+	Kind      string          `json:"kind"`
+	Message   string          `json:"message,omitempty"`
+	Label     string          `json:"label,omitempty"`
+	Timestamp string          `json:"timestamp,omitempty"`
+	Stream    string          `json:"stream,omitempty"`
+	Text      string          `json:"text,omitempty"`
+	Context   *HistoryContext `json:"context,omitempty"`
+}
+
+type SessionCreatedEvent struct {
+	Event
+	Summary SessionSummary `json:"summary"`
+}
+
+type SessionListResultEvent struct {
+	Event
+	Items []SessionSummary `json:"items"`
+}
+
+type SessionHistoryEvent struct {
+	Event
+	Summary             SessionSummary    `json:"summary"`
+	LogEntries          []HistoryLogEntry `json:"logEntries,omitempty"`
+	Diffs               []HistoryContext  `json:"diffs,omitempty"`
+	CurrentDiff         *HistoryContext   `json:"currentDiff,omitempty"`
+	CurrentStep         *HistoryContext   `json:"currentStep,omitempty"`
+	LatestError         *HistoryContext   `json:"latestError,omitempty"`
+	RawTerminalByStream map[string]string `json:"rawTerminalByStream,omitempty"`
+	CanResume           bool              `json:"canResume,omitempty"`
+	ResumeRuntimeMeta   RuntimeMeta       `json:"resumeRuntimeMeta,omitempty"`
 }
 
 type RuntimeInfoItem struct {
@@ -196,9 +288,12 @@ type FSListResultEvent struct {
 
 type FSReadResultEvent struct {
 	Event
-	Path    string `json:"path"`
-	Content string `json:"content"`
-	Size    int64  `json:"size"`
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	Size     int64  `json:"size"`
+	Lang     string `json:"lang,omitempty"`
+	Encoding string `json:"encoding,omitempty"`
+	IsText   bool   `json:"isText"`
 }
 
 type RuntimeInfoResultEvent struct {
@@ -291,12 +386,44 @@ func NewFSListResultEvent(sessionID, currentPath string, items []FSItem) FSListR
 	}
 }
 
-func NewFSReadResultEvent(sessionID, path, content string, size int64) FSReadResultEvent {
+func NewFSReadResultEvent(sessionID, path, content string, size int64, lang, encoding string, isText bool) FSReadResultEvent {
 	return FSReadResultEvent{
-		Event:   NewBaseEvent(EventTypeFSReadResult, sessionID),
-		Path:    path,
-		Content: content,
-		Size:    size,
+		Event:    NewBaseEvent(EventTypeFSReadResult, sessionID),
+		Path:     path,
+		Content:  content,
+		Size:     size,
+		Lang:     lang,
+		Encoding: encoding,
+		IsText:   isText,
+	}
+}
+
+func NewSessionCreatedEvent(sessionID string, summary SessionSummary) SessionCreatedEvent {
+	return SessionCreatedEvent{
+		Event:   NewBaseEvent(EventTypeSessionCreated, sessionID),
+		Summary: summary,
+	}
+}
+
+func NewSessionListResultEvent(sessionID string, items []SessionSummary) SessionListResultEvent {
+	return SessionListResultEvent{
+		Event: NewBaseEvent(EventTypeSessionListResult, sessionID),
+		Items: items,
+	}
+}
+
+func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries []HistoryLogEntry, diffs []HistoryContext, currentDiff, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, canResume bool, resumeRuntimeMeta RuntimeMeta) SessionHistoryEvent {
+	return SessionHistoryEvent{
+		Event:               NewBaseEvent(EventTypeSessionHistory, sessionID),
+		Summary:             summary,
+		LogEntries:          logEntries,
+		Diffs:               diffs,
+		CurrentDiff:         currentDiff,
+		CurrentStep:         currentStep,
+		LatestError:         latestError,
+		RawTerminalByStream: rawTerminalByStream,
+		CanResume:           canResume,
+		ResumeRuntimeMeta:   resumeRuntimeMeta,
 	}
 }
 
@@ -343,6 +470,18 @@ func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
 	if overlay.TargetText != "" {
 		merged.TargetText = overlay.TargetText
 	}
+	if overlay.Command != "" {
+		merged.Command = overlay.Command
+	}
+	if overlay.Engine != "" {
+		merged.Engine = overlay.Engine
+	}
+	if overlay.CWD != "" {
+		merged.CWD = overlay.CWD
+	}
+	if overlay.PermissionMode != "" {
+		merged.PermissionMode = overlay.PermissionMode
+	}
 	return merged
 }
 
@@ -379,6 +518,15 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case FSReadResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case SessionCreatedEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case SessionListResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case SessionHistoryEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case RuntimeInfoResultEvent:

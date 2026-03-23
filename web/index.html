@@ -43,28 +43,49 @@
     .crab-track {
       overflow: hidden;
       position: relative;
+      border-radius: 999px;
     }
     .crab-row {
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 0.75rem;
+      min-width: 0;
     }
     .crab-left {
       display: flex;
       align-items: center;
-      gap: 0.4rem;
+      gap: 0.5rem;
       min-width: 0;
+      flex: 1;
+    }
+    .crab-lane {
+      position: relative;
+      width: 1.2rem;
+      height: 1rem;
+      flex: none;
+      overflow: hidden;
     }
     .crab-runner {
-      display: inline-flex;
+      position: absolute;
+      inset: 0;
+      display: flex;
       align-items: center;
+      justify-content: center;
       animation: crab-walk 2.4s ease-in-out infinite;
       will-change: transform;
+      pointer-events: none;
+    }
+    .crab-status-copy {
+      min-width: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 0.35rem;
+      overflow: hidden;
     }
     .crab-status-label {
       color: #e4e4e7;
       white-space: nowrap;
+      flex: none;
     }
     .crab-tool-label {
       font-size: 10px;
@@ -73,11 +94,13 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      min-width: 0;
+      flex: 1;
     }
     @keyframes crab-walk {
-      0% { transform: translateX(-10px); }
-      50% { transform: translateX(10px); }
-      100% { transform: translateX(-10px); }
+      0% { transform: translateX(0); }
+      50% { transform: translateX(0.28rem); }
+      100% { transform: translateX(0); }
     }
     .spinner {
       width: 1rem; height: 1rem; border-radius: 999px; border: 2px solid rgba(255,255,255,0.16); border-top-color: #60a5fa;
@@ -124,33 +147,40 @@
     </section>
 
     <section id="chatView" class="hidden min-h-screen px-3 pb-[calc(8.5rem+var(--safe-bottom))] pt-3 sm:px-4">
-      <header class="glass sticky top-0 z-20 mb-3 rounded-[1.8rem] border border-zinc-800 px-4 py-3 shadow-xl">
-        <div class="flex items-center justify-between gap-3">
+      <header class="glass sticky top-0 z-20 mb-3 rounded-[1.6rem] border border-zinc-800 px-3 py-3 shadow-xl sm:px-4">
+        <div class="flex items-start justify-between gap-1.5 sm:gap-2">
           <div class="flex min-w-0 items-center gap-2">
-            <button id="openSidebarBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-base text-zinc-100 hover:bg-zinc-800">📁</button>
+            <button id="openSidebarBtn" class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-zinc-700 text-base text-zinc-100 hover:bg-zinc-800">📁</button>
             <div class="min-w-0">
               <div id="projectTitleText" class="truncate text-sm font-semibold text-zinc-100">MobileVC</div>
-              <div id="workspacePath" class="truncate text-xs text-zinc-400">.</div>
+              <div id="workspacePath" class="truncate text-[11px] text-zinc-400">.</div>
             </div>
           </div>
-          <div class="flex items-center gap-2">
-            <button id="diffBadgeBtn" class="relative rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">
+          <div class="flex shrink-0 items-center gap-1.5">
+            <button id="diffBadgeBtn" class="relative rounded-xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">
               Diff
               <span id="diffBadgeDot" class="absolute -right-1 -top-1 hidden min-w-4 rounded-full bg-red-500 px-1 text-[10px] leading-4 text-white">1</span>
             </button>
-            <button id="terminalBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">日志</button>
+            <button id="terminalBtn" class="rounded-xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">日志</button>
           </div>
         </div>
-        <div class="mt-3 flex items-center justify-between gap-2 text-sm text-zinc-300">
-          <button id="statusDetailBtn" class="flex items-center gap-2 rounded-full border border-zinc-800 px-3 py-1.5 text-left hover:bg-zinc-800/70">
-            <span id="statusDot" class="h-2.5 w-2.5 rounded-full bg-red-500"></span>
-            <span id="statusText">未连接</span>
+        <div class="mt-3 flex flex-col gap-2 text-sm text-zinc-300">
+          <button id="statusDetailBtn" class="flex w-full min-w-0 items-center gap-2 rounded-full border border-zinc-800 px-3 py-1.5 text-left hover:bg-zinc-800/70 sm:w-fit sm:max-w-full">
+            <span id="statusDot" class="h-2.5 w-2.5 shrink-0 rounded-full bg-red-500"></span>
+            <span id="statusText" class="truncate">未连接</span>
           </button>
-          <div class="flex items-center gap-2">
-            <div id="runtimeMetaBadge" class="hidden rounded-full border border-violet-800 bg-violet-950/40 px-3 py-1.5 text-[11px] text-violet-200"></div>
-            <button id="resumeSessionBtn" class="hidden rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100 hover:bg-emerald-900/60">恢复</button>
-            <button id="retokenBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">Token</button>
-            <button id="reconnectBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">重连</button>
+          <div class="flex flex-wrap items-center gap-2 [&>*]:min-w-0 [&>*]:max-w-full">
+            <div id="runtimeMetaBadge" class="hidden min-w-0 truncate rounded-full border border-violet-800 bg-violet-950/40 px-2.5 py-1 text-[10px] text-violet-200 sm:px-3 sm:py-1.5 sm:text-[11px] xl:max-w-[14rem]"></div>
+            <select id="permissionModeSelect" class="min-w-0 max-w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-2.5 py-2 text-[11px] text-zinc-100 outline-none hover:bg-zinc-800 sm:px-3 sm:text-xs xl:w-[9.5rem]">
+              <option value="acceptEdits">自动同意修改</option>
+              <option value="default">逐项确认</option>
+              <option value="plan">仅规划</option>
+            </select>
+            <button id="sessionPanelBtn" class="rounded-2xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">会话</button>
+            <button id="newSessionBtn" class="rounded-2xl border border-sky-700 bg-sky-950/40 px-2.5 py-2 text-[11px] text-sky-100 hover:bg-sky-900/60 sm:px-3 sm:text-xs">新会话</button>
+            <button id="resumeSessionBtn" class="hidden rounded-2xl border border-emerald-700 bg-emerald-950/40 px-2.5 py-2 text-[11px] text-emerald-100 hover:bg-emerald-900/60 sm:px-3 sm:text-xs">继续上次</button>
+            <button id="retokenBtn" class="rounded-2xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">Token</button>
+            <button id="reconnectBtn" class="rounded-2xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">重连</button>
           </div>
         </div>
       </header>
@@ -161,16 +191,20 @@
 
       <div id="chatComposerDock" class="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-4xl px-3 pb-[calc(0.75rem+var(--safe-bottom))] sm:px-4">
         <div class="glass rounded-[1.8rem] border border-zinc-800 p-3 shadow-2xl">
-          <div id="statusActivity" class="crab-track hidden mb-2 px-1 py-1 text-[11px] text-zinc-200">
+          <div id="statusActivity" class="crab-track hidden mb-2 rounded-full border border-zinc-800/70 bg-zinc-900/55 px-2 py-1 text-[11px] text-zinc-200">
             <div class="crab-row">
               <div class="crab-left min-w-0">
-                <div class="crab-runner">
-                  <span>🦀</span>
+                <div class="crab-lane" aria-hidden="true">
+                  <div class="crab-runner">
+                    <span>🦀</span>
+                  </div>
                 </div>
-                <span class="crab-status-label">执行中</span>
-                <span id="statusToolLabel" class="crab-tool-label"></span>
+                <div class="crab-status-copy">
+                  <span class="crab-status-label">执行中</span>
+                  <span id="statusToolLabel" class="crab-tool-label"></span>
+                </div>
               </div>
-              <span id="statusTimer">0s</span>
+              <span id="statusTimer" class="shrink-0 text-zinc-400">0s</span>
             </div>
           </div>
           <div id="chatInputHint" class="mb-2 hidden rounded-2xl border border-blue-900/70 bg-blue-950/20 px-3 py-2 text-xs text-blue-100"></div>
@@ -220,6 +254,19 @@
     </form>
   </div>
 
+  <div id="sessionPanel" class="pointer-events-none fixed inset-0 z-[45] flex items-end bg-black/50 opacity-0 transition">
+    <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+      <div class="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div class="text-sm font-semibold text-zinc-100">会话列表</div>
+          <div id="sessionPanelHint" class="text-xs text-zinc-500">查看并切换已保存会话</div>
+        </div>
+        <button id="closeSessionPanelBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+      </div>
+      <div id="sessionList" class="max-h-[62vh] space-y-2 overflow-y-auto"></div>
+    </div>
+  </div>
+
   <div id="statusDetailPanel" class="pointer-events-none fixed inset-0 z-40 flex items-end bg-black/50 opacity-0 transition">
     <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
       <div class="mb-3 flex items-center justify-between gap-2">
@@ -256,7 +303,8 @@
       token: 'vibe_token',
       permissionMode: 'vibe_permissionMode',
       resumeSessionId: 'vibe_resume_session_id',
-      fastMode: 'vibe_fast_mode'
+      fastMode: 'vibe_fast_mode',
+      activeSessionId: 'vibe_active_session_id'
     };
 
     function storageGet(key, fallback = '') {
@@ -302,10 +350,18 @@
     const statusDetailBtn = document.getElementById('statusDetailBtn');
     const retokenBtn = document.getElementById('retokenBtn');
     const reconnectBtn = document.getElementById('reconnectBtn');
+    const permissionModeSelect = document.getElementById('permissionModeSelect');
     const resumeSessionBtn = document.getElementById('resumeSessionBtn');
+    const sessionPanelBtn = document.getElementById('sessionPanelBtn');
+    const newSessionBtn = document.getElementById('newSessionBtn');
     const diffBadgeBtn = document.getElementById('diffBadgeBtn');
     const diffBadgeDot = document.getElementById('diffBadgeDot');
     const terminalBtn = document.getElementById('terminalBtn');
+
+    const sessionPanel = document.getElementById('sessionPanel');
+    const sessionPanelHint = document.getElementById('sessionPanelHint');
+    const sessionList = document.getElementById('sessionList');
+    const closeSessionPanelBtn = document.getElementById('closeSessionPanelBtn');
 
     const singleFileView = document.getElementById('singleFileView');
     const closeFileViewBtn = document.getElementById('closeFileViewBtn');
@@ -338,20 +394,22 @@
       auth: { token: storageGet(STORAGE_KEYS.token, ''), validating: false, error: '' },
       ws: null,
       connection: { connected: false, running: false },
-      session: { id: '', claudeInteractiveActive: false, activeAI: 'claude', fastMode: storageGet(STORAGE_KEYS.fastMode, '') === '1' },
+      session: { id: '', claudeInteractiveActive: false, activeAI: 'claude', fastMode: storageGet(STORAGE_KEYS.fastMode, '') === '1', summaries: [], activeSessionId: storageGet(STORAGE_KEYS.activeSessionId, ''), canResumeCurrent: false },
       view: { current: 'auth', drawerOpen: false },
       workspace: { cwd: '.', items: [], highlightedFilePath: '' },
       prompt: { awaitingInput: false, options: [], message: '' },
-      file: { activePath: '', content: '', loading: false, pendingReview: false },
+      file: { activePath: '', requestedPath: '', content: '', loading: false, pendingReview: false, lang: '', encoding: 'utf-8', isText: true, error: '', viewMode: 'content' },
       ui: {
         terminalDrawerOpen: false,
         statusDetailOpen: false,
+        sessionPanelOpen: false,
+        sessionAutoLoadAttempted: false,
         drawers: { terminal: { height: 320, minHeight: 240, maxHeight: 0, openHeight: 320, pointerId: null, dragging: false, startY: 0, startHeight: 0 } }
       }
     };
 
     const runtimeState = {
-      meta: { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '' },
+      meta: { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') },
       agentState: 'IDLE',
       agentStateMessage: ''
     };
@@ -362,19 +420,37 @@
     };
 
     const projectionState = {
+      diffs: [],
       currentDiff: null,
       currentStep: null,
       latestError: null,
       latestRuntimeInfo: null,
       contexts: { diff: null, step: null, error: null },
       logEntries: [],
-      rawTerminalByStream: { stdout: '', stderr: '' }
+      rawTerminalByStream: { stdout: '', stderr: '' },
+      review: { activeId: '', autoHandledId: '', pendingAutoAcceptId: '' }
     };
 
     const dedupState = { lastLogMsg: '', lastLogStream: '', lastLogTime: 0, lastStepMsg: '', lastStepStatus: '' };
 
-    function basename(path) {
-      return String(path || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    function buildDiffKey(diff = {}) {
+      return diff.id || diff.path || diff.title || '';
+    }
+    function mergeDiffListItem(diff) {
+      if (!diff) return;
+      const key = buildDiffKey(diff);
+      if (!key) return;
+      const index = projectionState.diffs.findIndex((item) => buildDiffKey(item) === key);
+      if (index >= 0) projectionState.diffs.splice(index, 1, { ...projectionState.diffs[index], ...diff });
+      else projectionState.diffs.push({ ...diff });
+      projectionState.currentDiff = projectionState.diffs.find((item) => buildDiffKey(item) === key) || { ...diff };
+      projectionState.contexts.diff = projectionState.currentDiff;
+    }
+    function pickNextPendingDiff() {
+      return projectionState.diffs.find((item) => item?.pendingReview) || null;
+    }
+    function pendingDiffCount() {
+      return projectionState.diffs.filter((item) => item?.pendingReview).length;
     }
     function joinPath(base, name) {
       if (!base || base === '.' || base === '/') return `${base === '/' ? '/' : ''}${name}`;
@@ -461,14 +537,224 @@
         resumeSessionId: payload.resumeSessionId || runtimeState.meta.resumeSessionId || '',
         contextId: payload.contextId || runtimeState.meta.contextId || '',
         contextTitle: payload.contextTitle || runtimeState.meta.contextTitle || '',
-        targetText: payload.targetText || runtimeState.meta.targetText || ''
+        targetText: payload.targetText || runtimeState.meta.targetText || '',
+        command: payload.command || runtimeState.meta.command || '',
+        engine: payload.engine || runtimeState.meta.engine || '',
+        cwd: payload.cwd || runtimeState.meta.cwd || '',
+        permissionMode: payload.permissionMode || runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits')
       };
     }
     function requestFSList(path) { return sendJson({ action: 'fs_list', path }); }
     function requestFSRead(path) { return sendJson({ action: 'fs_read', path }); }
+    function requestSessionList() { return sendJson({ action: 'session_list' }); }
+    function requestSessionLoad(sessionId) { return sendJson({ action: 'session_load', sessionId }); }
+    function requestSessionDelete(sessionId) { return sendJson({ action: 'session_delete', sessionId }); }
+    function requestResumeSession(meta = {}) {
+      const resumeSessionId = meta.resumeSessionId || runtimeState.meta.resumeSessionId || '';
+      if (!resumeSessionId) return false;
+      const engine = meta.engine || runtimeState.meta.engine || 'claude';
+      const cwd = meta.cwd || appState.workspace.cwd || '.';
+      const permissionMode = meta.permissionMode || effectivePermissionMode();
+      const cmd = engine === 'gemini' ? `gemini --resume ${resumeSessionId}` : `claude --resume ${resumeSessionId}`;
+      updateRuntimeMeta({ source: 'command', resumeSessionId, command: cmd, engine, cwd, permissionMode });
+      runtimeState.agentState = 'WAIT_INPUT';
+      appState.prompt.awaitingInput = true;
+      appState.prompt.message = 'AI 会话恢复中…';
+      appState.prompt.options = [];
+      return sendJson({ action: 'exec', mode: 'pty', cmd, cwd, source: 'command', engine, permissionMode, resumeSessionId });
+    }
+    function requestSessionCreate(title = '') { return sendJson({ action: 'session_create', title }); }
+    function resetProjectionState() {
+      projectionState.diffs = [];
+      projectionState.currentDiff = null;
+      projectionState.currentStep = null;
+      projectionState.latestError = null;
+      projectionState.latestRuntimeInfo = null;
+      projectionState.contexts = { diff: null, step: null, error: null };
+      projectionState.logEntries = [];
+      projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
+      projectionState.review = { activeId: '', autoHandledId: '', pendingAutoAcceptId: '' };
+      dedupState.lastLogMsg = '';
+      dedupState.lastLogStream = '';
+      dedupState.lastLogTime = 0;
+      dedupState.lastStepMsg = '';
+      dedupState.lastStepStatus = '';
+    }
+    function pickSessionSummary(sessionId) {
+      return appState.session.summaries.find((item) => item.id === sessionId) || null;
+    }
+    function mergeSessionSummary(summary) {
+      if (!summary?.id) return;
+      const rest = appState.session.summaries.filter((item) => item.id !== summary.id);
+      rest.unshift(summary);
+      appState.session.summaries = rest;
+    }
+    function switchToSession(sessionId) {
+      if (!sessionId) return;
+      appState.session.activeSessionId = sessionId;
+      storageSet(STORAGE_KEYS.activeSessionId, sessionId);
+      resetProjectionState();
+      requestSessionLoad(sessionId);
+    }
+    function deleteSession(sessionId) {
+      if (!sessionId) return;
+      const isCurrent = sessionId === (appState.session.activeSessionId || appState.session.id || '');
+      if (isCurrent) {
+        resetProjectionState();
+        appState.session.id = '';
+        appState.session.activeSessionId = '';
+        appState.session.canResumeCurrent = false;
+        appState.session.claudeInteractiveActive = false;
+        appState.prompt = { awaitingInput: false, options: [], message: '' };
+        runtimeState.agentState = 'IDLE';
+        runtimeState.agentStateMessage = '';
+        updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') });
+        storageSet(STORAGE_KEYS.activeSessionId, null);
+        storageSet(STORAGE_KEYS.resumeSessionId, null);
+      }
+      appState.session.summaries = appState.session.summaries.filter((item) => item.id !== sessionId);
+      requestSessionDelete(sessionId);
+    }
+    function openSessionHistory(sessionId) {
+      toggleSessionPanel(false);
+      switchToSession(sessionId);
+    }
+    function renderSessionList() {
+      sessionList.innerHTML = '';
+      const items = Array.isArray(appState.session.summaries) ? appState.session.summaries : [];
+      const activeSessionId = appState.session.activeSessionId || appState.session.id || '';
+      sessionPanelHint.textContent = activeSessionId ? '可打开历史，或直接恢复该会话的 AI 上下文' : '当前尚未打开任何历史会话';
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-4 text-sm text-zinc-400';
+        empty.innerHTML = '<div class="font-medium text-zinc-100">暂无已保存会话</div><div class="mt-1">点击右上角“新会话”开始。</div>';
+        sessionList.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const active = item.id === activeSessionId;
+        const runtime = item.runtime || {};
+        const canResume = !!runtime.resumeSessionId;
+        const row = document.createElement('div');
+        row.className = `w-full rounded-3xl border px-4 py-3 text-left ${active ? 'border-blue-700 bg-blue-950/20' : 'border-zinc-800 bg-zinc-900/70'}`;
+        row.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-sm font-semibold ${active ? 'text-blue-100' : 'text-zinc-100'}">${escapeHtml(item.title || item.id || '未命名会话')}</div>
+              <div class="mt-1 text-xs text-zinc-500">${escapeHtml(formatSessionMeta(item))}</div>
+              <div class="mt-2 line-clamp-2 break-words text-xs text-zinc-400">${escapeHtml(item.lastPreview || '暂无预览')}</div>
+              ${canResume ? `<div class="mt-2 text-[11px] text-emerald-300">可恢复 · ${escapeHtml(runtime.engine || 'claude')} · ${escapeHtml(runtime.resumeSessionId)}</div>` : ''}
+            </div>
+            <div class="shrink-0 text-[11px] ${active ? 'text-blue-300' : 'text-zinc-500'}">${active ? '当前' : '历史'}</div>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button data-open-history class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">打开历史</button>
+            ${canResume ? '<button data-resume-history class="rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100 hover:bg-emerald-900/60">恢复会话</button>' : ''}
+            <button data-delete-session class="rounded-2xl border border-red-800 bg-red-950/30 px-3 py-2 text-xs text-red-100 hover:bg-red-900/50">删除</button>
+          </div>`;
+        row.querySelector('[data-open-history]').addEventListener('click', () => openSessionHistory(item.id));
+        const resumeBtn = row.querySelector('[data-resume-history]');
+        if (resumeBtn) {
+          resumeBtn.addEventListener('click', () => {
+            openSessionHistory(item.id);
+            requestResumeSession(runtime);
+          });
+        }
+        row.querySelector('[data-delete-session]').addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          deleteSession(item.id);
+        });
+        sessionList.appendChild(row);
+      });
+    }
+    function formatSessionMeta(item = {}) {
+      const parts = [];
+      if (item.updatedAt) parts.push(`更新于 ${formatDateTime(item.updatedAt)}`);
+      parts.push(`${Number(item.entryCount || 0)} 条记录`);
+      return parts.join(' · ');
+    }
+    function formatDateTime(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return '';
+      return date.toLocaleString();
+    }
+    function effectivePermissionMode() {
+      return selectedPermissionMode();
+    }
+    function selectedPermissionMode() {
+      return runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || 'acceptEdits';
+    }
+    function isAutoAcceptMode() {
+      return selectedPermissionMode() === 'acceptEdits';
+    }
+    function currentReviewContext() {
+      const diff = projectionState.diffs.find((item) => item?.pendingReview && (item.id || item.path || '') === projectionState.review.activeId) || projectionState.contexts.diff;
+      if (!diff?.pendingReview) return null;
+      if (!projectionState.review.activeId || projectionState.review.activeId !== (diff.id || diff.path || '')) return null;
+      return diff;
+    }
+    function hasActiveInteractiveAI() {
+      return !!(appState.session.claudeInteractiveActive && runtimeState.agentState === 'WAIT_INPUT');
+    }
+    function shouldShowReviewChoices() {
+      return !!(currentReviewContext() && appState.prompt.awaitingInput && runtimeState.agentState === 'WAIT_INPUT');
+    }
+    function syncPermissionMode(mode, { silent = false } = {}) {
+      const next = mode || 'acceptEdits';
+      storageSet(STORAGE_KEYS.permissionMode, next);
+      if (permissionModeSelect.value !== next) permissionModeSelect.value = next;
+      runtimeState.meta.permissionMode = next;
+      updateRuntimeMeta({ permissionMode: next });
+      sendJson({ action: 'set_permission_mode', permissionMode: next });
+      const nextPending = pickNextPendingDiff();
+      if (next !== 'acceptEdits' && nextPending) {
+        projectionState.currentDiff = nextPending;
+        projectionState.contexts.diff = nextPending;
+        projectionState.review.activeId = nextPending.id || nextPending.path || '';
+      }
+      projectionState.review.pendingAutoAcceptId = '';
+      if (!silent) appendSystemMessage(`权限模式已切换为 ${permissionModeSelect.options[permissionModeSelect.selectedIndex]?.text || permissionModeSelect.value}`);
+      renderStatusDetailPanel();
+      renderHeaderStatus();
+      renderDiffBadge();
+      renderSingleFileView();
+      renderChatStream();
+    }
+    function detectLanguageFromPath(path) {
+      const ext = String(path || '').split('.').pop()?.toLowerCase() || '';
+      const map = {
+        js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+        json: 'json', jsonc: 'jsonc', md: 'markdown', go: 'go', py: 'python', java: 'java',
+        kt: 'kotlin', swift: 'swift', html: 'html', css: 'css', scss: 'scss',
+        yml: 'yaml', yaml: 'yaml', xml: 'xml', sh: 'bash', bash: 'bash',
+        sql: 'sql', txt: 'plaintext'
+      };
+      return map[ext] || 'plaintext';
+    }
+    function normalizeFileContent(content) {
+      return String(content || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    }
+    function isCodeLikeLanguage(lang) {
+      return ['json', 'jsonc', 'javascript', 'typescript', 'go', 'python', 'java', 'kotlin', 'swift', 'html', 'css', 'scss', 'yaml', 'xml', 'bash', 'sql'].includes(lang);
+    }
+    function prettyPrintContent(content, lang) {
+      const text = normalizeFileContent(content);
+      if (!text.trim()) return text;
+      if (lang === 'json' || lang === 'jsonc') {
+        try {
+          return JSON.stringify(JSON.parse(text), null, 2);
+        } catch (_) {
+          return text;
+        }
+      }
+      return text;
+    }
 
     function connect(forcePrompt = false) {
       if (forcePrompt) appState.auth.token = '';
+      appState.ui.sessionAutoLoadAttempted = false;
       const nextToken = String(tokenInput.value || appState.auth.token || '').trim();
       if (!nextToken) {
         setView('auth');
@@ -501,6 +787,7 @@
         setView('chat');
         appendSystemMessage('连接成功');
         requestFSList(appState.workspace.cwd || '.');
+        requestSessionList();
         renderApp();
       };
       appState.ws.onclose = () => {
@@ -510,7 +797,7 @@
         appState.prompt = { awaitingInput: false, options: [], message: '' };
         runtimeState.agentState = 'IDLE';
         runtimeState.agentStateMessage = '';
-        runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '' };
+        runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') };
         if (wasConnected) appendErrorMessage('连接已关闭，请检查 token 或服务状态。');
         if (!appState.auth.token) {
           setView('auth');
@@ -570,12 +857,12 @@
     function buildDiffContextFromPayload(payload = {}) {
       const path = payload.path || payload.targetPath || runtimeState.meta.targetPath || '';
       return {
-        id: payload.contextId || `diff:${payload.timestamp || path || Date.now()}`,
+        id: payload.contextId || payload.id || `diff:${payload.timestamp || path || Date.now()}`,
         path,
         title: payload.title || payload.contextTitle || basename(path) || '最近改动',
         diff: payload.diff || '',
         lang: payload.lang || '',
-        pendingReview: true,
+        pendingReview: payload.pendingReview !== false,
         timestamp: payload.timestamp || '',
         source: payload.source || runtimeState.meta.source || '',
         skillName: payload.skillName || runtimeState.meta.skillName || ''
@@ -697,12 +984,30 @@
       runtimeMetaBadge.textContent = parts.join(' · ');
       runtimeMetaBadge.classList.toggle('hidden', parts.length === 0);
     }
+    function renderSessionSummaryLabel() {
+      if (!appState.session.summaries.length) return appState.session.activeSessionId || '';
+      const active = appState.session.summaries.find((item) => item.id === appState.session.activeSessionId || item.id === appState.session.id);
+      if (!active) return appState.session.activeSessionId || '';
+      return active.title || active.id;
+    }
+    function mergeSessionSummary(summary) {
+      if (!summary?.id) return;
+      const next = Array.isArray(appState.session.summaries) ? [...appState.session.summaries] : [];
+      const index = next.findIndex((item) => item.id === summary.id);
+      if (index >= 0) next[index] = { ...next[index], ...summary };
+      else next.unshift(summary);
+      appState.session.summaries = next;
+    }
     function renderHeaderStatus() {
       statusText.textContent = compactAgentMessage();
       statusDot.className = 'h-2.5 w-2.5 rounded-full ' + (!appState.connection.connected ? 'bg-red-500' : runtimeState.agentState === 'WAIT_INPUT' ? 'bg-blue-400' : runtimeState.agentState === 'RUNNING_TOOL' ? 'bg-violet-400' : runtimeState.agentState === 'THINKING' ? 'bg-amber-400' : 'bg-emerald-500');
-      projectTitleText.textContent = '全局聊天';
+      const sessionLabel = renderSessionSummaryLabel();
+      projectTitleText.textContent = sessionLabel ? `会话 · ${sessionLabel}` : '未打开会话';
       workspacePath.textContent = appState.workspace.cwd || '.';
-      const resumeId = runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '');
+      const currentSummary = pickSessionSummary(appState.session.activeSessionId || appState.session.id || '');
+      const currentRuntime = currentSummary?.runtime || {};
+      const resumeId = currentRuntime.resumeSessionId || runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '');
+      resumeSessionBtn.textContent = appState.session.canResumeCurrent ? '恢复当前会话' : '继续当前';
       resumeSessionBtn.classList.toggle('hidden', !(resumeId && appState.connection.connected && runtimeState.agentState === 'IDLE'));
       const replyMode = appState.prompt.awaitingInput || runtimeState.agentState === 'WAIT_INPUT';
       chatInput.placeholder = replyMode ? '继续回复当前会话' : '输入命令，如 claude、/build、pwd';
@@ -710,18 +1015,22 @@
       chatInput.disabled = !appState.connection.connected;
       chatSendBtn.disabled = !appState.connection.connected;
       if (replyMode) {
-        chatInputHint.textContent = projectionState.contexts.diff?.pendingReview ? '等待审核或继续输入' : 'AI 会话已就绪，可继续输入';
+        chatInputHint.textContent = shouldShowReviewChoices() ? (isAutoAcceptMode() ? '自动同意修改模式已开启，新 diff 只会自动确认一次。' : '等待审核或继续输入') : 'AI 会话已就绪，可继续输入';
+        chatInputHint.classList.remove('hidden');
+      } else if (!appState.session.id) {
+        chatInputHint.textContent = '可先打开会话列表选择历史会话，或直接创建新会话。';
         chatInputHint.classList.remove('hidden');
       } else {
+        chatInputHint.textContent = '';
         chatInputHint.classList.add('hidden');
       }
       renderActivityState();
     }
     function renderDiffBadge() {
-      const diff = projectionState.contexts.diff;
-      const show = !!(diff && diff.pendingReview);
+      const count = pendingDiffCount();
+      const show = count > 0 || !!projectionState.contexts.diff;
       diffBadgeDot.classList.toggle('hidden', !show);
-      diffBadgeDot.textContent = show ? '1' : '';
+      diffBadgeDot.textContent = show ? String(Math.max(count, 1)) : '';
     }
     function renderStatusDetailPanel() {
       statusDetailContent.innerHTML = '';
@@ -780,7 +1089,11 @@
       if (!projectionState.logEntries.length) {
         const empty = document.createElement('section');
         empty.className = 'rounded-[1.8rem] border border-zinc-800 bg-zinc-900/80 p-5 text-sm text-zinc-400';
-        empty.innerHTML = '<div class="text-zinc-100 font-semibold">开始聊天</div><div class="mt-2">输入命令、slash command，或在文件页发送当前文件定向指令。</div>';
+        if (appState.session.id) {
+          empty.innerHTML = '<div class="text-zinc-100 font-semibold">开始聊天</div><div class="mt-2">输入命令、slash command，或在文件页发送当前文件定向指令。</div>';
+        } else {
+          empty.innerHTML = '<div class="text-zinc-100 font-semibold">尚未打开会话</div><div class="mt-2">点击顶部“会话”查看历史，或点击“新会话”开始。</div>';
+        }
         chatContainer.appendChild(empty);
       }
       projectionState.logEntries.forEach((entry) => {
@@ -828,6 +1141,7 @@
         }
         if (entry.kind === 'diff') {
           const diff = entry.context;
+          const isActiveReview = !!(diff?.pendingReview && projectionState.review.activeId && projectionState.review.activeId === diff.id);
           const row = document.createElement('div');
           row.className = 'rounded-[1.4rem] border border-violet-900/70 bg-violet-950/20 px-4 py-4';
           const preview = String(diff.diff || '').split('\n').slice(0, 12).map(highlightDiffLine).join('');
@@ -841,15 +1155,17 @@
               <button data-open-diff class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">查看</button>
             </div>
             <div class="mt-3 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/80 py-2 font-mono text-xs leading-6">${preview}</div>
-            <div class="mt-3 flex flex-wrap gap-2">
+            ${isActiveReview ? `<div class="mt-3 flex flex-wrap gap-2">
               <button data-accept class="rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100 hover:bg-emerald-900/60">同意</button>
               <button data-revert class="rounded-2xl border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-100 hover:bg-red-900/60">撤销</button>
               <button data-revise class="rounded-2xl border border-amber-700 bg-amber-950/40 px-3 py-2 text-xs text-amber-100 hover:bg-amber-900/60">继续调整</button>
-            </div>`;
+            </div>` : `<div class="mt-3 text-xs text-zinc-500">${diff.pendingReview ? '等待当前审核上下文激活' : '该 diff 已处理'}</div>`}`;
           row.querySelector('[data-open-diff]').addEventListener('click', () => openDiffContext(diff));
-          row.querySelector('[data-accept]').addEventListener('click', () => sendReviewDecision('accept'));
-          row.querySelector('[data-revert]').addEventListener('click', () => sendReviewDecision('revert'));
-          row.querySelector('[data-revise]').addEventListener('click', () => sendReviewDecision('revise'));
+          if (isActiveReview) {
+            row.querySelector('[data-accept]').addEventListener('click', () => sendReviewDecision('accept'));
+            row.querySelector('[data-revert]').addEventListener('click', () => sendReviewDecision('revert'));
+            row.querySelector('[data-revise]').addEventListener('click', () => sendReviewDecision('revise'));
+          }
           chatContainer.appendChild(row);
           return;
         }
@@ -881,9 +1197,24 @@
       terminalDrawerContent.appendChild(wrap);
     }
 
-    function renderCodeViewer(content) {
-      const lines = String(content || '').split('\n');
-      return `<div class="overflow-hidden rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80"><div class="font-mono text-xs leading-6">${lines.map((line, index) => `<div class="line-row flex border-b border-zinc-800/50 last:border-b-0"><div class="w-14 shrink-0 select-none border-r border-zinc-800/60 px-3 py-0.5 text-right text-zinc-500">${index + 1}</div><div class="min-w-0 flex-1 overflow-x-auto px-3 py-0.5 text-zinc-100">${escapeHtml(line) || '&nbsp;'}</div></div>`).join('')}</div></div>`;
+    function renderCodeViewer(content, path = '', langOverride = '', isText = true, errorMessage = '') {
+      const lang = langOverride || detectLanguageFromPath(path);
+      if (errorMessage) {
+        return `<div class="rounded-[1.4rem] border border-red-900/70 bg-red-950/20 px-4 py-4 text-sm text-red-100"><div class="font-medium text-red-200">文件读取失败</div><div class="mt-2 whitespace-pre-wrap break-words text-red-100">${escapeHtml(errorMessage)}</div></div>`;
+      }
+      if (!isText) {
+        return `<div class="rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80 px-4 py-4 text-sm text-zinc-300">当前文件似乎不是文本文件，暂不直接展示内容。</div>`;
+      }
+      const formatted = prettyPrintContent(content, lang);
+      if (formatted === '') {
+        return `<div class="rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80 px-4 py-4 text-sm text-zinc-300"><div class="font-medium text-zinc-100">当前文件为空</div><div class="mt-2 text-xs text-zinc-500">文件内容为空（0 B）。</div></div>`;
+      }
+      const escaped = escapeHtml(formatted);
+      const lines = formatted.split('\n');
+      const lineNumbers = lines.map((_, index) => `<div>${index + 1}</div>`).join('');
+      const codeClass = hljs.getLanguage(lang) ? `language-${lang}` : 'language-plaintext';
+      const whiteSpaceClass = isCodeLikeLanguage(lang) ? 'whitespace-pre' : 'whitespace-pre-wrap';
+      return `<div class="overflow-hidden rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80"><div class="grid grid-cols-[3.5rem_minmax(0,1fr)] font-mono text-xs leading-6"><div class="select-none border-r border-zinc-800/60 bg-zinc-950/70 px-3 py-2 text-right text-zinc-500">${lineNumbers}</div><div class="min-w-0 overflow-x-auto px-3 py-2"><pre class="min-w-max ${whiteSpaceClass} break-normal text-zinc-100"><code class="${codeClass}">${escaped}</code></pre></div></div></div>`;
     }
     function renderDiffViewer(diff) {
       const lines = String(diff || '').split('\n');
@@ -899,9 +1230,33 @@
       return a === b || a.endsWith('/' + b) || b.endsWith('/' + a);
     }
     function currentFileDiff() {
-      const diff = projectionState.contexts.diff;
+      if (appState.file.viewMode !== 'diff') return null;
+      const diff = currentReviewContext() || projectionState.contexts.diff;
       if (!diff || !appState.file.activePath) return null;
       return pathMatches(diff.path, appState.file.activePath) ? diff : null;
+    }
+    function isCurrentRequestedFilePath(path) {
+      return !!appState.file.requestedPath && pathMatches(path, appState.file.requestedPath);
+    }
+    function normalizeFileErrorMessage(message) {
+      const text = String(message || '').trim();
+      return text.replace(/^read file:\s*/i, '') || '文件读取失败';
+    }
+    function handleFileReadError(payload = {}) {
+      const message = normalizeFileErrorMessage(payload.msg || payload.message || '');
+      const targetPath = payload.targetPath || runtimeState.meta.targetPath || appState.file.requestedPath || appState.file.activePath || '';
+      if (!appState.file.loading) return;
+      if (payload.targetPath && !isCurrentRequestedFilePath(payload.targetPath)) return;
+      if (!payload.targetPath && !/^read file:/i.test(String(payload.msg || payload.message || ''))) return;
+      appState.file.activePath = targetPath;
+      appState.file.requestedPath = targetPath;
+      appState.file.content = '';
+      appState.file.lang = detectLanguageFromPath(targetPath);
+      appState.file.encoding = 'utf-8';
+      appState.file.isText = true;
+      appState.file.error = message;
+      appState.file.loading = false;
+      renderSingleFileView();
     }
     function renderSingleFileView() {
       const open = !!appState.file.activePath;
@@ -911,16 +1266,29 @@
       fileViewPath.textContent = appState.file.activePath || '';
       fileLoadingBar.classList.toggle('hidden', !appState.file.loading);
       const diff = currentFileDiff();
-      fileReviewBar.classList.toggle('hidden', !(diff && diff.pendingReview));
-      appState.file.pendingReview = !!(diff && diff.pendingReview);
-      fileViewRevertBtn.classList.toggle('hidden', !(diff && diff.pendingReview));
-      fileCodeContainer.innerHTML = diff ? renderDiffViewer(diff.diff || '') : renderCodeViewer(appState.file.content || '');
+      const reviewDiff = appState.file.viewMode === 'diff' ? currentReviewContext() : null;
+      const lang = appState.file.lang || detectLanguageFromPath(appState.file.activePath);
+      fileReviewBar.classList.toggle('hidden', !(reviewDiff && pathMatches(reviewDiff.path, appState.file.activePath) && !isAutoAcceptMode()));
+      appState.file.pendingReview = !!reviewDiff;
+      fileViewRevertBtn.classList.toggle('hidden', !diff);
+      fileCodeContainer.innerHTML = diff ? renderDiffViewer(diff.diff || '') : renderCodeViewer(appState.file.content || '', appState.file.activePath || '', lang, appState.file.isText !== false, appState.file.error || '');
+      fileCodeContainer.querySelectorAll('pre code').forEach((code) => {
+        if (!code.className) code.className = `language-${lang}`;
+        hljs.highlightElement(code);
+      });
       enhanceCodeBlocks(fileCodeContainer);
     }
 
-    function openFile(path) {
+    function openFile(path, options = {}) {
       appState.file.activePath = path;
+      appState.file.requestedPath = path;
+      appState.file.content = '';
+      appState.file.error = '';
       appState.file.loading = true;
+      appState.file.lang = '';
+      appState.file.encoding = 'utf-8';
+      appState.file.isText = true;
+      appState.file.viewMode = options.viewMode === 'diff' ? 'diff' : 'content';
       appState.workspace.highlightedFilePath = path;
       setSidebarOpen(false);
       renderFileList();
@@ -929,8 +1297,11 @@
     }
     function closeFileView() {
       appState.file.activePath = '';
+      appState.file.requestedPath = '';
       appState.file.content = '';
+      appState.file.error = '';
       appState.file.loading = false;
+      appState.file.viewMode = 'content';
       renderSingleFileView();
     }
     function openDiffContext(diff) {
@@ -938,12 +1309,12 @@
       if (diff?.path) {
         appState.workspace.highlightedFilePath = diff.path;
         renderFileList();
-        openFile(diff.path);
+        openFile(diff.path, { viewMode: 'diff' });
       }
     }
 
     function effectivePromptOptions(message, options) {
-      if (projectionState.contexts.diff?.pendingReview && appState.prompt.awaitingInput && runtimeState.agentState === 'WAIT_INPUT') return ['accept', 'revert', 'revise'];
+      if (shouldShowReviewChoices()) return ['accept', 'revert', 'revise'];
       return Array.isArray(options) ? options : [];
     }
     function parseSlashCommand(command) {
@@ -975,46 +1346,74 @@
     function sendSlashCommand(command) {
       const contextPayload = resolveSlashContext(command);
       updateRuntimeMeta({ source: 'slash-command', targetType: contextPayload.targetType || '', targetPath: contextPayload.targetPath || '', contextId: contextPayload.contextId || '', contextTitle: contextPayload.contextTitle || '' });
-      return sendJson({ action: 'slash_command', command, cwd: appState.workspace.cwd || '.', engine: appState.session.activeAI, permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined, ...contextPayload });
+      return sendJson({ action: 'slash_command', command, cwd: appState.workspace.cwd || '.', engine: appState.session.activeAI, permissionMode: effectivePermissionMode(), ...contextPayload });
+    }
+    function isGlobalSessionEvent(payload) {
+      return payload?.type === 'session_created' || payload?.type === 'session_list_result';
+    }
+    function isActiveSessionEvent(payload) {
+      if (payload?.type === 'fs_list_result' || payload?.type === 'fs_read_result') return true;
+      if (!payload?.sessionId) return true;
+      const activeSessionId = appState.session.activeSessionId || appState.session.id || '';
+      return !activeSessionId || payload.sessionId === activeSessionId;
     }
     function runCommand(command) {
       const cmd = String(command || '').trim();
       if (!cmd) return;
-      updateRuntimeMeta({ source: 'command', skillName: '', resultView: '', targetType: '', targetPath: '', contextId: '', contextTitle: '', targetText: '' });
-      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: appState.workspace.cwd || '.', source: 'command', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined })) return;
+      appState.prompt.awaitingInput = false;
+      appState.prompt.options = [];
+      appState.prompt.message = '';
+      appState.session.claudeInteractiveActive = false;
+      runtimeState.agentState = 'IDLE';
+      updateRuntimeMeta({ source: 'command', skillName: '', resultView: '', targetType: '', targetPath: '', contextId: '', contextTitle: '', targetText: '', resumeSessionId: '', command: cmd });
+      storageSet(STORAGE_KEYS.resumeSessionId, null);
+      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: appState.workspace.cwd || '.', source: 'command', permissionMode: effectivePermissionMode(), resumeSessionId: '' })) return;
       appendUserMessage(`${cmd}\n@ ${appState.workspace.cwd || '.'}`, '命令');
     }
     function sendInputRaw(raw, label = '回复') {
       if (!raw) return;
-      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n`, permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined })) return;
+      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n`, permissionMode: effectivePermissionMode() })) return;
       appendUserMessage(raw.replace(/\n$/, ''), label);
     }
-    function sendReviewDecision(decision) {
-      const diff = projectionState.contexts.diff;
+    function sendReviewDecision(decision, options = {}) {
+      const diff = currentReviewContext() || projectionState.contexts.diff;
       if (!diff) return;
-      const permissionMode = storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined;
-      if (permissionMode === 'plan' && decision === 'accept') {
-        appendErrorMessage('当前 permission mode 为 plan，不能直接保存修改。');
+      const permissionMode = effectivePermissionMode();
+      if (decision === 'accept' && permissionMode !== 'acceptEdits') {
+        appendErrorMessage('当前 permission mode 不是 acceptEdits，不能直接 accept diff。');
         return;
       }
       if (!sendJson({ action: 'review_decision', decision, contextId: diff.id || runtimeState.meta.contextId || '', contextTitle: diff.title || runtimeState.meta.contextTitle || '', targetPath: diff.path || runtimeState.meta.targetPath || '', permissionMode })) return;
-      appendUserMessage(`${decision}\n@ ${diff.path || diff.title || '当前 Diff'}`, 'Diff 决策');
+      if (!options.silent) appendUserMessage(`${decision}\n@ ${diff.path || diff.title || '当前 Diff'}`, options.autoTriggered ? '自动审核' : 'Diff 决策');
       diff.pendingReview = decision === 'revise';
+      projectionState.diffs = projectionState.diffs.map((item) => {
+        const matched = buildDiffKey(item) === buildDiffKey(diff);
+        return matched ? { ...item, pendingReview: decision === 'revise' } : item;
+      });
+      const nextDiff = decision === 'revise' ? diff : pickNextPendingDiff();
+      projectionState.currentDiff = nextDiff || diff;
+      projectionState.contexts.diff = projectionState.currentDiff || null;
+      projectionState.review.activeId = nextDiff ? (nextDiff.id || nextDiff.path || '') : '';
+      if (decision === 'accept' && options.autoTriggered) {
+        projectionState.review.autoHandledId = diff.id || diff.path || '';
+        projectionState.review.pendingAutoAcceptId = '';
+      }
+      if (decision !== 'revise') appState.prompt.options = [];
       renderDiffBadge();
       renderSingleFileView();
       renderChatStream();
+      if (nextDiff?.path && decision !== 'revise') openDiffContext(nextDiff);
     }
     function resumeSession(sessionId) {
       if (!sessionId || !appState.connection.connected) return;
-      updateRuntimeMeta({ source: 'command', resumeSessionId: sessionId });
-      sendJson({ action: 'exec', mode: 'pty', cmd: `claude --resume ${sessionId}`, cwd: appState.workspace.cwd || '.', source: 'command', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || undefined });
-      appendUserMessage(`恢复会话 ${sessionId}`, '恢复');
+      requestSessionLoad(sessionId);
+      appendSystemMessage(`已请求加载会话 ${sessionId}`);
     }
     function handlePrimarySubmit(rawValue) {
       const value = String(rawValue || '').trim();
       if (!value) return;
-      if (appState.prompt.awaitingInput || runtimeState.agentState === 'WAIT_INPUT') {
-        if (['accept', 'revert', 'revise'].includes(value.toLowerCase()) && projectionState.contexts.diff?.pendingReview) {
+      if (hasActiveInteractiveAI() || shouldShowReviewChoices()) {
+        if (['accept', 'revert', 'revise'].includes(value.toLowerCase()) && shouldShowReviewChoices()) {
           sendReviewDecision(value.toLowerCase());
           return;
         }
@@ -1031,7 +1430,8 @@
           return;
         }
         if (slash.key === '/exit' || slash.key === '/quit') {
-          appState.ws?.close();
+          appendUserMessage(value, 'Slash Command');
+          sendSlashCommand(value);
           return;
         }
         if (slash.key === '/fast') {
@@ -1053,21 +1453,112 @@
     }
 
     function handleIncomingEvent(payload) {
-      if (payload.sessionId) appState.session.id = payload.sessionId;
-      updateRuntimeMeta(payload);
+      const globalEvent = isGlobalSessionEvent(payload);
+      const activeSessionEvent = isActiveSessionEvent(payload);
+      if (payload.type === 'session_history' && payload.sessionId) {
+        appState.session.id = payload.sessionId;
+      } else if (globalEvent && payload.sessionId) {
+        appState.session.id = payload.sessionId;
+      }
+      if (activeSessionEvent) updateRuntimeMeta(payload);
       switch (payload.type) {
+        case 'session_created':
+          if (payload.summary?.id) {
+            mergeSessionSummary(payload.summary);
+            appState.session.activeSessionId = payload.summary.id;
+            storageSet(STORAGE_KEYS.activeSessionId, payload.summary.id);
+            appState.session.id = payload.summary.id;
+            appState.ui.sessionAutoLoadAttempted = true;
+            resetProjectionState();
+            toggleSessionPanel(false);
+            requestSessionList();
+            appendSystemMessage('已创建新会话');
+          }
+          break;
+        case 'session_list_result': {
+          appState.session.summaries = Array.isArray(payload.items) ? payload.items : [];
+          const activeSessionId = appState.session.activeSessionId || appState.session.id || '';
+          const hasActive = !!activeSessionId && appState.session.summaries.some((item) => item.id === activeSessionId);
+          const preferred = storageGet(STORAGE_KEYS.activeSessionId, '');
+          const hasPreferred = !!preferred && appState.session.summaries.some((item) => item.id === preferred);
+          if (!hasActive && activeSessionId) {
+            resetProjectionState();
+            appState.session.id = '';
+            appState.session.activeSessionId = '';
+            appState.session.canResumeCurrent = false;
+            appState.session.claudeInteractiveActive = false;
+            appState.prompt = { awaitingInput: false, options: [], message: '' };
+            runtimeState.agentState = 'IDLE';
+            runtimeState.agentStateMessage = '';
+            updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') });
+            storageSet(STORAGE_KEYS.activeSessionId, null);
+            storageSet(STORAGE_KEYS.resumeSessionId, null);
+          }
+          if (!appState.ui.sessionAutoLoadAttempted) {
+            appState.ui.sessionAutoLoadAttempted = true;
+            if (hasPreferred) {
+              appState.session.activeSessionId = preferred;
+              requestSessionLoad(preferred);
+            }
+          }
+          if (!hasPreferred && preferred) {
+            storageSet(STORAGE_KEYS.activeSessionId, null);
+            if (appState.session.activeSessionId === preferred) appState.session.activeSessionId = '';
+          }
+          break;
+        }
+        case 'session_history': {
+          const summary = payload.summary || {};
+          const nextId = summary.id || payload.sessionId || '';
+          if (summary.id) mergeSessionSummary(summary);
+          if (nextId) {
+            appState.session.id = nextId;
+            appState.session.activeSessionId = nextId;
+            storageSet(STORAGE_KEYS.activeSessionId, nextId);
+            appState.ui.sessionAutoLoadAttempted = true;
+          }
+          projectionState.logEntries = Array.isArray(payload.logEntries) ? payload.logEntries.map((entry) => ({ ...entry })) : [];
+          projectionState.diffs = Array.isArray(payload.diffs) && payload.diffs.length
+            ? payload.diffs.map((item) => ({ ...item }))
+            : (payload.currentDiff ? [{ ...payload.currentDiff }] : []);
+          projectionState.currentDiff = payload.currentDiff || projectionState.diffs[0] || null;
+          projectionState.currentStep = payload.currentStep || null;
+          projectionState.latestError = payload.latestError || null;
+          projectionState.contexts = { diff: projectionState.currentDiff, step: payload.currentStep || null, error: payload.latestError || null };
+          projectionState.review.activeId = projectionState.currentDiff?.pendingReview ? (projectionState.currentDiff?.id || projectionState.currentDiff?.path || '') : '';
+          projectionState.review.autoHandledId = '';
+          projectionState.review.pendingAutoAcceptId = '';
+          projectionState.rawTerminalByStream = payload.rawTerminalByStream || { stdout: '', stderr: '' };
+          appState.session.canResumeCurrent = !!payload.canResume;
+          if (payload.resumeRuntimeMeta) updateRuntimeMeta(payload.resumeRuntimeMeta);
+          requestFSList(appState.workspace.cwd || '.');
+          appendSystemMessage(`已加载历史会话${summary.title ? ` · ${summary.title}` : ''}`);
+          break;
+        }
         case 'session_state':
+          if (!activeSessionEvent) break;
           appendSystemMessage(payload.msg || payload.state || 'session update', payload.timestamp);
           break;
         case 'agent_state': {
+          if (!activeSessionEvent) break;
           runtimeState.agentState = payload.state || 'IDLE';
           runtimeState.agentStateMessage = payload.msg || '';
           appState.connection.running = runtimeState.agentState !== 'IDLE';
           const cmd = payload.command || '';
           const isAI = cmd === 'claude' || cmd === 'gemini' || cmd.startsWith('claude ') || cmd.startsWith('gemini ');
-          appState.session.claudeInteractiveActive = isAI && payload.state !== 'IDLE';
+          appState.session.claudeInteractiveActive = isAI && payload.state === 'WAIT_INPUT';
           if (isAI) appState.session.activeAI = cmd;
           if (payload.resumeSessionId) storageSet(STORAGE_KEYS.resumeSessionId, payload.resumeSessionId);
+          else if (payload.state === 'IDLE') storageSet(STORAGE_KEYS.resumeSessionId, null);
+          if (payload.permissionMode) {
+            storageSet(STORAGE_KEYS.permissionMode, payload.permissionMode);
+            runtimeState.meta.permissionMode = payload.permissionMode;
+            if (permissionModeSelect.value !== payload.permissionMode) permissionModeSelect.value = payload.permissionMode;
+          }
+          if (payload.state === 'IDLE' && projectionState.review.activeId && projectionState.review.activeId !== projectionState.review.autoHandledId) {
+            projectionState.review.activeId = '';
+            if (projectionState.contexts.diff) projectionState.contexts.diff.pendingReview = false;
+          }
           if (payload.step) {
             const stepContext = buildStepContextFromPayload({ ...payload, msg: payload.step, status: runtimeState.agentState === 'RUNNING_TOOL' ? 'running' : 'info' });
             projectionState.currentStep = stepContext;
@@ -1080,6 +1571,7 @@
           break;
         }
         case 'log': {
+          if (!activeSessionEvent) break;
           const now = Date.now();
           const msg = payload.msg || '';
           const stream = payload.stream || 'stdout';
@@ -1092,18 +1584,23 @@
           break;
         }
         case 'error': {
+          if (!activeSessionEvent) break;
           const errorContext = buildErrorContextFromPayload(payload);
           projectionState.latestError = errorContext;
           projectionState.contexts.error = errorContext;
           projectionState.logEntries.push({ kind: 'error', context: errorContext });
+          handleFileReadError(payload);
           break;
         }
         case 'prompt_request':
+          if (!activeSessionEvent) break;
+          if (runtimeState.agentState === 'WAIT_INPUT' && !currentReviewContext()) projectionState.review.activeId = '';
           appState.prompt.awaitingInput = true;
           appState.prompt.message = payload.msg || '等待输入';
           appState.prompt.options = effectivePromptOptions(payload.msg || '', payload.options || []);
           break;
         case 'step_update': {
+          if (!activeSessionEvent) break;
           const stepMsg = payload.msg || payload.message || '';
           const stepStatus = payload.status || '';
           if (stepMsg === dedupState.lastStepMsg && stepStatus === dedupState.lastStepStatus) break;
@@ -1117,10 +1614,19 @@
           break;
         }
         case 'file_diff': {
+          if (!activeSessionEvent) break;
           const diffContext = buildDiffContextFromPayload(payload);
-          projectionState.currentDiff = diffContext;
-          projectionState.contexts.diff = diffContext;
+          mergeDiffListItem(diffContext);
+          projectionState.review.activeId = diffContext.id || diffContext.path || '';
+          projectionState.review.pendingAutoAcceptId = diffContext.id || diffContext.path || '';
           projectionState.logEntries.push({ kind: 'diff', context: diffContext });
+          const shouldAutoAccept = isAutoAcceptMode()
+            && projectionState.review.pendingAutoAcceptId === (diffContext.id || diffContext.path || '')
+            && projectionState.review.autoHandledId !== (diffContext.id || diffContext.path || '');
+          if (shouldAutoAccept) {
+            appendSystemMessage('当前为自动同意修改模式，已自动接受本次 diff。');
+            sendReviewDecision('accept', { silent: true, autoTriggered: true });
+          }
           if (diffContext.path) {
             appState.workspace.highlightedFilePath = diffContext.path;
             if (appState.file.activePath === diffContext.path) renderSingleFileView();
@@ -1128,28 +1634,43 @@
           break;
         }
         case 'runtime_info_result':
+          if (!activeSessionEvent) break;
           projectionState.latestRuntimeInfo = payload;
           appendMarkdownMessage([payload.title ? `## ${payload.title}` : '', payload.msg || '', ...(Array.isArray(payload.items) ? payload.items.map((item) => `- ${item.label}: ${item.value || '(none)'}`) : [])].filter(Boolean).join('\n'), payload.timestamp, 'stdout');
           break;
         case 'fs_list_result':
+          if (!activeSessionEvent) break;
           appState.workspace.cwd = payload.current_path || appState.workspace.cwd;
           appState.workspace.items = Array.isArray(payload.items) ? payload.items : [];
           renderFileList();
           break;
-        case 'fs_read_result':
+        case 'fs_read_result': {
+          if (!activeSessionEvent) break;
+          if (!isCurrentRequestedFilePath(payload.path || '')) break;
           appState.file.activePath = payload.path || appState.file.activePath;
+          appState.file.requestedPath = payload.path || appState.file.requestedPath;
           appState.file.content = payload.content || '';
+          appState.file.lang = payload.lang || detectLanguageFromPath(payload.path || appState.file.activePath || '');
+          appState.file.encoding = payload.encoding || 'utf-8';
+          appState.file.isText = payload.isText !== false;
+          appState.file.error = '';
           appState.file.loading = false;
           renderSingleFileView();
           break;
+        }
         default:
+          if (!activeSessionEvent) break;
           appendSystemMessage(`收到未处理事件 ${payload.type || 'unknown'}`, payload.timestamp);
           break;
       }
-      if (runtimeState.agentState !== 'WAIT_INPUT') {
+      if (activeSessionEvent && runtimeState.agentState !== 'WAIT_INPUT') {
         appState.prompt.awaitingInput = false;
         appState.prompt.options = [];
+        projectionState.review.activeId = '';
         if (payload.type !== 'prompt_request') appState.prompt.message = '';
+      }
+      if (activeSessionEvent && runtimeState.agentState === 'IDLE') {
+        appState.session.claudeInteractiveActive = false;
       }
       renderApp();
     }
@@ -1159,6 +1680,7 @@
       renderRuntimeMetaBadge();
       renderDiffBadge();
       renderFileList();
+      renderSessionList();
       renderChatStream();
       renderSingleFileView();
       renderTerminalDrawer();
@@ -1176,6 +1698,11 @@
     function setStatusDetailOpen(open) {
       appState.ui.statusDetailOpen = open;
       setPanelOpen(statusDetailPanel, open);
+    }
+    function toggleSessionPanel(force) {
+      const next = typeof force === 'boolean' ? force : !appState.ui.sessionPanelOpen;
+      appState.ui.sessionPanelOpen = next;
+      setPanelOpen(sessionPanel, next);
     }
     function ensureTerminalMetrics() {
       const drawer = appState.ui.drawers.terminal;
@@ -1226,18 +1753,37 @@
     sidebarOverlay.addEventListener('click', () => setSidebarOpen(false));
     sidebarRefreshBtn.addEventListener('click', () => requestFSList(appState.workspace.cwd || '.'));
     sidebarUpBtn.addEventListener('click', () => requestFSList(parentPath(appState.workspace.cwd || '.')));
+    sessionPanelBtn.addEventListener('click', () => toggleSessionPanel(true));
+    closeSessionPanelBtn.addEventListener('click', () => toggleSessionPanel(false));
+    sessionPanel.addEventListener('click', (event) => {
+      if (event.target === sessionPanel) toggleSessionPanel(false);
+    });
     terminalBtn.addEventListener('click', () => setTerminalDrawerOpen(true));
     closeTerminalDrawerBtn.addEventListener('click', () => setTerminalDrawerOpen(false));
     statusDetailBtn.addEventListener('click', () => setStatusDetailOpen(true));
     closeStatusDetailBtn.addEventListener('click', () => setStatusDetailOpen(false));
     retokenBtn.addEventListener('click', () => { setView('auth'); setAuthStatus('请重新输入 token。'); tokenInput.focus(); });
     reconnectBtn.addEventListener('click', () => connect(false));
+    permissionModeSelect.value = storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits');
+    permissionModeSelect.addEventListener('change', () => {
+      syncPermissionMode(permissionModeSelect.value || 'acceptEdits');
+    });
+    newSessionBtn.addEventListener('click', () => {
+      resetProjectionState();
+      appState.session.id = '';
+      appState.session.activeSessionId = '';
+      storageSet(STORAGE_KEYS.activeSessionId, null);
+      requestSessionCreate('');
+      appendSystemMessage('已请求创建新会话');
+    });
     resumeSessionBtn.addEventListener('click', () => {
-      const resumeId = runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '') || '';
-      if (resumeId) resumeSession(resumeId);
+      const currentSummary = pickSessionSummary(appState.session.activeSessionId || appState.session.id || '');
+      const runtime = currentSummary?.runtime || {};
+      const resumeId = runtime.resumeSessionId || runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '') || '';
+      if (resumeId) requestResumeSession({ ...runtime, resumeSessionId: resumeId });
     });
     diffBadgeBtn.addEventListener('click', () => {
-      const diff = projectionState.contexts.diff;
+      const diff = currentReviewContext() || projectionState.contexts.diff || pickNextPendingDiff();
       if (diff) openDiffContext(diff);
     });
     closeFileViewBtn.addEventListener('click', () => closeFileView());

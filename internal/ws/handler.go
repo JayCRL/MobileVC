@@ -21,6 +21,7 @@ import (
 	runtimepkg "mobilevc/internal/runtime"
 	"mobilevc/internal/session"
 	"mobilevc/internal/skills"
+	"mobilevc/internal/store"
 )
 
 type Handler struct {
@@ -29,9 +30,14 @@ type Handler struct {
 	NewPtyRunner  func() runner.Runner
 	Upgrader      websocket.Upgrader
 	SkillLauncher *skills.Launcher
+	SessionStore  store.Store
 }
 
 func NewHandler(authToken string) *Handler {
+	sessionStore, err := store.NewFileStore("")
+	if err != nil {
+		log.Printf("session store init failed: %v", err)
+	}
 	return &Handler{
 		AuthToken: authToken,
 		NewExecRunner: func() runner.Runner {
@@ -41,6 +47,7 @@ func NewHandler(authToken string) *Handler {
 			return runner.NewPtyRunner()
 		},
 		SkillLauncher: skills.NewLauncher(),
+		SessionStore:  sessionStore,
 		Upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -68,8 +75,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	sessionID := fmt.Sprintf("session-%d", time.Now().UTC().UnixNano())
-	runtimeSvc := runtimepkg.NewService(sessionID, runtimepkg.Dependencies{
+	connectionID := fmt.Sprintf("conn-%d", time.Now().UTC().UnixNano())
+	selectedSessionID := connectionID
+	runtimeSvc := runtimepkg.NewService(selectedSessionID, runtimepkg.Dependencies{
 		NewExecRunner: h.NewExecRunner,
 		NewPtyRunner:  h.NewPtyRunner,
 	})
@@ -98,8 +106,66 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	buildProjectionSnapshotFor := func(sessionID string) store.ProjectionSnapshot {
+		projection := store.ProjectionSnapshot{
+			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+		}
+		loaded := readProjectionFromSessionStore(h.SessionStore, ctx, sessionID)
+		projection = loaded
+		projection = withRuntimeSnapshot(projection, runtimeSvc)
+		if diff := loaded.CurrentDiff; diff != nil {
+			projection.CurrentDiff = diff
+		}
+		if len(projection.Diffs) == 0 && projection.CurrentDiff != nil {
+			projection.Diffs = []session.DiffContext{*projection.CurrentDiff}
+		}
+		return projection
+	}
+
+	persistProjectionFor := func(sessionID string, snapshot store.ProjectionSnapshot) {
+		if h.SessionStore == nil || strings.TrimSpace(sessionID) == "" {
+			return
+		}
+		if _, err := h.SessionStore.SaveProjection(ctx, sessionID, snapshot); err != nil {
+			log.Printf("save session projection failed: %v", err)
+		}
+	}
+
 	emit := func(event any) {
 		runtimepkg.Enqueue(ctx, writeCh, event)
+	}
+
+	switchRuntimeSession := func(sessionID string) {
+		runtimeSvc.Cleanup()
+		selectedSessionID = sessionID
+		runtimeSvc = runtimepkg.NewService(selectedSessionID, runtimepkg.Dependencies{NewExecRunner: h.NewExecRunner, NewPtyRunner: h.NewPtyRunner})
+	}
+
+	emitSessionList := func() []store.SessionSummary {
+		if h.SessionStore == nil {
+			return nil
+		}
+		items, err := h.SessionStore.ListSessions(ctx)
+		if err != nil {
+			emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+			return nil
+		}
+		emit(protocol.NewSessionListResultEvent(selectedSessionID, toProtocolSummaries(items)))
+		return items
+	}
+
+	emitEmptySessionState := func() {
+		emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "session cleared"))
+	}
+
+	emitAndPersistFor := func(sessionID string) func(any) {
+		return func(event any) {
+			emit(event)
+			snapshot, ok := applyEventToProjection(buildProjectionSnapshotFor(sessionID), event)
+			if ok {
+				persistProjectionFor(sessionID, snapshot)
+			}
+		}
 	}
 
 	defer func() {
@@ -108,8 +174,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writerWG.Wait()
 	}()
 
-	emit(protocol.NewSessionStateEvent(sessionID, string(session.StateActive), "connected"))
+	emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "connected"))
 	emit(runtimeSvc.InitialEvent())
+	if h.SessionStore != nil {
+		if items, err := h.SessionStore.ListSessions(ctx); err == nil {
+			emit(protocol.NewSessionListResultEvent(selectedSessionID, toProtocolSummaries(items)))
+			if strings.TrimSpace(selectedSessionID) != "" {
+				if record, err := h.SessionStore.GetSession(ctx, selectedSessionID); err == nil {
+					emit(newSessionHistoryEventFromRecord(record))
+				}
+			}
+		}
+	}
 
 	for {
 		select {
@@ -130,67 +206,161 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if messageType != websocket.TextMessage {
-			emit(protocol.NewErrorEvent(sessionID, "only text messages are supported", ""))
+			emit(protocol.NewErrorEvent(selectedSessionID, "only text messages are supported", ""))
 			continue
 		}
 
 		var clientEvent protocol.ClientEvent
 		if err := json.Unmarshal(payload, &clientEvent); err != nil {
-			emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid json: %v", err), ""))
+			emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid json: %v", err), ""))
 			continue
 		}
 
 		switch clientEvent.Action {
+		case "session_create":
+			var req protocol.SessionCreateRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_create request: %v", err), ""))
+				continue
+			}
+			if h.SessionStore == nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
+				continue
+			}
+			created, err := h.SessionStore.CreateSession(ctx, req.Title)
+			if err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			switchRuntimeSession(created.ID)
+			emit(protocol.NewSessionCreatedEvent(selectedSessionID, toProtocolSummary(created)))
+			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "session selected"))
+			emitSessionList()
+		case "session_list":
+			if h.SessionStore == nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
+				continue
+			}
+			emitSessionList()
+		case "session_load":
+			var req protocol.SessionLoadRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_load request: %v", err), ""))
+				continue
+			}
+			if h.SessionStore == nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
+				continue
+			}
+			record, err := h.SessionStore.GetSession(ctx, req.SessionID)
+			if err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			switchRuntimeSession(req.SessionID)
+			emit(newSessionHistoryEventFromRecord(record))
+			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
+		case "session_delete":
+			var req protocol.SessionDeleteRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_delete request: %v", err), ""))
+				continue
+			}
+			if h.SessionStore == nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
+				continue
+			}
+			if err := h.SessionStore.DeleteSession(ctx, req.SessionID); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			deletingCurrent := req.SessionID == selectedSessionID
+			items := emitSessionList()
+			if !deletingCurrent {
+				continue
+			}
+			fallbackSessionID := connectionID
+			for _, item := range items {
+				if strings.TrimSpace(item.ID) != "" {
+					fallbackSessionID = item.ID
+					break
+				}
+			}
+			switchRuntimeSession(fallbackSessionID)
+			if fallbackSessionID == connectionID {
+				emitEmptySessionState()
+				continue
+			}
+			record, err := h.SessionStore.GetSession(ctx, fallbackSessionID)
+			if err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			emit(newSessionHistoryEventFromRecord(record))
+			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
 		case "exec":
 			var reqEvent protocol.ExecRequestEvent
 			if err := json.Unmarshal(payload, &reqEvent); err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid exec request: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid exec request: %v", err), ""))
 				continue
 			}
 			if strings.TrimSpace(reqEvent.Command) == "" {
-				emit(protocol.NewErrorEvent(sessionID, "cmd is required", ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, "cmd is required", ""))
 				continue
 			}
+			sessionID := selectedSessionID
+			service := runtimeSvc
+			emitAndPersist := emitAndPersistFor(sessionID)
+			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, reqEvent.Command, "命令")
 			mode, err := runtimepkg.ParseMode(reqEvent.Mode)
 			if err != nil {
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 				continue
 			}
-			err = runtimeSvc.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
+			err = service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
 				Command:        reqEvent.Command,
 				CWD:            reqEvent.CWD,
 				Mode:           mode,
 				PermissionMode: reqEvent.PermissionMode,
 				RuntimeMeta: protocol.RuntimeMeta{
-					Source:       fallback(reqEvent.Source, "command"),
-					SkillName:    reqEvent.SkillName,
-					Target:       reqEvent.Target,
-					TargetType:   reqEvent.TargetType,
-					TargetPath:   reqEvent.TargetPath,
-					ResultView:   reqEvent.ResultView,
-					ContextID:    reqEvent.ContextID,
-					ContextTitle: reqEvent.ContextTitle,
-					TargetText:   reqEvent.TargetText,
+					Source:         fallback(reqEvent.Source, "command"),
+					SkillName:      reqEvent.SkillName,
+					Target:         reqEvent.Target,
+					TargetType:     reqEvent.TargetType,
+					TargetPath:     reqEvent.TargetPath,
+					ResultView:     reqEvent.ResultView,
+					ContextID:      reqEvent.ContextID,
+					ContextTitle:   reqEvent.ContextTitle,
+					TargetText:     reqEvent.TargetText,
+					Command:        reqEvent.Command,
+					Engine:         reqEvent.Engine,
+					CWD:            reqEvent.CWD,
+					PermissionMode: reqEvent.PermissionMode,
 				},
-			}, emit)
+			}, emitAndPersist)
 			if err != nil {
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
 		case "input":
 			var inputEvent protocol.InputRequestEvent
 			if err := json.Unmarshal(payload, &inputEvent); err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid input request: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid input request: %v", err), ""))
 				continue
 			}
 			if inputEvent.Data == "" {
-				emit(protocol.NewErrorEvent(sessionID, "input data is required", ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, "input data is required", ""))
 				continue
 			}
-			// update permission mode if provided
+			sessionID := selectedSessionID
+			service := runtimeSvc
+			emitAndPersist := emitAndPersistFor(sessionID)
+			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复")
+			inputMeta := protocol.RuntimeMeta{}
 			if pm := inputEvent.PermissionMode; pm != "" {
-				runtimeSvc.UpdatePermissionMode(pm)
+				service.UpdatePermissionMode(pm)
+				inputMeta.PermissionMode = pm
 			}
-			if err := runtimeSvc.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: inputEvent.Data}, emit); err != nil {
+			if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: inputEvent.Data, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
 				message := err.Error()
 				if errors.Is(err, runner.ErrInputNotSupported) {
 					message = "input is only supported for pty sessions"
@@ -200,32 +370,47 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "review_decision":
 			var reviewEvent protocol.ReviewDecisionRequestEvent
 			if err := json.Unmarshal(payload, &reviewEvent); err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid review decision request: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid review decision request: %v", err), ""))
 				continue
 			}
 			decision := strings.TrimSpace(strings.ToLower(reviewEvent.Decision))
 			if decision != "accept" && decision != "revert" && decision != "revise" {
-				emit(protocol.NewErrorEvent(sessionID, "review decision must be one of: accept, revert, revise", ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, "review decision must be one of: accept, revert, revise", ""))
 				continue
 			}
-			if pm := reviewEvent.PermissionMode; pm != "" {
-				runtimeSvc.UpdatePermissionMode(pm)
+			sessionID := selectedSessionID
+			service := runtimeSvc
+			emitAndPersist := emitAndPersistFor(sessionID)
+			effectivePermissionMode := strings.TrimSpace(reviewEvent.PermissionMode)
+			if effectivePermissionMode == "" {
+				effectivePermissionMode = strings.TrimSpace(service.ControllerSnapshot().ActiveMeta.PermissionMode)
+			}
+			if effectivePermissionMode == "" {
+				effectivePermissionMode = strings.TrimSpace(buildProjectionSnapshotFor(sessionID).Runtime.PermissionMode)
+			}
+			if decision == "accept" && effectivePermissionMode != "acceptEdits" {
+				emit(protocol.NewErrorEvent(sessionID, "当前 permission mode 不是 acceptEdits，不能直接 accept diff", ""))
+				continue
+			}
+			if effectivePermissionMode != "" {
+				service.UpdatePermissionMode(effectivePermissionMode)
 			}
 			prompt, err := buildReviewDecisionPrompt(decision, reviewEvent)
 			if err != nil {
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 				continue
 			}
-			if err := runtimeSvc.SendInput(ctx, sessionID, runtimepkg.InputRequest{
+			if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{
 				Data: prompt,
 				RuntimeMeta: protocol.RuntimeMeta{
-					Source:       "review-decision",
-					ContextID:    reviewEvent.ContextID,
-					ContextTitle: reviewEvent.ContextTitle,
-					TargetPath:   reviewEvent.TargetPath,
-					TargetText:   decision,
+					Source:         "review-decision",
+					ContextID:      reviewEvent.ContextID,
+					ContextTitle:   reviewEvent.ContextTitle,
+					TargetPath:     reviewEvent.TargetPath,
+					TargetText:     decision,
+					PermissionMode: effectivePermissionMode,
 				},
-			}, emit); err != nil {
+			}, emitAndPersist); err != nil {
 				message := err.Error()
 				if errors.Is(err, runner.ErrInputNotSupported) {
 					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
@@ -234,68 +419,102 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
 			}
+		case "set_permission_mode":
+			var modeEvent protocol.PermissionModeUpdateRequestEvent
+			if err := json.Unmarshal(payload, &modeEvent); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid permission mode request: %v", err), ""))
+				continue
+			}
+			service := runtimeSvc
+			service.UpdatePermissionMode(modeEvent.PermissionMode)
+			emit(protocol.ApplyRuntimeMeta(service.InitialEvent(), protocol.RuntimeMeta{PermissionMode: modeEvent.PermissionMode}))
 		case "skill_exec":
 			var skillEvent protocol.SkillRequestEvent
 			if err := json.Unmarshal(payload, &skillEvent); err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid skill request: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid skill request: %v", err), ""))
 				continue
 			}
 			if h.SkillLauncher == nil {
-				emit(protocol.NewErrorEvent(sessionID, "skill launcher is unavailable", ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, "skill launcher is unavailable", ""))
 				continue
 			}
-			if err := executeSkillRequest(ctx, sessionID, skillEvent, runtimeSvc, h.SkillLauncher, emit); err != nil {
+			sessionID := selectedSessionID
+			service := runtimeSvc
+			emitAndPersist := emitAndPersistFor(sessionID)
+			if err := executeSkillRequest(ctx, sessionID, skillEvent, service, h.SkillLauncher, emitAndPersist); err != nil {
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
 		case "runtime_info":
 			var infoReq protocol.RuntimeInfoRequestEvent
 			if err := json.Unmarshal(payload, &infoReq); err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid runtime_info request: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid runtime_info request: %v", err), ""))
 				continue
 			}
-			result, err := runtimepkg.BuildRuntimeInfoResult(sessionID, infoReq.Query, fallback(infoReq.CWD, "."), runtimeSvc)
+			result, err := runtimepkg.BuildRuntimeInfoResult(selectedSessionID, infoReq.Query, fallback(infoReq.CWD, "."), runtimeSvc)
 			if err != nil {
-				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
 			emit(result)
 		case "slash_command":
 			var slashReq protocol.SlashCommandRequestEvent
 			if err := json.Unmarshal(payload, &slashReq); err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid slash_command request: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid slash_command request: %v", err), ""))
 				continue
 			}
-			if err := handleSlashCommand(ctx, sessionID, slashReq, runtimeSvc, h.SkillLauncher, emit); err != nil {
+			sessionID := selectedSessionID
+			service := runtimeSvc
+			emitAndPersist := emitAndPersistFor(sessionID)
+			if err := handleSlashCommand(ctx, sessionID, slashReq, service, h.SkillLauncher, emitAndPersist); err != nil {
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
 		case "fs_list":
 			var fsListReq protocol.FSListRequestEvent
 			if err := json.Unmarshal(payload, &fsListReq); err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid fs_list request: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid fs_list request: %v", err), ""))
 				continue
 			}
-			result, err := listDirectory(sessionID, fsListReq.Path)
+			result, err := listDirectory(selectedSessionID, fsListReq.Path)
 			if err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("list directory: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("list directory: %v", err), ""))
 				continue
 			}
 			emit(result)
 		case "fs_read":
 			var fsReadReq protocol.FSReadRequestEvent
 			if err := json.Unmarshal(payload, &fsReadReq); err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("invalid fs_read request: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid fs_read request: %v", err), ""))
 				continue
 			}
-			result, err := readFile(sessionID, fsReadReq.Path)
+			result, err := readFile(selectedSessionID, fsReadReq.Path)
 			if err != nil {
-				emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("read file: %v", err), ""))
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("read file: %v", err), ""))
 				continue
 			}
 			emit(result)
 		default:
-			emit(protocol.NewErrorEvent(sessionID, fmt.Sprintf("unknown action: %s", clientEvent.Action), ""))
+			emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("unknown action: %s", clientEvent.Action), ""))
 		}
+		_ = connectionID
 	}
+}
+
+func appendUserProjectionEntry(sessionStore store.Store, ctx context.Context, sessionID, text, label string) {
+	if sessionStore == nil || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(text) == "" {
+		return
+	}
+	record, err := sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	projection := normalizeProjectionSnapshot(record.Projection)
+	projection.LogEntries = append(projection.LogEntries, store.SnapshotLogEntry{
+		Kind:      "user",
+		Message:   text,
+		Label:     label,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+	_, _ = sessionStore.SaveProjection(ctx, sessionID, projection)
 }
 
 func fallback(value, defaultValue string) string {
@@ -303,6 +522,287 @@ func fallback(value, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+func readProjectionFromSessionStore(sessionStore store.Store, ctx context.Context, sessionID string) store.ProjectionSnapshot {
+	if sessionStore == nil || strings.TrimSpace(sessionID) == "" {
+		return store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
+	}
+	record, err := sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
+	}
+	return record.Projection
+}
+
+func withRuntimeSnapshot(snapshot store.ProjectionSnapshot, svc *runtimepkg.Service) store.ProjectionSnapshot {
+	snapshot = normalizeProjectionSnapshot(snapshot)
+	if svc == nil {
+		return snapshot
+	}
+	controller := svc.ControllerSnapshot()
+	runtimeMeta := controller.ActiveMeta
+	snapshot.Controller = controller
+	snapshot.Runtime = store.SessionRuntime{
+		ResumeSessionID: firstNonEmptyString(controller.ResumeSession, runtimeMeta.ResumeSessionID),
+		Command:         firstNonEmptyString(controller.CurrentCommand, runtimeMeta.Command),
+		Engine:          firstNonEmptyString(runtimeMeta.Engine, runtimeMeta.SkillName),
+		PermissionMode:  runtimeMeta.PermissionMode,
+		CWD:             runtimeMeta.CWD,
+	}
+	return snapshot
+}
+
+func toProtocolSummary(item store.SessionSummary) protocol.SessionSummary {
+	return protocol.SessionSummary{
+		ID:          item.ID,
+		Title:       item.Title,
+		CreatedAt:   item.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   item.UpdatedAt.Format(time.RFC3339),
+		LastPreview: item.LastPreview,
+		EntryCount:  item.EntryCount,
+		Runtime: protocol.RuntimeMeta{
+			ResumeSessionID: item.Runtime.ResumeSessionID,
+			Command:         item.Runtime.Command,
+			Engine:          item.Runtime.Engine,
+			CWD:             item.Runtime.CWD,
+			PermissionMode:  item.Runtime.PermissionMode,
+		},
+	}
+}
+
+func toProtocolSummaries(items []store.SessionSummary) []protocol.SessionSummary {
+	result := make([]protocol.SessionSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, toProtocolSummary(item))
+	}
+	return result
+}
+
+func toHistoryContext(ctx *store.SnapshotContext) *protocol.HistoryContext {
+	if ctx == nil {
+		return nil
+	}
+	return &protocol.HistoryContext{
+		ID:            ctx.ID,
+		Type:          ctx.Type,
+		Message:       ctx.Message,
+		Status:        ctx.Status,
+		Target:        ctx.Target,
+		TargetPath:    ctx.TargetPath,
+		Tool:          ctx.Tool,
+		Command:       ctx.Command,
+		Timestamp:     ctx.Timestamp,
+		Title:         ctx.Title,
+		Stack:         ctx.Stack,
+		Code:          ctx.Code,
+		RelatedStep:   ctx.RelatedStep,
+		Path:          ctx.Path,
+		Diff:          ctx.Diff,
+		Lang:          ctx.Lang,
+		PendingReview: ctx.PendingReview,
+		Source:        ctx.Source,
+		SkillName:     ctx.SkillName,
+	}
+}
+
+func fromDiffContext(diff *session.DiffContext) *protocol.HistoryContext {
+	if diff == nil {
+		return nil
+	}
+	return &protocol.HistoryContext{
+		ID:            diff.ContextID,
+		Type:          "diff",
+		Path:          diff.Path,
+		Title:         diff.Title,
+		Diff:          diff.Diff,
+		Lang:          diff.Lang,
+		PendingReview: diff.PendingReview,
+	}
+}
+
+func fromDiffContexts(diffs []session.DiffContext) []protocol.HistoryContext {
+	if len(diffs) == 0 {
+		return nil
+	}
+	result := make([]protocol.HistoryContext, 0, len(diffs))
+	for _, diff := range diffs {
+		ctx := fromDiffContext(&diff)
+		if ctx != nil {
+			result = append(result, *ctx)
+		}
+	}
+	return result
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.SessionHistoryEvent {
+	entries := make([]protocol.HistoryLogEntry, 0, len(record.Projection.LogEntries))
+	for _, entry := range record.Projection.LogEntries {
+		entries = append(entries, protocol.HistoryLogEntry{
+			Kind:      entry.Kind,
+			Message:   entry.Message,
+			Label:     entry.Label,
+			Timestamp: entry.Timestamp,
+			Stream:    entry.Stream,
+			Text:      entry.Text,
+			Context:   toHistoryContext(entry.Context),
+		})
+	}
+	resumeMeta := protocol.RuntimeMeta{
+		ResumeSessionID: record.Projection.Runtime.ResumeSessionID,
+		Command:         record.Projection.Runtime.Command,
+		Engine:          record.Projection.Runtime.Engine,
+		CWD:             record.Projection.Runtime.CWD,
+		PermissionMode:  record.Projection.Runtime.PermissionMode,
+	}
+	canResume := strings.TrimSpace(resumeMeta.ResumeSessionID) != ""
+	return protocol.NewSessionHistoryEvent(
+		record.Summary.ID,
+		toProtocolSummary(record.Summary),
+		entries,
+		fromDiffContexts(record.Projection.Diffs),
+		fromDiffContext(record.Projection.CurrentDiff),
+		toHistoryContext(record.Projection.CurrentStep),
+		toHistoryContext(record.Projection.LatestError),
+		record.Projection.RawTerminalByStream,
+		canResume,
+		resumeMeta,
+	)
+}
+
+func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store.ProjectionSnapshot, bool) {
+	snapshot = normalizeProjectionSnapshot(snapshot)
+	switch e := event.(type) {
+	case protocol.SessionStateEvent:
+		if e.Message != "" {
+			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "system", Message: e.Message, Timestamp: e.Timestamp.Format(time.RFC3339)})
+		}
+		return snapshot, true
+	case protocol.LogEvent:
+		msg := strings.TrimSpace(e.Message)
+		if msg == "" {
+			return snapshot, false
+		}
+		if e.Stream != "stderr" && looksLikeMarkdownMessage(msg) {
+			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "markdown", Message: e.Message, Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream})
+		} else {
+			previousIndex := len(snapshot.LogEntries) - 1
+			if previousIndex >= 0 && snapshot.LogEntries[previousIndex].Kind == "terminal" && snapshot.LogEntries[previousIndex].Stream == e.Stream {
+				prev := snapshot.LogEntries[previousIndex]
+				if prev.Text != "" {
+					prev.Text += "\n"
+				}
+				prev.Text += strings.TrimLeft(e.Message, "\r")
+				prev.Timestamp = e.Timestamp.Format(time.RFC3339)
+				snapshot.LogEntries[previousIndex] = prev
+			} else {
+				snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "terminal", Text: strings.TrimLeft(e.Message, "\r"), Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream})
+			}
+			stream := fallback(e.Stream, "stdout")
+			if snapshot.RawTerminalByStream[stream] != "" {
+				snapshot.RawTerminalByStream[stream] += "\n"
+			}
+			snapshot.RawTerminalByStream[stream] += strings.TrimLeft(e.Message, "\r")
+		}
+		return snapshot, true
+	case protocol.ErrorEvent:
+		ctx := &store.SnapshotContext{ID: firstNonEmptyString(e.ContextID, fmt.Sprintf("error:%s", e.Timestamp.Format(time.RFC3339Nano))), Message: e.Message, Stack: e.Stack, Code: e.Code, TargetPath: firstNonEmptyString(e.TargetPath, e.RuntimeMeta.TargetPath), RelatedStep: e.Step, Command: e.Command, Timestamp: e.Timestamp.Format(time.RFC3339), Title: firstNonEmptyString(e.ContextTitle, e.Message)}
+		snapshot.LatestError = ctx
+		snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "error", Context: ctx})
+		return snapshot, true
+	case protocol.StepUpdateEvent:
+		ctx := &store.SnapshotContext{ID: firstNonEmptyString(e.ContextID, fmt.Sprintf("step:%s", e.Timestamp.Format(time.RFC3339Nano))), Type: "step", Message: e.Message, Status: e.Status, Target: e.Target, TargetPath: firstNonEmptyString(e.TargetPath, e.Target), Tool: e.Tool, Command: e.Command, Timestamp: e.Timestamp.Format(time.RFC3339), Title: firstNonEmptyString(e.ContextTitle, e.Message, "当前步骤")}
+		snapshot.CurrentStep = ctx
+		snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "step", Context: ctx})
+		return snapshot, true
+	case protocol.FileDiffEvent:
+		diff := session.DiffContext{ContextID: firstNonEmptyString(e.ContextID, e.Path, e.Title), Title: firstNonEmptyString(e.Title, e.ContextTitle, "最近改动"), Path: firstNonEmptyString(e.Path, e.TargetPath), Diff: e.Diff, Lang: e.Lang, PendingReview: true}
+		snapshot.Diffs = upsertSnapshotDiff(snapshot.Diffs, diff)
+		active := pickActiveSnapshotDiff(snapshot.Diffs)
+		if strings.TrimSpace(active.ContextID+active.Path+active.Title) != "" {
+			snapshot.CurrentDiff = &active
+		}
+		snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "diff", Context: &store.SnapshotContext{ID: diff.ContextID, Path: diff.Path, Title: diff.Title, Diff: diff.Diff, Lang: diff.Lang, PendingReview: diff.PendingReview, Timestamp: e.Timestamp.Format(time.RFC3339), Source: e.Source, SkillName: e.SkillName}})
+		return snapshot, true
+	case protocol.AgentStateEvent:
+		return snapshot, false
+	case protocol.PromptRequestEvent:
+		return snapshot, false
+	default:
+		return snapshot, false
+	}
+}
+
+func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.ProjectionSnapshot {
+	if snapshot.RawTerminalByStream == nil {
+		snapshot.RawTerminalByStream = map[string]string{"stdout": "", "stderr": ""}
+	}
+	if snapshot.LogEntries == nil {
+		snapshot.LogEntries = []store.SnapshotLogEntry{}
+	}
+	if snapshot.Runtime.ResumeSessionID == "" {
+		snapshot.Runtime.ResumeSessionID = snapshot.Controller.ResumeSession
+	}
+	if snapshot.Runtime.Command == "" {
+		snapshot.Runtime.Command = snapshot.Controller.CurrentCommand
+	}
+	if snapshot.Runtime.Engine == "" {
+		snapshot.Runtime.Engine = firstNonEmptyString(snapshot.Controller.ActiveMeta.Engine, snapshot.Controller.ActiveMeta.SkillName)
+	}
+	if snapshot.Runtime.CWD == "" {
+		snapshot.Runtime.CWD = snapshot.Controller.ActiveMeta.CWD
+	}
+	if snapshot.Runtime.PermissionMode == "" {
+		snapshot.Runtime.PermissionMode = snapshot.Controller.ActiveMeta.PermissionMode
+	}
+	if len(snapshot.Diffs) == 0 && snapshot.CurrentDiff != nil {
+		snapshot.Diffs = []session.DiffContext{*snapshot.CurrentDiff}
+	}
+	activeDiff := pickActiveSnapshotDiff(snapshot.Diffs)
+	if strings.TrimSpace(activeDiff.ContextID+activeDiff.Path+activeDiff.Title) != "" {
+		snapshot.CurrentDiff = &activeDiff
+	}
+	return snapshot
+}
+
+func upsertSnapshotDiff(diffs []session.DiffContext, diff session.DiffContext) []session.DiffContext {
+	for i := range diffs {
+		item := diffs[i]
+		if (strings.TrimSpace(diff.ContextID) != "" && strings.TrimSpace(item.ContextID) == strings.TrimSpace(diff.ContextID)) ||
+			(strings.TrimSpace(diff.Path) != "" && strings.TrimSpace(item.Path) == strings.TrimSpace(diff.Path)) {
+			diffs[i] = diff
+			return diffs
+		}
+	}
+	return append(diffs, diff)
+}
+
+func pickActiveSnapshotDiff(diffs []session.DiffContext) session.DiffContext {
+	for i := len(diffs) - 1; i >= 0; i-- {
+		if diffs[i].PendingReview {
+			return diffs[i]
+		}
+	}
+	if len(diffs) > 0 {
+		return diffs[len(diffs)-1]
+	}
+	return session.DiffContext{}
+}
+
+func looksLikeMarkdownMessage(message string) bool {
+	if strings.TrimSpace(message) == "" {
+		return false
+	}
+	return strings.Contains(message, "```") || strings.Contains(message, "# ") || strings.Contains(message, "## ") || strings.Contains(message, "- ") || len(message) > 180
 }
 
 func parseMode(raw string) (runner.Mode, error) {
@@ -397,5 +897,65 @@ func readFile(sessionID, rawPath string) (protocol.FSReadResultEvent, error) {
 		return protocol.FSReadResultEvent{}, err
 	}
 
-	return protocol.NewFSReadResultEvent(sessionID, absPath, string(content), info.Size()), nil
+	isText := !hasBinaryContent(content)
+	textContent := string(content)
+	if !isText {
+		textContent = ""
+	}
+	return protocol.NewFSReadResultEvent(sessionID, absPath, textContent, info.Size(), detectLangFromPath(absPath), "utf-8", isText), nil
+}
+
+func detectLangFromPath(path string) string {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	switch ext {
+	case "js", "jsx":
+		return "javascript"
+	case "ts", "tsx":
+		return "typescript"
+	case "json":
+		return "json"
+	case "jsonc":
+		return "jsonc"
+	case "md":
+		return "markdown"
+	case "go":
+		return "go"
+	case "py":
+		return "python"
+	case "java":
+		return "java"
+	case "kt":
+		return "kotlin"
+	case "swift":
+		return "swift"
+	case "html":
+		return "html"
+	case "css", "scss":
+		return ext
+	case "yml", "yaml":
+		return "yaml"
+	case "xml":
+		return "xml"
+	case "sh", "bash":
+		return "bash"
+	case "sql":
+		return "sql"
+	case "txt":
+		return "plaintext"
+	default:
+		return "plaintext"
+	}
+}
+
+func hasBinaryContent(content []byte) bool {
+	limit := len(content)
+	if limit > 1024 {
+		limit = 1024
+	}
+	for i := 0; i < limit; i++ {
+		if content[i] == 0 {
+			return true
+		}
+	}
+	return false
 }

@@ -39,6 +39,18 @@ type DiffContext struct {
 	PendingReview bool   `json:"pendingReview,omitempty"`
 }
 
+type ControllerSnapshot struct {
+	SessionID      string               `json:"sessionId"`
+	State          ControllerState      `json:"state"`
+	CurrentCommand string               `json:"currentCommand,omitempty"`
+	LastStep       string               `json:"lastStep,omitempty"`
+	LastTool       string               `json:"lastTool,omitempty"`
+	ResumeSession  string               `json:"resumeSession,omitempty"`
+	ActiveMeta     protocol.RuntimeMeta `json:"activeMeta,omitempty"`
+	RecentDiffs    []DiffContext        `json:"recentDiffs,omitempty"`
+	RecentDiff     DiffContext          `json:"recentDiff,omitempty"`
+}
+
 type Controller struct {
 	mu             sync.Mutex
 	sessionID      string
@@ -48,6 +60,7 @@ type Controller struct {
 	lastTool       string
 	resumeSession  string
 	activeMeta     protocol.RuntimeMeta
+	recentDiffs    []DiffContext
 	recentDiff     DiffContext
 
 	// dedup fields
@@ -56,6 +69,12 @@ type Controller struct {
 	lastStepMsg    string
 	lastStepStatus string
 	lastPromptMsg  string
+}
+
+func (c *Controller) UpdatePermissionMode(mode string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.activeMeta.PermissionMode = strings.TrimSpace(mode)
 }
 
 func NewController(sessionID string) *Controller {
@@ -139,6 +158,8 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 			Lang:          e.Lang,
 			PendingReview: true,
 		}
+		c.upsertRecentDiffLocked(c.recentDiff)
+		c.recentDiff = c.pickActiveRecentDiffLocked()
 		return []any{c.newAgentStateEvent(message, false)}
 	case protocol.LogEvent:
 		if e.ResumeSessionID != "" {
@@ -171,13 +192,19 @@ func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {
 	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" || meta.TargetPath != "" {
 		c.activeMeta = protocol.MergeRuntimeMeta(c.activeMeta, meta)
 	}
-	if meta.Source == "review-decision" && c.recentDiff.PendingReview {
+	if meta.Source == "review-decision" {
+		targetID := strings.TrimSpace(meta.ContextID)
+		targetPath := strings.TrimSpace(meta.TargetPath)
 		switch strings.TrimSpace(meta.TargetText) {
 		case "accept", "revert":
-			c.recentDiff.PendingReview = false
+			c.markRecentDiffPendingLocked(targetID, targetPath, false)
 		case "revise":
-			c.recentDiff.PendingReview = true
+			c.markRecentDiffPendingLocked(targetID, targetPath, true)
 		}
+		c.recentDiff = c.pickActiveRecentDiffLocked()
+	}
+	if meta.PermissionMode != "" {
+		c.activeMeta.PermissionMode = meta.PermissionMode
 	}
 	c.currentState = ControllerStateThinking
 	return []any{c.newAgentStateEvent("思考中", false)}
@@ -208,6 +235,48 @@ func (c *Controller) RecentDiff() DiffContext {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.recentDiff
+}
+
+func (c *Controller) RecentDiffs() []DiffContext {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]DiffContext(nil), c.recentDiffs...)
+}
+
+func (c *Controller) Snapshot() ControllerSnapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return ControllerSnapshot{
+		SessionID:      c.sessionID,
+		State:          c.currentState,
+		CurrentCommand: c.currentCommand,
+		LastStep:       c.lastStep,
+		LastTool:       c.lastTool,
+		ResumeSession:  c.resumeSession,
+		ActiveMeta:     c.activeMeta,
+		RecentDiffs:    append([]DiffContext(nil), c.recentDiffs...),
+		RecentDiff:     c.recentDiff,
+	}
+}
+
+func (c *Controller) Restore(snapshot ControllerSnapshot) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if snapshot.SessionID != "" {
+		c.sessionID = snapshot.SessionID
+	}
+	c.currentState = snapshot.State
+	c.currentCommand = snapshot.CurrentCommand
+	c.lastStep = snapshot.LastStep
+	c.lastTool = snapshot.LastTool
+	c.resumeSession = snapshot.ResumeSession
+	c.activeMeta = snapshot.ActiveMeta
+	c.recentDiffs = append([]DiffContext(nil), snapshot.RecentDiffs...)
+	c.recentDiff = snapshot.RecentDiff
+	if len(c.recentDiffs) == 0 && strings.TrimSpace(c.recentDiff.ContextID+c.recentDiff.Path+c.recentDiff.Title) != "" {
+		c.recentDiffs = []DiffContext{c.recentDiff}
+	}
+	c.recentDiff = c.pickActiveRecentDiffLocked()
 }
 
 func (c *Controller) newAgentStateEvent(message string, awaitInput bool) protocol.AgentStateEvent {
@@ -256,4 +325,55 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (c *Controller) upsertRecentDiffLocked(diff DiffContext) {
+	keyID := strings.TrimSpace(diff.ContextID)
+	keyPath := strings.TrimSpace(diff.Path)
+	for i := range c.recentDiffs {
+		item := c.recentDiffs[i]
+		if (keyID != "" && strings.TrimSpace(item.ContextID) == keyID) || (keyPath != "" && strings.TrimSpace(item.Path) == keyPath) {
+			c.recentDiffs[i] = diff
+			return
+		}
+	}
+	c.recentDiffs = append(c.recentDiffs, diff)
+}
+
+func (c *Controller) markRecentDiffPendingLocked(contextID, targetPath string, pending bool) {
+	matched := false
+	for i := range c.recentDiffs {
+		item := &c.recentDiffs[i]
+		if (contextID != "" && strings.TrimSpace(item.ContextID) == contextID) || (targetPath != "" && strings.TrimSpace(item.Path) == targetPath) {
+			item.PendingReview = pending
+			matched = true
+		}
+	}
+	if !matched && len(c.recentDiffs) == 1 {
+		c.recentDiffs[0].PendingReview = pending
+		matched = true
+	}
+	if matched {
+		for _, item := range c.recentDiffs {
+			if (contextID != "" && strings.TrimSpace(item.ContextID) == contextID) || (targetPath != "" && strings.TrimSpace(item.Path) == targetPath) || (len(c.recentDiffs) == 1) {
+				c.recentDiff = item
+				break
+			}
+		}
+	}
+	if (contextID != "" && strings.TrimSpace(c.recentDiff.ContextID) == contextID) || (targetPath != "" && strings.TrimSpace(c.recentDiff.Path) == targetPath) || (len(c.recentDiffs) == 1) {
+		c.recentDiff.PendingReview = pending
+	}
+}
+
+func (c *Controller) pickActiveRecentDiffLocked() DiffContext {
+	for i := len(c.recentDiffs) - 1; i >= 0; i-- {
+		if c.recentDiffs[i].PendingReview {
+			return c.recentDiffs[i]
+		}
+	}
+	if len(c.recentDiffs) > 0 {
+		return c.recentDiffs[len(c.recentDiffs)-1]
+	}
+	return DiffContext{}
 }

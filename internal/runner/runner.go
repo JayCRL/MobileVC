@@ -82,9 +82,49 @@ func newShellCommand(ctx context.Context, command string, mode Mode) *exec.Cmd {
 	return cmd
 }
 
-func newClaudeStreamCommand(ctx context.Context, command string) *exec.Cmd {
+func newClaudeStreamCommand(ctx context.Context, command string, resumeSessionID string, permissionMode string) *exec.Cmd {
 	spec := getShellSpec()
+	if spec.claudeNode != "" && spec.claudeCLI != "" {
+		nodeEntry := spec.claudeNode
+		cliEntry := spec.claudeCLI
+		if shortNode, err := windowsShortPath(nodeEntry); err == nil && shortNode != "" {
+			nodeEntry = shortNode
+		}
+		if shortCLI, err := windowsShortPath(cliEntry); err == nil && shortCLI != "" {
+			cliEntry = shortCLI
+		}
+		args := []string{cliEntry}
+		base := strings.TrimSpace(command)
+		if base != "" {
+			for _, arg := range claudeCommandArgs(base) {
+				args = append(args, arg)
+			}
+		}
+		if resumeSessionID != "" && !containsArg(args, "--resume") {
+			args = append(args, "--resume", resumeSessionID)
+		}
+		if !containsArg(args, "--print") && !containsArg(args, "-p") {
+			args = append(args, "--print")
+		}
+		if !containsArg(args, "--verbose") {
+			args = append(args, "--verbose")
+		}
+		if !containsArg(args, "--output-format") {
+			args = append(args, "--output-format", "stream-json")
+		}
+		if !containsArg(args, "--input-format") {
+			args = append(args, "--input-format", "stream-json")
+		}
+		args = appendPermissionMode(args, permissionMode)
+		cmd := exec.CommandContext(ctx, nodeEntry, args...)
+		cmd.Env = shellEnvironment(spec, command)
+		return cmd
+	}
 	preparedCommand := buildClaudeStreamJSONCommand(command)
+	if resumeSessionID != "" && !strings.Contains(strings.ToLower(preparedCommand), " --resume") {
+		preparedCommand += " --resume " + shellEscapeForBash(resumeSessionID)
+	}
+	preparedCommand = appendPermissionModeToCommand(preparedCommand, permissionMode)
 	cmd := exec.CommandContext(ctx, spec.path, append(spec.args, preparedCommand)...)
 	cmd.Env = shellEnvironment(spec, command)
 	return cmd
@@ -251,6 +291,15 @@ func appendPermissionModeToCommand(command string, permissionMode string) string
 		return command
 	}
 	return command + " --permission-mode " + permissionMode
+}
+
+func containsArg(args []string, target string) bool {
+	for _, arg := range args {
+		if arg == target {
+			return true
+		}
+	}
+	return false
 }
 
 func shellEscapeForBash(path string) string {
