@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
 	runtimepkg "mobilevc/internal/runtime"
@@ -33,11 +33,7 @@ type Handler struct {
 	SessionStore  store.Store
 }
 
-func NewHandler(authToken string) *Handler {
-	sessionStore, err := store.NewFileStore("")
-	if err != nil {
-		log.Printf("session store init failed: %v", err)
-	}
+func NewHandler(authToken string, sessionStore store.Store) *Handler {
 	return &Handler{
 		AuthToken: authToken,
 		NewExecRunner: func() runner.Runner {
@@ -59,24 +55,48 @@ func NewHandler(authToken string) *Handler {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	connectionID := fmt.Sprintf("conn-%d", time.Now().UTC().UnixNano())
+	selectedSessionID := connectionID
+	remoteAddr := r.RemoteAddr
+	connected := false
+	var conn *websocket.Conn
+
+	emitIfPossible := func(event any) {
+		if conn == nil {
+			return
+		}
+		_ = conn.WriteJSON(event)
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			stack := logx.StackTrace()
+			logx.Error("ws", "serve panic recovered: connectionID=%s sessionID=%s remoteAddr=%s panic=%v\n%s", connectionID, selectedSessionID, remoteAddr, recovered, stack)
+			if connected {
+				emitIfPossible(protocol.NewErrorEvent(selectedSessionID, "internal server error", stack))
+			}
+		}
+	}()
+
 	token := r.URL.Query().Get("token")
 	if token == "" || token != h.AuthToken {
+		logx.Warn("ws", "reject unauthorized request: connectionID=%s remoteAddr=%s", connectionID, remoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	conn, err := h.Upgrader.Upgrade(w, r, nil)
+	upgradedConn, err := h.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("websocket upgrade failed: %v", err)
+		logx.Error("ws", "websocket upgrade failed: connectionID=%s remoteAddr=%s err=%v", connectionID, remoteAddr, err)
 		return
 	}
+	conn = upgradedConn
+	connected = true
 	defer conn.Close()
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	connectionID := fmt.Sprintf("conn-%d", time.Now().UTC().UnixNano())
-	selectedSessionID := connectionID
 	runtimeSvc := runtimepkg.NewService(selectedSessionID, runtimepkg.Dependencies{
 		NewExecRunner: h.NewExecRunner,
 		NewPtyRunner:  h.NewPtyRunner,
@@ -87,6 +107,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writerWG.Add(1)
 	go func() {
 		defer writerWG.Done()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				stack := logx.StackTrace()
+				logx.Error("ws", "writer panic recovered: connectionID=%s sessionID=%s remoteAddr=%s panic=%v\n%s", connectionID, selectedSessionID, remoteAddr, recovered, stack)
+				select {
+				case writeErrCh <- fmt.Errorf("writer panic: %v", recovered):
+				default:
+				}
+			}
+		}()
 		for {
 			select {
 			case <-ctx.Done():
@@ -96,6 +126,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if err := conn.WriteJSON(event); err != nil {
+					logx.Error("ws", "write websocket event failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 					select {
 					case writeErrCh <- err:
 					default:
@@ -106,11 +137,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	logx.Info("ws", "connection established: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
+
 	buildProjectionSnapshotFor := func(sessionID string) store.ProjectionSnapshot {
 		projection := store.ProjectionSnapshot{
 			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
 		}
-		loaded := readProjectionFromSessionStore(h.SessionStore, ctx, sessionID)
+		loaded := readProjectionFromSessionStore(h.SessionStore, ctx, sessionID, connectionID, remoteAddr)
 		projection = loaded
 		projection = withRuntimeSnapshot(projection, runtimeSvc)
 		if diff := loaded.CurrentDiff; diff != nil {
@@ -124,10 +157,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	persistProjectionFor := func(sessionID string, snapshot store.ProjectionSnapshot) {
 		if h.SessionStore == nil || strings.TrimSpace(sessionID) == "" {
+			if h.SessionStore == nil {
+				logx.Warn("ws", "skip projection persistence because session store is unavailable: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, sessionID, remoteAddr)
+			}
 			return
 		}
 		if _, err := h.SessionStore.SaveProjection(ctx, sessionID, snapshot); err != nil {
-			log.Printf("save session projection failed: %v", err)
+			logx.Error("ws", "save session projection failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 		}
 	}
 
@@ -136,6 +172,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switchRuntimeSession := func(sessionID string) {
+		logx.Info("ws", "switch runtime session: connectionID=%s previousSessionID=%s nextSessionID=%s remoteAddr=%s", connectionID, selectedSessionID, sessionID, remoteAddr)
 		runtimeSvc.Cleanup()
 		selectedSessionID = sessionID
 		runtimeSvc = runtimepkg.NewService(selectedSessionID, runtimepkg.Dependencies{NewExecRunner: h.NewExecRunner, NewPtyRunner: h.NewPtyRunner})
@@ -143,10 +180,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	emitSessionList := func() []store.SessionSummary {
 		if h.SessionStore == nil {
+			logx.Warn("ws", "session list requested but session store unavailable: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 			return nil
 		}
 		items, err := h.SessionStore.ListSessions(ctx)
 		if err != nil {
+			logx.Error("ws", "list sessions failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 			emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 			return nil
 		}
@@ -172,15 +211,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cancel()
 		runtimeSvc.Cleanup()
 		writerWG.Wait()
+		logx.Info("ws", "connection closed: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 	}()
 
 	emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "connected"))
 	emit(runtimeSvc.InitialEvent())
 	if h.SessionStore != nil {
-		if items, err := h.SessionStore.ListSessions(ctx); err == nil {
+		items, err := h.SessionStore.ListSessions(ctx)
+		if err != nil {
+			logx.Warn("ws", "initial session list restore failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+		} else {
 			emit(protocol.NewSessionListResultEvent(selectedSessionID, toProtocolSummaries(items)))
 			if strings.TrimSpace(selectedSessionID) != "" {
-				if record, err := h.SessionStore.GetSession(ctx, selectedSessionID); err == nil {
+				record, err := h.SessionStore.GetSession(ctx, selectedSessionID)
+				if err != nil {
+					logx.Warn("ws", "initial session history restore skipped: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				} else {
 					emit(newSessionHistoryEventFromRecord(record))
 				}
 			}
@@ -191,7 +237,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		select {
 		case err := <-writeErrCh:
 			if err != nil {
-				log.Printf("write websocket event failed: %v", err)
+				logx.Error("ws", "writer terminated with error: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 			}
 			return
 		default:
@@ -200,18 +246,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		messageType, payload, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("unexpected websocket close: %v", err)
+				logx.Warn("ws", "unexpected websocket close: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+			} else {
+				logx.Info("ws", "websocket read loop ended: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 			}
 			return
 		}
 
 		if messageType != websocket.TextMessage {
+			logx.Warn("ws", "reject non-text websocket message: connectionID=%s sessionID=%s remoteAddr=%s type=%d", connectionID, selectedSessionID, remoteAddr, messageType)
 			emit(protocol.NewErrorEvent(selectedSessionID, "only text messages are supported", ""))
 			continue
 		}
 
 		var clientEvent protocol.ClientEvent
 		if err := json.Unmarshal(payload, &clientEvent); err != nil {
+			logx.Warn("ws", "invalid websocket json payload: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 			emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid json: %v", err), ""))
 			continue
 		}
@@ -220,15 +270,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "session_create":
 			var req protocol.SessionCreateRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid session_create request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_create request: %v", err), ""))
 				continue
 			}
 			if h.SessionStore == nil {
+				logx.Error("ws", "session store unavailable for session_create: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
 			}
 			created, err := h.SessionStore.CreateSession(ctx, req.Title)
 			if err != nil {
+				logx.Error("ws", "create session failed: connectionID=%s sessionID=%s remoteAddr=%s title=%q err=%v", connectionID, selectedSessionID, remoteAddr, req.Title, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
@@ -238,6 +291,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			emitSessionList()
 		case "session_list":
 			if h.SessionStore == nil {
+				logx.Error("ws", "session store unavailable for session_list: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
 			}
@@ -245,15 +299,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "session_load":
 			var req protocol.SessionLoadRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid session_load request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_load request: %v", err), ""))
 				continue
 			}
 			if h.SessionStore == nil {
+				logx.Error("ws", "session store unavailable for session_load: connectionID=%s sessionID=%s remoteAddr=%s requestedSessionID=%s", connectionID, selectedSessionID, remoteAddr, req.SessionID)
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
 			}
 			record, err := h.SessionStore.GetSession(ctx, req.SessionID)
 			if err != nil {
+				logx.Warn("ws", "load session failed: connectionID=%s sessionID=%s requestedSessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, req.SessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
@@ -263,14 +320,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "session_delete":
 			var req protocol.SessionDeleteRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid session_delete request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_delete request: %v", err), ""))
 				continue
 			}
 			if h.SessionStore == nil {
+				logx.Error("ws", "session store unavailable for session_delete: connectionID=%s sessionID=%s remoteAddr=%s requestedSessionID=%s", connectionID, selectedSessionID, remoteAddr, req.SessionID)
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
 			}
 			if err := h.SessionStore.DeleteSession(ctx, req.SessionID); err != nil {
+				logx.Warn("ws", "delete session failed: connectionID=%s sessionID=%s requestedSessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, req.SessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
@@ -293,6 +353,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			record, err := h.SessionStore.GetSession(ctx, fallbackSessionID)
 			if err != nil {
+				logx.Warn("ws", "load fallback session after delete failed: connectionID=%s sessionID=%s fallbackSessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, fallbackSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
@@ -301,19 +362,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "exec":
 			var reqEvent protocol.ExecRequestEvent
 			if err := json.Unmarshal(payload, &reqEvent); err != nil {
+				logx.Warn("ws", "invalid exec request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid exec request: %v", err), ""))
 				continue
 			}
 			if strings.TrimSpace(reqEvent.Command) == "" {
+				logx.Warn("ws", "reject empty exec command: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(selectedSessionID, "cmd is required", ""))
 				continue
 			}
 			sessionID := selectedSessionID
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
-			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, reqEvent.Command, "命令")
+			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, reqEvent.Command, "命令", connectionID, remoteAddr)
 			mode, err := runtimepkg.ParseMode(reqEvent.Mode)
 			if err != nil {
+				logx.Warn("ws", "parse exec mode failed: connectionID=%s sessionID=%s remoteAddr=%s mode=%q err=%v", connectionID, sessionID, remoteAddr, reqEvent.Mode, err)
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 				continue
 			}
@@ -339,22 +403,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				},
 			}, emitAndPersist)
 			if err != nil {
+				logx.Error("ws", "service execute failed: connectionID=%s sessionID=%s remoteAddr=%s action=exec err=%v", connectionID, sessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
 		case "input":
 			var inputEvent protocol.InputRequestEvent
 			if err := json.Unmarshal(payload, &inputEvent); err != nil {
+				logx.Warn("ws", "invalid input request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid input request: %v", err), ""))
 				continue
 			}
 			if inputEvent.Data == "" {
+				logx.Warn("ws", "reject empty input payload: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(selectedSessionID, "input data is required", ""))
 				continue
 			}
 			sessionID := selectedSessionID
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
-			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复")
+			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
 			inputMeta := protocol.RuntimeMeta{}
 			if pm := inputEvent.PermissionMode; pm != "" {
 				service.UpdatePermissionMode(pm)
@@ -365,16 +432,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if errors.Is(err, runner.ErrInputNotSupported) {
 					message = "input is only supported for pty sessions"
 				}
+				logx.Warn("ws", "service send input failed: connectionID=%s sessionID=%s remoteAddr=%s action=input err=%v", connectionID, sessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
 			}
 		case "review_decision":
 			var reviewEvent protocol.ReviewDecisionRequestEvent
 			if err := json.Unmarshal(payload, &reviewEvent); err != nil {
+				logx.Warn("ws", "invalid review decision request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid review decision request: %v", err), ""))
 				continue
 			}
 			decision := strings.TrimSpace(strings.ToLower(reviewEvent.Decision))
 			if decision != "accept" && decision != "revert" && decision != "revise" {
+				logx.Warn("ws", "reject invalid review decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%q", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision)
 				emit(protocol.NewErrorEvent(selectedSessionID, "review decision must be one of: accept, revert, revise", ""))
 				continue
 			}
@@ -389,6 +459,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				effectivePermissionMode = strings.TrimSpace(buildProjectionSnapshotFor(sessionID).Runtime.PermissionMode)
 			}
 			if decision == "accept" && effectivePermissionMode != "acceptEdits" {
+				logx.Warn("ws", "reject accept review decision outside acceptEdits: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, sessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(sessionID, "当前 permission mode 不是 acceptEdits，不能直接 accept diff", ""))
 				continue
 			}
@@ -397,6 +468,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			prompt, err := buildReviewDecisionPrompt(decision, reviewEvent)
 			if err != nil {
+				logx.Warn("ws", "build review decision prompt failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 				continue
 			}
@@ -417,11 +489,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				} else if strings.Contains(message, "no active runner") {
 					message = "当前没有可交互会话，请先恢复会话后再审核 diff"
 				}
+				logx.Warn("ws", "send review decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
 			}
 		case "set_permission_mode":
 			var modeEvent protocol.PermissionModeUpdateRequestEvent
 			if err := json.Unmarshal(payload, &modeEvent); err != nil {
+				logx.Warn("ws", "invalid permission mode request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid permission mode request: %v", err), ""))
 				continue
 			}
@@ -431,10 +505,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "skill_exec":
 			var skillEvent protocol.SkillRequestEvent
 			if err := json.Unmarshal(payload, &skillEvent); err != nil {
+				logx.Warn("ws", "invalid skill request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid skill request: %v", err), ""))
 				continue
 			}
 			if h.SkillLauncher == nil {
+				logx.Error("ws", "skill launcher unavailable: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(selectedSessionID, "skill launcher is unavailable", ""))
 				continue
 			}
@@ -442,16 +518,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
 			if err := executeSkillRequest(ctx, sessionID, skillEvent, service, h.SkillLauncher, emitAndPersist); err != nil {
+				logx.Error("ws", "execute skill request failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
 		case "runtime_info":
 			var infoReq protocol.RuntimeInfoRequestEvent
 			if err := json.Unmarshal(payload, &infoReq); err != nil {
+				logx.Warn("ws", "invalid runtime_info request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid runtime_info request: %v", err), ""))
 				continue
 			}
 			result, err := runtimepkg.BuildRuntimeInfoResult(selectedSessionID, infoReq.Query, fallback(infoReq.CWD, "."), runtimeSvc)
 			if err != nil {
+				logx.Warn("ws", "build runtime info failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
@@ -459,6 +538,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "slash_command":
 			var slashReq protocol.SlashCommandRequestEvent
 			if err := json.Unmarshal(payload, &slashReq); err != nil {
+				logx.Warn("ws", "invalid slash_command request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid slash_command request: %v", err), ""))
 				continue
 			}
@@ -466,16 +546,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
 			if err := handleSlashCommand(ctx, sessionID, slashReq, service, h.SkillLauncher, emitAndPersist); err != nil {
+				logx.Error("ws", "handle slash command failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
 		case "fs_list":
 			var fsListReq protocol.FSListRequestEvent
 			if err := json.Unmarshal(payload, &fsListReq); err != nil {
+				logx.Warn("ws", "invalid fs_list request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid fs_list request: %v", err), ""))
 				continue
 			}
 			result, err := listDirectory(selectedSessionID, fsListReq.Path)
 			if err != nil {
+				logx.Warn("ws", "list directory failed: connectionID=%s sessionID=%s remoteAddr=%s path=%q err=%v", connectionID, selectedSessionID, remoteAddr, fsListReq.Path, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("list directory: %v", err), ""))
 				continue
 			}
@@ -483,28 +566,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "fs_read":
 			var fsReadReq protocol.FSReadRequestEvent
 			if err := json.Unmarshal(payload, &fsReadReq); err != nil {
+				logx.Warn("ws", "invalid fs_read request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid fs_read request: %v", err), ""))
 				continue
 			}
 			result, err := readFile(selectedSessionID, fsReadReq.Path)
 			if err != nil {
+				logx.Warn("ws", "read file failed: connectionID=%s sessionID=%s remoteAddr=%s path=%q err=%v", connectionID, selectedSessionID, remoteAddr, fsReadReq.Path, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("read file: %v", err), ""))
 				continue
 			}
 			emit(result)
 		default:
+			logx.Warn("ws", "unknown action: connectionID=%s sessionID=%s remoteAddr=%s action=%s", connectionID, selectedSessionID, remoteAddr, clientEvent.Action)
 			emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("unknown action: %s", clientEvent.Action), ""))
 		}
-		_ = connectionID
 	}
 }
 
-func appendUserProjectionEntry(sessionStore store.Store, ctx context.Context, sessionID, text, label string) {
+func appendUserProjectionEntry(sessionStore store.Store, ctx context.Context, sessionID, text, label, connectionID, remoteAddr string) {
 	if sessionStore == nil || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(text) == "" {
+		if sessionStore == nil {
+			logx.Warn("ws", "skip append user projection entry because session store unavailable: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, sessionID, remoteAddr)
+		}
 		return
 	}
 	record, err := sessionStore.GetSession(ctx, sessionID)
 	if err != nil {
+		logx.Warn("ws", "get session before append projection entry failed: connectionID=%s sessionID=%s remoteAddr=%s label=%s err=%v", connectionID, sessionID, remoteAddr, label, err)
 		return
 	}
 	projection := normalizeProjectionSnapshot(record.Projection)
@@ -514,7 +603,9 @@ func appendUserProjectionEntry(sessionStore store.Store, ctx context.Context, se
 		Label:     label,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
-	_, _ = sessionStore.SaveProjection(ctx, sessionID, projection)
+	if _, err := sessionStore.SaveProjection(ctx, sessionID, projection); err != nil {
+		logx.Error("ws", "save projection after append user entry failed: connectionID=%s sessionID=%s remoteAddr=%s label=%s err=%v", connectionID, sessionID, remoteAddr, label, err)
+	}
 }
 
 func fallback(value, defaultValue string) string {
@@ -524,12 +615,16 @@ func fallback(value, defaultValue string) string {
 	return value
 }
 
-func readProjectionFromSessionStore(sessionStore store.Store, ctx context.Context, sessionID string) store.ProjectionSnapshot {
+func readProjectionFromSessionStore(sessionStore store.Store, ctx context.Context, sessionID, connectionID, remoteAddr string) store.ProjectionSnapshot {
 	if sessionStore == nil || strings.TrimSpace(sessionID) == "" {
+		if sessionStore == nil {
+			logx.Warn("ws", "projection restore skipped because session store unavailable: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, sessionID, remoteAddr)
+		}
 		return store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
 	}
 	record, err := sessionStore.GetSession(ctx, sessionID)
 	if err != nil {
+		logx.Warn("ws", "read projection from session store failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 		return store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
 	}
 	return record.Projection

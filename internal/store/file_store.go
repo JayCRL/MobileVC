@@ -13,8 +13,8 @@ import (
 )
 
 type FileStore struct {
-	mu       sync.Mutex
-	baseDir  string
+	mu        sync.Mutex
+	baseDir   string
 	indexPath string
 }
 
@@ -229,6 +229,13 @@ func (s *FileStore) writeSessionLocked(record SessionRecord) error {
 
 func (s *FileStore) sessionPath(sessionID string) string {
 	return filepath.Join(s.baseDir, sessionID+".json")
+}
+
+func (s *FileStore) BaseDir() string {
+	if s == nil {
+		return ""
+	}
+	return s.baseDir
 }
 
 func filterOut(items []SessionSummary, id string) []SessionSummary {

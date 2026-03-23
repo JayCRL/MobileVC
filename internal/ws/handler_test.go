@@ -1,7 +1,10 @@
 package ws
 
 import (
+	"bytes"
 	"context"
+	"log"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -70,6 +73,10 @@ func (s *stubRunner) SetPermissionMode(mode string) {
 	defer s.mu.Unlock()
 	s.lastPermissionMode = mode
 	s.permissionModes = append(s.permissionModes, mode)
+}
+
+func newTestHandler() *Handler {
+	return NewHandler("test", nil)
 }
 
 func newTestConn(t *testing.T, h *Handler) *websocket.Conn {
@@ -273,7 +280,7 @@ func TestHandlerExecFlow(t *testing.T) {
 		protocol.NewSessionStateEvent("ignored", "closed", "command finished"),
 	)
 
-	h := NewHandler("test")
+	h := newTestHandler()
 	h.NewExecRunner = func() runner.Runner { return execRunner }
 
 	conn := newTestConn(t, h)
@@ -303,7 +310,7 @@ func TestHandlerPtyInputFlow(t *testing.T) {
 		protocol.NewPromptRequestEvent("ignored", "Proceed? [y/N]", []string{"y", "n"}),
 	)
 
-	h := NewHandler("test")
+	h := newTestHandler()
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 
 	conn := newTestConn(t, h)
@@ -346,7 +353,7 @@ func TestHandlerEmitsAgentStateForToolEventsAndFinish(t *testing.T) {
 		protocol.NewFileDiffEvent("ignored", "internal/ws/handler.go", "Updating internal/ws/handler.go", "diff --git a/internal/ws/handler.go b/internal/ws/handler.go", "go"),
 	)
 
-	h := NewHandler("test")
+	h := newTestHandler()
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 
 	conn := newTestConn(t, h)
@@ -377,7 +384,7 @@ func TestHandlerClaudeSessionStartsInWaitInput(t *testing.T) {
 		protocol.NewPromptRequestEvent("ignored", "Claude 会话已就绪，可继续输入", nil),
 	)
 
-	h := NewHandler("test")
+	h := newTestHandler()
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 
 	conn := newTestConn(t, h)
@@ -397,7 +404,7 @@ func TestHandlerClaudeSessionStartsInWaitInput(t *testing.T) {
 }
 
 func TestHandlerInputWithoutRunner(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	server := httptest.NewServer(h)
 	defer server.Close()
 
@@ -444,7 +451,7 @@ func TestHandlerInputRejectedForExecRunner(t *testing.T) {
 	execRunner := newHoldingStubRunner()
 	execRunner.writeErr = runner.ErrInputNotSupported
 
-	h := NewHandler("test")
+	h := newTestHandler()
 	h.NewExecRunner = func() runner.Runner { return execRunner }
 
 	server := httptest.NewServer(h)
@@ -494,6 +501,66 @@ func TestHandlerInputRejectedForExecRunner(t *testing.T) {
 	}
 }
 
+func TestHandlerRecoversRunnerPanicAndReturnsErrorEvent(t *testing.T) {
+	var logs bytes.Buffer
+	originalWriter := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	defer log.SetOutput(originalWriter)
+	defer log.SetFlags(originalFlags)
+
+	h := newTestHandler()
+	h.Upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
+	h.NewExecRunner = func() runner.Runner {
+		return &panicRunner{}
+	}
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "panic please",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "internal server error" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+	stack, _ := event["stack"].(string)
+	if stack == "" {
+		t.Fatalf("expected panic stack in error event, got %#v", event)
+	}
+	if !strings.Contains(logs.String(), "runner panic recovered") {
+		t.Fatalf("expected runtime panic log, got %q", logs.String())
+	}
+}
+
+type panicRunner struct{}
+
+func (p *panicRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
+	panic("boom")
+}
+
+func (p *panicRunner) Write(ctx context.Context, data []byte) error {
+	return nil
+}
+
+func (p *panicRunner) Close() error {
+	return nil
+}
+
+func (p *panicRunner) SetPermissionMode(mode string) {}
+
 func TestParseMode(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -524,7 +591,7 @@ func TestParseMode(t *testing.T) {
 }
 
 func TestHandlerRejectsEmptyInput(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	server := httptest.NewServer(h)
 	defer server.Close()
 
@@ -564,7 +631,7 @@ func TestHandlerRejectsEmptyInput(t *testing.T) {
 }
 
 func TestHandlerUnknownAction(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	server := httptest.NewServer(h)
 	defer server.Close()
 
@@ -601,7 +668,7 @@ func TestHandlerUnknownAction(t *testing.T) {
 }
 
 func TestHandlerUnknownMode(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	server := httptest.NewServer(h)
 	defer server.Close()
 
@@ -643,7 +710,7 @@ func TestHandlerUnknownMode(t *testing.T) {
 
 func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
-	h := NewHandler("test")
+	h := newTestHandler()
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
@@ -690,7 +757,7 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 
 func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
-	h := NewHandler("test")
+	h := newTestHandler()
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
@@ -717,7 +784,7 @@ func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 
 func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
-	h := NewHandler("test")
+	h := newTestHandler()
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
@@ -751,7 +818,7 @@ func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 }
 
 func TestHandlerReviewDecisionWithoutRunner(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
 
@@ -767,7 +834,7 @@ func TestHandlerReviewDecisionWithoutRunner(t *testing.T) {
 
 func TestHandlerReviewDecisionRejectsAcceptOutsideAcceptEdits(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
-	h := NewHandler("test")
+	h := newTestHandler()
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
@@ -803,7 +870,7 @@ func TestHandlerReviewDecisionRejectsAcceptOutsideAcceptEdits(t *testing.T) {
 }
 
 func TestHandlerReviewDecisionRejectsUnknownDecision(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
 
@@ -818,7 +885,7 @@ func TestHandlerReviewDecisionRejectsUnknownDecision(t *testing.T) {
 }
 
 func TestHandlerRuntimeInfoReturnsContextSnapshot(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
 
@@ -841,7 +908,7 @@ func TestHandlerRuntimeInfoReturnsContextSnapshot(t *testing.T) {
 }
 
 func TestHandlerRuntimeInfoRejectsUnknownQuery(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
 
@@ -874,7 +941,7 @@ func TestHandlerSlashCommandRuntimeInfoQueries(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewHandler("test")
+			h := newTestHandler()
 			conn := newTestConn(t, h)
 			_, _ = readInitialEvents(t, conn)
 
@@ -898,7 +965,7 @@ func TestHandlerSlashCommandLocalOnlyCommands(t *testing.T) {
 	tests := []string{"/clear", "/exit", "/quit", "/fast"}
 	for _, command := range tests {
 		t.Run(command, func(t *testing.T) {
-			h := NewHandler("test")
+			h := newTestHandler()
 			conn := newTestConn(t, h)
 			_, _ = readInitialEvents(t, conn)
 
@@ -923,7 +990,7 @@ func TestHandlerSlashCommandLocalOnlyCommands(t *testing.T) {
 }
 
 func TestHandlerSlashCommandDiffRequiresContext(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
 
@@ -957,7 +1024,7 @@ func TestHandlerSlashCommandExecMappings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runnerStub := newHoldingStubRunner()
-			h := NewHandler("test")
+			h := newTestHandler()
 			h.NewPtyRunner = func() runner.Runner { return runnerStub }
 			conn := newTestConn(t, h)
 			_, _ = readInitialEvents(t, conn)
@@ -984,7 +1051,7 @@ func TestHandlerSlashCommandExecMappings(t *testing.T) {
 }
 
 func TestHandlerSessionDeleteRemovesHistorySessionFromList(t *testing.T) {
-	h := NewHandler("test")
+	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("new temp store: %v", err)
@@ -1048,7 +1115,7 @@ func TestHandlerSessionDeleteCurrentSessionCleansRuntimeAndFallsBack(t *testing.
 	runnerA := newSwitchableStubRunner()
 	firstRunner := runnerA
 	runnerB := newSwitchableStubRunner()
-	h := NewHandler("test")
+	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("new temp store: %v", err)
@@ -1148,7 +1215,12 @@ func TestHandlerSessionLoadKeepsOldRunnerEventsInOriginalSessionProjection(t *te
 	firstRunner := runnerA
 	runnerB := newSwitchableStubRunner()
 
-	h := NewHandler("test")
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner {
 		if runnerA != nil {
 			r := runnerA
@@ -1229,7 +1301,12 @@ func TestHandlerSessionLoadCleansUpPreviousRuntime(t *testing.T) {
 	firstRunner := runnerA
 	runnerB := newSwitchableStubRunner()
 
-	h := NewHandler("test")
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner {
 		if runnerA != nil {
 			r := runnerA

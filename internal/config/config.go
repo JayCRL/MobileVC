@@ -23,6 +23,19 @@ type Config struct {
 	Runtime   RuntimeConfig
 }
 
+type Summary struct {
+	Port                   string
+	AuthTokenConfigured    bool
+	DefaultCommand         string
+	DefaultMode            string
+	Debug                  bool
+	WorkspaceRoot          string
+	EnhancedProjection     bool
+	EnableStepProjection   bool
+	EnableDiffProjection   bool
+	EnablePromptProjection bool
+}
+
 func Load() (Config, error) {
 	cfg := Config{
 		Port:      getEnv("PORT", "8001"),
@@ -44,6 +57,21 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func (c Config) Summary() Summary {
+	return Summary{
+		Port:                   c.Port,
+		AuthTokenConfigured:    strings.TrimSpace(c.AuthToken) != "",
+		DefaultCommand:         c.Runtime.DefaultCommand,
+		DefaultMode:            c.Runtime.DefaultMode,
+		Debug:                  c.Runtime.Debug,
+		WorkspaceRoot:          c.Runtime.WorkspaceRoot,
+		EnhancedProjection:     c.Runtime.EnhancedProjection,
+		EnableStepProjection:   c.Runtime.EnableStepProjection,
+		EnableDiffProjection:   c.Runtime.EnableDiffProjection,
+		EnablePromptProjection: c.Runtime.EnablePromptProjection,
+	}
 }
 
 func getEnv(key, fallback string) string {

@@ -3,9 +3,11 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
+	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
 	"mobilevc/internal/session"
@@ -121,6 +123,18 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 		emit(event)
 	}
 	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				stack := logx.StackTrace()
+				message := fmt.Sprintf("runner panic recovered: %v", recovered)
+				logx.Error("runtime", "%s\nsessionID=%s\n%s", message, sessionID, stack)
+				emit(protocol.ApplyRuntimeMeta(protocol.NewErrorEvent(sessionID, "internal server error", stack), req.RuntimeMeta))
+				s.manager.finish(selected)
+				for _, event := range s.controller.OnCommandFinished(req.RuntimeMeta) {
+					emit(event)
+				}
+			}
+		}()
 		err := selected.Run(ctx, runner.ExecRequest{
 			SessionID:      sessionID,
 			Command:        req.Command,
