@@ -177,6 +177,8 @@
               <option value="plan">仅规划</option>
             </select>
             <button id="sessionPanelBtn" class="rounded-2xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">会话</button>
+            <button id="skillPanelBtn" class="rounded-2xl border border-violet-700 bg-violet-950/30 px-2.5 py-2 text-[11px] text-violet-100 hover:bg-violet-900/50 sm:px-3 sm:text-xs">Skill</button>
+            <button id="memoryPanelBtn" class="rounded-2xl border border-amber-700 bg-amber-950/30 px-2.5 py-2 text-[11px] text-amber-100 hover:bg-amber-900/50 sm:px-3 sm:text-xs">Memory</button>
             <button id="newSessionBtn" class="rounded-2xl border border-sky-700 bg-sky-950/40 px-2.5 py-2 text-[11px] text-sky-100 hover:bg-sky-900/60 sm:px-3 sm:text-xs">新会话</button>
             <button id="resumeSessionBtn" class="hidden rounded-2xl border border-emerald-700 bg-emerald-950/40 px-2.5 py-2 text-[11px] text-emerald-100 hover:bg-emerald-900/60 sm:px-3 sm:text-xs">继续上次</button>
             <button id="retokenBtn" class="rounded-2xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">Token</button>
@@ -267,6 +269,57 @@
     </div>
   </div>
 
+  <div id="skillPanel" class="pointer-events-none fixed inset-0 z-[45] flex items-end bg-black/50 opacity-0 transition">
+    <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+      <div class="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div class="text-sm font-semibold text-zinc-100">Skill 管理</div>
+          <div class="text-xs text-zinc-500">会话级启用 + 全局 catalog</div>
+        </div>
+        <div class="flex gap-2">
+          <button id="skillSyncBtn" class="rounded-2xl border border-violet-700 bg-violet-950/30 px-3 py-2 text-xs text-violet-100 hover:bg-violet-900/50">同步 skill</button>
+          <button id="closeSkillPanelBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+        </div>
+      </div>
+      <div class="mb-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3">
+        <div class="mb-2 text-xs text-zinc-500">新增 / 编辑 local skill</div>
+        <div class="grid gap-2">
+          <input id="skillNameInput" type="text" placeholder="skill name" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          <input id="skillDescriptionInput" type="text" placeholder="description" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          <div class="grid grid-cols-2 gap-2">
+            <input id="skillTargetTypeInput" type="text" placeholder="targetType" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+            <input id="skillResultViewInput" type="text" placeholder="resultView" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          </div>
+          <textarea id="skillPromptInput" placeholder="prompt" class="min-h-[96px] rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none"></textarea>
+          <button id="saveSkillBtn" class="rounded-2xl border border-sky-700 bg-sky-950/40 px-3 py-3 text-sm text-sky-100 hover:bg-sky-900/60">保存 local skill</button>
+        </div>
+      </div>
+      <div id="skillList" class="max-h-[48vh] space-y-2 overflow-y-auto"></div>
+    </div>
+  </div>
+
+  <div id="memoryPanel" class="pointer-events-none fixed inset-0 z-[45] flex items-end bg-black/50 opacity-0 transition">
+    <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+      <div class="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div class="text-sm font-semibold text-zinc-100">Memory 管理</div>
+          <div class="text-xs text-zinc-500">这是 MobileVC 内部记忆层，不是 Claude 隐式 /memory</div>
+        </div>
+        <button id="closeMemoryPanelBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+      </div>
+      <div class="mb-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3">
+        <div class="mb-2 text-xs text-zinc-500">新增 / 编辑 memory</div>
+        <div class="grid gap-2">
+          <input id="memoryIdInput" type="text" placeholder="memory id（可留空自动生成）" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          <input id="memoryTitleInput" type="text" placeholder="title" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          <textarea id="memoryContentInput" placeholder="content" class="min-h-[110px] rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none"></textarea>
+          <button id="saveMemoryBtn" class="rounded-2xl border border-amber-700 bg-amber-950/40 px-3 py-3 text-sm text-amber-100 hover:bg-amber-900/60">保存 memory</button>
+        </div>
+      </div>
+      <div id="memoryList" class="max-h-[48vh] space-y-2 overflow-y-auto"></div>
+    </div>
+  </div>
+
   <div id="statusDetailPanel" class="pointer-events-none fixed inset-0 z-40 flex items-end bg-black/50 opacity-0 transition">
     <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
       <div class="mb-3 flex items-center justify-between gap-2">
@@ -353,6 +406,8 @@
     const permissionModeSelect = document.getElementById('permissionModeSelect');
     const resumeSessionBtn = document.getElementById('resumeSessionBtn');
     const sessionPanelBtn = document.getElementById('sessionPanelBtn');
+    const skillPanelBtn = document.getElementById('skillPanelBtn');
+    const memoryPanelBtn = document.getElementById('memoryPanelBtn');
     const newSessionBtn = document.getElementById('newSessionBtn');
     const diffBadgeBtn = document.getElementById('diffBadgeBtn');
     const diffBadgeDot = document.getElementById('diffBadgeDot');
@@ -362,6 +417,25 @@
     const sessionPanelHint = document.getElementById('sessionPanelHint');
     const sessionList = document.getElementById('sessionList');
     const closeSessionPanelBtn = document.getElementById('closeSessionPanelBtn');
+
+    const skillPanel = document.getElementById('skillPanel');
+    const closeSkillPanelBtn = document.getElementById('closeSkillPanelBtn');
+    const skillSyncBtn = document.getElementById('skillSyncBtn');
+    const saveSkillBtn = document.getElementById('saveSkillBtn');
+    const skillList = document.getElementById('skillList');
+    const skillNameInput = document.getElementById('skillNameInput');
+    const skillDescriptionInput = document.getElementById('skillDescriptionInput');
+    const skillTargetTypeInput = document.getElementById('skillTargetTypeInput');
+    const skillResultViewInput = document.getElementById('skillResultViewInput');
+    const skillPromptInput = document.getElementById('skillPromptInput');
+
+    const memoryPanel = document.getElementById('memoryPanel');
+    const closeMemoryPanelBtn = document.getElementById('closeMemoryPanelBtn');
+    const saveMemoryBtn = document.getElementById('saveMemoryBtn');
+    const memoryList = document.getElementById('memoryList');
+    const memoryIdInput = document.getElementById('memoryIdInput');
+    const memoryTitleInput = document.getElementById('memoryTitleInput');
+    const memoryContentInput = document.getElementById('memoryContentInput');
 
     const singleFileView = document.getElementById('singleFileView');
     const closeFileViewBtn = document.getElementById('closeFileViewBtn');
@@ -403,6 +477,8 @@
         terminalDrawerOpen: false,
         statusDetailOpen: false,
         sessionPanelOpen: false,
+        skillPanelOpen: false,
+        memoryPanelOpen: false,
         sessionAutoLoadAttempted: false,
         drawers: { terminal: { height: 320, minHeight: 240, maxHeight: 0, openHeight: 320, pointerId: null, dragging: false, startY: 0, startHeight: 0 } }
       }
@@ -419,6 +495,13 @@
       timerId: null
     };
 
+    const fileDownloadState = {
+      timerId: null,
+      pointerId: null,
+      path: '',
+      suppressClickPath: ''
+    };
+
     const projectionState = {
       diffs: [],
       currentDiff: null,
@@ -428,10 +511,23 @@
       contexts: { diff: null, step: null, error: null },
       logEntries: [],
       rawTerminalByStream: { stdout: '', stderr: '' },
+      terminalExecutions: [],
+      selectedExecutionId: '',
       review: { activeId: '', autoHandledId: '', pendingAutoAcceptId: '' }
     };
 
-    const dedupState = { lastLogMsg: '', lastLogStream: '', lastLogTime: 0, lastStepMsg: '', lastStepStatus: '' };
+    const catalogState = {
+      skills: [],
+      memory: [],
+      syncStatus: ''
+    };
+
+    const sessionContextState = {
+      enabledSkillNames: [],
+      enabledMemoryIds: []
+    };
+
+    const dedupState = { lastLogMsg: '', lastLogStream: '', lastLogPhase: '', lastLogExecutionId: '', lastLogTime: 0, lastStepMsg: '', lastStepStatus: '' };
 
     function buildDiffKey(diff = {}) {
       return diff.id || diff.path || diff.title || '';
@@ -549,6 +645,13 @@
     function requestSessionList() { return sendJson({ action: 'session_list' }); }
     function requestSessionLoad(sessionId) { return sendJson({ action: 'session_load', sessionId }); }
     function requestSessionDelete(sessionId) { return sendJson({ action: 'session_delete', sessionId }); }
+    function requestSkillCatalog() { return sendJson({ action: 'skill_catalog_get' }); }
+    function requestMemoryList() { return sendJson({ action: 'memory_list' }); }
+    function requestSessionContext() { return sendJson({ action: 'session_context_get' }); }
+    function updateSessionContext(payload) { return sendJson({ action: 'session_context_update', ...payload }); }
+    function saveSkill(def) { return sendJson({ action: 'skill_catalog_upsert', skill: def }); }
+    function syncSkills() { return sendJson({ action: 'skill_sync_pull' }); }
+    function saveMemory(item) { return sendJson({ action: 'memory_upsert', item }); }
     function requestResumeSession(meta = {}) {
       const resumeSessionId = meta.resumeSessionId || runtimeState.meta.resumeSessionId || '';
       if (!resumeSessionId) return false;
@@ -573,9 +676,15 @@
       projectionState.contexts = { diff: null, step: null, error: null };
       projectionState.logEntries = [];
       projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
+      projectionState.terminalExecutions = [];
+      projectionState.selectedExecutionId = '';
       projectionState.review = { activeId: '', autoHandledId: '', pendingAutoAcceptId: '' };
+      sessionContextState.enabledSkillNames = [];
+      sessionContextState.enabledMemoryIds = [];
       dedupState.lastLogMsg = '';
       dedupState.lastLogStream = '';
+      dedupState.lastLogPhase = '';
+      dedupState.lastLogExecutionId = '';
       dedupState.lastLogTime = 0;
       dedupState.lastStepMsg = '';
       dedupState.lastStepStatus = '';
@@ -666,6 +775,108 @@
           deleteSession(item.id);
         });
         sessionList.appendChild(row);
+      });
+    }
+    function renderSkillPanel() {
+      skillList.innerHTML = '';
+      const items = Array.isArray(catalogState.skills) ? catalogState.skills : [];
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-4 text-sm text-zinc-400';
+        empty.innerHTML = '<div class="font-medium text-zinc-100">暂无 skill</div><div class="mt-1">可新增 local skill，或点击“同步 skill”。</div>';
+        skillList.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const enabled = sessionContextState.enabledSkillNames.includes(item.name);
+        const row = document.createElement('div');
+        row.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3';
+        row.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="truncate text-sm font-semibold text-zinc-100">${escapeHtml(item.name || '')}</div>
+                <span class="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] uppercase text-zinc-300">${escapeHtml(item.source || 'builtin')}</span>
+                ${item.editable ? '<span class="rounded-full border border-sky-700 px-2 py-0.5 text-[10px] uppercase text-sky-200">editable</span>' : ''}
+              </div>
+              <div class="mt-2 text-xs text-zinc-400">${escapeHtml(item.description || '无描述')}</div>
+              <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-zinc-500">
+                <span>targetType: ${escapeHtml(item.targetType || '-')}</span>
+                <span>resultView: ${escapeHtml(item.resultView || '-')}</span>
+              </div>
+            </div>
+            <label class="flex shrink-0 items-center gap-2 text-xs text-zinc-200">
+              <input data-skill-toggle type="checkbox" class="h-4 w-4 rounded border-zinc-700 bg-zinc-950" ${enabled ? 'checked' : ''} />
+              <span>启用</span>
+            </label>
+          </div>`;
+        row.querySelector('[data-skill-toggle]').addEventListener('change', (event) => {
+          const next = new Set(sessionContextState.enabledSkillNames);
+          if (event.target.checked) next.add(item.name);
+          else next.delete(item.name);
+          sessionContextState.enabledSkillNames = Array.from(next);
+          updateSessionContext({
+            enabledSkillNames: sessionContextState.enabledSkillNames,
+            enabledMemoryIds: sessionContextState.enabledMemoryIds
+          });
+          renderSkillPanel();
+        });
+        row.addEventListener('dblclick', () => {
+          if (item.source !== 'local') return;
+          skillNameInput.value = item.name || '';
+          skillDescriptionInput.value = item.description || '';
+          skillTargetTypeInput.value = item.targetType || '';
+          skillResultViewInput.value = item.resultView || '';
+          skillPromptInput.value = item.prompt || '';
+        });
+        skillList.appendChild(row);
+      });
+    }
+    function renderMemoryPanel() {
+      memoryList.innerHTML = '';
+      const items = Array.isArray(catalogState.memory) ? catalogState.memory : [];
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-4 text-sm text-zinc-400';
+        empty.innerHTML = '<div class="font-medium text-zinc-100">暂无 memory</div><div class="mt-1">保存后可在当前 session 勾选启用。</div>';
+        memoryList.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const enabled = sessionContextState.enabledMemoryIds.includes(item.id);
+        const row = document.createElement('div');
+        row.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3';
+        row.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="truncate text-sm font-semibold text-zinc-100">${escapeHtml(item.title || item.id || '')}</div>
+                <span class="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] uppercase text-zinc-300">${escapeHtml(item.id || '')}</span>
+              </div>
+              <div class="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-400">${escapeHtml(item.content || '')}</div>
+            </div>
+            <label class="flex shrink-0 items-center gap-2 text-xs text-zinc-200">
+              <input data-memory-toggle type="checkbox" class="h-4 w-4 rounded border-zinc-700 bg-zinc-950" ${enabled ? 'checked' : ''} />
+              <span>启用</span>
+            </label>
+          </div>`;
+        row.querySelector('[data-memory-toggle]').addEventListener('change', (event) => {
+          const next = new Set(sessionContextState.enabledMemoryIds);
+          if (event.target.checked) next.add(item.id);
+          else next.delete(item.id);
+          sessionContextState.enabledMemoryIds = Array.from(next);
+          updateSessionContext({
+            enabledSkillNames: sessionContextState.enabledSkillNames,
+            enabledMemoryIds: sessionContextState.enabledMemoryIds
+          });
+          renderMemoryPanel();
+        });
+        row.addEventListener('dblclick', () => {
+          memoryIdInput.value = item.id || '';
+          memoryTitleInput.value = item.title || '';
+          memoryContentInput.value = item.content || '';
+        });
+        memoryList.appendChild(row);
       });
     }
     function formatSessionMeta(item = {}) {
@@ -788,6 +999,8 @@
         appendSystemMessage('连接成功');
         requestFSList(appState.workspace.cwd || '.');
         requestSessionList();
+        requestSkillCatalog();
+        requestMemoryList();
         renderApp();
       };
       appState.ws.onclose = () => {
@@ -887,14 +1100,14 @@
       projectionState.logEntries.push({ kind: 'markdown', message, timestamp, stream });
       renderChatStream();
     }
-    function appendTerminalMessage(text, timestamp, stream) {
+    function appendTerminalMessage(text, timestamp, stream, meta = {}) {
       if (shouldSuppressTerminalNoise(text)) return;
       const previous = projectionState.logEntries[projectionState.logEntries.length - 1];
-      if (previous && previous.kind === 'terminal' && previous.stream === stream) {
+      if (previous && previous.kind === 'terminal' && previous.stream === stream && previous.executionId === (meta.executionId || '') && previous.phase === (meta.phase || stream)) {
         previous.text = `${previous.text || ''}${previous.text ? '\n' : ''}${text}`;
         previous.timestamp = timestamp || previous.timestamp;
       } else {
-        projectionState.logEntries.push({ kind: 'terminal', text, timestamp, stream });
+        projectionState.logEntries.push({ kind: 'terminal', text, timestamp, stream, executionId: meta.executionId || '', phase: meta.phase || stream, exitCode: meta.exitCode ?? null });
       }
       projectionState.rawTerminalByStream[stream || 'stdout'] = `${projectionState.rawTerminalByStream[stream || 'stdout'] || ''}${projectionState.rawTerminalByStream[stream || 'stdout'] ? '\n' : ''}${text}`;
       renderChatStream();
@@ -1051,6 +1264,32 @@
       });
     }
 
+    function triggerFileDownload(path) {
+      const target = String(path || '').trim();
+      if (!target) return;
+      const url = new URL('/download', window.location.origin);
+      url.searchParams.set('token', appState.auth.token || '');
+      url.searchParams.set('path', target);
+      const anchor = document.createElement('a');
+      anchor.href = url.toString();
+      anchor.download = basename(target) || 'download';
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      appendSystemMessage(`开始下载 ${basename(target) || target}`);
+    }
+    function clearFileLongPress(pointerId = null) {
+      if (fileDownloadState.timerId) {
+        clearTimeout(fileDownloadState.timerId);
+        fileDownloadState.timerId = null;
+      }
+      if (pointerId === null || fileDownloadState.pointerId === pointerId) {
+        fileDownloadState.pointerId = null;
+        fileDownloadState.path = '';
+      }
+    }
+
     function renderFileList() {
       fileList.innerHTML = '';
       sidebarPath.textContent = appState.workspace.cwd || '.';
@@ -1071,11 +1310,38 @@
           <div class="flex items-center justify-between gap-3">
             <div class="min-w-0">
               <div class="truncate text-sm font-medium text-zinc-100">${item.is_dir ? '📁' : '📄'} ${escapeHtml(item.name)}</div>
-              <div class="mt-1 text-xs text-zinc-400">${item.is_dir ? '文件夹' : (formatSize(item.size) || '文件')}</div>
+              <div class="mt-1 text-xs text-zinc-400">${item.is_dir ? '文件夹' : `${formatSize(item.size) || '文件'} · 长按下载`}</div>
             </div>
             <div class="shrink-0 text-xs ${active ? 'text-blue-300' : 'text-zinc-500'}">${item.is_dir ? '进入' : '打开'}</div>
           </div>`;
+        if (!item.is_dir) {
+          const startLongPress = (event) => {
+            if (event.pointerType === 'mouse' && event.button !== 0) return;
+            clearFileLongPress();
+            fileDownloadState.pointerId = event.pointerId;
+            fileDownloadState.path = path;
+            fileDownloadState.timerId = window.setTimeout(() => {
+              fileDownloadState.suppressClickPath = path;
+              triggerFileDownload(path);
+              clearFileLongPress(event.pointerId);
+            }, 550);
+          };
+          row.addEventListener('pointerdown', startLongPress);
+          row.addEventListener('pointerup', (event) => clearFileLongPress(event.pointerId));
+          row.addEventListener('pointercancel', (event) => clearFileLongPress(event.pointerId));
+          row.addEventListener('pointerleave', (event) => clearFileLongPress(event.pointerId));
+          row.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            fileDownloadState.suppressClickPath = path;
+            clearFileLongPress();
+            triggerFileDownload(path);
+          });
+        }
         row.addEventListener('click', () => {
+          if (!item.is_dir && fileDownloadState.suppressClickPath === path) {
+            fileDownloadState.suppressClickPath = '';
+            return;
+          }
           if (item.is_dir) requestFSList(path);
           else openFile(path);
         });
@@ -1185,15 +1451,101 @@
       requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }));
     }
 
+    function ensureExecutionSelection() {
+      if (!projectionState.terminalExecutions.length) {
+        projectionState.selectedExecutionId = '';
+        return null;
+      }
+      const exists = projectionState.terminalExecutions.some((item) => item.executionId === projectionState.selectedExecutionId);
+      if (!exists) projectionState.selectedExecutionId = projectionState.terminalExecutions[projectionState.terminalExecutions.length - 1]?.executionId || '';
+      return projectionState.terminalExecutions.find((item) => item.executionId === projectionState.selectedExecutionId) || projectionState.terminalExecutions[projectionState.terminalExecutions.length - 1] || null;
+    }
+    function upsertTerminalExecutionItem(patch = {}) {
+      const executionId = patch.executionId || '';
+      if (!executionId) return null;
+      const index = projectionState.terminalExecutions.findIndex((item) => item.executionId === executionId);
+      let current = index >= 0 ? { ...projectionState.terminalExecutions[index] } : { executionId, command: '', cwd: '', startedAt: '', finishedAt: '', exitCode: null, stdout: '', stderr: '' };
+      current = { ...current, ...patch };
+      if (index >= 0) projectionState.terminalExecutions.splice(index, 1, current);
+      else projectionState.terminalExecutions.push(current);
+      projectionState.selectedExecutionId = executionId;
+      return current;
+    }
+    function appendExecutionOutput(executionId, stream, text, meta = {}) {
+      if (!executionId) return;
+      const key = stream === 'stderr' ? 'stderr' : 'stdout';
+      const current = upsertTerminalExecutionItem({ executionId, command: meta.command || '', cwd: meta.cwd || '', startedAt: meta.startedAt || '' });
+      if (!current) return;
+      current[key] = `${current[key] || ''}${current[key] ? '\n' : ''}${text}`;
+      upsertTerminalExecutionItem(current);
+    }
+    function applyExecutionLogEvent(payload = {}) {
+      const executionId = payload.executionId || '';
+      if (!executionId) return;
+      const phase = payload.phase || payload.stream || '';
+      if (phase === 'started') {
+        upsertTerminalExecutionItem({ executionId, command: payload.msg || payload.command || '', cwd: payload.cwd || '', startedAt: payload.timestamp || new Date().toISOString(), finishedAt: '', exitCode: null, stdout: '', stderr: '' });
+        return;
+      }
+      if (phase === 'finished') {
+        upsertTerminalExecutionItem({ executionId, finishedAt: payload.timestamp || new Date().toISOString(), exitCode: payload.exitCode ?? null });
+        return;
+      }
+      const text = String(payload.msg || '').replace(/^\r+/, '');
+      if (!text) return;
+      appendExecutionOutput(executionId, payload.stream || 'stdout', text, { command: payload.command || '', cwd: payload.cwd || '', startedAt: payload.timestamp || '' });
+    }
+    function renderExecutionStatus(execution = {}) {
+      if (!execution.finishedAt) return '<span class="text-amber-300">运行中</span>';
+      const code = execution.exitCode;
+      if (code === null || code === undefined) return '<span class="text-zinc-400">已结束</span>';
+      return `<span class="${Number(code) === 0 ? 'text-emerald-300' : 'text-red-300'}">exit ${escapeHtml(String(code))}</span>`;
+    }
     function renderTerminalDrawer() {
       terminalDrawerContent.innerHTML = '';
+      if (!projectionState.terminalExecutions.length) {
+        const wrap = document.createElement('div');
+        wrap.className = 'rounded-[1.4rem] border border-zinc-800 bg-zinc-900/90 p-4';
+        wrap.innerHTML = `
+          <div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">stdout</div>
+          <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-zinc-100">${escapeHtml(projectionState.rawTerminalByStream.stdout || '')}</pre>
+          <div class="mt-4 mb-2 text-[11px] uppercase tracking-wide text-red-300">stderr</div>
+          <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-red-200">${escapeHtml(projectionState.rawTerminalByStream.stderr || '')}</pre>`;
+        terminalDrawerContent.appendChild(wrap);
+        return;
+      }
+      const selected = ensureExecutionSelection();
       const wrap = document.createElement('div');
-      wrap.className = 'rounded-[1.4rem] border border-zinc-800 bg-zinc-900/90 p-4';
-      wrap.innerHTML = `
-        <div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">stdout</div>
-        <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-zinc-100">${escapeHtml(projectionState.rawTerminalByStream.stdout || '')}</pre>
-        <div class="mt-4 mb-2 text-[11px] uppercase tracking-wide text-red-300">stderr</div>
-        <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-red-200">${escapeHtml(projectionState.rawTerminalByStream.stderr || '')}</pre>`;
+      wrap.className = 'grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]';
+      const sidebar = document.createElement('div');
+      sidebar.className = 'space-y-2';
+      projectionState.terminalExecutions.slice().reverse().forEach((item) => {
+        const selectedClass = item.executionId === projectionState.selectedExecutionId ? 'border-blue-700 bg-blue-950/30' : 'border-zinc-800 bg-zinc-900/70';
+        const row = document.createElement('button');
+        row.className = `w-full rounded-2xl border px-3 py-3 text-left ${selectedClass}`;
+        row.innerHTML = `
+          <div class="truncate text-sm font-semibold text-zinc-100">${escapeHtml(item.command || item.executionId)}</div>
+          <div class="mt-1 text-[11px] text-zinc-500">${escapeHtml(formatDateTime(item.startedAt) || '')}</div>
+          <div class="mt-2 text-xs">${renderExecutionStatus(item)}</div>`;
+        row.addEventListener('click', () => {
+          projectionState.selectedExecutionId = item.executionId;
+          renderTerminalDrawer();
+        });
+        sidebar.appendChild(row);
+      });
+      const detail = document.createElement('div');
+      detail.className = 'rounded-[1.4rem] border border-zinc-800 bg-zinc-900/90 p-4';
+      const current = selected || { command: '', cwd: '', startedAt: '', finishedAt: '', stdout: '', stderr: '' };
+      detail.innerHTML = `
+        <div class="text-sm font-semibold text-zinc-100">${escapeHtml(current.command || current.executionId || '未命名执行')}</div>
+        <div class="mt-1 text-xs text-zinc-500">${escapeHtml(current.cwd || '')}</div>
+        <div class="mt-2 text-xs text-zinc-400">开始：${escapeHtml(formatDateTime(current.startedAt) || '-')} · 结束：${escapeHtml(formatDateTime(current.finishedAt) || '-')} · ${renderExecutionStatus(current)}</div>
+        <div class="mt-4 text-[11px] uppercase tracking-wide text-zinc-500">stdout</div>
+        <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-6 text-zinc-100">${escapeHtml(current.stdout || '')}</pre>
+        <div class="mt-4 text-[11px] uppercase tracking-wide text-red-300">stderr</div>
+        <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-6 text-red-200">${escapeHtml(current.stderr || '')}</pre>`;
+      wrap.appendChild(sidebar);
+      wrap.appendChild(detail);
       terminalDrawerContent.appendChild(wrap);
     }
 
@@ -1425,6 +1777,8 @@
         if (slash.key === '/clear') {
           projectionState.logEntries = [];
           projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
+          projectionState.terminalExecutions = [];
+          projectionState.selectedExecutionId = '';
           renderChatStream();
           renderTerminalDrawer();
           return;
@@ -1529,12 +1883,30 @@
           projectionState.review.autoHandledId = '';
           projectionState.review.pendingAutoAcceptId = '';
           projectionState.rawTerminalByStream = payload.rawTerminalByStream || { stdout: '', stderr: '' };
+          projectionState.terminalExecutions = Array.isArray(payload.terminalExecutions) ? payload.terminalExecutions.map((item) => ({ ...item })) : [];
+          projectionState.selectedExecutionId = projectionState.terminalExecutions[projectionState.terminalExecutions.length - 1]?.executionId || '';
+          sessionContextState.enabledSkillNames = Array.isArray(payload.sessionContext?.enabledSkillNames) ? [...payload.sessionContext.enabledSkillNames] : [];
+          sessionContextState.enabledMemoryIds = Array.isArray(payload.sessionContext?.enabledMemoryIds) ? [...payload.sessionContext.enabledMemoryIds] : [];
           appState.session.canResumeCurrent = !!payload.canResume;
           if (payload.resumeRuntimeMeta) updateRuntimeMeta(payload.resumeRuntimeMeta);
           requestFSList(appState.workspace.cwd || '.');
           appendSystemMessage(`已加载历史会话${summary.title ? ` · ${summary.title}` : ''}`);
           break;
         }
+        case 'skill_catalog_result':
+          catalogState.skills = Array.isArray(payload.items) ? payload.items.map((item) => ({ ...item })) : [];
+          break;
+        case 'memory_list_result':
+          catalogState.memory = Array.isArray(payload.items) ? payload.items.map((item) => ({ ...item })) : [];
+          break;
+        case 'session_context_result':
+          sessionContextState.enabledSkillNames = Array.isArray(payload.sessionContext?.enabledSkillNames) ? [...payload.sessionContext.enabledSkillNames] : [];
+          sessionContextState.enabledMemoryIds = Array.isArray(payload.sessionContext?.enabledMemoryIds) ? [...payload.sessionContext.enabledMemoryIds] : [];
+          break;
+        case 'skill_sync_result':
+          catalogState.syncStatus = payload.msg || 'skill 同步完成';
+          appendSystemMessage(catalogState.syncStatus);
+          break;
         case 'session_state':
           if (!activeSessionEvent) break;
           appendSystemMessage(payload.msg || payload.state || 'session update', payload.timestamp);
@@ -1575,12 +1947,18 @@
           const now = Date.now();
           const msg = payload.msg || '';
           const stream = payload.stream || 'stdout';
-          if (msg === dedupState.lastLogMsg && stream === dedupState.lastLogStream && (now - dedupState.lastLogTime) < 200) break;
+          const phase = payload.phase || stream;
+          const executionId = payload.executionId || '';
+          if (msg === dedupState.lastLogMsg && stream === dedupState.lastLogStream && phase === dedupState.lastLogPhase && executionId === dedupState.lastLogExecutionId && (now - dedupState.lastLogTime) < 200) break;
           dedupState.lastLogMsg = msg;
           dedupState.lastLogStream = stream;
+          dedupState.lastLogPhase = phase;
+          dedupState.lastLogExecutionId = executionId;
           dedupState.lastLogTime = now;
+          applyExecutionLogEvent(payload);
+          if (phase === 'started' || phase === 'finished') break;
           if (stream !== 'stderr' && looksLikeMarkdown(msg) && !msg.startsWith('\r')) appendMarkdownMessage(msg, payload.timestamp, stream);
-          else appendTerminalMessage(msg.replace(/^\r+/, ''), payload.timestamp, stream);
+          else appendTerminalMessage(msg.replace(/^\r+/, ''), payload.timestamp, stream, { executionId, phase, exitCode: payload.exitCode ?? null });
           break;
         }
         case 'error': {
@@ -1681,6 +2059,8 @@
       renderDiffBadge();
       renderFileList();
       renderSessionList();
+      renderSkillPanel();
+      renderMemoryPanel();
       renderChatStream();
       renderSingleFileView();
       renderTerminalDrawer();
@@ -1703,6 +2083,24 @@
       const next = typeof force === 'boolean' ? force : !appState.ui.sessionPanelOpen;
       appState.ui.sessionPanelOpen = next;
       setPanelOpen(sessionPanel, next);
+    }
+    function toggleSkillPanel(force) {
+      const next = typeof force === 'boolean' ? force : !appState.ui.skillPanelOpen;
+      appState.ui.skillPanelOpen = next;
+      setPanelOpen(skillPanel, next);
+      if (next) {
+        requestSkillCatalog();
+        requestSessionContext();
+      }
+    }
+    function toggleMemoryPanel(force) {
+      const next = typeof force === 'boolean' ? force : !appState.ui.memoryPanelOpen;
+      appState.ui.memoryPanelOpen = next;
+      setPanelOpen(memoryPanel, next);
+      if (next) {
+        requestMemoryList();
+        requestSessionContext();
+      }
     }
     function ensureTerminalMetrics() {
       const drawer = appState.ui.drawers.terminal;
@@ -1754,9 +2152,55 @@
     sidebarRefreshBtn.addEventListener('click', () => requestFSList(appState.workspace.cwd || '.'));
     sidebarUpBtn.addEventListener('click', () => requestFSList(parentPath(appState.workspace.cwd || '.')));
     sessionPanelBtn.addEventListener('click', () => toggleSessionPanel(true));
+    skillPanelBtn.addEventListener('click', () => toggleSkillPanel(true));
+    memoryPanelBtn.addEventListener('click', () => toggleMemoryPanel(true));
     closeSessionPanelBtn.addEventListener('click', () => toggleSessionPanel(false));
+    closeSkillPanelBtn.addEventListener('click', () => toggleSkillPanel(false));
+    closeMemoryPanelBtn.addEventListener('click', () => toggleMemoryPanel(false));
     sessionPanel.addEventListener('click', (event) => {
       if (event.target === sessionPanel) toggleSessionPanel(false);
+    });
+    skillPanel.addEventListener('click', (event) => {
+      if (event.target === skillPanel) toggleSkillPanel(false);
+    });
+    memoryPanel.addEventListener('click', (event) => {
+      if (event.target === memoryPanel) toggleMemoryPanel(false);
+    });
+    skillSyncBtn.addEventListener('click', () => syncSkills());
+    saveSkillBtn.addEventListener('click', () => {
+      const name = String(skillNameInput.value || '').trim();
+      if (!name) {
+        appendErrorMessage('skill name 不能为空。');
+        return;
+      }
+      saveSkill({
+        name,
+        description: String(skillDescriptionInput.value || '').trim(),
+        targetType: String(skillTargetTypeInput.value || '').trim(),
+        resultView: String(skillResultViewInput.value || '').trim(),
+        prompt: String(skillPromptInput.value || '').trim()
+      });
+      skillNameInput.value = '';
+      skillDescriptionInput.value = '';
+      skillTargetTypeInput.value = '';
+      skillResultViewInput.value = '';
+      skillPromptInput.value = '';
+    });
+    saveMemoryBtn.addEventListener('click', () => {
+      const title = String(memoryTitleInput.value || '').trim();
+      const content = String(memoryContentInput.value || '').trim();
+      if (!title || !content) {
+        appendErrorMessage('memory title 和 content 不能为空。');
+        return;
+      }
+      saveMemory({
+        id: String(memoryIdInput.value || '').trim(),
+        title,
+        content
+      });
+      memoryIdInput.value = '';
+      memoryTitleInput.value = '';
+      memoryContentInput.value = '';
     });
     terminalBtn.addEventListener('click', () => setTerminalDrawerOpen(true));
     closeTerminalDrawerBtn.addEventListener('click', () => setTerminalDrawerOpen(false));

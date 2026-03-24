@@ -6,20 +6,28 @@ import (
 
 	"mobilevc/internal/runner"
 	"mobilevc/internal/runtime"
+	"mobilevc/internal/store"
 )
 
 type Launcher struct {
-	registry map[string]Definition
+	registry *Registry
+	store    store.Store
 }
 
-func NewLauncher() *Launcher {
-	return &Launcher{registry: Builtins()}
+func NewLauncher(skillStore store.Store) *Launcher {
+	return &Launcher{registry: NewRegistry(skillStore), store: skillStore}
 }
 
-func (l *Launcher) BuildRequest(name, engine, cwd, targetType, targetPath, targetTitle, targetDiff, contextID, contextTitle, targetText, targetStack string) (runtime.ExecuteRequest, error) {
-	def, ok := l.registry[strings.TrimSpace(name)]
+func (l *Launcher) BuildRequest(name, engine, cwd, targetType, targetPath, targetTitle, targetDiff, contextID, contextTitle, targetText, targetStack string, sessionContext store.SessionContext) (runtime.ExecuteRequest, error) {
+	def, ok, err := l.registry.GetSkill(strings.TrimSpace(name))
+	if err != nil {
+		return runtime.ExecuteRequest{}, err
+	}
 	if !ok {
 		return runtime.ExecuteRequest{}, fmt.Errorf("unknown skill: %s", name)
+	}
+	if !isSkillEnabled(sessionContext, def.Name) {
+		return runtime.ExecuteRequest{}, fmt.Errorf("当前 skill 未在本会话启用，请先到 Skill 管理界面勾选")
 	}
 
 	resolvedTargetType := strings.TrimSpace(targetType)
@@ -37,6 +45,14 @@ func (l *Launcher) BuildRequest(name, engine, cwd, targetType, targetPath, targe
 	prompt, err := l.buildPrompt(def, resolvedTargetType, targetPath, resolvedContextTitle, targetDiff, targetText, targetStack)
 	if err != nil {
 		return runtime.ExecuteRequest{}, err
+	}
+	memoryItems, err := l.loadEnabledMemory(sessionContext)
+	if err != nil {
+		return runtime.ExecuteRequest{}, err
+	}
+	memoryPrefix := BuildMemoryPrefix(sessionContext, memoryItems)
+	if memoryPrefix != "" {
+		prompt = memoryPrefix + "\n\n" + prompt
 	}
 
 	aiCmd := "claude"
@@ -139,6 +155,54 @@ func buildErrorPrompt(def Definition, targetPath, contextTitle, targetText, targ
 	return prompt, nil
 }
 
+func BuildMemoryPrefix(sessionContext store.SessionContext, items []store.MemoryItem) string {
+	if len(sessionContext.EnabledMemoryIDs) == 0 || len(items) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(items)+2)
+	parts = append(parts, "[MobileVC Memory]")
+	parts = append(parts, "以下内容来自当前会话启用的 MobileVC 内部显式记忆，请在回答与执行 skill 时一并参考：")
+	for _, item := range items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = item.ID
+		}
+		parts = append(parts, "- "+title+"\n"+strings.TrimSpace(item.Content))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func (l *Launcher) loadEnabledMemory(sessionContext store.SessionContext) ([]store.MemoryItem, error) {
+	if l == nil || l.store == nil || len(sessionContext.EnabledMemoryIDs) == 0 {
+		return nil, nil
+	}
+	items, err := l.store.ListMemoryCatalog(contextBackground())
+	if err != nil {
+		return nil, err
+	}
+	enabled := make(map[string]struct{}, len(sessionContext.EnabledMemoryIDs))
+	for _, id := range sessionContext.EnabledMemoryIDs {
+		enabled[strings.TrimSpace(id)] = struct{}{}
+	}
+	result := make([]store.MemoryItem, 0, len(enabled))
+	for _, item := range items {
+		if _, ok := enabled[item.ID]; ok {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func isSkillEnabled(sessionContext store.SessionContext, skillName string) bool {
+	needle := strings.TrimSpace(skillName)
+	for _, item := range sessionContext.EnabledSkillNames {
+		if strings.TrimSpace(item) == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func quotePrompt(prompt string) string {
 	escaped := strings.ReplaceAll(prompt, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
@@ -150,13 +214,11 @@ func quotePrompt(prompt string) string {
 // The command is in the form: `claude "escaped prompt"` — we extract and unescape the quoted part.
 func (l *Launcher) ExtractPrompt(command string) string {
 	trimmed := strings.TrimSpace(command)
-	// Find the first quoted segment
 	idx := strings.IndexByte(trimmed, '"')
 	if idx < 0 {
 		return ""
 	}
 	rest := trimmed[idx+1:]
-	// Find closing quote (handle escaped quotes)
 	var result strings.Builder
 	i := 0
 	for i < len(rest) {

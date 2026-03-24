@@ -83,6 +83,114 @@ func TestExecRunnerEmitsErrorEvent(t *testing.T) {
 	}
 }
 
+func TestExecRunnerEmitsExecutionLifecycle(t *testing.T) {
+	runner := NewExecRunner()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var events []any
+	err := runner.Run(ctx, ExecRequest{
+		SessionID: "s1",
+		Command:   shellTestCommand("printf 'hello\n'", "Write-Output 'hello'", "echo hello"),
+	}, func(event any) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+
+	var started, stdout, finished *protocol.LogEvent
+	for _, event := range events {
+		logEvent, ok := event.(protocol.LogEvent)
+		if !ok {
+			continue
+		}
+		switch logEvent.Phase {
+		case "started":
+			copy := logEvent
+			started = &copy
+		case "stdout":
+			if strings.Contains(logEvent.Message, "hello") {
+				copy := logEvent
+				stdout = &copy
+			}
+		case "finished":
+			copy := logEvent
+			finished = &copy
+		}
+	}
+
+	if started == nil {
+		t.Fatalf("expected started log event, got %#v", events)
+	}
+	if strings.TrimSpace(started.ExecutionID) == "" {
+		t.Fatalf("expected execution id on started event, got %#v", started)
+	}
+	if stdout == nil {
+		t.Fatalf("expected stdout log event, got %#v", events)
+	}
+	if stdout.ExecutionID != started.ExecutionID {
+		t.Fatalf("expected stdout execution id %q, got %#v", started.ExecutionID, stdout)
+	}
+	if finished == nil {
+		t.Fatalf("expected finished log event, got %#v", events)
+	}
+	if finished.ExecutionID != started.ExecutionID {
+		t.Fatalf("expected finished execution id %q, got %#v", started.ExecutionID, finished)
+	}
+	if finished.ExitCode == nil || *finished.ExitCode != 0 {
+		t.Fatalf("expected exitCode=0, got %#v", finished)
+	}
+}
+
+func TestExecRunnerEmitsExecutionLifecycleOnFailure(t *testing.T) {
+	runner := NewExecRunner()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var events []any
+	err := runner.Run(ctx, ExecRequest{
+		SessionID: "s1",
+		Command:   shellTestCommand("printf 'boom\n' >&2; exit 7", "[Console]::Error.WriteLine('boom'); exit 7", "echo boom 1>&2 && exit /b 7"),
+	}, func(event any) {
+		events = append(events, event)
+	})
+	if err == nil {
+		t.Fatal("expected command failure")
+	}
+
+	var started, stderr, finished *protocol.LogEvent
+	for _, event := range events {
+		logEvent, ok := event.(protocol.LogEvent)
+		if !ok {
+			continue
+		}
+		switch logEvent.Phase {
+		case "started":
+			copy := logEvent
+			started = &copy
+		case "stderr":
+			if strings.Contains(logEvent.Message, "boom") {
+				copy := logEvent
+				stderr = &copy
+			}
+		case "finished":
+			copy := logEvent
+			finished = &copy
+		}
+	}
+
+	if started == nil || stderr == nil || finished == nil {
+		t.Fatalf("expected started/stderr/finished events, got %#v", events)
+	}
+	if stderr.ExecutionID != started.ExecutionID || finished.ExecutionID != started.ExecutionID {
+		t.Fatalf("expected same execution id across lifecycle, got started=%#v stderr=%#v finished=%#v", started, stderr, finished)
+	}
+	if finished.ExitCode == nil || *finished.ExitCode != 7 {
+		t.Fatalf("expected exitCode=7, got %#v", finished)
+	}
+}
+
 func TestExecRunnerWriteNotSupported(t *testing.T) {
 	runner := NewExecRunner()
 	if err := runner.Write(context.Background(), []byte("y\\n")); !errors.Is(err, ErrInputNotSupported) {

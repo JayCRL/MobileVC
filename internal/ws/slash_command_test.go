@@ -8,6 +8,7 @@ import (
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
 	runtimepkg "mobilevc/internal/runtime"
+	"mobilevc/internal/store"
 )
 
 type stubSkillLauncher struct {
@@ -17,7 +18,7 @@ type stubSkillLauncher struct {
 	calls       int
 }
 
-func (s *stubSkillLauncher) BuildRequest(name, engine, cwd, targetType, targetPath, targetTitle, targetDiff, contextID, contextTitle, targetText, targetStack string) (runtimepkg.ExecuteRequest, error) {
+func (s *stubSkillLauncher) BuildRequest(name, engine, cwd, targetType, targetPath, targetTitle, targetDiff, contextID, contextTitle, targetText, targetStack string, sessionContext store.SessionContext) (runtimepkg.ExecuteRequest, error) {
 	s.calls++
 	if s.buildErr != nil {
 		return runtimepkg.ExecuteRequest{}, s.buildErr
@@ -218,7 +219,7 @@ func TestExecuteSkillRequestUsesSendInputWhenRunnerActive(t *testing.T) {
 		t.Fatalf("start runtime service runner: %v", err)
 	}
 	launcher := &stubSkillLauncher{buildReq: runtimepkg.ExecuteRequest{Command: "claude \"review prompt\"", Mode: runner.ModeExec}, extractText: "review prompt"}
-	if err := executeSkillRequest(context.Background(), "s1", protocol.SkillRequestEvent{Name: "review", CWD: ".", TargetType: "diff", TargetDiff: "diff --git a b"}, runtimeSvc, launcher, func(any) {}); err != nil {
+	if err := executeSkillRequest(context.Background(), "s1", protocol.SkillRequestEvent{Name: "review", CWD: ".", TargetType: "diff", TargetDiff: "diff --git a b"}, store.SessionContext{}, runtimeSvc, launcher, func(any) {}); err != nil {
 		t.Fatalf("execute skill request: %v", err)
 	}
 	select {
@@ -239,7 +240,7 @@ func TestExecuteSkillRequestWithoutRunnerExecutesNormally(t *testing.T) {
 	})
 	launcher := &stubSkillLauncher{buildReq: runtimepkg.ExecuteRequest{Command: "claude \"review prompt\"", Mode: runner.ModeExec}}
 	var events []any
-	if err := executeSkillRequest(context.Background(), "s1", protocol.SkillRequestEvent{Name: "review", CWD: ".", TargetType: "diff", TargetDiff: "diff --git a b"}, runtimeSvc, launcher, collectEmit(&events)); err != nil {
+	if err := executeSkillRequest(context.Background(), "s1", protocol.SkillRequestEvent{Name: "review", CWD: ".", TargetType: "diff", TargetDiff: "diff --git a b"}, store.SessionContext{}, runtimeSvc, launcher, collectEmit(&events)); err != nil {
 		t.Fatalf("execute skill request: %v", err)
 	}
 	if !runtimeSvc.IsRunning() {
@@ -249,7 +250,7 @@ func TestExecuteSkillRequestWithoutRunnerExecutesNormally(t *testing.T) {
 
 func TestHandleSlashCommandSkillLauncherNil(t *testing.T) {
 	runtimeSvc := runtimepkg.NewService("s1", runtimepkg.Dependencies{})
-	err := handleSlashCommand(context.Background(), "s1", protocol.SlashCommandRequestEvent{Command: "/review", TargetType: "diff"}, runtimeSvc, nil, func(any) {})
+	err := handleSlashCommand(context.Background(), "s1", protocol.SlashCommandRequestEvent{Command: "/review", TargetType: "diff"}, store.SessionContext{}, runtimeSvc, nil, func(any) {})
 	if err == nil || err.Error() != "skill launcher is unavailable" {
 		t.Fatalf("expected launcher unavailable error, got %v", err)
 	}
@@ -261,7 +262,7 @@ func TestHandleSlashCommandRuntimeInfoAndLocalOnly(t *testing.T) {
 
 	t.Run("help", func(t *testing.T) {
 		var events []any
-		err := handleSlashCommand(context.Background(), "s1", protocol.SlashCommandRequestEvent{Command: "/help", CWD: "."}, runtimeSvc, launcher, collectEmit(&events))
+		err := handleSlashCommand(context.Background(), "s1", protocol.SlashCommandRequestEvent{Command: "/help", CWD: "."}, store.SessionContext{}, runtimeSvc, launcher, collectEmit(&events))
 		if err != nil {
 			t.Fatalf("handle slash command: %v", err)
 		}
@@ -270,9 +271,24 @@ func TestHandleSlashCommandRuntimeInfoAndLocalOnly(t *testing.T) {
 		}
 	})
 
+	t.Run("memory", func(t *testing.T) {
+		var events []any
+		err := handleSlashCommand(context.Background(), "s1", protocol.SlashCommandRequestEvent{Command: "/memory", CWD: "."}, store.SessionContext{}, runtimeSvc, launcher, collectEmit(&events))
+		if err != nil {
+			t.Fatalf("handle slash command: %v", err)
+		}
+		result, ok := events[0].(protocol.RuntimeInfoResultEvent)
+		if !ok {
+			t.Fatalf("expected runtime info result, got %#v", events)
+		}
+		if result.Title != "Memory 面板" || !strings.Contains(result.Message, "MobileVC 内部记忆层") {
+			t.Fatalf("unexpected memory runtime info result: %#v", result)
+		}
+	})
+
 	t.Run("clear", func(t *testing.T) {
 		var events []any
-		err := handleSlashCommand(context.Background(), "s1", protocol.SlashCommandRequestEvent{Command: "/clear"}, runtimeSvc, launcher, collectEmit(&events))
+		err := handleSlashCommand(context.Background(), "s1", protocol.SlashCommandRequestEvent{Command: "/clear"}, store.SessionContext{}, runtimeSvc, launcher, collectEmit(&events))
 		if err != nil {
 			t.Fatalf("handle slash command: %v", err)
 		}

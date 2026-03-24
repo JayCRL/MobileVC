@@ -274,6 +274,216 @@ func containsText(items []string, want string) bool {
 	return false
 }
 
+func createHistorySessionForHandlerTest(t *testing.T, h *Handler, conn *websocket.Conn, title string) string {
+	t.Helper()
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: title}); err != nil {
+		t.Fatalf("write session create request: %v", err)
+	}
+	created := readUntilSessionCreated(t, conn)
+	summary, ok := created["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", created)
+	}
+	sessionID, _ := summary["id"].(string)
+	if sessionID == "" {
+		t.Fatalf("expected created session id, got %#v", created)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	return sessionID
+}
+
+func TestHandlerSkillCatalogLifecycle(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.SkillLauncher = nil
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "skill-session")
+
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "skill_catalog_get"}); err != nil {
+		t.Fatalf("write skill_catalog_get request: %v", err)
+	}
+	getEvent := readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	items, ok := getEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected skill catalog items, got %#v", getEvent)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected empty persisted skill catalog initially, got %#v", items)
+	}
+
+	if err := conn.WriteJSON(protocol.SkillCatalogRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "skill_catalog_upsert"},
+		Skill: protocol.SkillDefinition{
+			Name:        "local-review-extra",
+			Description: "local skill",
+			Prompt:      "please review",
+			ResultView:  "review-card",
+			TargetType:  "diff",
+		},
+	}); err != nil {
+		t.Fatalf("write skill_catalog_upsert request: %v", err)
+	}
+	upsertEvent := readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	upsertItems, ok := upsertEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected skill catalog items, got %#v", upsertEvent)
+	}
+	foundLocal := false
+	for _, raw := range upsertItems {
+		item, _ := raw.(map[string]any)
+		if item["name"] == "local-review-extra" {
+			foundLocal = true
+			if item["source"] != string(store.SkillSourceLocal) {
+				t.Fatalf("expected local source, got %#v", item)
+			}
+		}
+	}
+	if !foundLocal {
+		t.Fatalf("expected local skill in catalog, got %#v", upsertItems)
+	}
+
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "skill_sync_pull"}); err != nil {
+		t.Fatalf("write skill_sync_pull request: %v", err)
+	}
+	syncEvent := readUntilType(t, conn, protocol.EventTypeSkillSyncResult)
+	if syncEvent["msg"] != "skill 同步完成" {
+		t.Fatalf("unexpected skill sync event: %#v", syncEvent)
+	}
+	syncedCatalog := readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	syncedItems, ok := syncedCatalog["items"].([]any)
+	if !ok {
+		t.Fatalf("expected synced skill catalog items, got %#v", syncedCatalog)
+	}
+	foundExternal := false
+	for _, raw := range syncedItems {
+		item, _ := raw.(map[string]any)
+		if item["name"] == "external-diff-summary" {
+			foundExternal = true
+			if item["source"] != string(store.SkillSourceExternal) {
+				t.Fatalf("expected external source, got %#v", item)
+			}
+		}
+	}
+	if !foundExternal {
+		t.Fatalf("expected external synced skill, got %#v", syncedItems)
+	}
+}
+
+func TestHandlerMemoryListAndUpsert(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "memory-session")
+
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "memory_list"}); err != nil {
+		t.Fatalf("write memory_list request: %v", err)
+	}
+	listEvent := readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	items, ok := listEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected memory items array, got %#v", listEvent)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected empty memory catalog, got %#v", items)
+	}
+
+	if err := conn.WriteJSON(protocol.MemoryRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "memory_upsert"},
+		Item: protocol.MemoryItem{ID: "m-test", Title: "Test Memory", Content: "remember this"},
+	}); err != nil {
+		t.Fatalf("write memory_upsert request: %v", err)
+	}
+	upsertEvent := readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	upsertItems, ok := upsertEvent["items"].([]any)
+	if !ok || len(upsertItems) != 1 {
+		t.Fatalf("expected one memory item, got %#v", upsertEvent)
+	}
+	first, _ := upsertItems[0].(map[string]any)
+	if first["id"] != "m-test" || first["title"] != "Test Memory" {
+		t.Fatalf("unexpected memory item: %#v", first)
+	}
+}
+
+func TestHandlerSessionContextGetUpdateAndRestore(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "context-session")
+
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "session_context_get"}); err != nil {
+		t.Fatalf("write session_context_get request: %v", err)
+	}
+	initialEvent := readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+	initialContext, ok := initialEvent["sessionContext"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sessionContext payload, got %#v", initialEvent)
+	}
+	if len(initialContext) != 0 {
+		t.Fatalf("expected empty initial sessionContext, got %#v", initialContext)
+	}
+
+	if err := conn.WriteJSON(protocol.SessionContextUpdateRequestEvent{
+		ClientEvent:       protocol.ClientEvent{Action: "session_context_update"},
+		EnabledSkillNames: []string{"review", "analyze"},
+		EnabledMemoryIDs:  []string{"m-test", "m-2"},
+	}); err != nil {
+		t.Fatalf("write session_context_update request: %v", err)
+	}
+	updatedEvent := readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+	updatedContext, ok := updatedEvent["sessionContext"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected updated sessionContext payload, got %#v", updatedEvent)
+	}
+	skillNames, ok := updatedContext["enabledSkillNames"].([]any)
+	if !ok || len(skillNames) != 2 {
+		t.Fatalf("expected enabledSkillNames, got %#v", updatedContext)
+	}
+	memoryIDs, ok := updatedContext["enabledMemoryIds"].([]any)
+	if !ok || len(memoryIDs) != 2 {
+		t.Fatalf("expected enabledMemoryIds, got %#v", updatedContext)
+	}
+
+	record, err := h.SessionStore.GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get updated session: %v", err)
+	}
+	if len(record.Projection.SessionContext.EnabledSkillNames) != 2 || len(record.Projection.SessionContext.EnabledMemoryIDs) != 2 {
+		t.Fatalf("unexpected persisted session context: %#v", record.Projection.SessionContext)
+	}
+
+	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_load"}, SessionID: sessionID}); err != nil {
+		t.Fatalf("write session_load request: %v", err)
+	}
+	history := readUntilSessionHistory(t, conn)
+	historyContext, ok := history["sessionContext"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sessionContext in session history, got %#v", history)
+	}
+	historySkills, ok := historyContext["enabledSkillNames"].([]any)
+	if !ok || len(historySkills) != 2 {
+		t.Fatalf("expected restored enabledSkillNames, got %#v", historyContext)
+	}
+	historyMemory, ok := historyContext["enabledMemoryIds"].([]any)
+	if !ok || len(historyMemory) != 2 {
+		t.Fatalf("expected restored enabledMemoryIds, got %#v", historyContext)
+	}
+}
+
 func TestHandlerExecFlow(t *testing.T) {
 	execRunner := newStubRunner(
 		protocol.NewLogEvent("ignored", "hello from runner", "stdout"),
@@ -303,6 +513,68 @@ func TestHandlerExecFlow(t *testing.T) {
 		t.Fatalf("expected closed session event, got %#v", event)
 	}
 	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "IDLE", false)
+}
+
+func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
+	executionID := "exec-test-1"
+	snapshot := store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
+
+	var changed bool
+	snapshot, changed = applyEventToProjection(snapshot, protocol.ApplyRuntimeMeta(protocol.NewExecutionLogEvent("session-1", executionID, "echo hello", "", "started", nil), protocol.RuntimeMeta{Command: "echo hello", CWD: "/tmp"}))
+	if !changed {
+		t.Fatal("expected started event to change projection")
+	}
+	snapshot, changed = applyEventToProjection(snapshot, protocol.ApplyRuntimeMeta(protocol.NewExecutionLogEvent("session-1", executionID, "hello from runner", "stdout", "stdout", nil), protocol.RuntimeMeta{Command: "echo hello", CWD: "/tmp"}))
+	if !changed {
+		t.Fatal("expected stdout event to change projection")
+	}
+	snapshot, changed = applyEventToProjection(snapshot, protocol.ApplyRuntimeMeta(protocol.NewExecutionLogEvent("session-1", executionID, "", "", "finished", intPtr(0)), protocol.RuntimeMeta{Command: "echo hello", CWD: "/tmp"}))
+	if !changed {
+		t.Fatal("expected finished event to change projection")
+	}
+
+	if len(snapshot.TerminalExecutions) != 1 {
+		t.Fatalf("expected one terminal execution in snapshot, got %#v", snapshot.TerminalExecutions)
+	}
+	item := snapshot.TerminalExecutions[0]
+	if item.ExecutionID != executionID {
+		t.Fatalf("expected execution id %q, got %#v", executionID, item)
+	}
+	if item.Command != "echo hello" {
+		t.Fatalf("expected command echo hello, got %#v", item)
+	}
+	if item.CWD != "/tmp" {
+		t.Fatalf("expected cwd /tmp, got %#v", item)
+	}
+	if item.Stdout != "hello from runner" {
+		t.Fatalf("expected stdout aggregation, got %#v", item)
+	}
+	if item.ExitCode == nil || *item.ExitCode != 0 {
+		t.Fatalf("expected exitCode 0, got %#v", item)
+	}
+
+	record := store.SessionRecord{
+		Summary: store.SessionSummary{ID: "session-1", Title: "exec-history"},
+		Projection: snapshot,
+	}
+	history := newSessionHistoryEventFromRecord(record)
+	if len(history.TerminalExecutions) != 1 {
+		t.Fatalf("expected one terminal execution in history, got %#v", history.TerminalExecutions)
+	}
+	historyItem := history.TerminalExecutions[0]
+	if historyItem.ExecutionID != executionID {
+		t.Fatalf("expected history execution id %q, got %#v", executionID, historyItem)
+	}
+	if historyItem.Command != "echo hello" || historyItem.CWD != "/tmp" || historyItem.Stdout != "hello from runner" {
+		t.Fatalf("unexpected history execution payload: %#v", historyItem)
+	}
+	if historyItem.ExitCode == nil || *historyItem.ExitCode != 0 {
+		t.Fatalf("expected history exitCode 0, got %#v", historyItem)
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func TestHandlerPtyInputFlow(t *testing.T) {

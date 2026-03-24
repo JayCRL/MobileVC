@@ -1,0 +1,335 @@
+import 'runtime_meta.dart';
+
+DateTime? _parseDate(String? value) {
+  if (value == null || value.isEmpty) {
+    return null;
+  }
+  return DateTime.tryParse(value)?.toLocal();
+}
+
+class SessionSummary {
+  const SessionSummary({
+    required this.id,
+    required this.title,
+    this.createdAt,
+    this.updatedAt,
+    this.lastPreview = '',
+    this.entryCount = 0,
+    this.runtime = const RuntimeMeta(),
+  });
+
+  final String id;
+  final String title;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final String lastPreview;
+  final int entryCount;
+  final RuntimeMeta runtime;
+
+  factory SessionSummary.fromJson(Map<String, dynamic> json) {
+    return SessionSummary(
+      id: (json['id'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      createdAt: _parseDate(json['createdAt']?.toString()),
+      updatedAt: _parseDate(json['updatedAt']?.toString()),
+      lastPreview: (json['lastPreview'] ?? '').toString(),
+      entryCount: (json['entryCount'] as num?)?.toInt() ?? 0,
+      runtime: json['runtime'] is Map<String, dynamic>
+          ? RuntimeMeta.fromJson(json['runtime'] as Map<String, dynamic>)
+          : const RuntimeMeta(),
+    );
+  }
+}
+
+class HistoryContext {
+  const HistoryContext({
+    this.id = '',
+    this.type = '',
+    this.message = '',
+    this.status = '',
+    this.target = '',
+    this.targetPath = '',
+    this.tool = '',
+    this.command = '',
+    this.timestamp = '',
+    this.title = '',
+    this.stack = '',
+    this.code = '',
+    this.relatedStep = '',
+    this.path = '',
+    this.diff = '',
+    this.lang = '',
+    this.pendingReview = false,
+    this.source = '',
+    this.skillName = '',
+  });
+
+  final String id;
+  final String type;
+  final String message;
+  final String status;
+  final String target;
+  final String targetPath;
+  final String tool;
+  final String command;
+  final String timestamp;
+  final String title;
+  final String stack;
+  final String code;
+  final String relatedStep;
+  final String path;
+  final String diff;
+  final String lang;
+  final bool pendingReview;
+  final String source;
+  final String skillName;
+
+  factory HistoryContext.fromJson(Map<String, dynamic> json) {
+    bool pending = false;
+    final rawPending = json['pendingReview'];
+    if (rawPending is bool) {
+      pending = rawPending;
+    }
+    String read(String key) => (json[key] ?? '').toString();
+    return HistoryContext(
+      id: read('id'),
+      type: read('type'),
+      message: read('message'),
+      status: read('status'),
+      target: read('target'),
+      targetPath: read('targetPath'),
+      tool: read('tool'),
+      command: read('command'),
+      timestamp: read('timestamp'),
+      title: read('title'),
+      stack: read('stack'),
+      code: read('code'),
+      relatedStep: read('relatedStep'),
+      path: read('path'),
+      diff: read('diff'),
+      lang: read('lang'),
+      pendingReview: pending,
+      source: read('source'),
+      skillName: read('skillName'),
+    );
+  }
+}
+
+class HistoryLogEntry {
+  const HistoryLogEntry({
+    required this.kind,
+    this.message = '',
+    this.label = '',
+    this.timestamp = '',
+    this.stream = '',
+    this.text = '',
+    this.context,
+  });
+
+  final String kind;
+  final String message;
+  final String label;
+  final String timestamp;
+  final String stream;
+  final String text;
+  final HistoryContext? context;
+
+  factory HistoryLogEntry.fromJson(Map<String, dynamic> json) {
+    return HistoryLogEntry(
+      kind: (json['kind'] ?? '').toString(),
+      message: (json['message'] ?? '').toString(),
+      label: (json['label'] ?? '').toString(),
+      timestamp: (json['timestamp'] ?? '').toString(),
+      stream: (json['stream'] ?? '').toString(),
+      text: (json['text'] ?? '').toString(),
+      context: json['context'] is Map<String, dynamic>
+          ? HistoryContext.fromJson(json['context'] as Map<String, dynamic>)
+          : null,
+    );
+  }
+}
+
+class SkillDefinition {
+  const SkillDefinition({
+    this.name = '',
+    this.description = '',
+    this.prompt = '',
+    this.resultView = '',
+    this.targetType = '',
+    this.source = '',
+    this.editable = false,
+    this.updatedAt,
+  });
+
+  final String name;
+  final String description;
+  final String prompt;
+  final String resultView;
+  final String targetType;
+  final String source;
+  final bool editable;
+  final DateTime? updatedAt;
+
+  factory SkillDefinition.fromJson(Map<String, dynamic> json) {
+    return SkillDefinition(
+      name: (json['name'] ?? '').toString(),
+      description: (json['description'] ?? '').toString(),
+      prompt: (json['prompt'] ?? '').toString(),
+      resultView: (json['resultView'] ?? '').toString(),
+      targetType: (json['targetType'] ?? '').toString(),
+      source: (json['source'] ?? '').toString(),
+      editable: json['editable'] == true,
+      updatedAt: _parseDate(json['updatedAt']?.toString()),
+    );
+  }
+}
+
+class MemoryItem {
+  const MemoryItem({
+    this.id = '',
+    this.title = '',
+    this.content = '',
+    this.updatedAt,
+  });
+
+  final String id;
+  final String title;
+  final String content;
+  final DateTime? updatedAt;
+
+  factory MemoryItem.fromJson(Map<String, dynamic> json) {
+    return MemoryItem(
+      id: (json['id'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      content: (json['content'] ?? '').toString(),
+      updatedAt: _parseDate(json['updatedAt']?.toString()),
+    );
+  }
+}
+
+class SessionContext {
+  const SessionContext({
+    this.enabledSkillNames = const [],
+    this.enabledMemoryIds = const [],
+  });
+
+  final List<String> enabledSkillNames;
+  final List<String> enabledMemoryIds;
+
+  factory SessionContext.fromJson(Map<String, dynamic> json) {
+    return SessionContext(
+      enabledSkillNames: ((json['enabledSkillNames'] as List?) ?? const [])
+          .map((item) => item.toString())
+          .toList(),
+      enabledMemoryIds: ((json['enabledMemoryIds'] as List?) ?? const [])
+          .map((item) => item.toString())
+          .toList(),
+    );
+  }
+}
+
+class RuntimeInfoItem {
+  const RuntimeInfoItem({
+    required this.label,
+    this.value = '',
+    this.status = '',
+    this.available = false,
+    this.detail = '',
+  });
+
+  final String label;
+  final String value;
+  final String status;
+  final bool available;
+  final String detail;
+
+  factory RuntimeInfoItem.fromJson(Map<String, dynamic> json) {
+    return RuntimeInfoItem(
+      label: (json['label'] ?? '').toString(),
+      value: (json['value'] ?? '').toString(),
+      status: (json['status'] ?? '').toString(),
+      available: json['available'] == true,
+      detail: (json['detail'] ?? '').toString(),
+    );
+  }
+}
+
+class FSItem {
+  const FSItem({
+    required this.name,
+    this.isDir = false,
+    this.size = 0,
+  });
+
+  final String name;
+  final bool isDir;
+  final int size;
+
+  factory FSItem.fromJson(Map<String, dynamic> json) {
+    return FSItem(
+      name: (json['name'] ?? '').toString(),
+      isDir: json['is_dir'] == true,
+      size: (json['size'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class FileReadResult {
+  const FileReadResult({
+    this.path = '',
+    this.content = '',
+    this.lang = '',
+    this.isText = true,
+    this.size = 0,
+    this.encoding = 'utf-8',
+  });
+
+  static const Set<String> _imageExtensions = {
+    'png',
+    'jpg',
+    'jpeg',
+    'webp',
+    'gif',
+    'bmp',
+    'heic',
+    'heif',
+  };
+
+  final String path;
+  final String content;
+  final String lang;
+  final bool isText;
+  final int size;
+  final String encoding;
+
+  String get title {
+    if (path.isEmpty) {
+      return '文件';
+    }
+    final normalized = path.replaceAll('\\', '/');
+    final index = normalized.lastIndexOf('/');
+    return index == -1 ? normalized : normalized.substring(index + 1);
+  }
+
+  String get extension {
+    final name = title;
+    final index = name.lastIndexOf('.');
+    if (index == -1 || index == name.length - 1) {
+      return '';
+    }
+    return name.substring(index + 1).toLowerCase();
+  }
+
+  bool get isImage => _imageExtensions.contains(extension);
+
+  factory FileReadResult.fromJson(Map<String, dynamic> json) {
+    return FileReadResult(
+      path: (json['path'] ?? '').toString(),
+      content: (json['content'] ?? '').toString(),
+      lang: (json['lang'] ?? '').toString(),
+      isText: json['isText'] != false,
+      size: (json['size'] as num?)?.toInt() ?? 0,
+      encoding: (json['encoding'] ?? 'utf-8').toString(),
+    );
+  }
+}
