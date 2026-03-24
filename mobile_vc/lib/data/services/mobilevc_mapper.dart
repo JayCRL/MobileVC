@@ -1,0 +1,56 @@
+import '../models/events.dart';
+import '../models/runtime_meta.dart';
+
+class MobileVcMapper {
+  const MobileVcMapper();
+
+  AppEvent mapEvent(Map<String, dynamic> json) {
+    final type = (json['type'] ?? '').toString();
+    switch (type) {
+      case 'log':
+        return LogEvent.fromJson(json);
+      case 'progress':
+        return ProgressEvent.fromJson(json);
+      case 'error':
+        return ErrorEvent.fromJson(json);
+      case 'prompt_request':
+        return PromptRequestEvent.fromJson(json);
+      case 'session_state':
+        return SessionStateEvent.fromJson(json);
+      case 'agent_state':
+        return AgentStateEvent.fromJson(json);
+      case 'fs_list_result':
+        return FSListResultEvent.fromJson(json);
+      case 'fs_read_result':
+        return FSReadResultEvent.fromJson(json);
+      case 'step_update':
+        return StepUpdateEvent.fromJson(json);
+      case 'file_diff':
+        return FileDiffEvent.fromJson(json);
+      case 'runtime_info_result':
+        return RuntimeInfoResultEvent.fromJson(json);
+      case 'session_created':
+        return SessionCreatedEvent.fromJson(json);
+      case 'session_list_result':
+        return SessionListResultEvent.fromJson(json);
+      case 'session_history':
+        return SessionHistoryEvent.fromJson(json);
+      case 'skill_catalog_result':
+        return SkillCatalogResultEvent.fromJson(json);
+      case 'memory_list_result':
+        return MemoryListResultEvent.fromJson(json);
+      case 'session_context_result':
+        return SessionContextResultEvent.fromJson(json);
+      case 'skill_sync_result':
+        return SkillSyncResultEvent.fromJson(json);
+      default:
+        return UnknownEvent(
+          type: type,
+          timestamp: DateTime.now(),
+          sessionId: (json['sessionId'] ?? '').toString(),
+          runtimeMeta: const RuntimeMeta(),
+          raw: json,
+        );
+    }
+  }
+}

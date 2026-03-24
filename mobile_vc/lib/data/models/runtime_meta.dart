@@ -1,0 +1,110 @@
+class RuntimeMeta {
+  const RuntimeMeta({
+    this.source = '',
+    this.skillName = '',
+    this.target = '',
+    this.targetType = '',
+    this.targetPath = '',
+    this.resultView = '',
+    this.resumeSessionId = '',
+    this.contextId = '',
+    this.contextTitle = '',
+    this.targetText = '',
+    this.command = '',
+    this.engine = '',
+    this.cwd = '',
+    this.permissionMode = '',
+    this.targetDiff = '',
+    this.targetTitle = '',
+    this.targetStack = '',
+  });
+
+  final String source;
+  final String skillName;
+  final String target;
+  final String targetType;
+  final String targetPath;
+  final String resultView;
+  final String resumeSessionId;
+  final String contextId;
+  final String contextTitle;
+  final String targetText;
+  final String command;
+  final String engine;
+  final String cwd;
+  final String permissionMode;
+  final String targetDiff;
+  final String targetTitle;
+  final String targetStack;
+
+  bool get hasContext =>
+      contextId.isNotEmpty ||
+      contextTitle.isNotEmpty ||
+      targetPath.isNotEmpty ||
+      targetDiff.isNotEmpty;
+
+  RuntimeMeta merge(RuntimeMeta other) {
+    return RuntimeMeta(
+      source: other.source.isNotEmpty ? other.source : source,
+      skillName: other.skillName.isNotEmpty ? other.skillName : skillName,
+      target: other.target.isNotEmpty ? other.target : target,
+      targetType: other.targetType.isNotEmpty ? other.targetType : targetType,
+      targetPath: other.targetPath.isNotEmpty ? other.targetPath : targetPath,
+      resultView: other.resultView.isNotEmpty ? other.resultView : resultView,
+      resumeSessionId: other.resumeSessionId.isNotEmpty ? other.resumeSessionId : resumeSessionId,
+      contextId: other.contextId.isNotEmpty ? other.contextId : contextId,
+      contextTitle: other.contextTitle.isNotEmpty ? other.contextTitle : contextTitle,
+      targetText: other.targetText.isNotEmpty ? other.targetText : targetText,
+      command: other.command.isNotEmpty ? other.command : command,
+      engine: other.engine.isNotEmpty ? other.engine : engine,
+      cwd: other.cwd.isNotEmpty ? other.cwd : cwd,
+      permissionMode: other.permissionMode.isNotEmpty ? other.permissionMode : permissionMode,
+      targetDiff: other.targetDiff.isNotEmpty ? other.targetDiff : targetDiff,
+      targetTitle: other.targetTitle.isNotEmpty ? other.targetTitle : targetTitle,
+      targetStack: other.targetStack.isNotEmpty ? other.targetStack : targetStack,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        if (source.isNotEmpty) 'source': source,
+        if (skillName.isNotEmpty) 'skillName': skillName,
+        if (target.isNotEmpty) 'target': target,
+        if (targetType.isNotEmpty) 'targetType': targetType,
+        if (targetPath.isNotEmpty) 'targetPath': targetPath,
+        if (resultView.isNotEmpty) 'resultView': resultView,
+        if (resumeSessionId.isNotEmpty) 'resumeSessionId': resumeSessionId,
+        if (contextId.isNotEmpty) 'contextId': contextId,
+        if (contextTitle.isNotEmpty) 'contextTitle': contextTitle,
+        if (targetText.isNotEmpty) 'targetText': targetText,
+        if (command.isNotEmpty) 'command': command,
+        if (engine.isNotEmpty) 'engine': engine,
+        if (cwd.isNotEmpty) 'cwd': cwd,
+        if (permissionMode.isNotEmpty) 'permissionMode': permissionMode,
+        if (targetDiff.isNotEmpty) 'targetDiff': targetDiff,
+        if (targetTitle.isNotEmpty) 'targetTitle': targetTitle,
+        if (targetStack.isNotEmpty) 'targetStack': targetStack,
+      };
+
+  factory RuntimeMeta.fromJson(Map<String, dynamic> json) {
+    String read(String key) => (json[key] ?? '').toString();
+    return RuntimeMeta(
+      source: read('source'),
+      skillName: read('skillName'),
+      target: read('target'),
+      targetType: read('targetType'),
+      targetPath: read('targetPath'),
+      resultView: read('resultView'),
+      resumeSessionId: read('resumeSessionId'),
+      contextId: read('contextId'),
+      contextTitle: read('contextTitle'),
+      targetText: read('targetText'),
+      command: read('command'),
+      engine: read('engine'),
+      cwd: read('cwd'),
+      permissionMode: read('permissionMode'),
+      targetDiff: read('targetDiff'),
+      targetTitle: read('targetTitle'),
+      targetStack: read('targetStack'),
+    );
+  }
+}

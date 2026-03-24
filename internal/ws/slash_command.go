@@ -9,6 +9,7 @@ import (
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
 	runtimepkg "mobilevc/internal/runtime"
+	"mobilevc/internal/store"
 )
 
 type slashCommandSpec struct {
@@ -36,7 +37,7 @@ var slashCommandCatalog = []slashCommandSpec{
 	{key: "/analyze", category: "skill", skillName: "analyze"},
 	{key: "/diff", category: "local", localOnly: true},
 	{key: "/init", category: "exec", execTemplate: "claude /init"},
-	{key: "/memory", category: "exec", execTemplate: "claude /memory"},
+	{key: "/memory", category: "runtime-info", runtimeQuery: "memory-panel"},
 	{key: "/add-dir", category: "exec", execTemplate: "claude /add-dir %s", requiresArgs: true},
 	{key: "/plan", category: "exec", execTemplate: "claude /plan"},
 	{key: "/execute", category: "exec", execTemplate: "claude /execute"},
@@ -87,7 +88,7 @@ func sortedSlashCatalog() []slashCommandSpec {
 	return items
 }
 
-func handleSlashCommand(ctx context.Context, sessionID string, req protocol.SlashCommandRequestEvent, runtimeSvc *runtimepkg.Service, launcher commandSkillLauncher, emit func(any)) error {
+func handleSlashCommand(ctx context.Context, sessionID string, req protocol.SlashCommandRequestEvent, sessionContext store.SessionContext, runtimeSvc *runtimepkg.Service, launcher commandSkillLauncher, emit func(any)) error {
 	parsed, err := parseSlashCommand(req.Command)
 	if err != nil {
 		return err
@@ -96,6 +97,10 @@ func handleSlashCommand(ctx context.Context, sessionID string, req protocol.Slas
 	case "local":
 		return handleLocalSlashCommand(sessionID, parsed, req, emit)
 	case "runtime-info":
+		if parsed.spec.runtimeQuery == "memory-panel" {
+			emit(protocol.NewRuntimeInfoResultEvent(sessionID, "memory-panel", "Memory 面板", "这是 MobileVC 内部记忆层，不是 Claude 隐式 /memory；请在前端 Memory 面板中管理。", false, []protocol.RuntimeInfoItem{{Label: "entry", Value: "Memory", Available: true, Status: "ui-panel", Detail: "在 Memory 面板中新增、编辑并勾选会话级记忆。"}}))
+			return nil
+		}
 		result, err := runtimepkg.BuildRuntimeInfoResult(sessionID, parsed.spec.runtimeQuery, fallback(req.CWD, "."), runtimeSvc)
 		if err != nil {
 			return err
@@ -110,7 +115,7 @@ func handleSlashCommand(ctx context.Context, sessionID string, req protocol.Slas
 		if err != nil {
 			return err
 		}
-		return executeSkillRequest(ctx, sessionID, skillReq, runtimeSvc, launcher, emit)
+		return executeSkillRequest(ctx, sessionID, skillReq, sessionContext, runtimeSvc, launcher, emit)
 	case "exec":
 		execReq, err := buildExecRequestFromSlash(parsed, req)
 		if err != nil {
@@ -212,12 +217,12 @@ func buildSkillRequestFromSlash(parsed *parsedSlashCommand, req protocol.SlashCo
 }
 
 type commandSkillLauncher interface {
-	BuildRequest(name, engine, cwd, targetType, targetPath, targetTitle, targetDiff, contextID, contextTitle, targetText, targetStack string) (runtimepkg.ExecuteRequest, error)
+	BuildRequest(name, engine, cwd, targetType, targetPath, targetTitle, targetDiff, contextID, contextTitle, targetText, targetStack string, sessionContext store.SessionContext) (runtimepkg.ExecuteRequest, error)
 	ExtractPrompt(command string) string
 }
 
-func executeSkillRequest(ctx context.Context, sessionID string, skillEvent protocol.SkillRequestEvent, runtimeSvc *runtimepkg.Service, launcher commandSkillLauncher, emit func(any)) error {
-	execReq, err := launcher.BuildRequest(skillEvent.Name, skillEvent.Engine, fallback(skillEvent.CWD, "."), skillEvent.TargetType, skillEvent.TargetPath, skillEvent.TargetTitle, skillEvent.TargetDiff, skillEvent.ContextID, skillEvent.ContextTitle, skillEvent.TargetText, skillEvent.TargetStack)
+func executeSkillRequest(ctx context.Context, sessionID string, skillEvent protocol.SkillRequestEvent, sessionContext store.SessionContext, runtimeSvc *runtimepkg.Service, launcher commandSkillLauncher, emit func(any)) error {
+	execReq, err := launcher.BuildRequest(skillEvent.Name, skillEvent.Engine, fallback(skillEvent.CWD, "."), skillEvent.TargetType, skillEvent.TargetPath, skillEvent.TargetTitle, skillEvent.TargetDiff, skillEvent.ContextID, skillEvent.ContextTitle, skillEvent.TargetText, skillEvent.TargetStack, sessionContext)
 	if err != nil {
 		return err
 	}

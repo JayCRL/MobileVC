@@ -1,4 +1,4 @@
-# MobileVC
+222# MobileVC
 
 MobileVC 是一个面向手机浏览器的**Claude Code 移动控制台**。
 
@@ -117,6 +117,242 @@ test
 ```text
 claude
 ```
+
+### TTS 语音合成接口
+
+MobileVC 现已支持最小 REST TTS 能力：`POST /api/tts/synthesize`。
+
+它的工作方式是：
+
+- Go 服务接收文本请求
+- Go 服务通过本地 HTTP 调用独立运行的 Python ChatTTS sidecar
+- Python sidecar 直接返回 `audio/wav` 音频 bytes
+- MobileVC 再把音频流直接返回给客户端
+
+#### Python sidecar 目录
+
+仓库内已内置最小 sidecar 子项目：`sidecar/chattts`
+
+包含文件：
+
+- `sidecar/chattts/app.py`
+- `sidecar/chattts/requirements.txt`
+- `sidecar/chattts/run.sh`
+
+#### Python 版本与安装
+
+建议使用 Python `3.10+`，并在 sidecar 目录内创建虚拟环境：
+
+```bash
+cd sidecar/chattts
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+当前 `requirements.txt` 已直接包含：
+
+- `Flask`
+- `numpy`
+- `ChatTTS`
+
+`torch`、`transformers`、`vocos` 等运行依赖会通过 `ChatTTS` 安装链自动解决。
+
+#### 模型下载与缓存目录
+
+这个项目**没有单独的 Go 侧模型下载接口**。
+
+这里所说的“下载模型”，实际含义是：Python sidecar 在初始化 `ChatTTS` 时，由 `ChatTTS` 自身去准备模型文件。默认情况下，仓库通过 `CHATTTS_MODEL_DIR` 把模型缓存放到仓库外目录，避免把大模型权重写进 git。
+
+默认缓存目录：
+
+```text
+~/.cache/mobilevc/chattts
+```
+
+你也可以显式指定：
+
+```bash
+CHATTTS_MODEL_DIR="$HOME/.cache/mobilevc/chattts" bash sidecar/chattts/run.sh
+```
+
+如果你希望在正式启动前预拉取模型，可以直接执行一次严格模式健康检查，或让 sidecar 以 `chattts` 模式启动；首次启动会触发模型准备。
+
+#### sidecar 运行模式
+
+通过 `SIDECAR_MODE` 控制 sidecar 行为：
+
+- `mock`：始终返回本地生成的可播放蜂鸣音 wav
+- `auto`：优先尝试真实 ChatTTS，失败时自动回退到 mock，默认值
+- `chattts`：强制使用真实 ChatTTS，初始化失败时 `/healthz` 返回 `503`，`/synthesize` 也返回 `503`
+
+#### sidecar 启动
+
+```bash
+PYTHON_BIN="$PWD/sidecar/chattts/.venv/bin/python" \
+CHATTTS_MODEL_DIR="$HOME/.cache/mobilevc/chattts" \
+bash sidecar/chattts/run.sh
+```
+
+支持的环境变量：
+
+- `SIDECAR_HOST`：默认 `127.0.0.1`
+- `SIDECAR_PORT`：默认 `9966`
+- `SIDECAR_MODE`：默认 `auto`
+- `CHATTTS_SAMPLE_RATE`：默认 `24000`
+- `CHATTTS_MODEL_DIR`：默认 `~/.cache/mobilevc/chattts`
+- `PYTHON_BIN`：默认 `python3`
+
+例如强制 mock 模式：
+
+```bash
+SIDECAR_MODE=mock bash sidecar/chattts/run.sh
+```
+
+例如强制真实 ChatTTS 模式：
+
+```bash
+SIDECAR_MODE=chattts bash sidecar/chattts/run.sh
+```
+
+#### Python sidecar 协议
+
+Go 侧默认按如下协议调用本机 sidecar：
+
+- `GET /healthz`
+- `POST /synthesize`
+
+`/synthesize` 请求体示例：
+
+```json
+{
+  "text": "你好，欢迎使用 MobileVC。",
+  "format": "wav"
+}
+```
+
+期望 sidecar 响应：
+
+- `Content-Type: audio/wav`
+- body 直接为 wav 音频 bytes
+
+#### sidecar 单独验证
+
+```bash
+curl http://127.0.0.1:9966/healthz
+curl -X POST http://127.0.0.1:9966/synthesize \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"你好，欢迎使用 MobileVC。","format":"wav"}' \
+  --output /tmp/reply.wav
+```
+
+成功时：
+
+- `/healthz` 返回 `200`
+- `/synthesize` 返回 `audio/wav`
+- `/tmp/reply.wav` 可播放
+
+如果你在 `chattts` 模式下尚未安装真实模型依赖，或当前网络无法拉取 `ChatTTS` 模型，则 sidecar 会明确返回 `503`。
+
+#### 环境变量
+
+在原有环境变量之外，新增：
+
+- `TTS_ENABLED`：是否启用 TTS，默认 `false`
+- `TTS_PROVIDER`：提供方标识，默认 `chattts-http`
+- `TTS_PYTHON_SERVICE_URL`：Python sidecar 地址，默认 `http://127.0.0.1:9966`
+- `TTS_REQUEST_TIMEOUT_SECONDS`：请求超时秒数，默认 `30`
+- `TTS_MAX_TEXT_LENGTH`：最大文本长度，默认 `200`
+- `TTS_DEFAULT_FORMAT`：默认音频格式，当前仅支持 `wav`
+
+#### 启动示例
+
+先启动 Python ChatTTS sidecar，再启动 MobileVC：
+
+```bash
+AUTH_TOKEN=test \
+TTS_ENABLED=true \
+TTS_PROVIDER=chattts-http \
+TTS_PYTHON_SERVICE_URL=http://127.0.0.1:9966 \
+TTS_REQUEST_TIMEOUT_SECONDS=30 \
+TTS_MAX_TEXT_LENGTH=200 \
+TTS_DEFAULT_FORMAT=wav \
+go run ./cmd/server
+```
+
+#### Go 服务联调验证
+
+```bash
+curl 'http://127.0.0.1:8001/api/tts/healthz?token=test'
+curl -X POST 'http://127.0.0.1:8001/api/tts/synthesize?token=test' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"你好，欢迎使用 MobileVC。","format":"wav"}' \
+  --output /tmp/mobilevc_tts.wav
+```
+
+成功时：
+
+- MobileVC `/api/tts/healthz` 返回 `200`
+- MobileVC `/api/tts/synthesize` 返回 `200`
+- `Content-Type: audio/wav`
+- `/tmp/mobilevc_tts.wav` 可播放
+
+#### 健康检查
+
+```bash
+curl 'http://127.0.0.1:8001/api/tts/healthz?token=test'
+```
+
+如果 Python sidecar 正常，返回类似：
+
+```json
+{"provider":"chattts-http","status":"ok"}
+```
+
+#### 调用示例
+
+使用 query token：
+
+```bash
+curl -X POST 'http://127.0.0.1:8001/api/tts/synthesize?token=test' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"你好，欢迎使用 MobileVC。","format":"wav"}' \
+  --output reply.wav
+```
+
+也支持 Bearer Token：
+
+```bash
+curl -X POST 'http://127.0.0.1:8001/api/tts/synthesize' \
+  -H 'Authorization: Bearer test' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"你好","format":"wav"}' \
+  --output reply.wav
+```
+
+成功时：
+
+- HTTP `200`
+- `Content-Type: audio/wav`
+- 响应体为可播放的 wav 音频流
+
+#### 错误约定
+
+- `400`：空文本、文本超长、格式不支持
+- `401`：token 无效
+- `405`：请求方法不允许
+- `502`：Python sidecar 不可用、返回异常、返回空音频
+- `504`：Python sidecar 超时
+- `500`：服务内部错误
+
+#### 常见问题
+
+- sidecar 未启动：通常返回 `502` 或 `504`
+- `SIDECAR_MODE=mock`：可以直接返回蜂鸣音 wav，用于联调
+- `SIDECAR_MODE=chattts` 但真实模型未准备好：sidecar `/healthz` 与 `/synthesize` 返回 `503`
+- `format` 不是 `wav`：返回 `400`
+- 文本为空或过长：返回 `400`
+- sidecar 返回的不是音频流：返回 `502`
 
 ---
 

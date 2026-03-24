@@ -1,0 +1,5 @@
+.venv/
+.venv311/
+asset/
+*.wav
+__pycache__/

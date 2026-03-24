@@ -2,13 +2,17 @@ package main
 
 import (
 	"fmt"
+	"mime"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"mobilevc/internal/config"
 	"mobilevc/internal/logx"
 	"mobilevc/internal/store"
+	"mobilevc/internal/tts"
 	"mobilevc/internal/ws"
 )
 
@@ -36,7 +40,7 @@ func main() {
 	summary := cfg.Summary()
 	addr := ":" + cfg.Port
 
-	logx.Info("bootstrap", "Configuration summary: port=%s authToken=%s runtime.defaultCommand=%s runtime.defaultMode=%s runtime.debug=%v workspaceRoot=%s projection.enhanced=%v projection.step=%v projection.diff=%v projection.prompt=%v",
+	logx.Info("bootstrap", "Configuration summary: port=%s authToken=%s runtime.defaultCommand=%s runtime.defaultMode=%s runtime.debug=%v workspaceRoot=%s projection.enhanced=%v projection.step=%v projection.diff=%v projection.prompt=%v tts.enabled=%v tts.provider=%s tts.url=%s tts.timeout=%ds tts.maxTextLength=%d tts.format=%s",
 		summary.Port,
 		logx.AuthTokenSummary(cfg.AuthToken),
 		summary.DefaultCommand,
@@ -47,6 +51,12 @@ func main() {
 		summary.EnableStepProjection,
 		summary.EnableDiffProjection,
 		summary.EnablePromptProjection,
+		summary.TTSEnabled,
+		summary.TTSProvider,
+		fallback(summary.TTSPythonServiceURL, "-"),
+		summary.TTSRequestTimeout,
+		summary.TTSMaxTextLength,
+		summary.TTSDefaultFormat,
 	)
 
 	logx.Info("bootstrap", "Initializing session store")
@@ -61,6 +71,17 @@ func main() {
 	wsHandler := ws.NewHandler(cfg.AuthToken, sessionStore)
 	logx.Info("bootstrap", "WebSocket handler ready")
 
+	var ttsHandler *tts.HTTPHandler
+	if cfg.TTS.Enabled {
+		logx.Info("bootstrap", "Preparing TTS handler")
+		provider := tts.NewChatTTSHTTPProvider(cfg.TTS.PythonServiceURL, time.Duration(cfg.TTS.RequestTimeoutSeconds)*time.Second)
+		service := tts.NewService(provider, cfg.TTS.MaxTextLength, cfg.TTS.DefaultFormat)
+		ttsHandler = tts.NewHTTPHandler(cfg.AuthToken, true, cfg.TTS.Provider, service)
+		logx.Info("bootstrap", "TTS handler ready: provider=%s url=%s", cfg.TTS.Provider, cfg.TTS.PythonServiceURL)
+	} else {
+		logx.Info("bootstrap", "TTS handler disabled")
+	}
+
 	logx.Info("bootstrap", "Registering routes")
 	mux := http.NewServeMux()
 	mux.Handle("/ws", wsHandler)
@@ -68,8 +89,46 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("token") != cfg.AuthToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		target := filepath.Clean(r.URL.Query().Get("path"))
+		if target == "" || target == "." {
+			http.Error(w, "path is required", http.StatusBadRequest)
+			return
+		}
+		absPath, err := filepath.Abs(target)
+		if err != nil {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+		info, err := os.Stat(absPath)
+		if err != nil {
+			http.Error(w, "file not found", http.StatusNotFound)
+			return
+		}
+		if info.IsDir() {
+			http.Error(w, "path is a directory", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(absPath)))
+		if contentType := mime.TypeByExtension(filepath.Ext(absPath)); contentType != "" {
+			w.Header().Set("Content-Type", contentType)
+		} else {
+			w.Header().Set("Content-Type", "application/octet-stream")
+		}
+		http.ServeFile(w, r, absPath)
+	})
+	if ttsHandler != nil {
+		mux.HandleFunc("/api/tts/synthesize", ttsHandler.HandleSynthesize)
+		mux.HandleFunc("/api/tts/healthz", ttsHandler.HandleHealthz)
+		logx.Info("bootstrap", "Registered routes: /ws, /healthz, /download, /api/tts/synthesize, /api/tts/healthz, /")
+	} else {
+		logx.Info("bootstrap", "Registered routes: /ws, /healthz, /download, /")
+	}
 	mux.Handle("/", http.FileServer(http.Dir("./web")))
-	logx.Info("bootstrap", "Registered routes: /ws, /healthz, /")
 
 	server := &http.Server{
 		Addr:    addr,

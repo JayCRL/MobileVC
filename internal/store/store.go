@@ -6,6 +6,37 @@ import (
 	"time"
 )
 
+type SkillSource string
+
+const (
+	SkillSourceBuiltin  SkillSource = "builtin"
+	SkillSourceLocal    SkillSource = "local"
+	SkillSourceExternal SkillSource = "external"
+)
+
+type SkillDefinition struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Prompt      string      `json:"prompt,omitempty"`
+	ResultView  string      `json:"resultView,omitempty"`
+	TargetType  string      `json:"targetType,omitempty"`
+	Source      SkillSource `json:"source,omitempty"`
+	Editable    bool        `json:"editable,omitempty"`
+	UpdatedAt   time.Time   `json:"updatedAt,omitempty"`
+}
+
+type MemoryItem struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Content   string    `json:"content"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+}
+
+type SessionContext struct {
+	EnabledSkillNames []string `json:"enabledSkillNames,omitempty"`
+	EnabledMemoryIDs  []string `json:"enabledMemoryIds,omitempty"`
+}
+
 type SessionRuntime struct {
 	ResumeSessionID string `json:"resumeSessionId,omitempty"`
 	Command         string `json:"command,omitempty"`
@@ -47,24 +78,40 @@ type SnapshotContext struct {
 }
 
 type SnapshotLogEntry struct {
-	Kind      string           `json:"kind"`
-	Message   string           `json:"message,omitempty"`
-	Label     string           `json:"label,omitempty"`
-	Timestamp string           `json:"timestamp,omitempty"`
-	Stream    string           `json:"stream,omitempty"`
-	Text      string           `json:"text,omitempty"`
-	Context   *SnapshotContext `json:"context,omitempty"`
+	Kind        string           `json:"kind"`
+	Message     string           `json:"message,omitempty"`
+	Label       string           `json:"label,omitempty"`
+	Timestamp   string           `json:"timestamp,omitempty"`
+	Stream      string           `json:"stream,omitempty"`
+	Text        string           `json:"text,omitempty"`
+	ExecutionID string           `json:"executionId,omitempty"`
+	Phase       string           `json:"phase,omitempty"`
+	ExitCode    *int             `json:"exitCode,omitempty"`
+	Context     *SnapshotContext `json:"context,omitempty"`
+}
+
+type TerminalExecution struct {
+	ExecutionID string `json:"executionId"`
+	Command     string `json:"command,omitempty"`
+	CWD         string `json:"cwd,omitempty"`
+	StartedAt   string `json:"startedAt,omitempty"`
+	FinishedAt  string `json:"finishedAt,omitempty"`
+	ExitCode    *int   `json:"exitCode,omitempty"`
+	Stdout      string `json:"stdout,omitempty"`
+	Stderr      string `json:"stderr,omitempty"`
 }
 
 type ProjectionSnapshot struct {
-	Diffs               []session.DiffContext        `json:"diffs,omitempty"`
-	CurrentDiff         *session.DiffContext         `json:"currentDiff,omitempty"`
-	CurrentStep         *SnapshotContext             `json:"currentStep,omitempty"`
-	LatestError         *SnapshotContext             `json:"latestError,omitempty"`
-	LogEntries          []SnapshotLogEntry           `json:"logEntries,omitempty"`
-	RawTerminalByStream map[string]string            `json:"rawTerminalByStream,omitempty"`
-	Controller          session.ControllerSnapshot   `json:"controller,omitempty"`
-	Runtime             SessionRuntime               `json:"runtime,omitempty"`
+	Diffs               []session.DiffContext      `json:"diffs,omitempty"`
+	CurrentDiff         *session.DiffContext       `json:"currentDiff,omitempty"`
+	CurrentStep         *SnapshotContext           `json:"currentStep,omitempty"`
+	LatestError         *SnapshotContext           `json:"latestError,omitempty"`
+	LogEntries          []SnapshotLogEntry         `json:"logEntries,omitempty"`
+	RawTerminalByStream map[string]string          `json:"rawTerminalByStream,omitempty"`
+	TerminalExecutions  []TerminalExecution        `json:"terminalExecutions,omitempty"`
+	Controller          session.ControllerSnapshot `json:"controller,omitempty"`
+	Runtime             SessionRuntime             `json:"runtime,omitempty"`
+	SessionContext      SessionContext             `json:"sessionContext,omitempty"`
 }
 
 type SessionRecord struct {
@@ -78,4 +125,8 @@ type Store interface {
 	GetSession(ctx context.Context, sessionID string) (SessionRecord, error)
 	ListSessions(ctx context.Context) ([]SessionSummary, error)
 	DeleteSession(ctx context.Context, sessionID string) error
+	ListSkillCatalog(ctx context.Context) ([]SkillDefinition, error)
+	SaveSkillCatalog(ctx context.Context, items []SkillDefinition) error
+	ListMemoryCatalog(ctx context.Context) ([]MemoryItem, error)
+	SaveMemoryCatalog(ctx context.Context, items []MemoryItem) error
 }

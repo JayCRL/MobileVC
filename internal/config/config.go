@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -17,10 +18,20 @@ type RuntimeConfig struct {
 	EnablePromptProjection bool
 }
 
+type TTSConfig struct {
+	Enabled               bool
+	Provider              string
+	PythonServiceURL      string
+	RequestTimeoutSeconds int
+	MaxTextLength         int
+	DefaultFormat         string
+}
+
 type Config struct {
 	Port      string
 	AuthToken string
 	Runtime   RuntimeConfig
+	TTS       TTSConfig
 }
 
 type Summary struct {
@@ -34,6 +45,12 @@ type Summary struct {
 	EnableStepProjection   bool
 	EnableDiffProjection   bool
 	EnablePromptProjection bool
+	TTSEnabled             bool
+	TTSProvider            string
+	TTSPythonServiceURL    string
+	TTSRequestTimeout      int
+	TTSMaxTextLength       int
+	TTSDefaultFormat       string
 }
 
 func Load() (Config, error) {
@@ -50,10 +67,21 @@ func Load() (Config, error) {
 			EnableDiffProjection:   getEnvBool("RUNTIME_ENABLE_DIFF_PROJECTION", true),
 			EnablePromptProjection: getEnvBool("RUNTIME_ENABLE_PROMPT_PROJECTION", true),
 		},
+		TTS: TTSConfig{
+			Enabled:               getEnvBool("TTS_ENABLED", false),
+			Provider:              strings.TrimSpace(getEnv("TTS_PROVIDER", "chattts-http")),
+			PythonServiceURL:      strings.TrimSpace(getEnv("TTS_PYTHON_SERVICE_URL", "http://127.0.0.1:9966")),
+			RequestTimeoutSeconds: getEnvInt("TTS_REQUEST_TIMEOUT_SECONDS", 30),
+			MaxTextLength:         getEnvInt("TTS_MAX_TEXT_LENGTH", 200),
+			DefaultFormat:         strings.TrimSpace(getEnv("TTS_DEFAULT_FORMAT", "wav")),
+		},
 	}
 
 	if cfg.AuthToken == "" {
 		return Config{}, fmt.Errorf("AUTH_TOKEN is required")
+	}
+	if err := cfg.validateTTS(); err != nil {
+		return Config{}, err
 	}
 
 	return cfg, nil
@@ -71,7 +99,35 @@ func (c Config) Summary() Summary {
 		EnableStepProjection:   c.Runtime.EnableStepProjection,
 		EnableDiffProjection:   c.Runtime.EnableDiffProjection,
 		EnablePromptProjection: c.Runtime.EnablePromptProjection,
+		TTSEnabled:             c.TTS.Enabled,
+		TTSProvider:            c.TTS.Provider,
+		TTSPythonServiceURL:    c.TTS.PythonServiceURL,
+		TTSRequestTimeout:      c.TTS.RequestTimeoutSeconds,
+		TTSMaxTextLength:       c.TTS.MaxTextLength,
+		TTSDefaultFormat:       c.TTS.DefaultFormat,
 	}
+}
+
+func (c Config) validateTTS() error {
+	if !c.TTS.Enabled {
+		return nil
+	}
+	if c.TTS.Provider != "chattts-http" {
+		return fmt.Errorf("TTS_PROVIDER must be chattts-http")
+	}
+	if strings.TrimSpace(c.TTS.PythonServiceURL) == "" {
+		return fmt.Errorf("TTS_PYTHON_SERVICE_URL is required when TTS is enabled")
+	}
+	if c.TTS.RequestTimeoutSeconds <= 0 {
+		return fmt.Errorf("TTS_REQUEST_TIMEOUT_SECONDS must be greater than 0")
+	}
+	if c.TTS.MaxTextLength <= 0 {
+		return fmt.Errorf("TTS_MAX_TEXT_LENGTH must be greater than 0")
+	}
+	if strings.ToLower(strings.TrimSpace(c.TTS.DefaultFormat)) != "wav" {
+		return fmt.Errorf("TTS_DEFAULT_FORMAT must be wav")
+	}
+	return nil
 }
 
 func getEnv(key, fallback string) string {
@@ -94,4 +150,16 @@ func getEnvBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func getEnvInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

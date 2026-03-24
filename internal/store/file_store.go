@@ -13,9 +13,11 @@ import (
 )
 
 type FileStore struct {
-	mu        sync.Mutex
-	baseDir   string
-	indexPath string
+	mu              sync.Mutex
+	baseDir         string
+	indexPath       string
+	skillCatalogPath string
+	memoryCatalogPath string
 }
 
 type fileIndex struct {
@@ -30,8 +32,10 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
 	return &FileStore{
-		baseDir:   baseDir,
-		indexPath: filepath.Join(baseDir, "index.json"),
+		baseDir:          baseDir,
+		indexPath:        filepath.Join(baseDir, "index.json"),
+		skillCatalogPath: filepath.Join(baseDir, "skills.catalog.json"),
+		memoryCatalogPath: filepath.Join(baseDir, "memory.catalog.json"),
 	}, nil
 }
 
@@ -58,7 +62,7 @@ func (s *FileStore) CreateSession(ctx context.Context, title string) (SessionSum
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	record := SessionRecord{Summary: summary, Projection: ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}}
+	record := SessionRecord{Summary: summary, Projection: normalizeProjection(ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}})}
 	index, err := s.readIndexLocked()
 	if err != nil {
 		return SessionSummary{}, err
@@ -176,6 +180,50 @@ func (s *FileStore) DeleteSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+func (s *FileStore) ListSkillCatalog(ctx context.Context) ([]SkillDefinition, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	return s.readSkillCatalogLocked()
+}
+
+func (s *FileStore) SaveSkillCatalog(ctx context.Context, items []SkillDefinition) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	return s.writeJSONFileLocked(s.skillCatalogPath, normalizeSkillCatalog(items), "encode skill catalog")
+}
+
+func (s *FileStore) ListMemoryCatalog(ctx context.Context) ([]MemoryItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	return s.readMemoryCatalogLocked()
+}
+
+func (s *FileStore) SaveMemoryCatalog(ctx context.Context, items []MemoryItem) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	return s.writeJSONFileLocked(s.memoryCatalogPath, normalizeMemoryCatalog(items), "encode memory catalog")
+}
+
 func (s *FileStore) readIndexLocked() (fileIndex, error) {
 	var index fileIndex
 	data, err := os.ReadFile(s.indexPath)
@@ -227,6 +275,47 @@ func (s *FileStore) writeSessionLocked(record SessionRecord) error {
 	return os.WriteFile(s.sessionPath(record.Summary.ID), data, 0o644)
 }
 
+func (s *FileStore) readSkillCatalogLocked() ([]SkillDefinition, error) {
+	var items []SkillDefinition
+	if err := s.readJSONFileLocked(s.skillCatalogPath, &items, "read skill catalog", "decode skill catalog"); err != nil {
+		return nil, err
+	}
+	return normalizeSkillCatalog(items), nil
+}
+
+func (s *FileStore) readMemoryCatalogLocked() ([]MemoryItem, error) {
+	var items []MemoryItem
+	if err := s.readJSONFileLocked(s.memoryCatalogPath, &items, "read memory catalog", "decode memory catalog"); err != nil {
+		return nil, err
+	}
+	return normalizeMemoryCatalog(items), nil
+}
+
+func (s *FileStore) readJSONFileLocked(path string, target any, readErrLabel, decodeErrLabel string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("%s: %w", readErrLabel, err)
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(data, target); err != nil {
+		return fmt.Errorf("%s: %w", decodeErrLabel, err)
+	}
+	return nil
+}
+
+func (s *FileStore) writeJSONFileLocked(path string, value any, encodeErrLabel string) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("%s: %w", encodeErrLabel, err)
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
 func (s *FileStore) sessionPath(sessionID string) string {
 	return filepath.Join(s.baseDir, sessionID+".json")
 }
@@ -261,7 +350,96 @@ func normalizeProjection(projection ProjectionSnapshot) ProjectionSnapshot {
 	if projection.LogEntries == nil {
 		projection.LogEntries = []SnapshotLogEntry{}
 	}
+	if projection.TerminalExecutions == nil {
+		projection.TerminalExecutions = []TerminalExecution{}
+	}
+	projection.SessionContext = normalizeSessionContext(projection.SessionContext)
 	return projection
+}
+
+func normalizeSessionContext(ctx SessionContext) SessionContext {
+	ctx.EnabledSkillNames = normalizeStringSlice(ctx.EnabledSkillNames)
+	ctx.EnabledMemoryIDs = normalizeStringSlice(ctx.EnabledMemoryIDs)
+	return ctx
+}
+
+func normalizeSkillCatalog(items []SkillDefinition) []SkillDefinition {
+	if len(items) == 0 {
+		return []SkillDefinition{}
+	}
+	out := make([]SkillDefinition, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		item.Name = name
+		item.Description = strings.TrimSpace(item.Description)
+		item.Prompt = strings.TrimSpace(item.Prompt)
+		item.ResultView = strings.TrimSpace(item.ResultView)
+		item.TargetType = strings.TrimSpace(item.TargetType)
+		if item.Source == "" {
+			item.Source = SkillSourceLocal
+		}
+		item.Editable = item.Source != SkillSourceBuiltin
+		if _, ok := seen[item.Name]; ok {
+			continue
+		}
+		seen[item.Name] = struct{}{}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func normalizeMemoryCatalog(items []MemoryItem) []MemoryItem {
+	if len(items) == 0 {
+		return []MemoryItem{}
+	}
+	out := make([]MemoryItem, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		item.ID = id
+		item.Title = strings.TrimSpace(item.Title)
+		item.Content = strings.TrimSpace(item.Content)
+		if _, ok := seen[item.ID]; ok {
+			continue
+		}
+		seen[item.ID] = struct{}{}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
+	return out
+}
+
+func normalizeStringSlice(items []string) []string {
+	if len(items) == 0 {
+		return []string{}
+	}
+	out := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func buildPreview(projection ProjectionSnapshot) string {

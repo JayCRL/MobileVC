@@ -42,7 +42,7 @@ func NewHandler(authToken string, sessionStore store.Store) *Handler {
 		NewPtyRunner: func() runner.Runner {
 			return runner.NewPtyRunner()
 		},
-		SkillLauncher: skills.NewLauncher(),
+		SkillLauncher: skills.NewLauncher(sessionStore),
 		SessionStore:  sessionStore,
 		Upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -217,6 +217,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "connected"))
 	emit(runtimeSvc.InitialEvent())
 	if h.SessionStore != nil {
+		emitSkillCatalogResult(emit, h.SessionStore, ctx, selectedSessionID)
+		emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
 		items, err := h.SessionStore.ListSessions(ctx)
 		if err != nil {
 			logx.Warn("ws", "initial session list restore failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
@@ -359,6 +361,66 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			emit(newSessionHistoryEventFromRecord(record))
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
+		case "session_context_get":
+			record, ok := loadSelectedSessionRecord(h.SessionStore, ctx, selectedSessionID, emit)
+			if !ok {
+				continue
+			}
+			emit(protocol.NewSessionContextResultEvent(selectedSessionID, toProtocolSessionContext(record.Projection.SessionContext)))
+		case "session_context_update":
+			var req protocol.SessionContextUpdateRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid session_context_update request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_context_update request: %v", err), ""))
+				continue
+			}
+			record, ok := loadSelectedSessionRecord(h.SessionStore, ctx, selectedSessionID, emit)
+			if !ok {
+				continue
+			}
+			record.Projection.SessionContext = store.SessionContext{EnabledSkillNames: req.EnabledSkillNames, EnabledMemoryIDs: req.EnabledMemoryIDs}
+			if _, err := h.SessionStore.SaveProjection(ctx, selectedSessionID, record.Projection); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			emit(protocol.NewSessionContextResultEvent(selectedSessionID, toProtocolSessionContext(record.Projection.SessionContext)))
+		case "skill_catalog_get":
+			emitSkillCatalogResult(emit, h.SessionStore, ctx, selectedSessionID)
+		case "skill_catalog_upsert":
+			var req protocol.SkillCatalogRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid skill_catalog_upsert request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid skill_catalog_upsert request: %v", err), ""))
+				continue
+			}
+			if err := upsertLocalSkill(h.SessionStore, ctx, req.Skill); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			h.SkillLauncher = skills.NewLauncher(h.SessionStore)
+			emitSkillCatalogResult(emit, h.SessionStore, ctx, selectedSessionID)
+		case "skill_sync_pull":
+			if err := syncExternalSkills(h.SessionStore, ctx); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			h.SkillLauncher = skills.NewLauncher(h.SessionStore)
+			emit(protocol.NewSkillSyncResultEvent(selectedSessionID, "skill 同步完成"))
+			emitSkillCatalogResult(emit, h.SessionStore, ctx, selectedSessionID)
+		case "memory_list":
+			emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
+		case "memory_upsert":
+			var req protocol.MemoryRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid memory_upsert request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid memory_upsert request: %v", err), ""))
+				continue
+			}
+			if err := upsertMemoryItem(h.SessionStore, ctx, req.Item); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
 		case "exec":
 			var reqEvent protocol.ExecRequestEvent
 			if err := json.Unmarshal(payload, &reqEvent); err != nil {
@@ -514,10 +576,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, "skill launcher is unavailable", ""))
 				continue
 			}
+			sessionContext := store.SessionContext{}
+			if h.SessionStore != nil {
+				record, ok := loadSelectedSessionRecord(h.SessionStore, ctx, selectedSessionID, emit)
+				if !ok {
+					continue
+				}
+				sessionContext = record.Projection.SessionContext
+			}
 			sessionID := selectedSessionID
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
-			if err := executeSkillRequest(ctx, sessionID, skillEvent, service, h.SkillLauncher, emitAndPersist); err != nil {
+			if err := executeSkillRequest(ctx, sessionID, skillEvent, sessionContext, service, h.SkillLauncher, emitAndPersist); err != nil {
 				logx.Error("ws", "execute skill request failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
@@ -542,10 +612,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid slash_command request: %v", err), ""))
 				continue
 			}
+			sessionContext := store.SessionContext{}
+			if h.SessionStore != nil {
+				record, ok := loadSelectedSessionRecord(h.SessionStore, ctx, selectedSessionID, emit)
+				if !ok {
+					continue
+				}
+				sessionContext = record.Projection.SessionContext
+			}
 			sessionID := selectedSessionID
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
-			if err := handleSlashCommand(ctx, sessionID, slashReq, service, h.SkillLauncher, emitAndPersist); err != nil {
+			if err := handleSlashCommand(ctx, sessionID, slashReq, sessionContext, service, h.SkillLauncher, emitAndPersist); err != nil {
 				logx.Error("ws", "handle slash command failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 			}
@@ -674,6 +752,177 @@ func toProtocolSummaries(items []store.SessionSummary) []protocol.SessionSummary
 	return result
 }
 
+func toProtocolSessionContext(ctx store.SessionContext) protocol.SessionContext {
+	return protocol.SessionContext{
+		EnabledSkillNames: append([]string(nil), ctx.EnabledSkillNames...),
+		EnabledMemoryIDs:  append([]string(nil), ctx.EnabledMemoryIDs...),
+	}
+}
+
+func toProtocolSkillDefinitions(items []store.SkillDefinition) []protocol.SkillDefinition {
+	result := make([]protocol.SkillDefinition, 0, len(items))
+	for _, item := range items {
+		updatedAt := ""
+		if !item.UpdatedAt.IsZero() {
+			updatedAt = item.UpdatedAt.Format(time.RFC3339)
+		}
+		result = append(result, protocol.SkillDefinition{
+			Name:        item.Name,
+			Description: item.Description,
+			Prompt:      item.Prompt,
+			ResultView:  item.ResultView,
+			TargetType:  item.TargetType,
+			Source:      string(item.Source),
+			Editable:    item.Editable,
+			UpdatedAt:   updatedAt,
+		})
+	}
+	return result
+}
+
+func toProtocolMemoryItems(items []store.MemoryItem) []protocol.MemoryItem {
+	result := make([]protocol.MemoryItem, 0, len(items))
+	for _, item := range items {
+		updatedAt := ""
+		if !item.UpdatedAt.IsZero() {
+			updatedAt = item.UpdatedAt.Format(time.RFC3339)
+		}
+		result = append(result, protocol.MemoryItem{ID: item.ID, Title: item.Title, Content: item.Content, UpdatedAt: updatedAt})
+	}
+	return result
+}
+
+func loadSelectedSessionRecord(sessionStore store.Store, ctx context.Context, sessionID string, emit func(any)) (store.SessionRecord, bool) {
+	if sessionStore == nil {
+		emit(protocol.NewErrorEvent(sessionID, "session store unavailable", ""))
+		return store.SessionRecord{}, false
+	}
+	record, err := sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+		return store.SessionRecord{}, false
+	}
+	return record, true
+}
+
+func emitSkillCatalogResult(emit func(any), sessionStore store.Store, ctx context.Context, sessionID string) {
+	if sessionStore == nil {
+		emit(protocol.NewErrorEvent(sessionID, "session store unavailable", ""))
+		return
+	}
+	items, err := sessionStore.ListSkillCatalog(ctx)
+	if err != nil {
+		emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+		return
+	}
+	emit(protocol.NewSkillCatalogResultEvent(sessionID, toProtocolSkillDefinitions(items)))
+}
+
+func emitMemoryListResult(emit func(any), sessionStore store.Store, ctx context.Context, sessionID string) {
+	if sessionStore == nil {
+		emit(protocol.NewErrorEvent(sessionID, "session store unavailable", ""))
+		return
+	}
+	items, err := sessionStore.ListMemoryCatalog(ctx)
+	if err != nil {
+		emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+		return
+	}
+	emit(protocol.NewMemoryListResultEvent(sessionID, toProtocolMemoryItems(items)))
+}
+
+func upsertLocalSkill(sessionStore store.Store, ctx context.Context, item protocol.SkillDefinition) error {
+	if sessionStore == nil {
+		return fmt.Errorf("session store unavailable")
+	}
+	items, err := sessionStore.ListSkillCatalog(ctx)
+	if err != nil {
+		return err
+	}
+	updatedAt := time.Now().UTC()
+	next := store.SkillDefinition{
+		Name:        strings.TrimSpace(item.Name),
+		Description: strings.TrimSpace(item.Description),
+		Prompt:      strings.TrimSpace(item.Prompt),
+		ResultView:  strings.TrimSpace(item.ResultView),
+		TargetType:  strings.TrimSpace(item.TargetType),
+		Source:      store.SkillSourceLocal,
+		Editable:    true,
+		UpdatedAt:   updatedAt,
+	}
+	if next.Name == "" {
+		return fmt.Errorf("skill name is required")
+	}
+	found := false
+	for i := range items {
+		if items[i].Name == next.Name {
+			items[i] = next
+			found = true
+			break
+		}
+	}
+	if !found {
+		items = append(items, next)
+	}
+	return sessionStore.SaveSkillCatalog(ctx, items)
+}
+
+func syncExternalSkills(sessionStore store.Store, ctx context.Context) error {
+	if sessionStore == nil {
+		return fmt.Errorf("session store unavailable")
+	}
+	items, err := sessionStore.ListSkillCatalog(ctx)
+	if err != nil {
+		return err
+	}
+	filtered := make([]store.SkillDefinition, 0, len(items)+1)
+	for _, item := range items {
+		if item.Source != store.SkillSourceExternal {
+			filtered = append(filtered, item)
+		}
+	}
+	filtered = append(filtered, store.SkillDefinition{
+		Name:        "external-diff-summary",
+		Description: "外部同步示例 skill",
+		Prompt:      "请总结下面上下文的关键变化、影响范围和验证建议。",
+		ResultView:  "review-card",
+		TargetType:  "diff",
+		Source:      store.SkillSourceExternal,
+		Editable:    true,
+		UpdatedAt:   time.Now().UTC(),
+	})
+	return sessionStore.SaveSkillCatalog(ctx, filtered)
+}
+
+func upsertMemoryItem(sessionStore store.Store, ctx context.Context, item protocol.MemoryItem) error {
+	if sessionStore == nil {
+		return fmt.Errorf("session store unavailable")
+	}
+	items, err := sessionStore.ListMemoryCatalog(ctx)
+	if err != nil {
+		return err
+	}
+	next := store.MemoryItem{ID: strings.TrimSpace(item.ID), Title: strings.TrimSpace(item.Title), Content: strings.TrimSpace(item.Content), UpdatedAt: time.Now().UTC()}
+	if next.ID == "" {
+		next.ID = fmt.Sprintf("memory-%d", time.Now().UTC().UnixNano())
+	}
+	if next.Title == "" {
+		return fmt.Errorf("memory title is required")
+	}
+	found := false
+	for i := range items {
+		if items[i].ID == next.ID {
+			items[i] = next
+			found = true
+			break
+		}
+	}
+	if !found {
+		items = append(items, next)
+	}
+	return sessionStore.SaveMemoryCatalog(ctx, items)
+}
+
 func toHistoryContext(ctx *store.SnapshotContext) *protocol.HistoryContext {
 	if ctx == nil {
 		return nil
@@ -743,13 +992,29 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 	entries := make([]protocol.HistoryLogEntry, 0, len(record.Projection.LogEntries))
 	for _, entry := range record.Projection.LogEntries {
 		entries = append(entries, protocol.HistoryLogEntry{
-			Kind:      entry.Kind,
-			Message:   entry.Message,
-			Label:     entry.Label,
-			Timestamp: entry.Timestamp,
-			Stream:    entry.Stream,
-			Text:      entry.Text,
-			Context:   toHistoryContext(entry.Context),
+			Kind:        entry.Kind,
+			Message:     entry.Message,
+			Label:       entry.Label,
+			Timestamp:   entry.Timestamp,
+			Stream:      entry.Stream,
+			Text:        entry.Text,
+			ExecutionID: entry.ExecutionID,
+			Phase:       entry.Phase,
+			ExitCode:    entry.ExitCode,
+			Context:     toHistoryContext(entry.Context),
+		})
+	}
+	executions := make([]protocol.TerminalExecution, 0, len(record.Projection.TerminalExecutions))
+	for _, item := range record.Projection.TerminalExecutions {
+		executions = append(executions, protocol.TerminalExecution{
+			ExecutionID: item.ExecutionID,
+			Command:     item.Command,
+			CWD:         item.CWD,
+			StartedAt:   item.StartedAt,
+			FinishedAt:  item.FinishedAt,
+			ExitCode:    item.ExitCode,
+			Stdout:      item.Stdout,
+			Stderr:      item.Stderr,
 		})
 	}
 	resumeMeta := protocol.RuntimeMeta{
@@ -769,6 +1034,8 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 		toHistoryContext(record.Projection.CurrentStep),
 		toHistoryContext(record.Projection.LatestError),
 		record.Projection.RawTerminalByStream,
+		executions,
+		toProtocolSessionContext(record.Projection.SessionContext),
 		canResume,
 		resumeMeta,
 	)
@@ -783,15 +1050,47 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 		}
 		return snapshot, true
 	case protocol.LogEvent:
+		phase := strings.TrimSpace(e.Phase)
 		msg := strings.TrimSpace(e.Message)
+		entry := store.SnapshotLogEntry{
+			Kind:        "terminal",
+			Message:     e.Message,
+			Timestamp:   e.Timestamp.Format(time.RFC3339),
+			Stream:      e.Stream,
+			Text:        strings.TrimLeft(e.Message, "\r"),
+			ExecutionID: e.ExecutionID,
+			Phase:       phase,
+			ExitCode:    e.ExitCode,
+		}
+		if phase == "started" {
+			snapshot.TerminalExecutions = upsertTerminalExecution(snapshot.TerminalExecutions, store.TerminalExecution{
+				ExecutionID: e.ExecutionID,
+				Command:     firstNonEmptyString(e.Command, e.Message),
+				CWD:         e.CWD,
+				StartedAt:   e.Timestamp.Format(time.RFC3339),
+			})
+			snapshot.LogEntries = append(snapshot.LogEntries, entry)
+			return snapshot, true
+		}
+		if phase == "finished" {
+			snapshot.TerminalExecutions = updateTerminalExecution(snapshot.TerminalExecutions, e.ExecutionID, func(item *store.TerminalExecution) {
+				if item.StartedAt == "" {
+					item.StartedAt = e.Timestamp.Format(time.RFC3339)
+				}
+				item.FinishedAt = e.Timestamp.Format(time.RFC3339)
+				item.ExitCode = e.ExitCode
+			})
+			snapshot.LogEntries = append(snapshot.LogEntries, entry)
+			return snapshot, true
+		}
 		if msg == "" {
 			return snapshot, false
 		}
 		if e.Stream != "stderr" && looksLikeMarkdownMessage(msg) {
-			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "markdown", Message: e.Message, Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream})
+			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "markdown", Message: e.Message, Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream, ExecutionID: e.ExecutionID, Phase: phase, ExitCode: e.ExitCode})
 		} else {
 			previousIndex := len(snapshot.LogEntries) - 1
-			if previousIndex >= 0 && snapshot.LogEntries[previousIndex].Kind == "terminal" && snapshot.LogEntries[previousIndex].Stream == e.Stream {
+			if previousIndex >= 0 && snapshot.LogEntries[previousIndex].Kind == "terminal" && snapshot.LogEntries[previousIndex].Stream == e.Stream && snapshot.LogEntries[previousIndex].ExecutionID == e.ExecutionID && snapshot.LogEntries[previousIndex].Phase == phase {
 				prev := snapshot.LogEntries[previousIndex]
 				if prev.Text != "" {
 					prev.Text += "\n"
@@ -800,13 +1099,28 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 				prev.Timestamp = e.Timestamp.Format(time.RFC3339)
 				snapshot.LogEntries[previousIndex] = prev
 			} else {
-				snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "terminal", Text: strings.TrimLeft(e.Message, "\r"), Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream})
+				snapshot.LogEntries = append(snapshot.LogEntries, entry)
 			}
 			stream := fallback(e.Stream, "stdout")
 			if snapshot.RawTerminalByStream[stream] != "" {
 				snapshot.RawTerminalByStream[stream] += "\n"
 			}
 			snapshot.RawTerminalByStream[stream] += strings.TrimLeft(e.Message, "\r")
+			snapshot.TerminalExecutions = updateTerminalExecution(snapshot.TerminalExecutions, e.ExecutionID, func(item *store.TerminalExecution) {
+				if item.ExecutionID == "" {
+					item.ExecutionID = e.ExecutionID
+				}
+				if item.Command == "" {
+					item.Command = e.Command
+				}
+				if item.CWD == "" {
+					item.CWD = e.CWD
+				}
+				if item.StartedAt == "" {
+					item.StartedAt = e.Timestamp.Format(time.RFC3339)
+				}
+				appendExecutionStream(item, stream, strings.TrimLeft(e.Message, "\r"))
+			})
 		}
 		return snapshot, true
 	case protocol.ErrorEvent:
@@ -844,6 +1158,9 @@ func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.Projec
 	if snapshot.LogEntries == nil {
 		snapshot.LogEntries = []store.SnapshotLogEntry{}
 	}
+	if snapshot.TerminalExecutions == nil {
+		snapshot.TerminalExecutions = []store.TerminalExecution{}
+	}
 	if snapshot.Runtime.ResumeSessionID == "" {
 		snapshot.Runtime.ResumeSessionID = snapshot.Controller.ResumeSession
 	}
@@ -859,6 +1176,9 @@ func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.Projec
 	if snapshot.Runtime.PermissionMode == "" {
 		snapshot.Runtime.PermissionMode = snapshot.Controller.ActiveMeta.PermissionMode
 	}
+	if len(snapshot.SessionContext.EnabledSkillNames) == 0 && len(snapshot.SessionContext.EnabledMemoryIDs) == 0 {
+		snapshot.SessionContext = store.SessionContext{}
+	}
 	if len(snapshot.Diffs) == 0 && snapshot.CurrentDiff != nil {
 		snapshot.Diffs = []session.DiffContext{*snapshot.CurrentDiff}
 	}
@@ -867,6 +1187,72 @@ func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.Projec
 		snapshot.CurrentDiff = &activeDiff
 	}
 	return snapshot
+}
+
+func upsertTerminalExecution(items []store.TerminalExecution, next store.TerminalExecution) []store.TerminalExecution {
+	if strings.TrimSpace(next.ExecutionID) == "" {
+		return items
+	}
+	for i := range items {
+		if items[i].ExecutionID == next.ExecutionID {
+			if next.Command != "" {
+				items[i].Command = next.Command
+			}
+			if next.CWD != "" {
+				items[i].CWD = next.CWD
+			}
+			if next.StartedAt != "" {
+				items[i].StartedAt = next.StartedAt
+			}
+			if next.FinishedAt != "" {
+				items[i].FinishedAt = next.FinishedAt
+			}
+			if next.ExitCode != nil {
+				items[i].ExitCode = next.ExitCode
+			}
+			if next.Stdout != "" {
+				appendExecutionStream(&items[i], "stdout", next.Stdout)
+			}
+			if next.Stderr != "" {
+				appendExecutionStream(&items[i], "stderr", next.Stderr)
+			}
+			return items
+		}
+	}
+	return append(items, next)
+}
+
+func updateTerminalExecution(items []store.TerminalExecution, executionID string, mutate func(item *store.TerminalExecution)) []store.TerminalExecution {
+	if strings.TrimSpace(executionID) == "" {
+		return items
+	}
+	for i := range items {
+		if items[i].ExecutionID == executionID {
+			mutate(&items[i])
+			return items
+		}
+	}
+	item := store.TerminalExecution{ExecutionID: executionID}
+	mutate(&item)
+	return append(items, item)
+}
+
+func appendExecutionStream(item *store.TerminalExecution, stream string, text string) {
+	if item == nil || text == "" {
+		return
+	}
+	switch stream {
+	case "stderr":
+		if item.Stderr != "" {
+			item.Stderr += "\n"
+		}
+		item.Stderr += text
+	default:
+		if item.Stdout != "" {
+			item.Stdout += "\n"
+		}
+		item.Stdout += text
+	}
 }
 
 func upsertSnapshotDiff(diffs []session.DiffContext, diff session.DiffContext) []session.DiffContext {
