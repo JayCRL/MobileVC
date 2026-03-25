@@ -21,6 +21,11 @@ const Set<String> _approvePromptValues = {
   'continue',
   'allow once',
   'allow this time',
+  '允许',
+  '同意',
+  '批准',
+  '确认',
+  '继续',
 };
 
 const Set<String> _denyPromptValues = {
@@ -31,6 +36,10 @@ const Set<String> _denyPromptValues = {
   'reject',
   'cancel',
   'stop',
+  '拒绝',
+  '不同意',
+  '取消',
+  '停止',
 };
 
 class SessionController extends ChangeNotifier {
@@ -53,6 +62,7 @@ class SessionController extends ChangeNotifier {
   String _currentDirectoryPath = '';
   String _terminalStdout = '';
   String _terminalStderr = '';
+  String _activeTerminalExecutionId = '';
   AgentStateEvent? _agentState;
   SessionStateEvent? _sessionState;
   RuntimeInfoResultEvent? _runtimeInfo;
@@ -71,6 +81,7 @@ class SessionController extends ChangeNotifier {
   final List<MemoryItem> _memoryItems = [];
   final List<TimelineItem> _timeline = [];
   final List<ReviewGroup> _reviewGroups = [];
+  final List<TerminalExecution> _terminalExecutions = [];
   String _activeReviewGroupId = '';
   String _activeReviewDiffId = '';
   String _agentPhaseLabel = '未连接';
@@ -99,6 +110,19 @@ class SessionController extends ChangeNotifier {
   String get effectiveCwd => currentDirectoryPath;
   String get terminalStdout => _terminalStdout;
   String get terminalStderr => _terminalStderr;
+  List<TerminalExecution> get terminalExecutions => List.unmodifiable(_terminalExecutions);
+  String get activeTerminalExecutionId => _activeTerminalExecutionId;
+  TerminalExecution? get activeTerminalExecution => _resolvedActiveTerminalExecution();
+  String get activeTerminalStdout => activeTerminalExecution?.stdout ?? _terminalStdout;
+  String get activeTerminalStderr => activeTerminalExecution?.stderr ?? _terminalStderr;
+  String get terminalExecutionSummary {
+    final count = _terminalExecutions.length;
+    if (count == 0) {
+      return '';
+    }
+    final running = _terminalExecutions.where((item) => item.running).length;
+    return running > 0 ? '$count 条命令，$running 条运行中' : '$count 条命令';
+  }
   String get terminalLogs {
     if (_terminalStdout.isEmpty) {
       return _terminalStderr;
@@ -160,6 +184,16 @@ class SessionController extends ChangeNotifier {
     final summaryItems = titles.isNotEmpty ? titles : ids;
     return '${ids.length} 个：${summaryItems.join('、')}';
   }
+
+  bool get hasPendingPermissionPrompt =>
+      pendingPrompt?.looksLikePermissionPrompt == true;
+  bool get hasVisiblePrompt => pendingPrompt != null;
+  bool get shouldShowPromptComposer =>
+      hasVisiblePrompt && !shouldShowReviewChoices && !hasPendingPermissionPrompt;
+  bool get shouldShowPermissionChoices =>
+      hasPendingPermissionPrompt && !shouldShowReviewChoices;
+  bool get hasCompactContextSelection =>
+      _skills.isNotEmpty || _memoryItems.isNotEmpty;
 
   List<TimelineItem> get timeline => List.unmodifiable(_timeline);
   List<ReviewGroup> get reviewGroups => List.unmodifiable(_reviewGroups);
@@ -263,18 +297,21 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void focusNextPendingReviewDiff() {
-    final next = _nextPendingDiff();
-    final nextId = next == null ? '' : _diffIdentity(next);
-    if (_activeReviewDiffId == nextId) {
+  void setActiveTerminalExecution(String executionId) {
+    final normalized = executionId.trim();
+    if (normalized.isEmpty) {
+      if (_activeTerminalExecutionId.isEmpty) {
+        return;
+      }
+      _activeTerminalExecutionId = '';
+      notifyListeners();
       return;
     }
-    _activeReviewDiffId = nextId;
-    final groupId = next == null ? '' : _groupIdForDiff(next);
-    if (groupId.isNotEmpty) {
-      _activeReviewGroupId = groupId;
+    final exists = _terminalExecutions.any((item) => item.executionId == normalized);
+    if (!exists || _activeTerminalExecutionId == normalized) {
+      return;
     }
-    _syncActiveReviewSelection();
+    _activeTerminalExecutionId = normalized;
     notifyListeners();
   }
 
@@ -427,6 +464,8 @@ class SessionController extends ChangeNotifier {
       requestRuntimeInfo('context');
       requestSkillCatalog();
       requestMemoryList();
+      requestSessionContext();
+      requestReviewState();
     } catch (error) {
       _connected = false;
       _connectionMessage = '连接失败：$error';
@@ -451,6 +490,8 @@ class SessionController extends ChangeNotifier {
     _openedFile = null;
     _terminalStdout = '';
     _terminalStderr = '';
+    _activeTerminalExecutionId = '';
+    _terminalExecutions.clear();
     _canResumeCurrentSession = false;
     _resumeRuntimeMeta = const RuntimeMeta();
     _sessionContext = const SessionContext();
@@ -587,6 +628,10 @@ class SessionController extends ChangeNotifier {
     _service.send({'action': 'session_context_get'});
   }
 
+  void requestReviewState() {
+    _service.send({'action': 'review_state_get'});
+  }
+
   void updateSessionContext({
     List<String>? enabledSkillNames,
     List<String>? enabledMemoryIds,
@@ -655,13 +700,17 @@ class SessionController extends ChangeNotifier {
       return;
     }
     if (awaitInput) {
-      _pushDebug('文件面板输入走 input', _debugReviewStateSummary());
-      _service.send({
-        'action': 'input',
-        'data': '$prompt\n',
-        'permissionMode': _config.permissionMode
-      });
-      _pushUser(prompt, '文件回复');
+      _pushDebug('文件面板输入走等待态分流', _debugReviewStateSummary());
+      final pending = _pendingPrompt;
+      if (pending?.looksLikePermissionPrompt == true) {
+        _sendPermissionDecision(pending!, 'approve', promptLabel: '文件回复');
+        return;
+      }
+      _submitAwaitingPrompt(
+        prompt,
+        promptLabel: '文件回复',
+        fallbackToInput: true,
+      );
       return;
     }
     if (isSessionBusy) {
@@ -717,7 +766,7 @@ class SessionController extends ChangeNotifier {
       return;
     }
     if (awaitInput) {
-      _submitAwaitingInput(value);
+      _submitAwaitingPrompt(value);
       return;
     }
     if (value.startsWith('/')) {
@@ -749,7 +798,8 @@ class SessionController extends ChangeNotifier {
     if (normalized.isEmpty) {
       return;
     }
-    _pushDebug('提交 prompt 选项', 'value=$normalized\n${_debugReviewStateSummary()}');
+    _pushDebug(
+        '提交 prompt 选项', 'value=$normalized\n${_debugReviewStateSummary()}');
     if (shouldShowReviewChoices) {
       final decision = _reviewDecisionFromPromptValue(normalized);
       if (decision != null) {
@@ -758,7 +808,7 @@ class SessionController extends ChangeNotifier {
       }
     }
     final resolved = _normalizePromptReply(normalized, _pendingPrompt);
-    _submitAwaitingInput(resolved);
+    _submitAwaitingPrompt(resolved);
   }
 
   String _normalizePromptReply(String value, PromptRequestEvent? prompt) {
@@ -766,23 +816,95 @@ class SessionController extends ChangeNotifier {
     final lower = normalized.toLowerCase();
     if (prompt?.looksLikePermissionPrompt == true) {
       if (_approvePromptValues.contains(lower)) {
-        return 'y';
+        return 'approve';
       }
       if (_denyPromptValues.contains(lower)) {
-        return 'n';
+        return 'deny';
       }
     }
     return normalized;
   }
 
-  void _submitAwaitingInput(String value) {
+  void _submitAwaitingPrompt(
+    String value, {
+    String promptLabel = '回复',
+    bool fallbackToInput = false,
+  }) {
+    final prompt = _pendingPrompt;
+    if (prompt != null) {
+      if (shouldShowReviewChoices) {
+        final decision = _reviewDecisionFromPromptValue(value);
+        if (decision != null) {
+          sendReviewDecision(decision);
+          return;
+        }
+      }
+      if (prompt.looksLikePermissionPrompt) {
+        final decision = _permissionDecisionFromPromptValue(value);
+        if (decision != null) {
+          _sendPermissionDecision(prompt, decision, promptLabel: promptLabel);
+          return;
+        }
+      }
+    }
+    if (!fallbackToInput && !awaitInput) {
+      return;
+    }
+    _submitAwaitingInput(value, promptLabel: promptLabel);
+  }
+
+  String? _permissionDecisionFromPromptValue(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (_approvePromptValues.contains(normalized) || normalized == 'approve') {
+      return 'approve';
+    }
+    if (_denyPromptValues.contains(normalized) || normalized == 'deny') {
+      return 'deny';
+    }
+    return null;
+  }
+
+  void _submitAwaitingInput(String value, {String promptLabel = '回复'}) {
     _pendingPrompt = null;
     _service.send({
       'action': 'input',
       'data': '$value\n',
       'permissionMode': _config.permissionMode,
     });
-    _pushUser(value, '回复');
+    _pushUser(value, promptLabel);
+  }
+
+  void _sendPermissionDecision(
+    PromptRequestEvent prompt,
+    String decision, {
+    String promptLabel = '回复',
+  }) {
+    final meta = currentMeta;
+    final targetPath = _openedFile?.path.isNotEmpty == true
+        ? _openedFile!.path
+        : meta.targetPath;
+    final contextTitle = _openedFile?.title.isNotEmpty == true
+        ? _openedFile!.title
+        : meta.contextTitle.isNotEmpty
+            ? meta.contextTitle
+            : meta.targetTitle;
+    _pendingPrompt = null;
+    _service.send({
+      'action': 'permission_decision',
+      'decision': decision,
+      'permissionMode': _config.permissionMode,
+      'resumeSessionId': meta.resumeSessionId,
+      'targetPath': targetPath,
+      'contextId': meta.contextId,
+      'contextTitle': contextTitle,
+      'promptMessage': prompt.message,
+      'command': meta.command,
+      'cwd': effectiveCwd,
+      'engine': _config.engine,
+      'target': meta.target,
+      'targetType': meta.targetType,
+    });
+    _pushUser('Permission: $decision', promptLabel);
   }
 
   void requestRuntimeInfo(String query) {
@@ -872,7 +994,11 @@ class SessionController extends ChangeNotifier {
         _latestError = history.latestError;
         _canResumeCurrentSession = history.canResume;
         _resumeRuntimeMeta = history.resumeRuntimeMeta;
+        _terminalExecutions
+          ..clear()
+          ..addAll(history.terminalExecutions);
         _restoreTerminalLogs(history.rawTerminalByStream);
+        _syncActiveTerminalExecution();
         if (history.currentDiff != null) {
           final current = _normalizeHistoryDiff(history.currentDiff!);
           _mergeRecentDiff(current);
@@ -953,7 +1079,7 @@ class SessionController extends ChangeNotifier {
         );
         break;
       case LogEvent log:
-        _appendTerminalLog(log.stream, log.message);
+        _appendTerminalLog(log.stream, log.message, executionId: log.runtimeMeta.executionId);
         _handleLogTimeline(log);
         break;
       case ProgressEvent progress:
@@ -1052,7 +1178,8 @@ class SessionController extends ChangeNotifier {
         _reviewGroups
           ..clear()
           ..addAll(reviewState.groups.map(_normalizeReviewGroup));
-        _activeReviewGroupId = reviewState.activeGroup?.id ?? _activeReviewGroupId;
+        _activeReviewGroupId =
+            reviewState.activeGroup?.id ?? _activeReviewGroupId;
         _syncReviewGroupsFromRecentDiffs();
         _syncActiveReviewSelection();
         break;
@@ -1189,7 +1316,8 @@ class SessionController extends ChangeNotifier {
         executionId: item.executionId,
         groupId: item.groupId,
         groupTitle: item.groupTitle,
-        reviewStatus: reviewStatus.isNotEmpty ? reviewStatus : item.reviewStatus,
+        reviewStatus:
+            reviewStatus.isNotEmpty ? reviewStatus : item.reviewStatus,
       );
     }
     _syncActiveReviewDiff();
@@ -1667,7 +1795,8 @@ class SessionController extends ChangeNotifier {
     final grouped = <String, List<HistoryContext>>{};
     final preservedTitles = <String, String>{
       for (final group in _reviewGroups)
-        if (group.id.isNotEmpty && group.title.isNotEmpty) group.id: group.title,
+        if (group.id.isNotEmpty && group.title.isNotEmpty)
+          group.id: group.title,
     };
     final preservedExecutionIds = <String, String>{
       for (final group in _reviewGroups)
@@ -1710,7 +1839,8 @@ class SessionController extends ChangeNotifier {
           files.where((file) => file.reviewStatus == 'reverted').length;
       final revisedCount =
           files.where((file) => file.reviewStatus == 'revised').length;
-      final currentFile = pendingFiles.isNotEmpty ? pendingFiles.first : files.last;
+      final currentFile =
+          pendingFiles.isNotEmpty ? pendingFiles.first : files.last;
       final groupTitle = diffs
               .map((diff) => diff.groupTitle.trim())
               .firstWhere((title) => title.isNotEmpty, orElse: () => '')
@@ -1721,7 +1851,9 @@ class SessionController extends ChangeNotifier {
               .firstWhere((title) => title.isNotEmpty, orElse: () => '')
               .trim()
           : (preservedTitles[entry.key] ??
-              (files.length > 1 ? '本轮修改 ${files.length} 个文件' : currentFile.title));
+              (files.length > 1
+                  ? '本轮修改 ${files.length} 个文件'
+                  : currentFile.title));
       nextGroups.add(
         ReviewGroup(
           id: entry.key,
@@ -2138,21 +2270,75 @@ class SessionController extends ChangeNotifier {
     return '已连接';
   }
 
-  void _appendTerminalLog(String stream, String message) {
+  void _appendTerminalLog(String stream, String message, {String executionId = ''}) {
     if (message.isEmpty) {
       return;
     }
     final normalizedStream = stream.trim().toLowerCase();
     if (normalizedStream == 'stderr') {
       _terminalStderr = _appendChunk(_terminalStderr, message);
-      return;
+    } else {
+      _terminalStdout = _appendChunk(_terminalStdout, message);
     }
-    _terminalStdout = _appendChunk(_terminalStdout, message);
+    _appendExecutionOutput(executionId, normalizedStream, message);
   }
 
   void _restoreTerminalLogs(Map<String, String> rawTerminalByStream) {
     _terminalStdout = rawTerminalByStream['stdout'] ?? '';
     _terminalStderr = rawTerminalByStream['stderr'] ?? '';
+    _syncActiveTerminalExecution();
+  }
+
+  void _appendExecutionOutput(String executionId, String stream, String message) {
+    final normalizedId = executionId.trim();
+    if (normalizedId.isEmpty) {
+      return;
+    }
+    final index = _terminalExecutions.indexWhere((item) => item.executionId == normalizedId);
+    final current = index == -1
+        ? TerminalExecution(executionId: normalizedId)
+        : _terminalExecutions[index];
+    final updated = TerminalExecution(
+      executionId: current.executionId,
+      command: current.command,
+      cwd: current.cwd,
+      startedAt: current.startedAt,
+      completedAt: current.completedAt,
+      running: current.running || current.completedAt == null,
+      exitCode: current.exitCode,
+      stdout: stream == 'stderr' ? current.stdout : _appendChunk(current.stdout, message),
+      stderr: stream == 'stderr' ? _appendChunk(current.stderr, message) : current.stderr,
+    );
+    if (index == -1) {
+      _terminalExecutions.add(updated);
+    } else {
+      _terminalExecutions[index] = updated;
+    }
+    _syncActiveTerminalExecution();
+  }
+
+  TerminalExecution? _resolvedActiveTerminalExecution() {
+    if (_terminalExecutions.isEmpty) {
+      return null;
+    }
+    final activeId = _activeTerminalExecutionId.trim();
+    if (activeId.isNotEmpty) {
+      for (final item in _terminalExecutions) {
+        if (item.executionId == activeId) {
+          return item;
+        }
+      }
+    }
+    return _terminalExecutions.last;
+  }
+
+  void _syncActiveTerminalExecution() {
+    if (_terminalExecutions.isEmpty) {
+      _activeTerminalExecutionId = '';
+      return;
+    }
+    final active = _resolvedActiveTerminalExecution();
+    _activeTerminalExecutionId = active?.executionId ?? _terminalExecutions.last.executionId;
   }
 
   String _appendChunk(String original, String chunk) {

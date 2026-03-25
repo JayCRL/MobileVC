@@ -75,6 +75,10 @@ type SnapshotContext struct {
 	PendingReview bool   `json:"pendingReview,omitempty"`
 	Source        string `json:"source,omitempty"`
 	SkillName     string `json:"skillName,omitempty"`
+	ExecutionID   string `json:"executionId,omitempty"`
+	GroupID       string `json:"groupId,omitempty"`
+	GroupTitle    string `json:"groupTitle,omitempty"`
+	ReviewStatus  string `json:"reviewStatus,omitempty"`
 }
 
 type SnapshotLogEntry struct {
@@ -104,6 +108,8 @@ type TerminalExecution struct {
 type ProjectionSnapshot struct {
 	Diffs               []session.DiffContext      `json:"diffs,omitempty"`
 	CurrentDiff         *session.DiffContext       `json:"currentDiff,omitempty"`
+	ReviewGroups        []session.ReviewGroup      `json:"reviewGroups,omitempty"`
+	ActiveReviewGroup   *session.ReviewGroup       `json:"activeReviewGroup,omitempty"`
 	CurrentStep         *SnapshotContext           `json:"currentStep,omitempty"`
 	LatestError         *SnapshotContext           `json:"latestError,omitempty"`
 	LogEntries          []SnapshotLogEntry         `json:"logEntries,omitempty"`

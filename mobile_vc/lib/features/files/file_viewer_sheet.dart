@@ -380,12 +380,14 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
             if (showPermissionBar) ...[
               const SizedBox(height: 8),
               _PermissionActionBar(
+                key: const ValueKey('fileViewer.permissionBar'),
                 prompt: prompt,
                 onSubmit: widget.onSubmitPrompt,
               ),
             ],
             const SizedBox(height: 8),
             TextField(
+              key: const ValueKey('fileViewer.input'),
               controller: _controller,
               minLines: 1,
               maxLines: 3,
@@ -394,6 +396,7 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
               decoration: InputDecoration(
                 hintText: '输入针对当前文件的请求',
                 suffixIcon: IconButton(
+                  key: const ValueKey('fileViewer.sendButton'),
                   onPressed: _submitPrompt,
                   icon: const Icon(Icons.send),
                 ),
@@ -639,6 +642,7 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
 
 class _PermissionActionBar extends StatelessWidget {
   const _PermissionActionBar({
+    super.key,
     required this.prompt,
     required this.onSubmit,
   });
@@ -677,6 +681,7 @@ class _PermissionActionBar extends StatelessWidget {
             runSpacing: 8,
             children: options
                 .map((option) => _PromptOptionAction(
+                      key: ValueKey('fileViewer.permissionAction.${option.value.trim().toLowerCase()}'),
                       label: _promptOptionLabel(option.value, option.displayText),
                       style: _promptOptionStyle(option.value),
                       onPressed: () => onSubmit(option.value),
@@ -817,6 +822,7 @@ class _PromptRequestSection extends StatelessWidget {
 
 class _PromptOptionAction extends StatelessWidget {
   const _PromptOptionAction({
+    super.key,
     required this.label,
     required this.style,
     required this.onPressed,

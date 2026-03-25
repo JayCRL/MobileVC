@@ -18,6 +18,11 @@ type InputRequest struct {
 	protocol.RuntimeMeta
 }
 
+type ReviewDecisionRequest struct {
+	Decision string
+	protocol.RuntimeMeta
+}
+
 type Dependencies struct {
 	NewExecRunner func() runner.Runner
 	NewPtyRunner  func() runner.Runner

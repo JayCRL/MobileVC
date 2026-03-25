@@ -234,6 +234,8 @@ func TestIsLiveTailPromptTextRecognizesInteractivePrompts(t *testing.T) {
 		"Select an option:",
 		"Continue?",
 		"Approve?",
+		"p写 README 需要你的授权。拿到权限后我会直接覆盖成新的对外展示版。",
+		"你授权后，我就只改这一个位置。",
 	}
 
 	for _, text := range tests {
@@ -256,6 +258,27 @@ func TestIsLiveTailPromptTextDoesNotMisclassifyLogs(t *testing.T) {
 	for _, text := range tests {
 		if isLiveTailPromptText(text) {
 			t.Fatalf("expected %q to remain a log tail", text)
+		}
+	}
+}
+
+func TestPromptOptionsRecognizesPermissionPrompts(t *testing.T) {
+	tests := map[string][]string{
+		"Proceed? [y/N]":                                              {"y", "n"},
+		"Approve?":                                                    {"yes", "no"},
+		"p写 README 需要你的授权。拿到权限后我会直接覆盖成新的对外展示版。": {"y", "n"},
+		"你授权后，我就只改这一个位置。":                                   {"y", "n"},
+	}
+
+	for text, want := range tests {
+		got := promptOptions(text)
+		if len(got) != len(want) {
+			t.Fatalf("promptOptions(%q) length=%d want=%d", text, len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("promptOptions(%q)[%d]=%q want %q", text, i, got[i], want[i])
+			}
 		}
 	}
 }
@@ -310,6 +333,87 @@ func TestPtyRunnerClaudeLazyStartExposesPromptBeforeInput(t *testing.T) {
 	case <-errCh:
 	case <-time.After(3 * time.Second):
 		t.Fatal("runner did not exit after cancel")
+	}
+}
+
+func TestPtyRunnerClaudeAssistantPermissionTextBecomesPrompt(t *testing.T) {
+	runner := NewPtyRunner()
+	var events []any
+	sink := func(event any) { events = append(events, event) }
+
+	envelope, err := json.Marshal(map[string]any{
+		"type":       "assistant",
+		"session_id": "resume-1",
+		"message": map[string]any{
+			"content": []map[string]any{{
+				"type": "text",
+				"text": "我已定位到 README.md 第一行，准备改成：\n\n# MobileVC\n111 但当前写入权限还没授权，所以修改未执行。\n请授权后我就能直接完成。",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal assistant envelope: %v", err)
+	}
+
+	reader := strings.NewReader(string(envelope) + "\n")
+	runner.readClaudeStreamJSON(context.Background(), reader, "s-permission", sink)
+
+	var promptEvent *protocol.PromptRequestEvent
+	for _, event := range events {
+		if v, ok := event.(protocol.PromptRequestEvent); ok {
+			promptEvent = &v
+			break
+		}
+	}
+	if promptEvent == nil {
+		t.Fatalf("expected prompt request event, got %#v", events)
+	}
+	if !strings.Contains(promptEvent.Message, "还没授权") {
+		t.Fatalf("unexpected prompt message: %q", promptEvent.Message)
+	}
+	if len(promptEvent.Options) != 2 || promptEvent.Options[0] != "y" || promptEvent.Options[1] != "n" {
+		t.Fatalf("unexpected prompt options: %#v", promptEvent.Options)
+	}
+}
+
+func TestPtyRunnerClaudeToolResultPermissionErrorBecomesPrompt(t *testing.T) {
+	runner := NewPtyRunner()
+	var events []any
+	sink := func(event any) { events = append(events, event) }
+
+	envelope, err := json.Marshal(map[string]any{
+		"type":       "user",
+		"session_id": "resume-2",
+		"message": map[string]any{
+			"content": []map[string]any{{
+				"type":     "tool_result",
+				"is_error": true,
+				"content":  "Claude requested permissions to write to /Users/wust_lh/MobileVC/README.md, but you haven't granted it yet.",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal tool_result envelope: %v", err)
+	}
+
+	reader := strings.NewReader(string(envelope) + "\n")
+	runner.readClaudeStreamJSON(context.Background(), reader, "s-permission-tool", sink)
+
+	var promptEvent *protocol.PromptRequestEvent
+	for _, event := range events {
+		if v, ok := event.(protocol.PromptRequestEvent); ok {
+			promptEvent = &v
+			break
+		}
+	}
+	if promptEvent == nil {
+		t.Fatalf("expected prompt request event, got %#v", events)
+	}
+	if !strings.Contains(strings.ToLower(promptEvent.Message), "requested permissions to write") {
+		t.Fatalf("unexpected prompt message: %q", promptEvent.Message)
+	}
+	if len(promptEvent.Options) != 2 || promptEvent.Options[0] != "y" || promptEvent.Options[1] != "n" {
+		t.Fatalf("unexpected prompt options: %#v", promptEvent.Options)
 	}
 }
 

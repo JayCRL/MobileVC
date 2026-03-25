@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"mobilevc/internal/session"
 )
 
 type FileStore struct {
@@ -352,6 +354,9 @@ func normalizeProjection(projection ProjectionSnapshot) ProjectionSnapshot {
 	}
 	if projection.TerminalExecutions == nil {
 		projection.TerminalExecutions = []TerminalExecution{}
+	}
+	if projection.ReviewGroups == nil {
+		projection.ReviewGroups = []session.ReviewGroup{}
 	}
 	projection.SessionContext = normalizeSessionContext(projection.SessionContext)
 	return projection

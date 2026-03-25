@@ -3,24 +3,25 @@ package protocol
 import "time"
 
 const (
-	EventTypeLog                = "log"
-	EventTypeProgress           = "progress"
-	EventTypeError              = "error"
-	EventTypePromptRequest      = "prompt_request"
-	EventTypeSessionState       = "session_state"
-	EventTypeAgentState         = "agent_state"
-	EventTypeFSListResult       = "fs_list_result"
-	EventTypeFSReadResult       = "fs_read_result"
-	EventTypeStepUpdate         = "step_update"
-	EventTypeFileDiff           = "file_diff"
-	EventTypeRuntimeInfoResult  = "runtime_info_result"
-	EventTypeSessionCreated     = "session_created"
-	EventTypeSessionListResult  = "session_list_result"
-	EventTypeSessionHistory     = "session_history"
-	EventTypeSkillCatalogResult = "skill_catalog_result"
-	EventTypeMemoryListResult   = "memory_list_result"
+	EventTypeLog                  = "log"
+	EventTypeProgress             = "progress"
+	EventTypeError                = "error"
+	EventTypePromptRequest        = "prompt_request"
+	EventTypeSessionState         = "session_state"
+	EventTypeAgentState           = "agent_state"
+	EventTypeFSListResult         = "fs_list_result"
+	EventTypeFSReadResult         = "fs_read_result"
+	EventTypeStepUpdate           = "step_update"
+	EventTypeFileDiff             = "file_diff"
+	EventTypeRuntimeInfoResult    = "runtime_info_result"
+	EventTypeSessionCreated       = "session_created"
+	EventTypeSessionListResult    = "session_list_result"
+	EventTypeSessionHistory       = "session_history"
+	EventTypeReviewState          = "review_state"
+	EventTypeSkillCatalogResult   = "skill_catalog_result"
+	EventTypeMemoryListResult     = "memory_list_result"
 	EventTypeSessionContextResult = "session_context_result"
-	EventTypeSkillSyncResult    = "skill_sync_result"
+	EventTypeSkillSyncResult      = "skill_sync_result"
 )
 
 type RuntimeMeta struct {
@@ -32,6 +33,8 @@ type RuntimeMeta struct {
 	ResultView      string `json:"resultView,omitempty"`
 	ResumeSessionID string `json:"resumeSessionId,omitempty"`
 	ExecutionID     string `json:"executionId,omitempty"`
+	GroupID         string `json:"groupId,omitempty"`
+	GroupTitle      string `json:"groupTitle,omitempty"`
 	ContextID       string `json:"contextId,omitempty"`
 	ContextTitle    string `json:"contextTitle,omitempty"`
 	TargetText      string `json:"targetText,omitempty"`
@@ -70,10 +73,29 @@ type InputRequestEvent struct {
 type ReviewDecisionRequestEvent struct {
 	ClientEvent
 	Decision       string `json:"decision"`
+	ExecutionID    string `json:"executionId,omitempty"`
+	GroupID        string `json:"groupId,omitempty"`
+	GroupTitle     string `json:"groupTitle,omitempty"`
 	ContextID      string `json:"contextId,omitempty"`
 	ContextTitle   string `json:"contextTitle,omitempty"`
 	TargetPath     string `json:"targetPath,omitempty"`
 	PermissionMode string `json:"permissionMode,omitempty"`
+}
+
+type PermissionDecisionRequestEvent struct {
+	ClientEvent
+	Decision           string `json:"decision"`
+	PermissionMode     string `json:"permissionMode,omitempty"`
+	ResumeSessionID    string `json:"resumeSessionId,omitempty"`
+	TargetPath         string `json:"targetPath,omitempty"`
+	ContextID          string `json:"contextId,omitempty"`
+	ContextTitle       string `json:"contextTitle,omitempty"`
+	PromptMessage      string `json:"promptMessage,omitempty"`
+	FallbackCommand    string `json:"command,omitempty"`
+	FallbackCWD        string `json:"cwd,omitempty"`
+	FallbackEngine     string `json:"engine,omitempty"`
+	FallbackTarget     string `json:"target,omitempty"`
+	FallbackTargetType string `json:"targetType,omitempty"`
 }
 
 type PermissionModeUpdateRequestEvent struct {
@@ -136,7 +158,6 @@ type SessionContext struct {
 	EnabledSkillNames []string `json:"enabledSkillNames,omitempty"`
 	EnabledMemoryIDs  []string `json:"enabledMemoryIds,omitempty"`
 }
-
 
 type FSListRequestEvent struct {
 	ClientEvent
@@ -215,6 +236,36 @@ type HistoryContext struct {
 	PendingReview bool   `json:"pendingReview,omitempty"`
 	Source        string `json:"source,omitempty"`
 	SkillName     string `json:"skillName,omitempty"`
+	ExecutionID   string `json:"executionId,omitempty"`
+	GroupID       string `json:"groupId,omitempty"`
+	GroupTitle    string `json:"groupTitle,omitempty"`
+	ReviewStatus  string `json:"reviewStatus,omitempty"`
+}
+
+type ReviewFile struct {
+	ID            string `json:"id,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Diff          string `json:"diff,omitempty"`
+	Lang          string `json:"lang,omitempty"`
+	PendingReview bool   `json:"pendingReview,omitempty"`
+	ReviewStatus  string `json:"reviewStatus,omitempty"`
+	ExecutionID   string `json:"executionId,omitempty"`
+}
+
+type ReviewGroup struct {
+	ID            string       `json:"id,omitempty"`
+	Title         string       `json:"title,omitempty"`
+	ExecutionID   string       `json:"executionId,omitempty"`
+	PendingReview bool         `json:"pendingReview,omitempty"`
+	ReviewStatus  string       `json:"reviewStatus,omitempty"`
+	CurrentFileID string       `json:"currentFileId,omitempty"`
+	CurrentPath   string       `json:"currentPath,omitempty"`
+	PendingCount  int          `json:"pendingCount,omitempty"`
+	AcceptedCount int          `json:"acceptedCount,omitempty"`
+	RevertedCount int          `json:"revertedCount,omitempty"`
+	RevisedCount  int          `json:"revisedCount,omitempty"`
+	Files         []ReviewFile `json:"files,omitempty"`
 }
 
 type HistoryLogEntry struct {
@@ -257,6 +308,8 @@ type SessionHistoryEvent struct {
 	LogEntries          []HistoryLogEntry   `json:"logEntries,omitempty"`
 	Diffs               []HistoryContext    `json:"diffs,omitempty"`
 	CurrentDiff         *HistoryContext     `json:"currentDiff,omitempty"`
+	ReviewGroups        []ReviewGroup       `json:"reviewGroups,omitempty"`
+	ActiveReviewGroup   *ReviewGroup        `json:"activeReviewGroup,omitempty"`
 	CurrentStep         *HistoryContext     `json:"currentStep,omitempty"`
 	LatestError         *HistoryContext     `json:"latestError,omitempty"`
 	RawTerminalByStream map[string]string   `json:"rawTerminalByStream,omitempty"`
@@ -264,6 +317,12 @@ type SessionHistoryEvent struct {
 	SessionContext      SessionContext      `json:"sessionContext,omitempty"`
 	CanResume           bool                `json:"canResume,omitempty"`
 	ResumeRuntimeMeta   RuntimeMeta         `json:"resumeRuntimeMeta,omitempty"`
+}
+
+type ReviewStateEvent struct {
+	Event
+	Groups      []ReviewGroup `json:"groups,omitempty"`
+	ActiveGroup *ReviewGroup  `json:"activeGroup,omitempty"`
 }
 
 type SkillCatalogResultEvent struct {
@@ -513,13 +572,15 @@ func NewSessionListResultEvent(sessionID string, items []SessionSummary) Session
 	}
 }
 
-func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries []HistoryLogEntry, diffs []HistoryContext, currentDiff, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, terminalExecutions []TerminalExecution, sessionContext SessionContext, canResume bool, resumeRuntimeMeta RuntimeMeta) SessionHistoryEvent {
+func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries []HistoryLogEntry, diffs []HistoryContext, currentDiff *HistoryContext, reviewGroups []ReviewGroup, activeReviewGroup *ReviewGroup, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, terminalExecutions []TerminalExecution, sessionContext SessionContext, canResume bool, resumeRuntimeMeta RuntimeMeta) SessionHistoryEvent {
 	return SessionHistoryEvent{
 		Event:               NewBaseEvent(EventTypeSessionHistory, sessionID),
 		Summary:             summary,
 		LogEntries:          logEntries,
 		Diffs:               diffs,
 		CurrentDiff:         currentDiff,
+		ReviewGroups:        reviewGroups,
+		ActiveReviewGroup:   activeReviewGroup,
 		CurrentStep:         currentStep,
 		LatestError:         latestError,
 		RawTerminalByStream: rawTerminalByStream,
@@ -544,6 +605,14 @@ func NewSessionContextResultEvent(sessionID string, sessionContext SessionContex
 
 func NewSkillSyncResultEvent(sessionID, message string) SkillSyncResultEvent {
 	return SkillSyncResultEvent{Event: NewBaseEvent(EventTypeSkillSyncResult, sessionID), Message: message}
+}
+
+func NewReviewStateEvent(sessionID string, groups []ReviewGroup, activeGroup *ReviewGroup) ReviewStateEvent {
+	return ReviewStateEvent{
+		Event:       NewBaseEvent(EventTypeReviewState, sessionID),
+		Groups:      groups,
+		ActiveGroup: activeGroup,
+	}
 }
 
 func NewRuntimeInfoResultEvent(sessionID, query, title, message string, unavailable bool, items []RuntimeInfoItem) RuntimeInfoResultEvent {
@@ -577,8 +646,17 @@ func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
 	if overlay.ResultView != "" {
 		merged.ResultView = overlay.ResultView
 	}
+	if overlay.ResumeSessionID != "" {
+		merged.ResumeSessionID = overlay.ResumeSessionID
+	}
 	if overlay.ExecutionID != "" {
 		merged.ExecutionID = overlay.ExecutionID
+	}
+	if overlay.GroupID != "" {
+		merged.GroupID = overlay.GroupID
+	}
+	if overlay.GroupTitle != "" {
+		merged.GroupTitle = overlay.GroupTitle
 	}
 	if overlay.ContextID != "" {
 		merged.ContextID = overlay.ContextID
@@ -646,6 +724,9 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case SessionHistoryEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case ReviewStateEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case SkillCatalogResultEvent:
