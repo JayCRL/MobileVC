@@ -10,6 +10,29 @@ import '../../data/models/runtime_meta.dart';
 import '../../data/models/session_models.dart';
 import '../../data/services/mobilevc_ws_service.dart';
 
+const Set<String> _approvePromptValues = {
+  'y',
+  'yes',
+  'ok',
+  'approve',
+  'approved',
+  'allow',
+  'accept',
+  'continue',
+  'allow once',
+  'allow this time',
+};
+
+const Set<String> _denyPromptValues = {
+  'n',
+  'no',
+  'deny',
+  'denied',
+  'reject',
+  'cancel',
+  'stop',
+};
+
 class SessionController extends ChangeNotifier {
   SessionController({MobileVcWsService? service})
       : _service = service ?? MobileVcWsService();
@@ -47,6 +70,8 @@ class SessionController extends ChangeNotifier {
   final List<SkillDefinition> _skills = [];
   final List<MemoryItem> _memoryItems = [];
   final List<TimelineItem> _timeline = [];
+  final List<ReviewGroup> _reviewGroups = [];
+  String _activeReviewGroupId = '';
   String _activeReviewDiffId = '';
   String _agentPhaseLabel = '未连接';
   bool _activityVisible = false;
@@ -89,11 +114,11 @@ class SessionController extends ChangeNotifier {
   RuntimeInfoResultEvent? get runtimeInfo => _runtimeInfo;
   FileDiffEvent? get currentDiff => _currentDiff;
   PromptRequestEvent? get pendingPrompt {
-    if (isBypassPermissionsMode || shouldShowReviewChoices) {
-      return null;
-    }
     final prompt = _pendingPrompt;
     if (prompt == null || !prompt.hasVisiblePrompt) {
+      return null;
+    }
+    if (_shouldHidePromptCard(prompt)) {
       return null;
     }
     return prompt;
@@ -137,11 +162,16 @@ class SessionController extends ChangeNotifier {
   }
 
   List<TimelineItem> get timeline => List.unmodifiable(_timeline);
+  List<ReviewGroup> get reviewGroups => List.unmodifiable(_reviewGroups);
+  ReviewGroup? get activeReviewGroup => _resolvedActiveReviewGroup();
+  String get activeReviewGroupId => _activeReviewGroupId;
   bool get awaitInput =>
       _agentState?.awaitInput == true || pendingPrompt != null;
   bool get fastMode => _config.fastMode;
   bool get hasPendingReview => pendingDiffCount > 0;
   int get pendingDiffCount => _pendingDiffs.length;
+  int get pendingReviewGroupCount =>
+      _reviewGroups.where((group) => group.pendingCount > 0).length;
   List<HistoryContext> get diffItems => List.unmodifiable(_recentDiffs);
   List<HistoryContext> get pendingDiffs => List.unmodifiable(_pendingDiffs);
   String get activeReviewDiffId => _activeReviewDiffId;
@@ -161,8 +191,47 @@ class SessionController extends ChangeNotifier {
     }
     final state = (_agentState?.state ?? '').trim().toUpperCase();
     return currentReviewDiff != null &&
-        _pendingPrompt != null &&
+        _isReviewDecisionPrompt(_pendingPrompt) &&
         state == 'WAIT_INPUT';
+  }
+
+  String _debugReviewStateSummary() {
+    final prompt = _pendingPrompt;
+    final currentReview = currentReviewDiff;
+    final openedPending = openedFilePendingDiff;
+    return 'awaitInput=$awaitInput, agentState=${_agentState?.state ?? '-'}, pendingPrompt=${prompt?.message.trim().isNotEmpty == true ? prompt!.message.trim() : '-'}, shouldShowReviewChoices=$shouldShowReviewChoices, currentReviewDiff=${currentReview?.path.isNotEmpty == true ? currentReview!.path : '-'}, openedFilePendingDiff=${openedPending?.path.isNotEmpty == true ? openedPending!.path : '-'}, openedFile=${_openedFile?.path.isNotEmpty == true ? _openedFile!.path : '-'}';
+  }
+
+  void _pushDebug(String label, [String? details]) {
+    final body = details == null || details.trim().isEmpty
+        ? '[debug] $label'
+        : '[debug] $label\n${details.trim()}';
+    _pushSystem('system', body);
+  }
+
+  void setActiveReviewGroup(String groupId) {
+    final normalized = groupId.trim();
+    if (normalized.isEmpty) {
+      if (_activeReviewGroupId.isEmpty) {
+        return;
+      }
+      _activeReviewGroupId = '';
+      _syncActiveReviewSelection();
+      _syncDerivedState();
+      notifyListeners();
+      return;
+    }
+    final group = _findReviewGroupById(normalized);
+    if (group == null) {
+      return;
+    }
+    if (_activeReviewGroupId == group.id) {
+      return;
+    }
+    _activeReviewGroupId = group.id;
+    _syncActiveReviewSelection();
+    _syncDerivedState();
+    notifyListeners();
   }
 
   void setActiveReviewDiff(String diffId) {
@@ -172,6 +241,7 @@ class SessionController extends ChangeNotifier {
         return;
       }
       _activeReviewDiffId = '';
+      _syncActiveReviewSelection();
       _syncDerivedState();
       notifyListeners();
       return;
@@ -185,7 +255,11 @@ class SessionController extends ChangeNotifier {
       return;
     }
     _activeReviewDiffId = nextId;
-    _syncDerivedState();
+    final groupId = _groupIdForDiff(diff);
+    if (groupId.isNotEmpty) {
+      _activeReviewGroupId = groupId;
+    }
+    _syncActiveReviewSelection();
     notifyListeners();
   }
 
@@ -196,7 +270,11 @@ class SessionController extends ChangeNotifier {
       return;
     }
     _activeReviewDiffId = nextId;
-    _syncDerivedState();
+    final groupId = next == null ? '' : _groupIdForDiff(next);
+    if (groupId.isNotEmpty) {
+      _activeReviewGroupId = groupId;
+    }
+    _syncActiveReviewSelection();
     notifyListeners();
   }
 
@@ -577,6 +655,7 @@ class SessionController extends ChangeNotifier {
       return;
     }
     if (awaitInput) {
+      _pushDebug('文件面板输入走 input', _debugReviewStateSummary());
       _service.send({
         'action': 'input',
         'data': '$prompt\n',
@@ -670,6 +749,7 @@ class SessionController extends ChangeNotifier {
     if (normalized.isEmpty) {
       return;
     }
+    _pushDebug('提交 prompt 选项', 'value=$normalized\n${_debugReviewStateSummary()}');
     if (shouldShowReviewChoices) {
       final decision = _reviewDecisionFromPromptValue(normalized);
       if (decision != null) {
@@ -677,7 +757,22 @@ class SessionController extends ChangeNotifier {
         return;
       }
     }
-    _submitAwaitingInput(normalized);
+    final resolved = _normalizePromptReply(normalized, _pendingPrompt);
+    _submitAwaitingInput(resolved);
+  }
+
+  String _normalizePromptReply(String value, PromptRequestEvent? prompt) {
+    final normalized = value.trim();
+    final lower = normalized.toLowerCase();
+    if (prompt?.looksLikePermissionPrompt == true) {
+      if (_approvePromptValues.contains(lower)) {
+        return 'y';
+      }
+      if (_denyPromptValues.contains(lower)) {
+        return 'n';
+      }
+    }
+    return normalized;
   }
 
   void _submitAwaitingInput(String value) {
@@ -766,7 +861,12 @@ class SessionController extends ChangeNotifier {
         _recentDiffs
           ..clear()
           ..addAll(history.diffs.map(_normalizeHistoryDiff));
-        _syncActiveReviewDiff();
+        _reviewGroups
+          ..clear()
+          ..addAll(history.reviewGroups.map(_normalizeReviewGroup));
+        _activeReviewGroupId = history.activeReviewGroup?.id ?? '';
+        _syncReviewGroupsFromRecentDiffs();
+        _syncActiveReviewSelection();
         _currentStep = history.currentStep;
         _currentStepSummary = _summaryFromHistoryContext(history.currentStep);
         _latestError = history.latestError;
@@ -786,6 +886,9 @@ class SessionController extends ChangeNotifier {
                 targetPath: current.path,
                 targetDiff: current.diff,
                 targetTitle: current.title,
+                executionId: current.executionId,
+                groupId: current.groupId,
+                groupTitle: current.groupTitle,
               ),
             ),
             raw: const {},
@@ -808,6 +911,9 @@ class SessionController extends ChangeNotifier {
                       targetPath: resolved.path,
                       targetDiff: resolved.diff,
                       targetTitle: resolved.title,
+                      executionId: resolved.executionId,
+                      groupId: resolved.groupId,
+                      groupTitle: resolved.groupTitle,
                     ),
                   ),
                   raw: const {},
@@ -883,6 +989,7 @@ class SessionController extends ChangeNotifier {
         break;
       case PromptRequestEvent prompt:
         _pendingPrompt = prompt;
+        _pushDebug('收到 prompt_request', _debugReviewStateSummary());
         break;
       case FSListResultEvent fsList:
         _fileListLoading = false;
@@ -941,21 +1048,33 @@ class SessionController extends ChangeNotifier {
           targetPath: step.runtimeMeta.targetPath,
         );
         break;
+      case ReviewStateEvent reviewState:
+        _reviewGroups
+          ..clear()
+          ..addAll(reviewState.groups.map(_normalizeReviewGroup));
+        _activeReviewGroupId = reviewState.activeGroup?.id ?? _activeReviewGroupId;
+        _syncReviewGroupsFromRecentDiffs();
+        _syncActiveReviewSelection();
+        break;
       case FileDiffEvent diff:
         _currentDiff = diff;
-        _mergeRecentDiff(
-          HistoryContext(
-            id: diff.runtimeMeta.contextId,
-            type: 'diff',
-            path: diff.path,
-            title: diff.title,
-            diff: diff.diff,
-            lang: diff.lang,
-            pendingReview: !isAutoAcceptMode,
-            source: diff.runtimeMeta.source,
-            skillName: diff.runtimeMeta.skillName,
-          ),
+        final historyDiff = HistoryContext(
+          id: diff.runtimeMeta.contextId,
+          type: 'diff',
+          path: diff.path,
+          title: diff.title,
+          diff: diff.diff,
+          lang: diff.lang,
+          pendingReview: !isAutoAcceptMode,
+          source: diff.runtimeMeta.source,
+          skillName: diff.runtimeMeta.skillName,
+          executionId: diff.runtimeMeta.executionId,
+          groupId: diff.runtimeMeta.groupId,
+          groupTitle: diff.runtimeMeta.groupTitle,
+          reviewStatus: !isAutoAcceptMode ? 'pending' : 'accepted',
         );
+        _mergeRecentDiff(historyDiff);
+        _syncReviewGroupsFromRecentDiffs();
         _pushTimelineItem(
           TimelineItem(
             id: 'diff-${diff.timestamp.microsecondsSinceEpoch}',
@@ -964,14 +1083,7 @@ class SessionController extends ChangeNotifier {
             title: diff.title,
             body: diff.path,
             meta: diff.runtimeMeta,
-            context: HistoryContext(
-              path: diff.path,
-              title: diff.title,
-              diff: diff.diff,
-              lang: diff.lang,
-              id: diff.runtimeMeta.contextId,
-              pendingReview: !isAutoAcceptMode,
-            ),
+            context: historyDiff,
           ),
         );
         break;
@@ -1038,7 +1150,11 @@ class SessionController extends ChangeNotifier {
     }
   }
 
-  void _markDiffReviewState(HistoryContext diff, {required bool keepPending}) {
+  void _markDiffReviewState(
+    HistoryContext diff, {
+    required bool keepPending,
+    String reviewStatus = '',
+  }) {
     final targetId = diff.id.trim();
     final targetPath = diff.path.trim();
     for (var i = 0; i < _recentDiffs.length; i++) {
@@ -1070,6 +1186,10 @@ class SessionController extends ChangeNotifier {
         pendingReview: keepPending,
         source: item.source,
         skillName: item.skillName,
+        executionId: item.executionId,
+        groupId: item.groupId,
+        groupTitle: item.groupTitle,
+        reviewStatus: reviewStatus.isNotEmpty ? reviewStatus : item.reviewStatus,
       );
     }
     _syncActiveReviewDiff();
@@ -1084,12 +1204,11 @@ class SessionController extends ChangeNotifier {
       _pushSystem('session', '当前是自动接受修改模式，无需手动审核 diff');
       return;
     }
-    if (normalized == 'accept' && _config.permissionMode != 'acceptEdits') {
-      _pushSystem(
-          'error', '当前 permission mode 不是 acceptEdits，不能直接 accept diff。');
-      return;
-    }
     _activeReviewDiffId = _diffIdentity(diff);
+    final groupId = _groupIdForDiff(diff);
+    if (groupId.isNotEmpty) {
+      _activeReviewGroupId = groupId;
+    }
     _service.send({
       'action': 'review_decision',
       'decision': normalized,
@@ -1097,10 +1216,18 @@ class SessionController extends ChangeNotifier {
       'contextTitle':
           diff.title.isNotEmpty ? diff.title : currentMeta.contextTitle,
       'targetPath': diff.path.isNotEmpty ? diff.path : currentMeta.targetPath,
+      'executionId': diff.executionId,
+      'groupId': groupId,
+      'groupTitle': diff.groupTitle,
       'permissionMode': _config.permissionMode,
     });
     _pendingPrompt = normalized == 'revise' ? _pendingPrompt : null;
-    _markDiffReviewState(diff, keepPending: normalized == 'revise');
+    _markDiffReviewState(
+      diff,
+      keepPending: normalized == 'revise',
+      reviewStatus: _reviewStatusFromDecision(normalized),
+    );
+    _syncReviewGroupsFromRecentDiffs();
     if (pushTimeline) {
       _pushUser('Review: $normalized', '审阅');
     }
@@ -1441,6 +1568,40 @@ class SessionController extends ChangeNotifier {
       pendingReview: isAutoAcceptMode ? false : item.pendingReview,
       source: item.source,
       skillName: item.skillName,
+      executionId: item.executionId,
+      groupId: item.groupId,
+      groupTitle: item.groupTitle,
+      reviewStatus: item.reviewStatus,
+    );
+  }
+
+  ReviewFile _normalizeReviewFile(ReviewFile file) {
+    return ReviewFile(
+      id: file.id,
+      path: file.path,
+      title: file.title,
+      diff: file.diff,
+      lang: file.lang,
+      pendingReview: isAutoAcceptMode ? false : file.pendingReview,
+      reviewStatus: file.reviewStatus,
+      executionId: file.executionId,
+    );
+  }
+
+  ReviewGroup _normalizeReviewGroup(ReviewGroup group) {
+    return ReviewGroup(
+      id: group.id,
+      title: group.title,
+      executionId: group.executionId,
+      pendingReview: isAutoAcceptMode ? false : group.pendingReview,
+      reviewStatus: group.reviewStatus,
+      currentFileId: group.currentFileId,
+      currentPath: group.currentPath,
+      pendingCount: isAutoAcceptMode ? 0 : group.pendingCount,
+      acceptedCount: group.acceptedCount,
+      revertedCount: group.revertedCount,
+      revisedCount: group.revisedCount,
+      files: group.files.map(_normalizeReviewFile).toList(growable: false),
     );
   }
 
@@ -1452,24 +1613,222 @@ class SessionController extends ChangeNotifier {
     return _normalizePath(diff.path);
   }
 
-  void _syncActiveReviewDiff() {
-    final pending = _pendingDiffs;
-    if (pending.isEmpty) {
-      _activeReviewDiffId = '';
-      return;
+  String _groupIdForDiff(HistoryContext diff) {
+    final groupId = diff.groupId.trim();
+    if (groupId.isNotEmpty) {
+      return groupId;
     }
-    final currentId = _activeReviewDiffId.trim();
-    if (currentId.isNotEmpty) {
-      for (final item in pending) {
-        if (_diffIdentity(item) == currentId) {
-          return;
+    final executionId = diff.executionId.trim();
+    if (executionId.isNotEmpty) {
+      return executionId;
+    }
+    final normalizedPath = _normalizePath(diff.path);
+    return normalizedPath;
+  }
+
+  ReviewGroup? _findReviewGroupById(String groupId) {
+    final normalized = groupId.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    for (final group in _reviewGroups) {
+      if (group.id == normalized) {
+        return group;
+      }
+    }
+    return null;
+  }
+
+  ReviewGroup? _resolvedActiveReviewGroup() {
+    final activeId = _activeReviewGroupId.trim();
+    if (activeId.isNotEmpty) {
+      final explicit = _findReviewGroupById(activeId);
+      if (explicit != null) {
+        return explicit;
+      }
+    }
+    final current = _currentReviewDiff();
+    if (current != null) {
+      final currentGroupId = _groupIdForDiff(current);
+      if (currentGroupId.isNotEmpty) {
+        final group = _findReviewGroupById(currentGroupId);
+        if (group != null) {
+          return group;
         }
       }
     }
-    final preferred = _pendingDiffForCurrentDiff() ??
-        _pendingDiffForOpenedFile() ??
-        pending.last;
-    _activeReviewDiffId = _diffIdentity(preferred);
+    if (_reviewGroups.isEmpty) {
+      return null;
+    }
+    return _reviewGroups.last;
+  }
+
+  void _syncReviewGroupsFromRecentDiffs() {
+    final grouped = <String, List<HistoryContext>>{};
+    final preservedTitles = <String, String>{
+      for (final group in _reviewGroups)
+        if (group.id.isNotEmpty && group.title.isNotEmpty) group.id: group.title,
+    };
+    final preservedExecutionIds = <String, String>{
+      for (final group in _reviewGroups)
+        if (group.id.isNotEmpty && group.executionId.isNotEmpty)
+          group.id: group.executionId,
+    };
+
+    for (final diff in _recentDiffs) {
+      if (diff.diff.trim().isEmpty) {
+        continue;
+      }
+      final groupId = _groupIdForDiff(diff);
+      if (groupId.isEmpty) {
+        continue;
+      }
+      grouped.putIfAbsent(groupId, () => []).add(diff);
+    }
+
+    final nextGroups = <ReviewGroup>[];
+    for (final entry in grouped.entries) {
+      final diffs = entry.value;
+      final files = diffs
+          .map(
+            (diff) => ReviewFile(
+              id: diff.id,
+              path: diff.path,
+              title: diff.title,
+              diff: diff.diff,
+              lang: diff.lang,
+              pendingReview: diff.pendingReview,
+              reviewStatus: diff.reviewStatus,
+              executionId: diff.executionId,
+            ),
+          )
+          .toList(growable: false);
+      final pendingFiles = files.where((file) => file.pendingReview).toList();
+      final acceptedCount =
+          files.where((file) => file.reviewStatus == 'accepted').length;
+      final revertedCount =
+          files.where((file) => file.reviewStatus == 'reverted').length;
+      final revisedCount =
+          files.where((file) => file.reviewStatus == 'revised').length;
+      final currentFile = pendingFiles.isNotEmpty ? pendingFiles.first : files.last;
+      final groupTitle = diffs
+              .map((diff) => diff.groupTitle.trim())
+              .firstWhere((title) => title.isNotEmpty, orElse: () => '')
+              .trim()
+              .isNotEmpty
+          ? diffs
+              .map((diff) => diff.groupTitle.trim())
+              .firstWhere((title) => title.isNotEmpty, orElse: () => '')
+              .trim()
+          : (preservedTitles[entry.key] ??
+              (files.length > 1 ? '本轮修改 ${files.length} 个文件' : currentFile.title));
+      nextGroups.add(
+        ReviewGroup(
+          id: entry.key,
+          title: groupTitle,
+          executionId: diffs
+                  .map((diff) => diff.executionId.trim())
+                  .firstWhere((id) => id.isNotEmpty, orElse: () => '')
+                  .trim()
+                  .isNotEmpty
+              ? diffs
+                  .map((diff) => diff.executionId.trim())
+                  .firstWhere((id) => id.isNotEmpty, orElse: () => '')
+                  .trim()
+              : (preservedExecutionIds[entry.key] ?? ''),
+          pendingReview: pendingFiles.isNotEmpty,
+          reviewStatus: pendingFiles.isNotEmpty
+              ? 'pending'
+              : _groupReviewStatusFromCounts(
+                  acceptedCount: acceptedCount,
+                  revertedCount: revertedCount,
+                  revisedCount: revisedCount,
+                ),
+          currentFileId: currentFile.id,
+          currentPath: currentFile.path,
+          pendingCount: pendingFiles.length,
+          acceptedCount: acceptedCount,
+          revertedCount: revertedCount,
+          revisedCount: revisedCount,
+          files: files,
+        ),
+      );
+    }
+
+    _reviewGroups
+      ..clear()
+      ..addAll(nextGroups);
+  }
+
+  void _syncActiveReviewSelection() {
+    _syncReviewGroupsFromRecentDiffs();
+    final activeGroup = _resolvedActiveReviewGroup();
+    if (activeGroup == null) {
+      _activeReviewGroupId = '';
+      _activeReviewDiffId = '';
+      return;
+    }
+    _activeReviewGroupId = activeGroup.id;
+    final activeDiff = _findPendingDiffById(_activeReviewDiffId);
+    if (activeDiff != null && _groupIdForDiff(activeDiff) == activeGroup.id) {
+      return;
+    }
+    final pendingInGroup = _pendingDiffs.where((diff) {
+      return _groupIdForDiff(diff) == activeGroup.id;
+    }).toList(growable: false);
+    if (pendingInGroup.isNotEmpty) {
+      _activeReviewDiffId = _diffIdentity(pendingInGroup.first);
+      return;
+    }
+    if (activeGroup.files.isNotEmpty) {
+      final fallback = activeGroup.files.first;
+      final matched = _recentDiffs.where((diff) {
+        return (fallback.id.isNotEmpty && diff.id == fallback.id) ||
+            _pathsMatch(diff.path, fallback.path);
+      }).toList(growable: false);
+      if (matched.isNotEmpty) {
+        _activeReviewDiffId = _diffIdentity(matched.first);
+        return;
+      }
+    }
+    _activeReviewDiffId = '';
+  }
+
+  String _reviewStatusFromDecision(String decision) {
+    switch (decision) {
+      case 'accept':
+        return 'accepted';
+      case 'revert':
+        return 'reverted';
+      case 'revise':
+        return 'revised';
+      default:
+        return '';
+    }
+  }
+
+  String _groupReviewStatusFromCounts({
+    required int acceptedCount,
+    required int revertedCount,
+    required int revisedCount,
+  }) {
+    if (revisedCount > 0) {
+      return 'revised';
+    }
+    if (revertedCount > 0 && acceptedCount == 0) {
+      return 'reverted';
+    }
+    if (acceptedCount > 0 && revertedCount == 0) {
+      return 'accepted';
+    }
+    if (acceptedCount == 0 && revertedCount == 0 && revisedCount == 0) {
+      return '';
+    }
+    return 'mixed';
+  }
+
+  void _syncActiveReviewDiff() {
+    _syncActiveReviewSelection();
   }
 
   HistoryContext? _findPendingDiffById(String diffId) {
@@ -1479,6 +1838,11 @@ class SessionController extends ChangeNotifier {
     }
     for (final item in _pendingDiffs) {
       if (_diffIdentity(item) == normalized) {
+        return item;
+      }
+    }
+    for (final item in _recentDiffs) {
+      if (_diffIdentity(item) == normalized && item.diff.isNotEmpty) {
         return item;
       }
     }
@@ -1495,6 +1859,15 @@ class SessionController extends ChangeNotifier {
   bool _sameDiffIdentity(HistoryContext left, HistoryContext right) {
     if (left.id.isNotEmpty && right.id.isNotEmpty) {
       return left.id == right.id;
+    }
+    final leftGroupId = _groupIdForDiff(left);
+    final rightGroupId = _groupIdForDiff(right);
+    if (leftGroupId.isNotEmpty && rightGroupId.isNotEmpty) {
+      final leftPath = _normalizePath(left.path);
+      final rightPath = _normalizePath(right.path);
+      if (leftPath.isNotEmpty && rightPath.isNotEmpty) {
+        return leftGroupId == rightGroupId && leftPath == rightPath;
+      }
     }
     final leftPath = _normalizePath(left.path);
     final rightPath = _normalizePath(right.path);
@@ -1534,7 +1907,15 @@ class SessionController extends ChangeNotifier {
         pendingReview: pending,
         source: diff.runtimeMeta.source,
         skillName: diff.runtimeMeta.skillName,
+        executionId: diff.runtimeMeta.executionId,
+        groupId: diff.runtimeMeta.groupId,
+        groupTitle: diff.runtimeMeta.groupTitle,
+        reviewStatus: pending ? 'pending' : '',
       );
+    }
+    final currentReview = _currentReviewDiff();
+    if (currentReview != null) {
+      return currentReview;
     }
     if (_recentDiffs.isEmpty) {
       return null;
@@ -1686,7 +2067,9 @@ class SessionController extends ChangeNotifier {
   }
 
   void _syncDerivedState() {
+    _syncReviewGroupsFromRecentDiffs();
     _agentPhaseLabel = _compactAgentMessage();
+    _syncActiveReviewSelection();
     final active = _connected &&
         (_agentState?.state == 'THINKING' ||
             _agentState?.state == 'RUNNING_TOOL');
@@ -1707,6 +2090,35 @@ class SessionController extends ChangeNotifier {
     if (_currentStepSummary.isEmpty && _currentStep != null) {
       _currentStepSummary = _summaryFromHistoryContext(_currentStep);
     }
+  }
+
+  bool _isReviewDecisionPrompt(PromptRequestEvent? prompt) {
+    if (prompt == null) {
+      return false;
+    }
+    final options = prompt.options
+        .map((option) => option.value.trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    if (options.contains('accept') ||
+        options.contains('revert') ||
+        options.contains('revise')) {
+      return true;
+    }
+    final message = prompt.message.trim().toLowerCase();
+    return message.contains('accept') &&
+        message.contains('revert') &&
+        message.contains('revise');
+  }
+
+  bool _shouldHidePromptCard(PromptRequestEvent? prompt) {
+    if (prompt == null) {
+      return true;
+    }
+    if (isBypassPermissionsMode) {
+      return true;
+    }
+    return _isReviewDecisionPrompt(prompt);
   }
 
   String _compactAgentMessage() {

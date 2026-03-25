@@ -586,6 +586,8 @@ class SessionHistoryEvent extends AppEvent {
     this.logEntries = const [],
     this.diffs = const [],
     this.currentDiff,
+    this.reviewGroups = const [],
+    this.activeReviewGroup,
     this.currentStep,
     this.latestError,
     this.sessionContext = const SessionContext(),
@@ -598,6 +600,8 @@ class SessionHistoryEvent extends AppEvent {
   final List<HistoryLogEntry> logEntries;
   final List<HistoryContext> diffs;
   final HistoryContext? currentDiff;
+  final List<ReviewGroup> reviewGroups;
+  final ReviewGroup? activeReviewGroup;
   final HistoryContext? currentStep;
   final HistoryContext? latestError;
   final SessionContext sessionContext;
@@ -625,6 +629,14 @@ class SessionHistoryEvent extends AppEvent {
             ? HistoryContext.fromJson(
                 json['currentDiff'] as Map<String, dynamic>)
             : null,
+        reviewGroups: ((json['reviewGroups'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ReviewGroup.fromJson)
+            .toList(),
+        activeReviewGroup: json['activeReviewGroup'] is Map<String, dynamic>
+            ? ReviewGroup.fromJson(
+                json['activeReviewGroup'] as Map<String, dynamic>)
+            : null,
         currentStep: json['currentStep'] is Map<String, dynamic>
             ? HistoryContext.fromJson(
                 json['currentStep'] as Map<String, dynamic>)
@@ -644,6 +656,35 @@ class SessionHistoryEvent extends AppEvent {
             ? RuntimeMeta.fromJson(
                 json['resumeRuntimeMeta'] as Map<String, dynamic>)
             : const RuntimeMeta(),
+      );
+}
+
+class ReviewStateEvent extends AppEvent {
+  const ReviewStateEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.groups = const [],
+    this.activeGroup,
+  }) : super(type: 'review_state');
+
+  final List<ReviewGroup> groups;
+  final ReviewGroup? activeGroup;
+
+  factory ReviewStateEvent.fromJson(Map<String, dynamic> json) =>
+      ReviewStateEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        groups: ((json['groups'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ReviewGroup.fromJson)
+            .toList(),
+        activeGroup: json['activeGroup'] is Map<String, dynamic>
+            ? ReviewGroup.fromJson(json['activeGroup'] as Map<String, dynamic>)
+            : null,
       );
 }
 

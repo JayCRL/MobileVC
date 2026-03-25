@@ -9,7 +9,9 @@ class ChatTimeline extends StatefulWidget {
     super.key,
     required this.items,
     this.activeReviewDiff,
+    this.activeReviewGroup,
     this.pendingDiffCount = 0,
+    this.pendingReviewGroupCount = 0,
     this.isManualReviewMode = true,
     this.isAutoAcceptMode = false,
     this.pendingPrompt,
@@ -24,7 +26,9 @@ class ChatTimeline extends StatefulWidget {
 
   final List<TimelineItem> items;
   final HistoryContext? activeReviewDiff;
+  final ReviewGroup? activeReviewGroup;
   final int pendingDiffCount;
+  final int pendingReviewGroupCount;
   final bool isManualReviewMode;
   final bool isAutoAcceptMode;
   final PromptRequestEvent? pendingPrompt;
@@ -130,7 +134,9 @@ class _ChatTimelineState extends State<ChatTimeline> {
         if (item.kind == 'review_summary') {
           return _ReviewSummaryCard(
             diff: item.context,
+            reviewGroup: widget.activeReviewGroup,
             pendingDiffCount: widget.pendingDiffCount,
+            pendingReviewGroupCount: widget.pendingReviewGroupCount,
             isManualReviewMode: widget.isManualReviewMode,
             isAutoAcceptMode: widget.isAutoAcceptMode,
             shouldShowReviewChoices: widget.shouldShowReviewChoices,
@@ -326,7 +332,9 @@ const Set<String> _denyValues = {
 class _ReviewSummaryCard extends StatelessWidget {
   const _ReviewSummaryCard({
     required this.diff,
+    required this.reviewGroup,
     required this.pendingDiffCount,
+    required this.pendingReviewGroupCount,
     required this.isManualReviewMode,
     required this.isAutoAcceptMode,
     required this.shouldShowReviewChoices,
@@ -336,7 +344,9 @@ class _ReviewSummaryCard extends StatelessWidget {
   });
 
   final HistoryContext? diff;
+  final ReviewGroup? reviewGroup;
   final int pendingDiffCount;
+  final int pendingReviewGroupCount;
   final bool isManualReviewMode;
   final bool isAutoAcceptMode;
   final bool shouldShowReviewChoices;
@@ -351,6 +361,9 @@ class _ReviewSummaryCard extends StatelessWidget {
       return const SizedBox.shrink();
     }
     final isSingle = pendingDiffCount <= 1;
+    final group = reviewGroup;
+    final groupFileCount = group?.files.length ?? 0;
+    final pendingLabelCount = groupFileCount > 0 ? groupFileCount : pendingDiffCount;
     final showReviewButtons =
         isSingle && isManualReviewMode && shouldShowReviewChoices;
     return Container(
@@ -389,15 +402,15 @@ class _ReviewSummaryCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      pendingDiffCount > 1 ? '待审核改动已聚合' : '待审核改动',
+                      pendingLabelCount > 1 ? '待审核改动已聚合' : '待审核改动',
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
                             fontWeight: FontWeight.w800,
                           ),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      pendingDiffCount > 1
-                          ? '当前有 $pendingDiffCount 个文件待审核，可进入 differ 逐个处理。'
+                      pendingLabelCount > 1
+                          ? '当前有 $pendingLabelCount 个文件待审核，可进入 differ 逐个处理。'
                           : '当前文件已准备好审核，可直接在这里完成操作。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: Theme.of(context)
@@ -422,6 +435,24 @@ class _ReviewSummaryCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               reviewDiff.path,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ],
+          if (group != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              group.title.isNotEmpty ? group.title : '当前修改组',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              pendingReviewGroupCount > 1
+                  ? '当前共有 $pendingReviewGroupCount 组修改待处理，本组剩余 ${group.pendingCount} 个文件。'
+                  : '本组共 ${group.files.length} 个文件，剩余 ${group.pendingCount} 个待处理。',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -455,9 +486,9 @@ class _ReviewSummaryCard extends StatelessWidget {
                 FilledButton.tonalIcon(
                   onPressed: onOpenDiff,
                   icon: const Icon(Icons.difference_outlined, size: 16),
-                  label: Text(pendingDiffCount > 1 ? '进入 differ 处理' : '查看 diff'),
+                  label: Text(pendingLabelCount > 1 ? '进入 differ 处理' : '查看 diff'),
                 ),
-                if (pendingDiffCount > 1)
+                if (pendingLabelCount > 1)
                   FilledButton(
                     onPressed: onAcceptAll,
                     child: const Text('一键接受并继续'),
@@ -475,13 +506,16 @@ class _ReviewSummaryCard extends StatelessWidget {
   }
 
   String _statusText() {
+    final group = reviewGroup;
+    final groupFileCount = group?.files.length ?? 0;
+    final pendingLabelCount = groupFileCount > 0 ? groupFileCount : pendingDiffCount;
     if (isAutoAcceptMode) {
       return '自动接受修改模式已开启，新的 diff 会自动确认。';
     }
     if (!isManualReviewMode) {
       return '当前模式不需要手动确认 diff。';
     }
-    if (pendingDiffCount > 1) {
+    if (pendingDiffCount > 1 || pendingLabelCount > 1) {
       return shouldShowReviewChoices
           ? '聊天流已聚合本轮审核，底层仍会逐条发送 review_decision。'
           : '等待审核上下文进入输入态后继续处理。';

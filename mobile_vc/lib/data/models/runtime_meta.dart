@@ -7,6 +7,9 @@ class RuntimeMeta {
     this.targetPath = '',
     this.resultView = '',
     this.resumeSessionId = '',
+    this.executionId = '',
+    this.groupId = '',
+    this.groupTitle = '',
     this.contextId = '',
     this.contextTitle = '',
     this.targetText = '',
@@ -26,6 +29,9 @@ class RuntimeMeta {
   final String targetPath;
   final String resultView;
   final String resumeSessionId;
+  final String executionId;
+  final String groupId;
+  final String groupTitle;
   final String contextId;
   final String contextTitle;
   final String targetText;
@@ -51,14 +57,19 @@ class RuntimeMeta {
       targetType: other.targetType.isNotEmpty ? other.targetType : targetType,
       targetPath: other.targetPath.isNotEmpty ? other.targetPath : targetPath,
       resultView: other.resultView.isNotEmpty ? other.resultView : resultView,
-      resumeSessionId: other.resumeSessionId.isNotEmpty ? other.resumeSessionId : resumeSessionId,
+      resumeSessionId:
+          other.resumeSessionId.isNotEmpty ? other.resumeSessionId : resumeSessionId,
+      executionId: other.executionId.isNotEmpty ? other.executionId : executionId,
+      groupId: other.groupId.isNotEmpty ? other.groupId : groupId,
+      groupTitle: other.groupTitle.isNotEmpty ? other.groupTitle : groupTitle,
       contextId: other.contextId.isNotEmpty ? other.contextId : contextId,
       contextTitle: other.contextTitle.isNotEmpty ? other.contextTitle : contextTitle,
       targetText: other.targetText.isNotEmpty ? other.targetText : targetText,
       command: other.command.isNotEmpty ? other.command : command,
       engine: other.engine.isNotEmpty ? other.engine : engine,
       cwd: other.cwd.isNotEmpty ? other.cwd : cwd,
-      permissionMode: other.permissionMode.isNotEmpty ? other.permissionMode : permissionMode,
+      permissionMode:
+          other.permissionMode.isNotEmpty ? other.permissionMode : permissionMode,
       targetDiff: other.targetDiff.isNotEmpty ? other.targetDiff : targetDiff,
       targetTitle: other.targetTitle.isNotEmpty ? other.targetTitle : targetTitle,
       targetStack: other.targetStack.isNotEmpty ? other.targetStack : targetStack,
@@ -73,6 +84,9 @@ class RuntimeMeta {
         if (targetPath.isNotEmpty) 'targetPath': targetPath,
         if (resultView.isNotEmpty) 'resultView': resultView,
         if (resumeSessionId.isNotEmpty) 'resumeSessionId': resumeSessionId,
+        if (executionId.isNotEmpty) 'executionId': executionId,
+        if (groupId.isNotEmpty) 'groupId': groupId,
+        if (groupTitle.isNotEmpty) 'groupTitle': groupTitle,
         if (contextId.isNotEmpty) 'contextId': contextId,
         if (contextTitle.isNotEmpty) 'contextTitle': contextTitle,
         if (targetText.isNotEmpty) 'targetText': targetText,
@@ -95,6 +109,9 @@ class RuntimeMeta {
       targetPath: read('targetPath'),
       resultView: read('resultView'),
       resumeSessionId: read('resumeSessionId'),
+      executionId: read('executionId'),
+      groupId: read('groupId'),
+      groupTitle: read('groupTitle'),
       contextId: read('contextId'),
       contextTitle: read('contextTitle'),
       targetText: read('targetText'),

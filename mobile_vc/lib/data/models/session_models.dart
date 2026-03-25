@@ -62,6 +62,10 @@ class HistoryContext {
     this.pendingReview = false,
     this.source = '',
     this.skillName = '',
+    this.executionId = '',
+    this.groupId = '',
+    this.groupTitle = '',
+    this.reviewStatus = '',
   });
 
   final String id;
@@ -83,6 +87,10 @@ class HistoryContext {
   final bool pendingReview;
   final String source;
   final String skillName;
+  final String executionId;
+  final String groupId;
+  final String groupTitle;
+  final String reviewStatus;
 
   factory HistoryContext.fromJson(Map<String, dynamic> json) {
     bool pending = false;
@@ -111,6 +119,95 @@ class HistoryContext {
       pendingReview: pending,
       source: read('source'),
       skillName: read('skillName'),
+      executionId: read('executionId'),
+      groupId: read('groupId'),
+      groupTitle: read('groupTitle'),
+      reviewStatus: read('reviewStatus'),
+    );
+  }
+}
+
+class ReviewFile {
+  const ReviewFile({
+    this.id = '',
+    this.path = '',
+    this.title = '',
+    this.diff = '',
+    this.lang = '',
+    this.pendingReview = false,
+    this.reviewStatus = '',
+    this.executionId = '',
+  });
+
+  final String id;
+  final String path;
+  final String title;
+  final String diff;
+  final String lang;
+  final bool pendingReview;
+  final String reviewStatus;
+  final String executionId;
+
+  factory ReviewFile.fromJson(Map<String, dynamic> json) {
+    return ReviewFile(
+      id: (json['id'] ?? '').toString(),
+      path: (json['path'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      diff: (json['diff'] ?? '').toString(),
+      lang: (json['lang'] ?? '').toString(),
+      pendingReview: json['pendingReview'] == true,
+      reviewStatus: (json['reviewStatus'] ?? '').toString(),
+      executionId: (json['executionId'] ?? '').toString(),
+    );
+  }
+}
+
+class ReviewGroup {
+  const ReviewGroup({
+    this.id = '',
+    this.title = '',
+    this.executionId = '',
+    this.pendingReview = false,
+    this.reviewStatus = '',
+    this.currentFileId = '',
+    this.currentPath = '',
+    this.pendingCount = 0,
+    this.acceptedCount = 0,
+    this.revertedCount = 0,
+    this.revisedCount = 0,
+    this.files = const [],
+  });
+
+  final String id;
+  final String title;
+  final String executionId;
+  final bool pendingReview;
+  final String reviewStatus;
+  final String currentFileId;
+  final String currentPath;
+  final int pendingCount;
+  final int acceptedCount;
+  final int revertedCount;
+  final int revisedCount;
+  final List<ReviewFile> files;
+
+  factory ReviewGroup.fromJson(Map<String, dynamic> json) {
+    return ReviewGroup(
+      id: (json['id'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      executionId: (json['executionId'] ?? '').toString(),
+      pendingReview: json['pendingReview'] == true,
+      reviewStatus: (json['reviewStatus'] ?? '').toString(),
+      currentFileId: (json['currentFileId'] ?? '').toString(),
+      currentPath: (json['currentPath'] ?? '').toString(),
+      pendingCount: (json['pendingCount'] as num?)?.toInt() ?? 0,
+      acceptedCount: (json['acceptedCount'] as num?)?.toInt() ?? 0,
+      revertedCount: (json['revertedCount'] as num?)?.toInt() ?? 0,
+      revisedCount: (json['revisedCount'] as num?)?.toInt() ?? 0,
+      files: ((json['files'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(ReviewFile.fromJson)
+          .toList(),
     );
   }
 }

@@ -10,8 +10,11 @@ class DiffViewerSheet extends StatelessWidget {
     required this.path,
     required this.diff,
     this.pendingDiffs = const [],
+    this.reviewGroups = const [],
+    this.activeReviewGroupId = '',
     this.activeDiffId = '',
     this.showReviewActions = false,
+    this.onSelectGroup,
     this.onSelectDiff,
     this.onAccept,
     this.onRevert,
@@ -22,8 +25,11 @@ class DiffViewerSheet extends StatelessWidget {
   final String path;
   final String diff;
   final List<HistoryContext> pendingDiffs;
+  final List<ReviewGroup> reviewGroups;
+  final String activeReviewGroupId;
   final String activeDiffId;
   final bool showReviewActions;
+  final ValueChanged<String>? onSelectGroup;
   final ValueChanged<String>? onSelectDiff;
   final VoidCallback? onAccept;
   final VoidCallback? onRevert;
@@ -32,13 +38,16 @@ class DiffViewerSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final active = _activeDiff();
+    final activeGroup = _activeGroup();
+    final active = _activeDiff(activeGroup);
     final resolvedTitle =
         active?.title.isNotEmpty == true ? active!.title : (title.isEmpty ? 'Diff 预览' : title);
     final resolvedPath = active?.path ?? path;
     final resolvedDiff = active?.diff ?? diff;
     final summary = _diffSummary(resolvedDiff);
-    final multiDiff = pendingDiffs.length > 1;
+    final multiGroup = reviewGroups.length > 1;
+    final groupFiles = _groupDiffs(activeGroup);
+    final multiDiff = groupFiles.length > 1;
     return SafeArea(
       top: false,
       child: AnimatedPadding(
@@ -102,7 +111,7 @@ class DiffViewerSheet extends StatelessWidget {
                             const SizedBox(height: 4),
                             Text(
                               multiDiff
-                                  ? '在 differ 内横向切换文件，并逐个完成审核。'
+                                  ? '在当前修改组内横向切换文件，并逐个完成审核。'
                                   : '查看当前变更内容，便于继续审核与对比。',
                               style: Theme.of(context)
                                   .textTheme
@@ -119,17 +128,39 @@ class DiffViewerSheet extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (multiGroup) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 40,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: reviewGroups.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (context, index) {
+                          final group = reviewGroups[index];
+                          final selected = group.id == _resolvedActiveGroupId();
+                          return ChoiceChip(
+                            selected: selected,
+                            label: Text(group.title.isNotEmpty
+                                ? group.title
+                                : '修改组 ${index + 1}'),
+                            onSelected: (_) => onSelectGroup?.call(group.id),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                   if (multiDiff) ...[
                     const SizedBox(height: 12),
                     SizedBox(
                       height: 44,
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
-                        itemCount: pendingDiffs.length,
+                        itemCount: groupFiles.length,
                         separatorBuilder: (_, __) => const SizedBox(width: 8),
                         itemBuilder: (context, index) {
-                          final item = pendingDiffs[index];
-                          final selected = _diffIdentity(item) == _resolvedActiveDiffId();
+                          final item = groupFiles[index];
+                          final selected = _diffIdentity(item) == _resolvedActiveDiffId(activeGroup);
                           return ChoiceChip(
                             selected: selected,
                             label: Text('${index + 1}. ${_shortLabel(item)}'),
@@ -170,8 +201,10 @@ class DiffViewerSheet extends StatelessWidget {
                     children: [
                       _MetaChip(label: '显示', value: 'Unified diff'),
                       _MetaChip(label: '变更', value: summary),
-                      if (multiDiff)
-                        _MetaChip(label: '待审核', value: '${pendingDiffs.length} 个文件'),
+                      if (activeGroup != null)
+                        _MetaChip(label: '修改组', value: activeGroup.title.isNotEmpty ? activeGroup.title : activeGroup.id),
+                      if (activeGroup != null)
+                        _MetaChip(label: '待审核', value: '${activeGroup.pendingCount} / ${activeGroup.files.length}'),
                     ],
                   ),
                 ],
@@ -204,32 +237,82 @@ class DiffViewerSheet extends StatelessWidget {
     );
   }
 
-  HistoryContext? _activeDiff() {
-    if (pendingDiffs.isEmpty) {
+  HistoryContext? _activeDiff(ReviewGroup? activeGroup) {
+    final candidates = _groupDiffs(activeGroup);
+    if (candidates.isEmpty) {
       return null;
     }
-    final activeId = _resolvedActiveDiffId();
-    for (final item in pendingDiffs) {
+    final activeId = _resolvedActiveDiffId(activeGroup);
+    for (final item in candidates) {
       if (_diffIdentity(item) == activeId) {
         return item;
       }
     }
-    return pendingDiffs.last;
+    return candidates.last;
   }
 
-  String _resolvedActiveDiffId() {
+  ReviewGroup? _activeGroup() {
+    if (reviewGroups.isEmpty) {
+      return null;
+    }
+    final activeId = _resolvedActiveGroupId();
+    for (final group in reviewGroups) {
+      if (group.id == activeId) {
+        return group;
+      }
+    }
+    return reviewGroups.last;
+  }
+
+  List<HistoryContext> _groupDiffs(ReviewGroup? group) {
+    if (group == null) {
+      return pendingDiffs;
+    }
+    final fileIds = group.files
+        .where((file) => file.id.trim().isNotEmpty)
+        .map((file) => file.id.trim())
+        .toSet();
+    final filePaths = group.files
+        .where((file) => file.path.trim().isNotEmpty)
+        .map((file) => _normalizePath(file.path))
+        .toSet();
+    final matches = pendingDiffs.where((diff) {
+      final diffId = diff.id.trim();
+      final diffPath = _normalizePath(diff.path);
+      return (diffId.isNotEmpty && fileIds.contains(diffId)) ||
+          (diffPath.isNotEmpty && filePaths.contains(diffPath));
+    }).toList(growable: false);
+    return matches.isNotEmpty ? matches : pendingDiffs;
+  }
+
+  String _resolvedActiveGroupId() {
+    if (activeReviewGroupId.trim().isNotEmpty) {
+      return activeReviewGroupId.trim();
+    }
+    if (reviewGroups.isEmpty) {
+      return '';
+    }
+    return reviewGroups.last.id;
+  }
+
+  String _resolvedActiveDiffId(ReviewGroup? activeGroup) {
     if (activeDiffId.trim().isNotEmpty) {
       return activeDiffId.trim();
     }
-    if (pendingDiffs.isEmpty) {
+    final candidates = _groupDiffs(activeGroup);
+    if (candidates.isEmpty) {
       return '';
     }
-    return _diffIdentity(pendingDiffs.last);
+    return _diffIdentity(candidates.last);
   }
 
   String _diffIdentity(HistoryContext diff) {
     final id = diff.id.trim();
-    return id.isNotEmpty ? id : diff.path.trim();
+    return id.isNotEmpty ? id : _normalizePath(diff.path.trim());
+  }
+
+  String _normalizePath(String value) {
+    return value.replaceAll('\\', '/').trim();
   }
 
   String _shortLabel(HistoryContext diff) {

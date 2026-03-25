@@ -143,7 +143,10 @@ class _SessionHomePageState extends State<SessionHomePage> {
                         : ChatTimeline(
                             items: controller.timeline,
                             activeReviewDiff: controller.currentReviewDiff,
+                            activeReviewGroup: controller.activeReviewGroup,
                             pendingDiffCount: controller.pendingDiffCount,
+                            pendingReviewGroupCount:
+                                controller.pendingReviewGroupCount,
                             isManualReviewMode: controller.isManualReviewMode,
                             isAutoAcceptMode: controller.isAutoAcceptMode,
                             pendingPrompt: controller.pendingPrompt,
@@ -354,6 +357,8 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     isDiffMode: controller.openedFileDiff != null,
                     reviewDiff: controller.openedFileDiff,
                     pendingDiffs: controller.pendingDiffs,
+                    reviewGroups: controller.reviewGroups,
+                    activeReviewGroupId: controller.activeReviewGroupId,
                     activeReviewDiffId: controller.activeReviewDiffId,
                     isAutoAcceptMode: controller.isAutoAcceptMode,
                     shouldShowReviewChoices:
@@ -365,6 +370,8 @@ class _SessionHomePageState extends State<SessionHomePage> {
                                     controller.currentReviewDiff!.id) ||
                             controller.openedFilePendingDiff!.path ==
                                 controller.currentReviewDiff!.path),
+                    pendingPrompt: controller.pendingPrompt,
+                    onSelectReviewGroup: controller.setActiveReviewGroup,
                     onSelectReviewDiff: controller.setActiveReviewDiff,
                     onOpenDiffList: () => _openDiff(context),
                     onAccept: () => controller.sendReviewDecision('accept'),
@@ -373,6 +380,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     onUseAsContext: () =>
                         controller.continueWithCurrentFile('基于当前文件继续处理'),
                     onSendFilePrompt: controller.continueWithCurrentFile,
+                    onSubmitPrompt: controller.submitPromptOption,
                   );
                 },
               ),
@@ -403,8 +411,11 @@ class _SessionHomePageState extends State<SessionHomePage> {
                 path: diff?.path ?? '',
                 diff: diff?.diff ?? '',
                 pendingDiffs: controller.pendingDiffs,
+                reviewGroups: controller.reviewGroups,
+                activeReviewGroupId: controller.activeReviewGroupId,
                 activeDiffId: controller.activeReviewDiffId,
                 showReviewActions: controller.shouldShowReviewChoices,
+                onSelectGroup: controller.setActiveReviewGroup,
                 onSelectDiff: controller.setActiveReviewDiff,
                 onAccept: () => controller.sendReviewDecision('accept'),
                 onRevert: () => controller.sendReviewDecision('revert'),

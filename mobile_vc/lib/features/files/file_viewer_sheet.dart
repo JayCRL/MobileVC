@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../../data/models/events.dart';
 import '../../data/models/session_models.dart';
 import '../diff/diff_code_view.dart';
 
@@ -15,16 +16,21 @@ class FileViewerSheet extends StatefulWidget {
     required this.isDiffMode,
     required this.reviewDiff,
     required this.pendingDiffs,
+    required this.reviewGroups,
+    required this.activeReviewGroupId,
     required this.activeReviewDiffId,
     required this.isAutoAcceptMode,
     required this.shouldShowReviewChoices,
+    required this.pendingPrompt,
     required this.onAccept,
     required this.onRevert,
     required this.onRevise,
+    required this.onSelectReviewGroup,
     required this.onSelectReviewDiff,
     required this.onOpenDiffList,
     required this.onUseAsContext,
     required this.onSendFilePrompt,
+    required this.onSubmitPrompt,
   });
 
   final FileReadResult? file;
@@ -33,16 +39,21 @@ class FileViewerSheet extends StatefulWidget {
   final bool isDiffMode;
   final HistoryContext? reviewDiff;
   final List<HistoryContext> pendingDiffs;
+  final List<ReviewGroup> reviewGroups;
+  final String activeReviewGroupId;
   final String activeReviewDiffId;
   final bool isAutoAcceptMode;
   final bool shouldShowReviewChoices;
+  final PromptRequestEvent? pendingPrompt;
   final VoidCallback onAccept;
   final VoidCallback onRevert;
   final VoidCallback onRevise;
+  final ValueChanged<String> onSelectReviewGroup;
   final ValueChanged<String> onSelectReviewDiff;
   final VoidCallback onOpenDiffList;
   final VoidCallback onUseAsContext;
   final ValueChanged<String> onSendFilePrompt;
+  final ValueChanged<String> onSubmitPrompt;
 
   @override
   State<FileViewerSheet> createState() => _FileViewerSheetState();
@@ -61,9 +72,18 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
   Widget build(BuildContext context) {
     final result = widget.file;
     final diff = widget.reviewDiff;
+    final activeGroup = _activeGroup();
+    final groupDiffs = _groupDiffs(activeGroup);
     final modeLabel = widget.isDiffMode ? '待审核改动' : '文件内容';
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final multiPending = widget.pendingDiffs.length > 1;
+    final multiPending = groupDiffs.length > 1;
+    final multiGroup = widget.reviewGroups.length > 1;
+    final prompt = widget.pendingPrompt;
+    final showPermissionBar =
+        !widget.shouldShowReviewChoices &&
+        prompt != null &&
+        prompt.hasVisiblePrompt &&
+        prompt.looksLikePermissionPrompt;
     return SafeArea(
       top: false,
       child: AnimatedPadding(
@@ -103,7 +123,9 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                   const SizedBox(height: 6),
                   Text(
                     widget.isDiffMode
-                        ? '查看当前文件与待审核改动内容'
+                        ? (activeGroup != null
+                            ? '查看当前文件与所属修改组中的待审核内容'
+                            : '查看当前文件与待审核改动内容')
                         : '查看当前文件内容，并可直接基于它继续提问',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -200,7 +222,11 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      widget.isAutoAcceptMode ? '当前是自动接受修改模式' : '当前文件包含待审核改动',
+                      widget.isAutoAcceptMode
+                          ? '当前是自动接受修改模式'
+                          : widget.shouldShowReviewChoices
+                              ? '当前文件正在等待你审核'
+                              : '当前文件包含待审核改动',
                       style: Theme.of(context)
                           .textTheme
                           .titleSmall
@@ -211,16 +237,82 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                       Text(diff!.path,
                           style: Theme.of(context).textTheme.bodySmall),
                     ],
+                    if (activeGroup != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        activeGroup.title.isNotEmpty
+                            ? activeGroup.title
+                            : '当前修改组',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '本组共 ${activeGroup.files.length} 个文件，剩余 ${activeGroup.pendingCount} 个待审核。',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _MetaChip(
+                            label: '状态',
+                            value: _reviewStatusLabel(activeGroup.reviewStatus),
+                            compact: true,
+                          ),
+                          _MetaChip(
+                            label: '文件',
+                            value: '${activeGroup.files.length}',
+                            compact: true,
+                          ),
+                          _MetaChip(
+                            label: '待处理',
+                            value: '${activeGroup.pendingCount}',
+                            compact: true,
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (multiGroup) ...[
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 40,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: widget.reviewGroups.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 8),
+                          itemBuilder: (context, index) {
+                            final group = widget.reviewGroups[index];
+                            final selected = group.id == _resolvedActiveReviewGroupId();
+                            return ChoiceChip(
+                              selected: selected,
+                              label: Text(group.title.isNotEmpty
+                                  ? group.title
+                                  : '修改组 ${index + 1}'),
+                              onSelected: (_) =>
+                                  widget.onSelectReviewGroup(group.id),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                     if (multiPending) ...[
                       const SizedBox(height: 10),
                       SizedBox(
                         height: 40,
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
-                          itemCount: widget.pendingDiffs.length,
+                          itemCount: groupDiffs.length,
                           separatorBuilder: (_, __) => const SizedBox(width: 8),
                           itemBuilder: (context, index) {
-                            final item = widget.pendingDiffs[index];
+                            final item = groupDiffs[index];
                             final selected = _diffIdentity(item) ==
                                 _resolvedActiveReviewDiffId();
                             return ChoiceChip(
@@ -261,8 +353,35 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                         ],
                       ),
                     ],
+                    if (!widget.shouldShowReviewChoices &&
+                        widget.pendingPrompt != null &&
+                        widget.pendingPrompt!.hasVisiblePrompt) ...[
+                      const SizedBox(height: 10),
+                      _PromptRequestSection(
+                        prompt: widget.pendingPrompt!,
+                        onSubmit: widget.onSubmitPrompt,
+                      ),
+                    ],
                   ],
                 ),
+              ),
+            ],
+            if (!widget.showReviewActions &&
+                !widget.shouldShowReviewChoices &&
+                widget.pendingPrompt != null &&
+                widget.pendingPrompt!.hasVisiblePrompt &&
+                !widget.pendingPrompt!.looksLikePermissionPrompt) ...[
+              const SizedBox(height: 8),
+              _PromptRequestSection(
+                prompt: widget.pendingPrompt!,
+                onSubmit: widget.onSubmitPrompt,
+              ),
+            ],
+            if (showPermissionBar) ...[
+              const SizedBox(height: 8),
+              _PermissionActionBar(
+                prompt: prompt,
+                onSubmit: widget.onSubmitPrompt,
               ),
             ],
             const SizedBox(height: 8),
@@ -390,8 +509,71 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
     if (value.isEmpty) {
       return;
     }
-    widget.onSendFilePrompt(value);
+    final prompt = widget.pendingPrompt;
+    final shouldSubmitPrompt =
+        !widget.shouldShowReviewChoices &&
+        prompt != null &&
+        prompt.hasVisiblePrompt &&
+        (prompt.options.isNotEmpty || prompt.looksLikePermissionPrompt);
+    if (shouldSubmitPrompt) {
+      widget.onSubmitPrompt(value);
+    } else {
+      widget.onSendFilePrompt(value);
+    }
     _controller.clear();
+  }
+
+  String _resolvedActiveReviewGroupId() {
+    if (widget.activeReviewGroupId.trim().isNotEmpty) {
+      return widget.activeReviewGroupId.trim();
+    }
+    final diff = widget.reviewDiff;
+    if (diff == null) {
+      return '';
+    }
+    final groupId = diff.groupId.trim();
+    if (groupId.isNotEmpty) {
+      return groupId;
+    }
+    final executionId = diff.executionId.trim();
+    if (executionId.isNotEmpty) {
+      return executionId;
+    }
+    return _normalizePath(diff.path);
+  }
+
+  ReviewGroup? _activeGroup() {
+    final groupId = _resolvedActiveReviewGroupId();
+    if (groupId.isEmpty) {
+      return null;
+    }
+    for (final group in widget.reviewGroups) {
+      if (group.id == groupId) {
+        return group;
+      }
+    }
+    return null;
+  }
+
+  List<HistoryContext> _groupDiffs(ReviewGroup? group) {
+    if (group == null) {
+      return widget.pendingDiffs;
+    }
+    final fileIds = group.files
+        .where((file) => file.id.trim().isNotEmpty)
+        .map((file) => file.id.trim())
+        .toSet();
+    final filePaths = group.files
+        .where((file) => file.path.trim().isNotEmpty)
+        .map((file) => _normalizePath(file.path))
+        .toSet();
+    final matches = widget.pendingDiffs.where((item) {
+      final itemId = item.id.trim();
+      final itemPath = _normalizePath(item.path);
+      return (itemId.isNotEmpty && fileIds.contains(itemId)) ||
+          (itemPath.isNotEmpty && filePaths.contains(itemPath));
+    }).toList(growable: false);
+    return matches.isNotEmpty ? matches : widget.pendingDiffs;
   }
 
   String _resolvedActiveReviewDiffId() {
@@ -407,7 +589,11 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
 
   String _diffIdentity(HistoryContext diff) {
     final id = diff.id.trim();
-    return id.isNotEmpty ? id : diff.path.trim();
+    return id.isNotEmpty ? id : _normalizePath(diff.path);
+  }
+
+  String _normalizePath(String value) {
+    return value.replaceAll('\\', '/').trim();
   }
 
   String _shortLabel(HistoryContext diff) {
@@ -418,6 +604,23 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
     final normalized = source.replaceAll('\\', '/');
     final index = normalized.lastIndexOf('/');
     return index == -1 ? normalized : normalized.substring(index + 1);
+  }
+
+  String _reviewStatusLabel(String value) {
+    switch (value.trim()) {
+      case 'pending':
+        return '待审核';
+      case 'accepted':
+        return '已同意';
+      case 'reverted':
+        return '已撤销';
+      case 'revised':
+        return '继续调整';
+      case 'mixed':
+        return '混合';
+      default:
+        return '进行中';
+    }
   }
 
   String _sizeLabel(int size) {
@@ -433,6 +636,231 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
     return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 }
+
+class _PermissionActionBar extends StatelessWidget {
+  const _PermissionActionBar({
+    required this.prompt,
+    required this.onSubmit,
+  });
+
+  final PromptRequestEvent prompt;
+  final ValueChanged<String> onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final options = _resolvedOptions();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: Theme.of(context)
+              .colorScheme
+              .primary
+              .withValues(alpha: 0.22),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            prompt.message.trim().isEmpty ? '当前操作需要你的授权。' : prompt.message.trim(),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: options
+                .map((option) => _PromptOptionAction(
+                      label: _promptOptionLabel(option.value, option.displayText),
+                      style: _promptOptionStyle(option.value),
+                      onPressed: () => onSubmit(option.value),
+                    ))
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<PromptOption> _resolvedOptions() {
+    final options = prompt.options
+        .where((option) => option.displayText.isNotEmpty)
+        .toList(growable: false);
+    if (options.isNotEmpty) {
+      return options;
+    }
+    return const [
+      PromptOption(value: 'y', label: '允许'),
+      PromptOption(value: 'n', label: '拒绝'),
+    ];
+  }
+
+  String _promptOptionLabel(String value, String fallback) {
+    final normalized = value.trim().toLowerCase();
+    if (_approveValues.contains(normalized)) {
+      return '允许';
+    }
+    if (_denyValues.contains(normalized)) {
+      return '拒绝';
+    }
+    return fallback;
+  }
+
+  _PromptActionStyle _promptOptionStyle(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (_approveValues.contains(normalized)) {
+      return _PromptActionStyle.primary;
+    }
+    if (_denyValues.contains(normalized)) {
+      return _PromptActionStyle.tonal;
+    }
+    return _PromptActionStyle.outlined;
+  }
+}
+
+class _PromptRequestSection extends StatelessWidget {
+  const _PromptRequestSection({
+    required this.prompt,
+    required this.onSubmit,
+  });
+
+  final PromptRequestEvent prompt;
+  final ValueChanged<String> onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final options = _resolvedOptions();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.35),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (prompt.message.trim().isNotEmpty)
+            Text(
+              prompt.message.trim(),
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          if (options.isNotEmpty) ...[
+            if (prompt.message.trim().isNotEmpty) const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: options
+                  .map((option) => _PromptOptionAction(
+                        label: _promptOptionLabel(option.value, option.displayText),
+                        style: _promptOptionStyle(option.value),
+                        onPressed: () => onSubmit(option.value),
+                      ))
+                  .toList(growable: false),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  List<PromptOption> _resolvedOptions() {
+    final options = prompt.options
+        .where((option) => option.displayText.isNotEmpty)
+        .toList(growable: false);
+    if (options.isNotEmpty) {
+      return options;
+    }
+    if (prompt.looksLikePermissionPrompt) {
+      return const [
+        PromptOption(value: 'y', label: '允许'),
+        PromptOption(value: 'n', label: '拒绝'),
+      ];
+    }
+    return const [];
+  }
+
+  String _promptOptionLabel(String value, String fallback) {
+    final normalized = value.trim().toLowerCase();
+    if (_approveValues.contains(normalized)) {
+      return '允许';
+    }
+    if (_denyValues.contains(normalized)) {
+      return '拒绝';
+    }
+    return fallback;
+  }
+
+  _PromptActionStyle _promptOptionStyle(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (_approveValues.contains(normalized)) {
+      return _PromptActionStyle.primary;
+    }
+    if (_denyValues.contains(normalized)) {
+      return _PromptActionStyle.tonal;
+    }
+    return _PromptActionStyle.outlined;
+  }
+}
+
+class _PromptOptionAction extends StatelessWidget {
+  const _PromptOptionAction({
+    required this.label,
+    required this.style,
+    required this.onPressed,
+  });
+
+  final String label;
+  final _PromptActionStyle style;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (style) {
+      case _PromptActionStyle.primary:
+        return FilledButton(onPressed: onPressed, child: Text(label));
+      case _PromptActionStyle.tonal:
+        return FilledButton.tonal(onPressed: onPressed, child: Text(label));
+      case _PromptActionStyle.outlined:
+        return OutlinedButton(onPressed: onPressed, child: Text(label));
+    }
+  }
+}
+
+enum _PromptActionStyle { primary, tonal, outlined }
+
+const Set<String> _approveValues = {
+  'y',
+  'yes',
+  'ok',
+  'approve',
+  'approved',
+  'allow',
+  'accept',
+  'continue',
+};
+
+const Set<String> _denyValues = {
+  'n',
+  'no',
+  'deny',
+  'denied',
+  'reject',
+  'cancel',
+  'stop',
+};
 
 class _MetaChip extends StatelessWidget {
   const _MetaChip({

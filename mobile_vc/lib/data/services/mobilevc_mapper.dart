@@ -35,6 +35,8 @@ class MobileVcMapper {
         return SessionListResultEvent.fromJson(json);
       case 'session_history':
         return SessionHistoryEvent.fromJson(json);
+      case 'review_state':
+        return ReviewStateEvent.fromJson(json);
       case 'skill_catalog_result':
         return SkillCatalogResultEvent.fromJson(json);
       case 'memory_list_result':
