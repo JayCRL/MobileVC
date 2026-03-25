@@ -140,24 +140,32 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     child: (controller.timeline.isEmpty &&
                             controller.pendingPrompt?.hasVisiblePrompt != true)
                         ? const Center(child: _LandingBrand())
-                        : ChatTimeline(
-                            items: controller.timeline,
-                            activeReviewDiff: controller.currentReviewDiff,
-                            activeReviewGroup: controller.activeReviewGroup,
-                            pendingDiffCount: controller.pendingDiffCount,
-                            pendingReviewGroupCount:
-                                controller.pendingReviewGroupCount,
-                            isManualReviewMode: controller.isManualReviewMode,
-                            isAutoAcceptMode: controller.isAutoAcceptMode,
-                            pendingPrompt: controller.pendingPrompt,
-                            shouldShowReviewChoices:
-                                controller.shouldShowReviewChoices,
-                            onOpenDiff: () => _openDiff(context),
-                            onOpenRuntimeInfo: () => _openRuntimeInfo(context),
-                            onOpenFile: () => _openFileViewer(context),
-                            onReviewDecision: controller.sendReviewDecision,
-                            onAcceptAll: controller.acceptAllPendingDiffs,
-                            onPromptSubmit: controller.submitPromptOption,
+                        : Column(
+                            children: [
+                              if (controller.hasCompactContextSelection)
+                                _ContextSelectionBar(controller: controller),
+                              Expanded(
+                                child: ChatTimeline(
+                                  items: controller.timeline,
+                                  activeReviewDiff: controller.currentReviewDiff,
+                                  activeReviewGroup: controller.activeReviewGroup,
+                                  pendingDiffCount: controller.pendingDiffCount,
+                                  pendingReviewGroupCount:
+                                      controller.pendingReviewGroupCount,
+                                  isManualReviewMode: controller.isManualReviewMode,
+                                  isAutoAcceptMode: controller.isAutoAcceptMode,
+                                  pendingPrompt: controller.pendingPrompt,
+                                  shouldShowReviewChoices:
+                                      controller.shouldShowReviewChoices,
+                                  onOpenDiff: () => _openDiff(context),
+                                  onOpenRuntimeInfo: () => _openRuntimeInfo(context),
+                                  onOpenFile: () => _openFileViewer(context),
+                                  onReviewDecision: controller.sendReviewDecision,
+                                  onAcceptAll: controller.acceptAllPendingDiffs,
+                                  onPromptSubmit: controller.submitPromptOption,
+                                ),
+                              ),
+                            ],
                           ),
                   ),
                 ],
@@ -707,8 +715,11 @@ class _SessionHomePageState extends State<SessionHomePage> {
                 listenable: controller,
                 builder: (context, _) {
                   return TerminalLogSheet(
-                    stdout: controller.terminalStdout,
-                    stderr: controller.terminalStderr,
+                    executions: controller.terminalExecutions,
+                    activeExecutionId: controller.activeTerminalExecutionId,
+                    stdout: controller.activeTerminalStdout,
+                    stderr: controller.activeTerminalStderr,
+                    onSelectExecution: controller.setActiveTerminalExecution,
                   );
                 },
               ),
@@ -716,6 +727,90 @@ class _SessionHomePageState extends State<SessionHomePage> {
           ),
         );
       },
+    );
+  }
+}
+
+class _ContextSelectionBar extends StatelessWidget {
+  const _ContextSelectionBar({required this.controller});
+
+  final SessionController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (controller.skills.isNotEmpty) ...[
+            Text(
+              'Skill',
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: controller.skills.map((item) {
+                  final selected = controller.sessionContext.enabledSkillNames
+                      .contains(item.name);
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      selected: selected,
+                      label: Text(item.name.isEmpty ? '未命名 skill' : item.name),
+                      onSelected: (_) => controller.toggleSkillEnabled(item.name),
+                    ),
+                  );
+                }).toList(growable: false),
+              ),
+            ),
+          ],
+          if (controller.memoryItems.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Memory',
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: controller.memoryItems.map((item) {
+                  final selected = controller.sessionContext.enabledMemoryIds
+                      .contains(item.id);
+                  final label = item.title.trim().isNotEmpty ? item.title : item.id;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      selected: selected,
+                      label: Text(label.isEmpty ? '未命名 memory' : label),
+                      onSelected: (_) => controller.toggleMemoryEnabled(item.id),
+                    ),
+                  );
+                }).toList(growable: false),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

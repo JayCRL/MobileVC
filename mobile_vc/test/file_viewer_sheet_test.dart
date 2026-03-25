@@ -62,6 +62,42 @@ void main() {
       expect(submittedPrompt, 'y');
       expect(filePrompt, isNull);
     });
+
+    testWidgets('修改组与组内文件切换会走联动回调', (tester) async {
+      String? selectedGroupId;
+      String? selectedDiffId;
+      var openedDiffList = false;
+      await tester.pumpWidget(
+        _buildTestApp(
+          showReviewActions: true,
+          isDiffMode: true,
+          reviewDiff: _reviewDiffs.first,
+          pendingDiffs: _reviewDiffs,
+          reviewGroups: _reviewGroups,
+          activeReviewGroupId: 'group-1',
+          activeReviewDiffId: 'diff-1',
+          onSelectReviewGroup: (value) => selectedGroupId = value,
+          onSelectReviewDiff: (value) => selectedDiffId = value,
+          onOpenDiffList: () => openedDiffList = true,
+        ),
+      );
+
+      expect(find.text('组一'), findsWidgets);
+      expect(find.text('组二'), findsWidgets);
+      expect(find.text('进入 differ 逐个审核'), findsOneWidget);
+
+      await tester.tap(find.text('组二'));
+      await tester.pump();
+      expect(selectedGroupId, 'group-2');
+
+      await tester.tap(find.text('2. test_b.dart'));
+      await tester.pump();
+      expect(selectedDiffId, 'diff-2');
+
+      await tester.tap(find.text('进入 differ 逐个审核'));
+      await tester.pump();
+      expect(openedDiffList, isTrue);
+    });
   });
 }
 
@@ -69,6 +105,16 @@ Widget _buildTestApp({
   PromptRequestEvent? pendingPrompt,
   ValueChanged<String>? onSendFilePrompt,
   ValueChanged<String>? onSubmitPrompt,
+  bool showReviewActions = false,
+  bool isDiffMode = false,
+  HistoryContext? reviewDiff,
+  List<HistoryContext> pendingDiffs = const [],
+  List<ReviewGroup> reviewGroups = const [],
+  String activeReviewGroupId = '',
+  String activeReviewDiffId = '',
+  ValueChanged<String>? onSelectReviewGroup,
+  ValueChanged<String>? onSelectReviewDiff,
+  VoidCallback? onOpenDiffList,
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -82,22 +128,22 @@ Widget _buildTestApp({
           encoding: 'utf-8',
         ),
         loading: false,
-        showReviewActions: false,
-        isDiffMode: false,
-        reviewDiff: null,
-        pendingDiffs: const [],
-        reviewGroups: const [],
-        activeReviewGroupId: '',
-        activeReviewDiffId: '',
+        showReviewActions: showReviewActions,
+        isDiffMode: isDiffMode,
+        reviewDiff: reviewDiff,
+        pendingDiffs: pendingDiffs,
+        reviewGroups: reviewGroups,
+        activeReviewGroupId: activeReviewGroupId,
+        activeReviewDiffId: activeReviewDiffId,
         isAutoAcceptMode: false,
         shouldShowReviewChoices: false,
         pendingPrompt: pendingPrompt,
         onAccept: () {},
         onRevert: () {},
         onRevise: () {},
-        onSelectReviewGroup: (_) {},
-        onSelectReviewDiff: (_) {},
-        onOpenDiffList: () {},
+        onSelectReviewGroup: onSelectReviewGroup ?? (_) {},
+        onSelectReviewDiff: onSelectReviewDiff ?? (_) {},
+        onOpenDiffList: onOpenDiffList ?? () {},
         onUseAsContext: () {},
         onSendFilePrompt: onSendFilePrompt ?? (_) {},
         onSubmitPrompt: onSubmitPrompt ?? (_) {},
@@ -105,6 +151,66 @@ Widget _buildTestApp({
     ),
   );
 }
+
+const _reviewDiffs = [
+  HistoryContext(
+    id: 'diff-1',
+    type: 'diff',
+    path: '/workspace/test_a.dart',
+    title: 'test_a.dart',
+    diff: '@@ -1 +1 @@',
+    lang: 'dart',
+    pendingReview: true,
+    groupId: 'group-1',
+    groupTitle: '组一',
+  ),
+  HistoryContext(
+    id: 'diff-2',
+    type: 'diff',
+    path: '/workspace/test_b.dart',
+    title: 'test_b.dart',
+    diff: '@@ -1 +1 @@',
+    lang: 'dart',
+    pendingReview: true,
+    groupId: 'group-1',
+    groupTitle: '组一',
+  ),
+  HistoryContext(
+    id: 'diff-3',
+    type: 'diff',
+    path: '/workspace/test_c.dart',
+    title: 'test_c.dart',
+    diff: '@@ -1 +1 @@',
+    lang: 'dart',
+    pendingReview: true,
+    groupId: 'group-2',
+    groupTitle: '组二',
+  ),
+];
+
+const _reviewGroups = [
+  ReviewGroup(
+    id: 'group-1',
+    title: '组一',
+    pendingReview: true,
+    reviewStatus: 'pending',
+    pendingCount: 2,
+    files: [
+      ReviewFile(id: 'diff-1', path: '/workspace/test_a.dart', title: 'test_a.dart'),
+      ReviewFile(id: 'diff-2', path: '/workspace/test_b.dart', title: 'test_b.dart'),
+    ],
+  ),
+  ReviewGroup(
+    id: 'group-2',
+    title: '组二',
+    pendingReview: true,
+    reviewStatus: 'pending',
+    pendingCount: 1,
+    files: [
+      ReviewFile(id: 'diff-3', path: '/workspace/test_c.dart', title: 'test_c.dart'),
+    ],
+  ),
+];
 
 PromptRequestEvent _permissionPrompt({List<PromptOption> options = const [PromptOption(value: 'y'), PromptOption(value: 'n')]}) {
   return PromptRequestEvent(

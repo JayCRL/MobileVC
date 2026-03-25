@@ -230,6 +230,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					logx.Warn("ws", "initial session history restore skipped: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				} else {
 					emit(newSessionHistoryEventFromRecord(record))
+					emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
 				}
 			}
 		}
@@ -318,6 +319,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			switchRuntimeSession(req.SessionID)
 			emit(newSessionHistoryEventFromRecord(record))
+			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
 		case "session_delete":
 			var req protocol.SessionDeleteRequestEvent
@@ -367,6 +369,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emit(protocol.NewSessionContextResultEvent(selectedSessionID, toProtocolSessionContext(record.Projection.SessionContext)))
+		case "review_state_get":
+			emitReviewStateFromProjection(emit, selectedSessionID, buildProjectionSnapshotFor(selectedSessionID))
 		case "session_context_update":
 			var req protocol.SessionContextUpdateRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {
@@ -520,24 +524,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if effectivePermissionMode == "" {
 				effectivePermissionMode = strings.TrimSpace(buildProjectionSnapshotFor(sessionID).Runtime.PermissionMode)
 			}
-			if decision == "accept" && effectivePermissionMode != "acceptEdits" {
-				logx.Warn("ws", "reject accept review decision outside acceptEdits: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, sessionID, remoteAddr)
-				emit(protocol.NewErrorEvent(sessionID, "当前 permission mode 不是 acceptEdits，不能直接 accept diff", ""))
-				continue
-			}
 			if effectivePermissionMode != "" {
 				service.UpdatePermissionMode(effectivePermissionMode)
 			}
-			prompt, err := buildReviewDecisionPrompt(decision, reviewEvent)
-			if err != nil {
-				logx.Warn("ws", "build review decision prompt failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
-				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
-				continue
+			projection := buildProjectionSnapshotFor(sessionID)
+			var currentDiff session.DiffContext
+			if projection.CurrentDiff != nil {
+				currentDiff = *projection.CurrentDiff
 			}
-			if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{
-				Data: prompt,
+			projection = applyReviewDecisionToProjection(projection, reviewEvent, decision, currentDiff)
+			persistProjectionFor(sessionID, projection)
+			emitReviewStateFromProjection(emit, sessionID, projection)
+			if err := service.ReviewDecision(ctx, sessionID, runtimepkg.ReviewDecisionRequest{
+				Decision: decision,
 				RuntimeMeta: protocol.RuntimeMeta{
 					Source:         "review-decision",
+					ExecutionID:    firstNonEmptyString(reviewEvent.ExecutionID, currentDiff.ExecutionID),
+					GroupID:        firstNonEmptyString(reviewEvent.GroupID, reviewEvent.ExecutionID, currentDiff.GroupID, reviewEvent.ContextID),
+					GroupTitle:     firstNonEmptyString(reviewEvent.GroupTitle, currentDiff.GroupTitle, reviewEvent.ContextTitle),
 					ContextID:      reviewEvent.ContextID,
 					ContextTitle:   reviewEvent.ContextTitle,
 					TargetPath:     reviewEvent.TargetPath,
@@ -552,6 +556,100 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					message = "当前没有可交互会话，请先恢复会话后再审核 diff"
 				}
 				logx.Warn("ws", "send review decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
+				emit(protocol.NewErrorEvent(sessionID, message, ""))
+			}
+		case "permission_decision":
+			var permissionEvent protocol.PermissionDecisionRequestEvent
+			if err := json.Unmarshal(payload, &permissionEvent); err != nil {
+				logx.Warn("ws", "invalid permission decision request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid permission decision request: %v", err), ""))
+				continue
+			}
+			decision := strings.TrimSpace(strings.ToLower(permissionEvent.Decision))
+			if decision != "approve" && decision != "deny" {
+				logx.Warn("ws", "reject invalid permission decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%q", connectionID, selectedSessionID, remoteAddr, permissionEvent.Decision)
+				emit(protocol.NewErrorEvent(selectedSessionID, "permission decision must be one of: approve, deny", ""))
+				continue
+			}
+			sessionID := selectedSessionID
+			service := runtimeSvc
+			emitAndPersist := emitAndPersistFor(sessionID)
+			projection := buildProjectionSnapshotFor(sessionID)
+			controller := service.ControllerSnapshot()
+			effectivePermissionMode := strings.TrimSpace(permissionEvent.PermissionMode)
+			if effectivePermissionMode == "" {
+				effectivePermissionMode = strings.TrimSpace(controller.ActiveMeta.PermissionMode)
+			}
+			if effectivePermissionMode == "" {
+				effectivePermissionMode = strings.TrimSpace(projection.Runtime.PermissionMode)
+			}
+			if effectivePermissionMode != "" {
+				service.UpdatePermissionMode(effectivePermissionMode)
+			}
+			resumeSessionID := firstNonEmptyString(permissionEvent.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID)
+			targetPath := firstNonEmptyString(permissionEvent.TargetPath, controller.ActiveMeta.TargetPath)
+			contextID := firstNonEmptyString(permissionEvent.ContextID, controller.ActiveMeta.ContextID)
+			contextTitle := firstNonEmptyString(permissionEvent.ContextTitle, controller.ActiveMeta.ContextTitle)
+			promptText, err := buildPermissionDecisionPrompt(decision, protocol.PermissionDecisionRequestEvent{
+				Decision:        decision,
+				PermissionMode:  effectivePermissionMode,
+				ResumeSessionID: resumeSessionID,
+				TargetPath:      targetPath,
+				ContextID:       contextID,
+				ContextTitle:    contextTitle,
+				PromptMessage:   permissionEvent.PromptMessage,
+			})
+			if err != nil {
+				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+				continue
+			}
+			inputMeta := protocol.RuntimeMeta{
+				Source:          "permission-decision",
+				ResumeSessionID: resumeSessionID,
+				ContextID:       contextID,
+				ContextTitle:    contextTitle,
+				TargetPath:      targetPath,
+				TargetText:      decision,
+				Command:         firstNonEmptyString(permissionEvent.FallbackCommand, projection.Runtime.Command, controller.CurrentCommand, controller.ActiveMeta.Command),
+				Engine:          firstNonEmptyString(permissionEvent.FallbackEngine, controller.ActiveMeta.Engine),
+				CWD:             firstNonEmptyString(permissionEvent.FallbackCWD, controller.ActiveMeta.CWD, projection.Runtime.CWD),
+				Target:          firstNonEmptyString(permissionEvent.FallbackTarget, controller.ActiveMeta.Target),
+				TargetType:      firstNonEmptyString(permissionEvent.FallbackTargetType, controller.ActiveMeta.TargetType),
+				PermissionMode:  effectivePermissionMode,
+			}
+			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimSpace(promptText), "权限决策", connectionID, remoteAddr)
+			if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: promptText, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
+				if strings.Contains(err.Error(), "no active runner") {
+					fallbackCommand := firstNonEmptyString(inputMeta.Command, projection.Runtime.Command)
+					if strings.TrimSpace(fallbackCommand) == "" || strings.TrimSpace(resumeSessionID) == "" {
+						emit(protocol.NewErrorEvent(sessionID, "当前没有可恢复的 Claude 会话，无法继续处理该权限请求", ""))
+						continue
+					}
+					if !strings.Contains(strings.ToLower(fallbackCommand), " --resume") {
+						fallbackCommand = strings.TrimSpace(fallbackCommand) + " --resume " + resumeSessionID
+					}
+					if err := service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
+						Command:        fallbackCommand,
+						CWD:            firstNonEmptyString(inputMeta.CWD, projection.Runtime.CWD),
+						Mode:           runner.ModePTY,
+						PermissionMode: effectivePermissionMode,
+						RuntimeMeta:    inputMeta,
+					}, emitAndPersist); err != nil {
+						logx.Warn("ws", "resume permission decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
+						emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+						continue
+					}
+					if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: promptText, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
+						logx.Warn("ws", "resume permission follow-up input failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
+						emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+					}
+					continue
+				}
+				message := err.Error()
+				if errors.Is(err, runner.ErrInputNotSupported) {
+					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
+				}
+				logx.Warn("ws", "send permission decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
 			}
 		case "set_permission_mode":
@@ -947,7 +1045,62 @@ func toHistoryContext(ctx *store.SnapshotContext) *protocol.HistoryContext {
 		PendingReview: ctx.PendingReview,
 		Source:        ctx.Source,
 		SkillName:     ctx.SkillName,
+		ExecutionID:   ctx.ExecutionID,
+		GroupID:       ctx.GroupID,
+		GroupTitle:    ctx.GroupTitle,
+		ReviewStatus:  ctx.ReviewStatus,
 	}
+}
+
+func fromReviewFile(file session.ReviewFile) protocol.ReviewFile {
+	return protocol.ReviewFile{
+		ID:            file.ContextID,
+		Path:          file.Path,
+		Title:         file.Title,
+		Diff:          file.Diff,
+		Lang:          file.Lang,
+		PendingReview: file.PendingReview,
+		ReviewStatus:  file.ReviewStatus,
+		ExecutionID:   file.ExecutionID,
+	}
+}
+
+func fromReviewGroup(group *session.ReviewGroup) *protocol.ReviewGroup {
+	if group == nil {
+		return nil
+	}
+	files := make([]protocol.ReviewFile, 0, len(group.Files))
+	for _, file := range group.Files {
+		files = append(files, fromReviewFile(file))
+	}
+	return &protocol.ReviewGroup{
+		ID:            group.ID,
+		Title:         group.Title,
+		ExecutionID:   group.ExecutionID,
+		PendingReview: group.PendingReview,
+		ReviewStatus:  group.ReviewStatus,
+		CurrentFileID: group.CurrentFileID,
+		CurrentPath:   group.CurrentPath,
+		PendingCount:  group.PendingCount,
+		AcceptedCount: group.AcceptedCount,
+		RevertedCount: group.RevertedCount,
+		RevisedCount:  group.RevisedCount,
+		Files:         files,
+	}
+}
+
+func fromReviewGroups(groups []session.ReviewGroup) []protocol.ReviewGroup {
+	if len(groups) == 0 {
+		return nil
+	}
+	result := make([]protocol.ReviewGroup, 0, len(groups))
+	for _, group := range groups {
+		item := fromReviewGroup(&group)
+		if item != nil {
+			result = append(result, *item)
+		}
+	}
+	return result
 }
 
 func fromDiffContext(diff *session.DiffContext) *protocol.HistoryContext {
@@ -962,6 +1115,10 @@ func fromDiffContext(diff *session.DiffContext) *protocol.HistoryContext {
 		Diff:          diff.Diff,
 		Lang:          diff.Lang,
 		PendingReview: diff.PendingReview,
+		ExecutionID:   diff.ExecutionID,
+		GroupID:       diff.GroupID,
+		GroupTitle:    diff.GroupTitle,
+		ReviewStatus:  diff.ReviewStatus,
 	}
 }
 
@@ -986,6 +1143,200 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func emitReviewStateFromProjection(emit func(any), sessionID string, projection store.ProjectionSnapshot) {
+	projection = normalizeProjectionSnapshot(projection)
+	emit(protocol.NewReviewStateEvent(
+		sessionID,
+		fromReviewGroups(projection.ReviewGroups),
+		fromReviewGroup(projection.ActiveReviewGroup),
+	))
+}
+
+func applyReviewDecisionToProjection(snapshot store.ProjectionSnapshot, reviewEvent protocol.ReviewDecisionRequestEvent, decision string, currentDiff session.DiffContext) store.ProjectionSnapshot {
+	snapshot = normalizeProjectionSnapshot(snapshot)
+	targetContextID := firstNonEmptyString(reviewEvent.ContextID, currentDiff.ContextID)
+	targetPath := firstNonEmptyString(reviewEvent.TargetPath, currentDiff.Path)
+	targetExecutionID := firstNonEmptyString(reviewEvent.ExecutionID, currentDiff.ExecutionID)
+	targetGroupID := firstNonEmptyString(reviewEvent.GroupID, reviewEvent.ExecutionID, currentDiff.GroupID, targetContextID, targetPath)
+	targetGroupTitle := firstNonEmptyString(reviewEvent.GroupTitle, currentDiff.GroupTitle, currentDiff.Title)
+	reviewStatus := reviewStatusFromDecision(decision)
+	pending := decision == "revise"
+
+	for i := range snapshot.Diffs {
+		item := &snapshot.Diffs[i]
+		if !snapshotDiffMatches(*item, targetContextID, targetPath) {
+			continue
+		}
+		item.PendingReview = pending
+		item.ReviewStatus = reviewStatus
+		if item.GroupID == "" {
+			item.GroupID = targetGroupID
+		}
+		if item.GroupTitle == "" {
+			item.GroupTitle = targetGroupTitle
+		}
+		if item.ExecutionID == "" {
+			item.ExecutionID = targetExecutionID
+		}
+	}
+
+	snapshot.ReviewGroups = upsertReviewGroupState(snapshot.ReviewGroups, snapshot.Diffs, targetGroupID, targetGroupTitle, targetExecutionID)
+	active := pickActiveReviewGroup(snapshot.ReviewGroups)
+	if active != nil {
+		snapshot.ActiveReviewGroup = active
+	}
+	activeDiff := pickActiveSnapshotDiff(snapshot.Diffs)
+	if strings.TrimSpace(activeDiff.ContextID+activeDiff.Path+activeDiff.Title) != "" {
+		snapshot.CurrentDiff = &activeDiff
+	}
+	return snapshot
+}
+
+func reviewStatusFromDecision(decision string) string {
+	switch strings.TrimSpace(strings.ToLower(decision)) {
+	case "accept":
+		return "accepted"
+	case "revert":
+		return "reverted"
+	case "revise":
+		return "revised"
+	default:
+		return "pending"
+	}
+}
+
+func snapshotDiffMatches(item session.DiffContext, contextID, targetPath string) bool {
+	if strings.TrimSpace(contextID) != "" && strings.TrimSpace(item.ContextID) == strings.TrimSpace(contextID) {
+		return true
+	}
+	if strings.TrimSpace(targetPath) != "" && strings.TrimSpace(item.Path) == strings.TrimSpace(targetPath) {
+		return true
+	}
+	return false
+}
+
+func upsertReviewGroupState(groups []session.ReviewGroup, diffs []session.DiffContext, targetGroupID, targetGroupTitle, targetExecutionID string) []session.ReviewGroup {
+	groupID := strings.TrimSpace(targetGroupID)
+	if groupID == "" {
+		return rebuildReviewGroups(diffs)
+	}
+	return rebuildReviewGroups(diffs)
+}
+
+func rebuildReviewGroups(diffs []session.DiffContext) []session.ReviewGroup {
+	if len(diffs) == 0 {
+		return nil
+	}
+	groupOrder := make([]string, 0)
+	byGroup := map[string][]session.DiffContext{}
+	for _, diff := range diffs {
+		groupID := firstNonEmptyString(diff.GroupID, diff.ExecutionID, diff.ContextID, diff.Path)
+		if groupID == "" {
+			continue
+		}
+		if _, ok := byGroup[groupID]; !ok {
+			groupOrder = append(groupOrder, groupID)
+		}
+		if diff.GroupID == "" {
+			diff.GroupID = groupID
+		}
+		if diff.GroupTitle == "" {
+			diff.GroupTitle = firstNonEmptyString(diff.Title, diff.Path, groupID)
+		}
+		byGroup[groupID] = append(byGroup[groupID], diff)
+	}
+	groups := make([]session.ReviewGroup, 0, len(groupOrder))
+	for _, groupID := range groupOrder {
+		items := byGroup[groupID]
+		if len(items) == 0 {
+			continue
+		}
+		files := make([]session.ReviewFile, 0, len(items))
+		pendingCount := 0
+		acceptedCount := 0
+		revertedCount := 0
+		revisedCount := 0
+		for _, item := range items {
+			files = append(files, session.ReviewFile{
+				ContextID:     item.ContextID,
+				Title:         item.Title,
+				Path:          item.Path,
+				Diff:          item.Diff,
+				Lang:          item.Lang,
+				PendingReview: item.PendingReview,
+				ExecutionID:   item.ExecutionID,
+				ReviewStatus:  item.ReviewStatus,
+			})
+			if item.PendingReview {
+				pendingCount++
+			}
+			switch strings.TrimSpace(item.ReviewStatus) {
+			case "accepted":
+				acceptedCount++
+			case "reverted":
+				revertedCount++
+			case "revised":
+				revisedCount++
+			}
+		}
+		reviewStatus := "pending"
+		switch {
+		case pendingCount == len(files):
+			reviewStatus = "pending"
+		case acceptedCount == len(files):
+			reviewStatus = "accepted"
+		case revertedCount == len(files):
+			reviewStatus = "reverted"
+		case revisedCount == len(files):
+			reviewStatus = "revised"
+		default:
+			reviewStatus = "mixed"
+		}
+		current := pickActiveReviewFile(files)
+		groups = append(groups, session.ReviewGroup{
+			ID:            groupID,
+			Title:         firstNonEmptyString(items[len(items)-1].GroupTitle, items[len(items)-1].Title, items[len(items)-1].Path, groupID),
+			ExecutionID:   firstNonEmptyString(items[len(items)-1].ExecutionID, groupID),
+			PendingReview: pendingCount > 0,
+			ReviewStatus:  reviewStatus,
+			CurrentFileID: current.ContextID,
+			CurrentPath:   current.Path,
+			PendingCount:  pendingCount,
+			AcceptedCount: acceptedCount,
+			RevertedCount: revertedCount,
+			RevisedCount:  revisedCount,
+			Files:         files,
+		})
+	}
+	return groups
+}
+
+func pickActiveReviewFile(files []session.ReviewFile) session.ReviewFile {
+	for _, file := range files {
+		if file.PendingReview {
+			return file
+		}
+	}
+	if len(files) > 0 {
+		return files[len(files)-1]
+	}
+	return session.ReviewFile{}
+}
+
+func pickActiveReviewGroup(groups []session.ReviewGroup) *session.ReviewGroup {
+	for i := len(groups) - 1; i >= 0; i-- {
+		if groups[i].PendingReview {
+			group := groups[i]
+			return &group
+		}
+	}
+	if len(groups) > 0 {
+		group := groups[len(groups)-1]
+		return &group
+	}
+	return nil
 }
 
 func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.SessionHistoryEvent {
@@ -1031,6 +1382,8 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 		entries,
 		fromDiffContexts(record.Projection.Diffs),
 		fromDiffContext(record.Projection.CurrentDiff),
+		fromReviewGroups(record.Projection.ReviewGroups),
+		fromReviewGroup(record.Projection.ActiveReviewGroup),
 		toHistoryContext(record.Projection.CurrentStep),
 		toHistoryContext(record.Projection.LatestError),
 		record.Projection.RawTerminalByStream,
@@ -1134,13 +1487,16 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 		snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "step", Context: ctx})
 		return snapshot, true
 	case protocol.FileDiffEvent:
-		diff := session.DiffContext{ContextID: firstNonEmptyString(e.ContextID, e.Path, e.Title), Title: firstNonEmptyString(e.Title, e.ContextTitle, "最近改动"), Path: firstNonEmptyString(e.Path, e.TargetPath), Diff: e.Diff, Lang: e.Lang, PendingReview: true}
+		diff := session.DiffContext{ContextID: firstNonEmptyString(e.ContextID, e.Path, e.Title), Title: firstNonEmptyString(e.Title, e.ContextTitle, "最近改动"), Path: firstNonEmptyString(e.Path, e.TargetPath), Diff: e.Diff, Lang: e.Lang, PendingReview: true, ExecutionID: e.ExecutionID, GroupID: firstNonEmptyString(e.GroupID, e.ExecutionID, e.ContextID, e.Path), GroupTitle: firstNonEmptyString(e.GroupTitle, e.ContextTitle, e.Title), ReviewStatus: "pending"}
 		snapshot.Diffs = upsertSnapshotDiff(snapshot.Diffs, diff)
+		snapshot.ReviewGroups = rebuildReviewGroups(snapshot.Diffs)
+		activeGroup := pickActiveReviewGroup(snapshot.ReviewGroups)
+		snapshot.ActiveReviewGroup = activeGroup
 		active := pickActiveSnapshotDiff(snapshot.Diffs)
 		if strings.TrimSpace(active.ContextID+active.Path+active.Title) != "" {
 			snapshot.CurrentDiff = &active
 		}
-		snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "diff", Context: &store.SnapshotContext{ID: diff.ContextID, Path: diff.Path, Title: diff.Title, Diff: diff.Diff, Lang: diff.Lang, PendingReview: diff.PendingReview, Timestamp: e.Timestamp.Format(time.RFC3339), Source: e.Source, SkillName: e.SkillName}})
+		snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "diff", Context: &store.SnapshotContext{ID: diff.ContextID, Path: diff.Path, Title: diff.Title, Diff: diff.Diff, Lang: diff.Lang, PendingReview: diff.PendingReview, Timestamp: e.Timestamp.Format(time.RFC3339), Source: e.Source, SkillName: e.SkillName, ExecutionID: diff.ExecutionID, GroupID: diff.GroupID, GroupTitle: diff.GroupTitle, ReviewStatus: diff.ReviewStatus}})
 		return snapshot, true
 	case protocol.AgentStateEvent:
 		return snapshot, false
@@ -1181,6 +1537,13 @@ func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.Projec
 	}
 	if len(snapshot.Diffs) == 0 && snapshot.CurrentDiff != nil {
 		snapshot.Diffs = []session.DiffContext{*snapshot.CurrentDiff}
+	}
+	if len(snapshot.ReviewGroups) == 0 && len(snapshot.Diffs) > 0 {
+		snapshot.ReviewGroups = rebuildReviewGroups(snapshot.Diffs)
+	}
+	activeGroup := pickActiveReviewGroup(snapshot.ReviewGroups)
+	if activeGroup != nil {
+		snapshot.ActiveReviewGroup = activeGroup
 	}
 	activeDiff := pickActiveSnapshotDiff(snapshot.Diffs)
 	if strings.TrimSpace(activeDiff.ContextID+activeDiff.Path+activeDiff.Title) != "" {
@@ -1311,6 +1674,47 @@ func buildReviewDecisionPrompt(decision string, req protocol.ReviewDecisionReque
 		return fmt.Sprintf("请基于刚刚展示的 diff 继续调整并重新修改。目标：%s\n", subject), nil
 	default:
 		return "", fmt.Errorf("review decision must be one of: accept, revert, revise")
+	}
+}
+
+func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecisionRequestEvent) (string, error) {
+	decision = strings.TrimSpace(strings.ToLower(decision))
+	if decision == "" {
+		return "", fmt.Errorf("permission decision is required")
+	}
+	subject := strings.TrimSpace(req.TargetPath)
+	if subject == "" {
+		subject = strings.TrimSpace(req.ContextTitle)
+	}
+	if subject == "" {
+		subject = "刚才请求的操作"
+	}
+	lines := []string{}
+	if req.ResumeSessionID != "" {
+		lines = append(lines, fmt.Sprintf("ResumeSessionID: %s", req.ResumeSessionID))
+	}
+	if req.TargetPath != "" {
+		lines = append(lines, fmt.Sprintf("TargetPath: %s", req.TargetPath))
+	}
+	if req.ContextID != "" {
+		lines = append(lines, fmt.Sprintf("ContextID: %s", req.ContextID))
+	}
+	if req.ContextTitle != "" {
+		lines = append(lines, fmt.Sprintf("ContextTitle: %s", req.ContextTitle))
+	}
+	if req.PermissionMode != "" {
+		lines = append(lines, fmt.Sprintf("PermissionMode: %s", req.PermissionMode))
+	}
+	if strings.TrimSpace(req.PromptMessage) != "" {
+		lines = append(lines, fmt.Sprintf("OriginalPrompt: %s", strings.TrimSpace(req.PromptMessage)))
+	}
+	switch decision {
+	case "approve":
+		return fmt.Sprintf("用户已批准刚才请求的文件修改/写入权限。请在当前已保存的会话上下文中继续完成刚才因未授权而中断的操作；如有必要，请直接重新执行刚才被拦截的编辑或写入工具调用。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
+	case "deny":
+		return fmt.Sprintf("用户拒绝了刚才请求的文件修改/写入权限。请不要继续写入或编辑该目标，并基于当前上下文给出不写文件的替代方案或下一步建议。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
+	default:
+		return "", fmt.Errorf("permission decision must be one of: approve, deny")
 	}
 }
 

@@ -539,6 +539,11 @@ func (r *PtyRunner) emitFileDiffIfNeeded(sessionID, fallbackTarget string, sink 
 	toolTarget := r.lastToolTarget
 	cwd := r.currentDir
 	var snapshots map[string]fileSnapshot
+	groupMeta := protocol.RuntimeMeta{
+		ExecutionID: r.pendingReq.RuntimeMeta.ExecutionID,
+		GroupID:     firstNonEmptyString(r.pendingReq.RuntimeMeta.GroupID, r.pendingReq.RuntimeMeta.ExecutionID),
+		GroupTitle:  firstNonEmptyString(r.pendingReq.RuntimeMeta.GroupTitle, r.pendingReq.RuntimeMeta.ContextTitle),
+	}
 	if len(r.fileSnapshots) > 0 {
 		snapshots = make(map[string]fileSnapshot, len(r.fileSnapshots))
 		for k, v := range r.fileSnapshots {
@@ -566,8 +571,17 @@ func (r *PtyRunner) emitFileDiffIfNeeded(sessionID, fallbackTarget string, sink 
 		if !ok {
 			continue
 		}
-		sendEvent(sink, diffEvent)
+		sendEvent(sink, protocol.ApplyRuntimeMeta(diffEvent, groupMeta))
 	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func resolveToolPath(cwd, target string) string {
@@ -824,8 +838,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 					sendEvent(sink, protocol.NewStepUpdateEvent(sessionID, block.Name, "running", target, block.Name, ""))
 				case "text":
 					if text := strings.TrimSpace(block.Text); text != "" {
+						var event any = protocol.NewLogEvent(sessionID, text, "stdout")
+						if shouldEmitClaudeTextAsPrompt(text) {
+							event = protocol.NewPromptRequestEvent(sessionID, text, promptOptions(text))
+						}
 						sendEvent(sink, protocol.ApplyRuntimeMeta(
-							protocol.NewLogEvent(sessionID, text, "stdout"),
+							event,
 							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
 						))
 					}
@@ -835,6 +853,14 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			// Check message content for tool_result errors (Claude internal retries)
 			for _, block := range envelope.Message.Content {
 				if block.Type == "tool_result" && block.IsError {
+					text := strings.TrimSpace(block.Content)
+					if shouldEmitClaudeTextAsPrompt(text) {
+						sendEvent(sink, protocol.ApplyRuntimeMeta(
+							protocol.NewPromptRequestEvent(sessionID, text, promptOptions(text)),
+							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+						))
+						continue
+					}
 					// These are Claude's internal tool retry errors — don't expose to user
 					// but update step status to show tool had an issue
 					sendEvent(sink, protocol.NewStepUpdateEvent(sessionID, "tool retry", "info", "", "", ""))
@@ -1098,6 +1124,34 @@ func isLiveTailPromptText(text string) bool {
 		}
 	}
 
+	if strings.Contains(lower, "permission") ||
+		strings.Contains(lower, "authorize") ||
+		strings.Contains(lower, "approval") ||
+		strings.Contains(lower, "allow once") ||
+		strings.Contains(lower, "allow this time") ||
+		strings.Contains(trimmed, "授权") ||
+		strings.Contains(trimmed, "权限") ||
+		strings.Contains(trimmed, "允许") {
+		if strings.Contains(lower, "write") ||
+			strings.Contains(lower, "edit") ||
+			strings.Contains(lower, "overwrite") ||
+			strings.Contains(lower, "modify") ||
+			strings.Contains(lower, "update") ||
+			strings.Contains(trimmed, "写入") ||
+			strings.Contains(trimmed, "编辑") ||
+			strings.Contains(trimmed, "修改") ||
+			strings.Contains(trimmed, "覆盖") {
+			return true
+		}
+	}
+
+	if strings.Contains(trimmed, "还没授权") ||
+		strings.Contains(trimmed, "需要你的授权") ||
+		strings.Contains(trimmed, "拿到权限后") ||
+		strings.Contains(trimmed, "你授权后") {
+		return true
+	}
+
 	if strings.HasSuffix(trimmed, ">") {
 		base := strings.TrimSpace(strings.TrimSuffix(lower, ">"))
 		if base == "decision" || strings.HasSuffix(base, " decision") || strings.HasSuffix(base, " input") {
@@ -1131,7 +1185,30 @@ func promptOptions(text string) []string {
 		return []string{"y", "n"}
 	case strings.Contains(lower, "should i proceed"), strings.Contains(lower, "proceed"), strings.Contains(lower, "approve"), strings.Contains(lower, "yes/no"):
 		return []string{"yes", "no"}
+	case strings.Contains(lower, "permission") ||
+		strings.Contains(lower, "authorize") ||
+		strings.Contains(lower, "allow once") ||
+		strings.Contains(lower, "allow this time") ||
+		strings.Contains(trimmed, "授权") ||
+		strings.Contains(trimmed, "权限") ||
+		strings.Contains(trimmed, "允许") ||
+		strings.Contains(trimmed, "还没授权") ||
+		strings.Contains(trimmed, "需要你的授权") ||
+		strings.Contains(trimmed, "拿到权限后") ||
+		strings.Contains(trimmed, "你授权后"):
+		return []string{"y", "n"}
 	default:
 		return nil
 	}
+}
+
+func shouldEmitClaudeTextAsPrompt(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	if !isPromptText(trimmed) {
+		return false
+	}
+	return len(promptOptions(trimmed)) > 0
 }

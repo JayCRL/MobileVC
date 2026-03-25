@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"mobilevc/internal/protocol"
 )
 
 type Mode string
@@ -25,6 +27,7 @@ type ExecRequest struct {
 	SessionID      string
 	Mode           Mode
 	PermissionMode string
+	protocol.RuntimeMeta
 }
 
 type EventSink func(event any)

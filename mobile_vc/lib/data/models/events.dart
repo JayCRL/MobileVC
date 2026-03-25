@@ -592,6 +592,7 @@ class SessionHistoryEvent extends AppEvent {
     this.latestError,
     this.sessionContext = const SessionContext(),
     this.rawTerminalByStream = const {},
+    this.terminalExecutions = const [],
     this.canResume = false,
     this.resumeRuntimeMeta = const RuntimeMeta(),
   }) : super(type: 'session_history');
@@ -606,6 +607,7 @@ class SessionHistoryEvent extends AppEvent {
   final HistoryContext? latestError;
   final SessionContext sessionContext;
   final Map<String, String> rawTerminalByStream;
+  final List<TerminalExecution> terminalExecutions;
   final bool canResume;
   final RuntimeMeta resumeRuntimeMeta;
 
@@ -651,6 +653,10 @@ class SessionHistoryEvent extends AppEvent {
             : const SessionContext(),
         rawTerminalByStream: ((json['rawTerminalByStream'] as Map?) ?? const {})
             .map((key, value) => MapEntry(key.toString(), value.toString())),
+        terminalExecutions: ((json['terminalExecutions'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(TerminalExecution.fromJson)
+            .toList(),
         canResume: json['canResume'] == true,
         resumeRuntimeMeta: json['resumeRuntimeMeta'] is Map<String, dynamic>
             ? RuntimeMeta.fromJson(

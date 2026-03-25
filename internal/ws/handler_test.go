@@ -15,6 +15,7 @@ import (
 
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
+	"mobilevc/internal/session"
 	"mobilevc/internal/store"
 )
 
@@ -399,7 +400,7 @@ func TestHandlerMemoryListAndUpsert(t *testing.T) {
 
 	if err := conn.WriteJSON(protocol.MemoryRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "memory_upsert"},
-		Item: protocol.MemoryItem{ID: "m-test", Title: "Test Memory", Content: "remember this"},
+		Item:        protocol.MemoryItem{ID: "m-test", Title: "Test Memory", Content: "remember this"},
 	}); err != nil {
 		t.Fatalf("write memory_upsert request: %v", err)
 	}
@@ -484,6 +485,131 @@ func TestHandlerSessionContextGetUpdateAndRestore(t *testing.T) {
 	}
 }
 
+func TestHandlerSessionContextUpdateAndRestore(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "context-session")
+
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "session_context_get"}); err != nil {
+		t.Fatalf("write session_context_get request: %v", err)
+	}
+	initialEvent := readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+	initialContext, ok := initialEvent["sessionContext"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sessionContext payload, got %#v", initialEvent)
+	}
+	if len(initialContext) != 0 {
+		t.Fatalf("expected empty initial sessionContext, got %#v", initialContext)
+	}
+
+	if err := conn.WriteJSON(protocol.SessionContextUpdateRequestEvent{
+		ClientEvent:       protocol.ClientEvent{Action: "session_context_update"},
+		EnabledSkillNames: []string{"review", "analyze"},
+		EnabledMemoryIDs:  []string{"m-test", "m-2"},
+	}); err != nil {
+		t.Fatalf("write session_context_update request: %v", err)
+	}
+	updatedEvent := readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+	updatedContext, ok := updatedEvent["sessionContext"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected updated sessionContext payload, got %#v", updatedEvent)
+	}
+	skillNames, ok := updatedContext["enabledSkillNames"].([]any)
+	if !ok || len(skillNames) != 2 {
+		t.Fatalf("expected enabledSkillNames, got %#v", updatedContext)
+	}
+	memoryIDs, ok := updatedContext["enabledMemoryIds"].([]any)
+	if !ok || len(memoryIDs) != 2 {
+		t.Fatalf("expected enabledMemoryIds, got %#v", updatedContext)
+	}
+
+	record, err := h.SessionStore.GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get updated session: %v", err)
+	}
+	if len(record.Projection.SessionContext.EnabledSkillNames) != 2 || len(record.Projection.SessionContext.EnabledMemoryIDs) != 2 {
+		t.Fatalf("unexpected persisted session context: %#v", record.Projection.SessionContext)
+	}
+
+	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_load"}, SessionID: sessionID}); err != nil {
+		t.Fatalf("write session_load request: %v", err)
+	}
+	history := readUntilSessionHistory(t, conn)
+	historyContext, ok := history["sessionContext"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sessionContext in session history, got %#v", history)
+	}
+	historySkills, ok := historyContext["enabledSkillNames"].([]any)
+	if !ok || len(historySkills) != 2 {
+		t.Fatalf("expected restored enabledSkillNames, got %#v", historyContext)
+	}
+	historyMemory, ok := historyContext["enabledMemoryIds"].([]any)
+	if !ok || len(historyMemory) != 2 {
+		t.Fatalf("expected restored enabledMemoryIds, got %#v", historyContext)
+	}
+	reviewState := readUntilType(t, conn, protocol.EventTypeReviewState)
+	if reviewState["type"] != protocol.EventTypeReviewState {
+		t.Fatalf("expected review_state after session_load, got %#v", reviewState)
+	}
+}
+
+func TestHandlerReviewStateGetReturnsProjectionGroups(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "review-state-session")
+
+	record, err := h.SessionStore.GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	record.Projection = normalizeProjectionSnapshot(store.ProjectionSnapshot{
+		Diffs: []session.DiffContext{{
+			ContextID:     "diff-1",
+			Title:         "handler diff",
+			Path:          "internal/ws/handler.go",
+			Diff:          "@@ -1 +1 @@",
+			Lang:          "go",
+			PendingReview: true,
+			ExecutionID:   "exec-1",
+			GroupID:       "group-1",
+			GroupTitle:    "修改组 1",
+			ReviewStatus:  "pending",
+		}},
+		RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+	})
+	if _, err := h.SessionStore.SaveProjection(context.Background(), sessionID, record.Projection); err != nil {
+		t.Fatalf("save projection: %v", err)
+	}
+
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "review_state_get"}); err != nil {
+		t.Fatalf("write review_state_get request: %v", err)
+	}
+	event := readUntilType(t, conn, protocol.EventTypeReviewState)
+	groups, ok := event["groups"].([]any)
+	if !ok || len(groups) != 1 {
+		t.Fatalf("expected one review group, got %#v", event)
+	}
+	activeGroup, ok := event["activeGroup"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected activeGroup payload, got %#v", event)
+	}
+	if activeGroup["id"] != "group-1" {
+		t.Fatalf("expected activeGroup id group-1, got %#v", activeGroup)
+	}
+}
+
 func TestHandlerExecFlow(t *testing.T) {
 	execRunner := newStubRunner(
 		protocol.NewLogEvent("ignored", "hello from runner", "stdout"),
@@ -513,6 +639,71 @@ func TestHandlerExecFlow(t *testing.T) {
 		t.Fatalf("expected closed session event, got %#v", event)
 	}
 	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "IDLE", false)
+}
+
+func TestProjectionBuildsReviewGroupsFromDiffs(t *testing.T) {
+	snapshot := store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
+	event := protocol.ApplyRuntimeMeta(
+		protocol.NewFileDiffEvent("session-1", "internal/ws/handler.go", "handler diff", "diff --git a/internal/ws/handler.go b/internal/ws/handler.go", "go"),
+		protocol.RuntimeMeta{ContextID: "diff-1", ExecutionID: "exec-1", GroupID: "group-1", GroupTitle: "修改组 1"},
+	)
+	snapshot, changed := applyEventToProjection(snapshot, event)
+	if !changed {
+		t.Fatal("expected file_diff to change projection")
+	}
+	if len(snapshot.ReviewGroups) != 1 {
+		t.Fatalf("expected one review group, got %#v", snapshot.ReviewGroups)
+	}
+	group := snapshot.ReviewGroups[0]
+	if group.ID != "group-1" {
+		t.Fatalf("expected group id group-1, got %#v", group)
+	}
+	if group.PendingCount != 1 || !group.PendingReview {
+		t.Fatalf("expected pending review group, got %#v", group)
+	}
+	if snapshot.ActiveReviewGroup == nil || snapshot.ActiveReviewGroup.ID != "group-1" {
+		t.Fatalf("expected active review group to be restored, got %#v", snapshot.ActiveReviewGroup)
+	}
+}
+
+func TestApplyReviewDecisionToProjectionUpdatesReviewState(t *testing.T) {
+	snapshot := normalizeProjectionSnapshot(store.ProjectionSnapshot{
+		Diffs: []session.DiffContext{{
+			ContextID:     "diff-1",
+			Title:         "handler diff",
+			Path:          "internal/ws/handler.go",
+			Diff:          "@@ -1 +1 @@",
+			Lang:          "go",
+			PendingReview: true,
+			ExecutionID:   "exec-1",
+			GroupID:       "group-1",
+			GroupTitle:    "修改组 1",
+			ReviewStatus:  "pending",
+		}},
+	})
+	snapshot = applyReviewDecisionToProjection(snapshot, protocol.ReviewDecisionRequestEvent{
+		Decision:   "accept",
+		ContextID:  "diff-1",
+		TargetPath: "internal/ws/handler.go",
+		ExecutionID: "exec-1",
+		GroupID:    "group-1",
+	}, "accept", session.DiffContext{})
+	if len(snapshot.ReviewGroups) != 1 {
+		t.Fatalf("expected one review group, got %#v", snapshot.ReviewGroups)
+	}
+	group := snapshot.ReviewGroups[0]
+	if group.ReviewStatus != "accepted" {
+		t.Fatalf("expected accepted group, got %#v", group)
+	}
+	if group.PendingReview || group.PendingCount != 0 {
+		t.Fatalf("expected no pending reviews after accept, got %#v", group)
+	}
+	if len(group.Files) != 1 || group.Files[0].ReviewStatus != "accepted" {
+		t.Fatalf("expected accepted review file, got %#v", group.Files)
+	}
+	if snapshot.CurrentDiff == nil || snapshot.CurrentDiff.ReviewStatus != "accepted" || snapshot.CurrentDiff.PendingReview {
+		t.Fatalf("expected current diff to be marked accepted, got %#v", snapshot.CurrentDiff)
+	}
 }
 
 func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
@@ -555,9 +746,39 @@ func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
 
 	record := store.SessionRecord{
 		Summary: store.SessionSummary{ID: "session-1", Title: "exec-history"},
-		Projection: snapshot,
+		Projection: store.ProjectionSnapshot{
+			RawTerminalByStream: snapshot.RawTerminalByStream,
+			TerminalExecutions:  snapshot.TerminalExecutions,
+			ReviewGroups: []session.ReviewGroup{{
+				ID:            "group-1",
+				Title:         "修改组 1",
+				ExecutionID:   executionID,
+				PendingReview: true,
+				ReviewStatus:  "pending",
+				CurrentFileID: "diff-1",
+				CurrentPath:   "internal/ws/handler.go",
+				PendingCount:  1,
+				Files: []session.ReviewFile{{
+					ContextID:     "diff-1",
+					Title:         "handler diff",
+					Path:          "internal/ws/handler.go",
+					Diff:          "@@ -1 +1 @@",
+					Lang:          "go",
+					PendingReview: true,
+					ExecutionID:   executionID,
+					ReviewStatus:  "pending",
+				}},
+			}},
+			ActiveReviewGroup: &session.ReviewGroup{ID: "group-1", Title: "修改组 1", ExecutionID: executionID, PendingReview: true},
+		},
 	}
 	history := newSessionHistoryEventFromRecord(record)
+	if len(history.ReviewGroups) != 1 {
+		t.Fatalf("expected one review group in history, got %#v", history.ReviewGroups)
+	}
+	if history.ActiveReviewGroup == nil || history.ActiveReviewGroup.ID != "group-1" {
+		t.Fatalf("expected active review group in history, got %#v", history.ActiveReviewGroup)
+	}
 	if len(history.TerminalExecutions) != 1 {
 		t.Fatalf("expected one terminal execution in history, got %#v", history.TerminalExecutions)
 	}
@@ -980,6 +1201,206 @@ func TestHandlerUnknownMode(t *testing.T) {
 	}
 }
 
+func TestHandlerPermissionDecisionApproveSendsRecoveryPromptToRunner(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
+	h := newTestHandler()
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "claude",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	prompt := readUntilType(t, conn, protocol.EventTypePromptRequest)
+	if prompt["msg"] != "写 README 需要你的授权" {
+		t.Fatalf("unexpected prompt event: %#v", prompt)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
+		Decision:       "approve",
+		PermissionMode: "default",
+		TargetPath:     "README.md",
+		ContextTitle:   "README",
+		PromptMessage:  "写 README 需要你的授权",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		got := string(payload)
+		if !strings.Contains(got, "用户已批准刚才请求的文件修改/写入权限") {
+			t.Fatalf("unexpected permission payload: %q", got)
+		}
+		if !strings.Contains(got, "TargetPath: README.md") {
+			t.Fatalf("expected target path in payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive permission recovery payload")
+	}
+
+	thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
+	if thinking["state"] != "THINKING" {
+		t.Fatalf("expected THINKING state, got %#v", thinking)
+	}
+	if thinking["source"] != "permission-decision" {
+		t.Fatalf("expected permission-decision source, got %#v", thinking)
+	}
+	if thinking["permissionMode"] != "default" {
+		t.Fatalf("expected default permission mode, got %#v", thinking)
+	}
+}
+
+func TestHandlerPermissionDecisionDenySendsRecoveryPromptToRunner(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
+	h := newTestHandler()
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "claude",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
+		Decision:       "deny",
+		PermissionMode: "default",
+		TargetPath:     "README.md",
+		PromptMessage:  "写 README 需要你的授权",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		got := string(payload)
+		if !strings.Contains(got, "用户拒绝了刚才请求的文件修改/写入权限") {
+			t.Fatalf("unexpected deny payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive permission deny payload")
+	}
+}
+
+func TestHandlerPermissionDecisionWithoutRunnerReturnsError(t *testing.T) {
+	h := newTestHandler()
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
+		Decision:       "approve",
+		PermissionMode: "default",
+		TargetPath:     "README.md",
+		PromptMessage:  "写 README 需要你的授权",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "当前没有可恢复的 Claude 会话，无法继续处理该权限请求" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+}
+
+func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
+	firstRunner := newStubRunner(protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
+		protocol.RuntimeMeta{ResumeSessionID: "resume-123"},
+	))
+	secondRunner := newHoldingStubRunner()
+	runnerIndex := 0
+
+	h := newTestHandler()
+	h.NewPtyRunner = func() runner.Runner {
+		runnerIndex++
+		if runnerIndex == 1 {
+			return firstRunner
+		}
+		return secondRunner
+	}
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "claude",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	prompt := readUntilType(t, conn, protocol.EventTypePromptRequest)
+	if prompt["resumeSessionId"] != "resume-123" {
+		t.Fatalf("expected resume session id on prompt, got %#v", prompt)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
+		Decision:       "approve",
+		PermissionMode: "default",
+		TargetPath:     "README.md",
+		PromptMessage:  "写 README 需要你的授权",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	select {
+	case payload := <-secondRunner.writeCh:
+		got := string(payload)
+		if !strings.Contains(got, "用户已批准刚才请求的文件修改/写入权限") {
+			t.Fatalf("unexpected resumed payload: %q", got)
+		}
+		if !strings.Contains(got, "ResumeSessionID: resume-123") {
+			t.Fatalf("expected resume session id in payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive resumed permission payload")
+	}
+}
+
+func TestHandlerPermissionDecisionWithoutResumeCommandReturnsError(t *testing.T) {
+	h := newTestHandler()
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:     protocol.ClientEvent{Action: "permission_decision"},
+		Decision:        "approve",
+		PermissionMode:  "default",
+		ResumeSessionID: "resume-123",
+		TargetPath:      "README.md",
+		PromptMessage:   "写 README 需要你的授权",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "当前没有可恢复的 Claude 会话，无法继续处理该权限请求" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+}
+
 func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
 	h := newTestHandler()
@@ -1008,7 +1429,7 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	select {
 	case payload := <-ptyRunner.writeCh:
 		got := string(payload)
-		if !strings.Contains(got, "请接受刚刚展示的 diff 变更") {
+		if got != "1\n" {
 			t.Fatalf("unexpected review decision payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):
@@ -1104,7 +1525,7 @@ func TestHandlerReviewDecisionWithoutRunner(t *testing.T) {
 	}
 }
 
-func TestHandlerReviewDecisionRejectsAcceptOutsideAcceptEdits(t *testing.T) {
+func TestHandlerReviewDecisionAcceptAllowedInDefaultMode(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
 	h := newTestHandler()
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
@@ -1129,15 +1550,21 @@ func TestHandlerReviewDecisionRejectsAcceptOutsideAcceptEdits(t *testing.T) {
 		t.Fatalf("write review decision request: %v", err)
 	}
 
-	event := readUntilType(t, conn, protocol.EventTypeError)
-	if event["msg"] != "当前 permission mode 不是 acceptEdits，不能直接 accept diff" {
-		t.Fatalf("unexpected error event: %#v", event)
-	}
-
 	select {
 	case payload := <-ptyRunner.writeCh:
-		t.Fatalf("expected no review payload to runner, got %q", string(payload))
-	case <-time.After(200 * time.Millisecond):
+		if string(payload) != "1\n" {
+			t.Fatalf("unexpected review payload: %q", string(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive review decision payload")
+	}
+
+	thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
+	if thinking["state"] != "THINKING" {
+		t.Fatalf("expected THINKING state, got %#v", thinking)
+	}
+	if thinking["permissionMode"] != "default" {
+		t.Fatalf("expected default permission mode, got %#v", thinking)
 	}
 }
 

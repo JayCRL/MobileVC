@@ -246,6 +246,57 @@ class HistoryLogEntry {
   }
 }
 
+class TerminalExecution {
+  const TerminalExecution({
+    this.executionId = '',
+    this.command = '',
+    this.cwd = '',
+    this.startedAt,
+    this.completedAt,
+    this.running = false,
+    this.exitCode,
+    this.stdout = '',
+    this.stderr = '',
+  });
+
+  final String executionId;
+  final String command;
+  final String cwd;
+  final DateTime? startedAt;
+  final DateTime? completedAt;
+  final bool running;
+  final int? exitCode;
+  final String stdout;
+  final String stderr;
+
+  bool get hasOutput => stdout.isNotEmpty || stderr.isNotEmpty;
+
+  String get title {
+    final trimmed = command.trim();
+    if (trimmed.isNotEmpty) {
+      return trimmed;
+    }
+    if (cwd.trim().isNotEmpty) {
+      return cwd.trim();
+    }
+    return executionId.isNotEmpty ? executionId : '未命名命令';
+  }
+
+  factory TerminalExecution.fromJson(Map<String, dynamic> json) {
+    return TerminalExecution(
+      executionId: (json['executionId'] ?? '').toString(),
+      command: (json['command'] ?? '').toString(),
+      cwd: (json['cwd'] ?? '').toString(),
+      startedAt: _parseDate(json['startedAt']?.toString()),
+      completedAt: _parseDate(json['completedAt']?.toString()),
+      running: json['running'] == true,
+      exitCode: (json['exitCode'] as num?)?.toInt(),
+      stdout: (json['stdout'] ?? '').toString(),
+      stderr: (json['stderr'] ?? '').toString(),
+    );
+  }
+}
+
 class SkillDefinition {
   const SkillDefinition({
     this.name = '',

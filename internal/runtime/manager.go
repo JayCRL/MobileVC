@@ -141,6 +141,7 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 			CWD:            req.CWD,
 			Mode:           req.Mode,
 			PermissionMode: req.PermissionMode,
+			RuntimeMeta:    req.RuntimeMeta,
 		}, func(event any) {
 			mappedEvent := protocol.ApplyRuntimeMeta(event, req.RuntimeMeta)
 			emit(mappedEvent)
@@ -165,7 +166,7 @@ func (s *Service) SendInput(ctx context.Context, sessionID string, req InputRequ
 		return errors.New("no active runner")
 	}
 	effectiveMeta := meta
-	if req.RuntimeMeta.Source != "" || req.RuntimeMeta.SkillName != "" || req.RuntimeMeta.ResumeSessionID != "" || req.RuntimeMeta.ContextID != "" || req.RuntimeMeta.ContextTitle != "" || req.RuntimeMeta.TargetText != "" || req.RuntimeMeta.TargetPath != "" || req.RuntimeMeta.PermissionMode != "" {
+	if req.RuntimeMeta.Source != "" || req.RuntimeMeta.SkillName != "" || req.RuntimeMeta.ResumeSessionID != "" || req.RuntimeMeta.ExecutionID != "" || req.RuntimeMeta.GroupID != "" || req.RuntimeMeta.GroupTitle != "" || req.RuntimeMeta.ContextID != "" || req.RuntimeMeta.ContextTitle != "" || req.RuntimeMeta.TargetText != "" || req.RuntimeMeta.TargetPath != "" || req.RuntimeMeta.PermissionMode != "" {
 		effectiveMeta = protocol.MergeRuntimeMeta(effectiveMeta, req.RuntimeMeta)
 		s.manager.updateMeta(func(m *protocol.RuntimeMeta) {
 			*m = effectiveMeta
@@ -186,6 +187,21 @@ func (s *Service) SendInput(ctx context.Context, sessionID string, req InputRequ
 		emit(event)
 	}
 	return nil
+}
+
+func (s *Service) ReviewDecision(ctx context.Context, sessionID string, req ReviewDecisionRequest, emit func(any)) error {
+	decision := strings.TrimSpace(strings.ToLower(req.Decision))
+	if decision == "" {
+		return errors.New("review decision is required")
+	}
+	payload := reviewDecisionPayload(decision)
+	if payload == "" {
+		return errors.New("review decision must be one of: accept, revert, revise")
+	}
+	meta := req.RuntimeMeta
+	meta.Source = "review-decision"
+	meta.TargetText = decision
+	return s.SendInput(ctx, sessionID, InputRequest{Data: payload, RuntimeMeta: meta}, emit)
 }
 
 func (s *Service) IsRunning() bool {
@@ -221,5 +237,18 @@ func (s *Service) newRunner(mode runner.Mode) runner.Runner {
 		return s.deps.NewPtyRunner()
 	default:
 		return s.deps.NewExecRunner()
+	}
+}
+
+func reviewDecisionPayload(decision string) string {
+	switch strings.TrimSpace(strings.ToLower(decision)) {
+	case "accept":
+		return "1\n"
+	case "revert":
+		return "2\n"
+	case "revise":
+		return "3\n"
+	default:
+		return ""
 	}
 }

@@ -37,6 +37,36 @@ type DiffContext struct {
 	Diff          string `json:"diff,omitempty"`
 	Lang          string `json:"lang,omitempty"`
 	PendingReview bool   `json:"pendingReview,omitempty"`
+	ExecutionID   string `json:"executionId,omitempty"`
+	GroupID       string `json:"groupId,omitempty"`
+	GroupTitle    string `json:"groupTitle,omitempty"`
+	ReviewStatus  string `json:"reviewStatus,omitempty"`
+}
+
+type ReviewFile struct {
+	ContextID     string `json:"contextId,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Diff          string `json:"diff,omitempty"`
+	Lang          string `json:"lang,omitempty"`
+	PendingReview bool   `json:"pendingReview,omitempty"`
+	ExecutionID   string `json:"executionId,omitempty"`
+	ReviewStatus  string `json:"reviewStatus,omitempty"`
+}
+
+type ReviewGroup struct {
+	ID            string       `json:"id,omitempty"`
+	Title         string       `json:"title,omitempty"`
+	ExecutionID   string       `json:"executionId,omitempty"`
+	PendingReview bool         `json:"pendingReview,omitempty"`
+	ReviewStatus  string       `json:"reviewStatus,omitempty"`
+	CurrentFileID string       `json:"currentFileId,omitempty"`
+	CurrentPath   string       `json:"currentPath,omitempty"`
+	PendingCount  int          `json:"pendingCount,omitempty"`
+	AcceptedCount int          `json:"acceptedCount,omitempty"`
+	RevertedCount int          `json:"revertedCount,omitempty"`
+	RevisedCount  int          `json:"revisedCount,omitempty"`
+	Files         []ReviewFile `json:"files,omitempty"`
 }
 
 type ControllerSnapshot struct {
@@ -49,6 +79,8 @@ type ControllerSnapshot struct {
 	ActiveMeta     protocol.RuntimeMeta `json:"activeMeta,omitempty"`
 	RecentDiffs    []DiffContext        `json:"recentDiffs,omitempty"`
 	RecentDiff     DiffContext          `json:"recentDiff,omitempty"`
+	ReviewGroups   []ReviewGroup        `json:"reviewGroups,omitempty"`
+	ActiveReviewID string               `json:"activeReviewId,omitempty"`
 }
 
 type Controller struct {
@@ -207,7 +239,11 @@ func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {
 		c.activeMeta.PermissionMode = meta.PermissionMode
 	}
 	c.currentState = ControllerStateThinking
-	return []any{c.newAgentStateEvent("思考中", false)}
+	message := "思考中"
+	if meta.Source == "permission-decision" {
+		message = "根据权限决策继续处理中"
+	}
+	return []any{c.newAgentStateEvent(message, false)}
 }
 
 func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
