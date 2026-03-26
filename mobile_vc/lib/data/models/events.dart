@@ -270,7 +270,7 @@ class PromptRequestEvent extends AppEvent {
 
   bool get looksLikePermissionPrompt {
     final haystack = _promptSearchText(raw, message, options).toLowerCase();
-    return haystack.contains('allow') ||
+    final keywordMatch = haystack.contains('allow') ||
         haystack.contains('approve') ||
         haystack.contains('permission') ||
         haystack.contains('confirm') ||
@@ -284,6 +284,7 @@ class PromptRequestEvent extends AppEvent {
         haystack.contains('同意') ||
         haystack.contains('拒绝') ||
         haystack.contains('取消');
+    return keywordMatch || _looksLikeBinaryPermissionOptions(options);
   }
 
   bool get looksLikeEditPermissionPrompt {
@@ -452,6 +453,49 @@ String _promptSearchText(
 
   return parts.where((part) => part.trim().isNotEmpty).join('\n');
 }
+
+bool _looksLikeBinaryPermissionOptions(List<PromptOption> options) {
+  if (options.length != 2) {
+    return false;
+  }
+
+  final normalized = options
+      .map((option) => _normalizePromptOptionToken(option.displayText))
+      .where((token) => token.isNotEmpty)
+      .toList(growable: false);
+  if (normalized.length != 2) {
+    return false;
+  }
+
+  final tokenSet = normalized.toSet();
+  if (tokenSet.length != 2) {
+    return false;
+  }
+
+  if (_reviewOptionTokens.difference(tokenSet).isEmpty) {
+    return false;
+  }
+
+  return _binaryPermissionOptionPairs.any(
+    (pair) => pair.difference(tokenSet).isEmpty,
+  );
+}
+
+String _normalizePromptOptionToken(String value) {
+  return value.trim().toLowerCase();
+}
+
+const Set<String> _reviewOptionTokens = {'accept', 'revert', 'revise'};
+
+const List<Set<String>> _binaryPermissionOptionPairs = [
+  {'y', 'n'},
+  {'yes', 'no'},
+  {'allow', 'deny'},
+  {'approve', 'reject'},
+  {'允许', '拒绝'},
+  {'同意', '取消'},
+  {'批准', '拒绝'},
+];
 
 class SessionStateEvent extends AppEvent {
   const SessionStateEvent({

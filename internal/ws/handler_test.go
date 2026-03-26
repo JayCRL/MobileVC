@@ -509,6 +509,124 @@ func TestHandlerSkillCatalogLifecycle(t *testing.T) {
 	}
 }
 
+func TestHandlerCatalogAuthoringSkillAutoUpsertsAndEmitsCatalog(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	runnerStub := newSwitchableStubRunner()
+	h.NewPtyRunner = func() runner.Runner { return runnerStub }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "authoring-skill-session")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "author a skill",
+		Mode:        "pty",
+		RuntimeMeta: protocol.RuntimeMeta{Source: "catalog-authoring", TargetType: "skill", ResultView: "skill-catalog"},
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	runnerStub.WaitStarted(t)
+	runnerStub.Emit(protocol.CatalogAuthoringResultEvent{
+		Event:  protocol.NewBaseEvent(protocol.EventTypeCatalogAuthoringResult, runnerStub.req.SessionID),
+		Domain: "skill",
+		Skill: &protocol.SkillDefinition{
+			Name:        "authoring-skill",
+			Description: "generated",
+			Prompt:      "do it",
+			TargetType:  "diff",
+			ResultView:  "review-card",
+		},
+	})
+
+	catalogEvent := readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	items, ok := catalogEvent["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected one skill item, got %#v", catalogEvent)
+	}
+	item, _ := items[0].(map[string]any)
+	if item["name"] != "authoring-skill" {
+		t.Fatalf("unexpected skill payload: %#v", item)
+	}
+}
+
+func TestHandlerCatalogAuthoringMemoryAutoUpsertsAndEmitsCatalog(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	runnerStub := newSwitchableStubRunner()
+	h.NewPtyRunner = func() runner.Runner { return runnerStub }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "authoring-memory-session")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "author a memory",
+		Mode:        "pty",
+		RuntimeMeta: protocol.RuntimeMeta{Source: "catalog-authoring", TargetType: "memory", ResultView: "memory-catalog"},
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	runnerStub.WaitStarted(t)
+	runnerStub.Emit(protocol.CatalogAuthoringResultEvent{
+		Event:  protocol.NewBaseEvent(protocol.EventTypeCatalogAuthoringResult, runnerStub.req.SessionID),
+		Domain: "memory",
+		Memory: &protocol.MemoryItem{ID: "mem-author", Title: "Author", Content: "generated memory"},
+	})
+
+	listEvent := readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	items, ok := listEvent["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected one memory item, got %#v", listEvent)
+	}
+	item, _ := items[0].(map[string]any)
+	if item["id"] != "mem-author" {
+		t.Fatalf("unexpected memory payload: %#v", item)
+	}
+}
+
+func TestHandlerCatalogAuthoringInvalidPayloadEmitsError(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	runnerStub := newSwitchableStubRunner()
+	h.NewPtyRunner = func() runner.Runner { return runnerStub }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "authoring-invalid-session")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "author invalid",
+		Mode:        "pty",
+		RuntimeMeta: protocol.RuntimeMeta{Source: "catalog-authoring", TargetType: "skill", ResultView: "skill-catalog"},
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	runnerStub.WaitStarted(t)
+	runnerStub.Emit(protocol.CatalogAuthoringResultEvent{
+		Event:  protocol.NewBaseEvent(protocol.EventTypeCatalogAuthoringResult, runnerStub.req.SessionID),
+		Domain: "skill",
+		Skill:  &protocol.SkillDefinition{},
+	})
+
+	errorEvent := readUntilType(t, conn, protocol.EventTypeError)
+	if _, ok := errorEvent["msg"].(string); !ok {
+		t.Fatalf("expected error event, got %#v", errorEvent)
+	}
+}
+
 func TestHandlerMemoryListAndUpsert(t *testing.T) {
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
@@ -556,6 +674,57 @@ func TestHandlerMemoryListAndUpsert(t *testing.T) {
 	}
 	if len(persisted) != 1 || persisted[0].ID != "m-test" {
 		t.Fatalf("unexpected persisted memory items: %#v", persisted)
+	}
+}
+
+func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "memory-sync-session")
+
+	if err := conn.WriteJSON(protocol.MemoryRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "memory_upsert"},
+		Item:        protocol.MemoryItem{ID: "m-test", Title: "Test Memory", Content: "remember this"},
+	}); err != nil {
+		t.Fatalf("write memory_upsert request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "memory_sync_pull"}); err != nil {
+		t.Fatalf("write memory_sync_pull request: %v", err)
+	}
+	statusEvent := readUntilType(t, conn, protocol.EventTypeCatalogSyncStatus)
+	if statusEvent["domain"] != "memory" {
+		t.Fatalf("unexpected memory sync status: %#v", statusEvent)
+	}
+	resultEvent := readUntilType(t, conn, protocol.EventTypeCatalogSyncResult)
+	if resultEvent["domain"] != "memory" || resultEvent["success"] != true {
+		t.Fatalf("unexpected memory sync result: %#v", resultEvent)
+	}
+	listEvent := readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	meta, ok := listEvent["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected memory meta, got %#v", listEvent)
+	}
+	if meta["syncState"] != string(store.CatalogSyncStateSynced) || meta["sourceOfTruth"] != string(store.CatalogSourceTruthClaude) {
+		t.Fatalf("unexpected memory meta after sync: %#v", meta)
+	}
+	items, ok := listEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected memory items after sync, got %#v", listEvent)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one local memory item to remain after sync, got %#v", items)
+	}
+	item, _ := items[0].(map[string]any)
+	if item["id"] != "m-test" || item["syncState"] != string(store.CatalogSyncStateDraft) {
+		t.Fatalf("unexpected synced memory item payload: %#v", item)
 	}
 }
 

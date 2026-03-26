@@ -161,7 +161,7 @@ func BuildMemoryPrefix(sessionContext store.SessionContext, items []store.Memory
 	}
 	parts := make([]string, 0, len(items)+2)
 	parts = append(parts, "[MobileVC Memory]")
-	parts = append(parts, "以下内容来自当前会话启用的 MobileVC 内部显式记忆，请在回答与执行 skill 时一并参考：")
+	parts = append(parts, "以下内容来自当前会话启用且已同步的 MobileVC memory 镜像，请在回答与执行 skill 时一并参考：")
 	for _, item := range items {
 		title := strings.TrimSpace(item.Title)
 		if title == "" {
@@ -186,9 +186,13 @@ func (l *Launcher) loadEnabledMemory(sessionContext store.SessionContext) ([]sto
 	}
 	result := make([]store.MemoryItem, 0, len(enabled))
 	for _, item := range items {
-		if _, ok := enabled[item.ID]; ok {
-			result = append(result, item)
+		if _, ok := enabled[item.ID]; !ok {
+			continue
 		}
+		if item.SyncState != store.CatalogSyncStateSynced {
+			continue
+		}
+		result = append(result, item)
 	}
 	return result, nil
 }

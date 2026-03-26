@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-
 import '../../data/models/events.dart';
 import '../../data/models/session_models.dart';
 import '../../widgets/event_card.dart';
@@ -340,9 +339,7 @@ class _PromptRequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final options = prompt.options
-        .where((option) => option.displayText.isNotEmpty)
-        .toList();
+    final options = _resolvedOptions();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -383,6 +380,22 @@ class _PromptRequestCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<PromptOption> _resolvedOptions() {
+    final options = prompt.options
+        .where((option) => option.displayText.isNotEmpty)
+        .toList(growable: false);
+    if (options.isNotEmpty) {
+      return options;
+    }
+    if (prompt.looksLikePermissionPrompt) {
+      return const [
+        PromptOption(value: 'y', label: '允许'),
+        PromptOption(value: 'n', label: '拒绝'),
+      ];
+    }
+    return const [];
   }
 }
 

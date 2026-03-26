@@ -397,6 +397,69 @@ func TestPtyRunnerWritePermissionResponseWithoutPendingIDReturnsError(t *testing
 	}
 }
 
+func TestParseCatalogAuthoringPayloadRequiresSentinel(t *testing.T) {
+	text := `{"kind":"skill","skill":{"name":"review","description":"desc","prompt":"prompt","targetType":"diff","resultView":"review-card"}}`
+	if _, ok := parseCatalogAuthoringPayload(text); ok {
+		t.Fatal("expected payload without sentinel to be rejected")
+	}
+}
+
+func TestParseCatalogAuthoringPayloadAcceptsSkill(t *testing.T) {
+	text := `{"mobilevcCatalogAuthoring":true,"kind":"skill","skill":{"name":"review","description":"desc","prompt":"prompt","targetType":"diff","resultView":"review-card"}}`
+	payload, ok := parseCatalogAuthoringPayload(text)
+	if !ok {
+		t.Fatal("expected skill payload to parse")
+	}
+	if payload.Kind != "skill" || payload.Skill.Name != "review" {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
+func TestParseCatalogAuthoringPayloadAcceptsMemory(t *testing.T) {
+	text := `{"mobilevcCatalogAuthoring":true,"kind":"memory","memory":{"id":"mem-1","title":"偏好","content":"用户偏爱深色模式"}}`
+	payload, ok := parseCatalogAuthoringPayload(text)
+	if !ok {
+		t.Fatal("expected memory payload to parse")
+	}
+	if payload.Kind != "memory" || payload.Memory.ID != "mem-1" {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
+func TestPtyRunnerCatalogAuthoringOnlyTriggersForCatalogSource(t *testing.T) {
+	runner := NewPtyRunner()
+	runner.pendingReq = ExecRequest{RuntimeMeta: protocol.RuntimeMeta{Source: "command"}}
+	var events []any
+	runner.tryEmitCatalogAuthoringResult("s1", `{"mobilevcCatalogAuthoring":true,"kind":"memory","memory":{"id":"mem-1","title":"偏好","content":"内容"}}`, func(event any) {
+		events = append(events, event)
+	})
+	if len(events) != 0 {
+		t.Fatalf("expected no events, got %#v", events)
+	}
+}
+
+func TestPtyRunnerCatalogAuthoringEmitsStructuredEvent(t *testing.T) {
+	runner := NewPtyRunner()
+	runner.pendingReq = ExecRequest{RuntimeMeta: protocol.RuntimeMeta{Source: "catalog-authoring", TargetType: "skill", ResultView: "skill-catalog", SkillName: "review"}}
+	var events []any
+	runner.tryEmitCatalogAuthoringResult("s1", `{"mobilevcCatalogAuthoring":true,"kind":"skill","skill":{"name":"review","description":"desc","prompt":"prompt","targetType":"diff","resultView":"review-card"}}`, func(event any) {
+		events = append(events, event)
+	})
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %#v", events)
+	}
+	result, ok := events[0].(protocol.CatalogAuthoringResultEvent)
+	if !ok {
+		t.Fatalf("expected CatalogAuthoringResultEvent, got %#v", events[0])
+	}
+	if result.Domain != "skill" || result.Skill == nil || result.Skill.Name != "review" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if result.Source != "catalog-authoring" || result.ResultView != "skill-catalog" {
+		t.Fatalf("expected runtime meta to be preserved, got %#v", result.RuntimeMeta)
+	}
+}
+
 func TestPtyRunnerClaudeResumeUsesInteractiveWriter(t *testing.T) {
 	runner := NewPtyRunner()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -186,7 +186,9 @@ class _SessionHomePageState extends State<SessionHomePage> {
         isBusy: controller.isSessionBusy,
         hasPendingReview: controller.hasPendingReview,
         fastMode: controller.fastMode,
-        permissionMode: controller.config.permissionMode,
+        permissionMode: controller.displayPermissionMode,
+        shouldShowPermissionChoices: controller.shouldShowPermissionChoices,
+        shouldShowReviewChoices: controller.shouldShowReviewChoices,
         onSubmit: controller.sendInputText,
         onOpenSessions: () => _openSessions(context),
         onOpenRuntimeInfo: () => _openRuntimeInfo(context),
@@ -195,6 +197,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
         onOpenMemory: () => _openMemory(context),
         onPermissionModeChanged: controller.updatePermissionMode,
         showClaudeMode: controller.inClaudeMode,
+        isSessionLoading: controller.isLoadingSession,
       ),
     );
   }
@@ -376,6 +379,8 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     activeReviewGroupId: controller.activeReviewGroupId,
                     activeReviewDiffId: controller.activeReviewDiffId,
                     isAutoAcceptMode: controller.isAutoAcceptMode,
+                    shouldShowPermissionChoices:
+                        controller.shouldShowPermissionChoices,
                     shouldShowReviewChoices:
                         controller.shouldShowReviewChoices &&
                             controller.openedFilePendingDiff != null &&
@@ -463,36 +468,61 @@ class _SessionHomePageState extends State<SessionHomePage> {
   }
 
   Future<void> _openSkills(BuildContext context) async {
-    await showModalBottomSheet<void>(
+    await showGeneralDialog<void>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return FractionallySizedBox(
-          heightFactor: 0.92,
-          child: ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-            child: Material(
-              color: Theme.of(context).colorScheme.surface,
-              child: ListenableBuilder(
-                listenable: controller,
-                builder: (context, _) {
-                  return SkillManagementSheet(
-                    skills: controller.skills,
-                    enabledSkillNames:
-                        controller.sessionContext.enabledSkillNames,
-                    syncStatus: controller.skillSyncStatus,
-                    catalogMeta: controller.skillCatalogMeta,
-                    onToggleEnabled: controller.toggleSkillEnabled,
-                    onSave: controller.saveSkill,
-                    onSync: controller.syncSkills,
-                  );
-                },
+      barrierDismissible: true,
+      barrierLabel: '关闭 Skill 面板',
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: FractionallySizedBox(
+              widthFactor: 0.92,
+              child: ClipRRect(
+                borderRadius:
+                    const BorderRadius.horizontal(left: Radius.circular(28)),
+                child: Material(
+                  color: Theme.of(context).colorScheme.surface,
+                  child: ListenableBuilder(
+                    listenable: controller,
+                    builder: (context, _) {
+                      return SkillManagementSheet(
+                        skills: controller.skills,
+                        enabledSkillNames:
+                            controller.sessionContext.enabledSkillNames,
+                        syncStatus: controller.skillSyncStatus,
+                        catalogMeta: controller.skillCatalogMeta,
+                        onToggleEnabled: controller.toggleSkillEnabled,
+                        onSave: controller.saveSkill,
+                        onSync: controller.syncSkills,
+                        onExecuteSkill: controller.executeSkill,
+                        onGenerateSkill: (request) =>
+                            controller.saveGeneratedSkill(request: request),
+                        onReviseSkill: (skill, request) =>
+                            controller.saveGeneratedSkill(
+                          request: request,
+                          base: skill,
+                        ),
+                      );
+                    },
+                  ),
+                ),
               ),
             ),
           ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved =
+            CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(1, 0),
+            end: Offset.zero,
+          ).animate(curved),
+          child: FadeTransition(opacity: curved, child: child),
         );
       },
     );
@@ -524,6 +554,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     onToggleEnabled: controller.toggleMemoryEnabled,
                     onSave: controller.saveMemory,
                     onSync: controller.syncMemories,
+                    onReviseMemory: controller.reviseMemoryWithClaude,
                   );
                 },
               ),
@@ -750,83 +781,7 @@ class _ContextSelectionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
-          ),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (controller.skills.isNotEmpty) ...[
-            Text(
-              'Skill',
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 6),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: controller.skills.map((item) {
-                  final selected = controller.sessionContext.enabledSkillNames
-                      .contains(item.name);
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: FilterChip(
-                      selected: selected,
-                      label: Text(item.name.isEmpty ? '未命名 skill' : item.name),
-                      onSelected: (_) =>
-                          controller.toggleSkillEnabled(item.name),
-                    ),
-                  );
-                }).toList(growable: false),
-              ),
-            ),
-          ],
-          if (controller.memoryItems.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Memory',
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 6),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: controller.memoryItems.map((item) {
-                  final selected = controller.sessionContext.enabledMemoryIds
-                      .contains(item.id);
-                  final label =
-                      item.title.trim().isNotEmpty ? item.title : item.id;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: FilterChip(
-                      selected: selected,
-                      label: Text(label.isEmpty ? '未命名 memory' : label),
-                      onSelected: (_) =>
-                          controller.toggleMemoryEnabled(item.id),
-                    ),
-                  );
-                }).toList(growable: false),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
+    return const SizedBox.shrink();
   }
 }
 

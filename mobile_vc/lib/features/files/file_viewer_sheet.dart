@@ -20,6 +20,7 @@ class FileViewerSheet extends StatefulWidget {
     required this.activeReviewGroupId,
     required this.activeReviewDiffId,
     required this.isAutoAcceptMode,
+    required this.shouldShowPermissionChoices,
     required this.shouldShowReviewChoices,
     required this.pendingPrompt,
     required this.pendingInteraction,
@@ -44,6 +45,7 @@ class FileViewerSheet extends StatefulWidget {
   final String activeReviewGroupId;
   final String activeReviewDiffId;
   final bool isAutoAcceptMode;
+  final bool shouldShowPermissionChoices;
   final bool shouldShowReviewChoices;
   final PromptRequestEvent? pendingPrompt;
   final InteractionRequestEvent? pendingInteraction;
@@ -63,10 +65,35 @@ class FileViewerSheet extends StatefulWidget {
 
 class _FileViewerSheetState extends State<FileViewerSheet> {
   final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+
+  bool get _inputLocked =>
+      widget.shouldShowPermissionChoices || widget.shouldShowReviewChoices;
+
+  String get _lockedHintText {
+    if (widget.shouldShowPermissionChoices) {
+      return '请先在上方确认授权';
+    }
+    if (widget.shouldShowReviewChoices) {
+      return '请先在上方完成审核';
+    }
+    return '输入针对当前文件的请求';
+  }
+
+  @override
+  void didUpdateWidget(covariant FileViewerSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_inputLocked &&
+        (!oldWidget.shouldShowPermissionChoices &&
+            !oldWidget.shouldShowReviewChoices)) {
+      _focusNode.unfocus();
+    }
+  }
 
   @override
   void dispose() {
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -417,15 +444,20 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
             TextField(
               key: const ValueKey('fileViewer.input'),
               controller: _controller,
+              focusNode: _focusNode,
+              enabled: !_inputLocked,
+              readOnly: _inputLocked,
+              canRequestFocus: !_inputLocked,
               minLines: 1,
               maxLines: 3,
               textInputAction: TextInputAction.send,
-              onSubmitted: (_) => _submitPrompt(),
+              onTap: _inputLocked ? () => _focusNode.unfocus() : null,
+              onSubmitted: _inputLocked ? null : (_) => _submitPrompt(),
               decoration: InputDecoration(
-                hintText: '输入针对当前文件的请求',
+                hintText: _lockedHintText,
                 suffixIcon: IconButton(
                   key: const ValueKey('fileViewer.sendButton'),
-                  onPressed: _submitPrompt,
+                  onPressed: _inputLocked ? null : _submitPrompt,
                   icon: const Icon(Icons.send),
                 ),
               ),
@@ -536,15 +568,22 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
   }
 
   void _submitPrompt() {
+    if (_inputLocked) {
+      _focusNode.unfocus();
+      return;
+    }
+
     final value = _controller.text.trim();
     if (value.isEmpty) {
       return;
     }
     final prompt = widget.pendingPrompt;
+    final interaction = widget.pendingInteraction;
     final shouldSubmitPrompt = !widget.shouldShowReviewChoices &&
-        prompt != null &&
-        prompt.hasVisiblePrompt &&
-        (prompt.options.isNotEmpty || prompt.looksLikePermissionPrompt);
+        ((interaction != null && interaction.hasVisiblePrompt) ||
+            (prompt != null &&
+                prompt.hasVisiblePrompt &&
+                (prompt.options.isNotEmpty || prompt.looksLikePermissionPrompt)));
     if (shouldSubmitPrompt) {
       widget.onSubmitPrompt(value);
     } else {

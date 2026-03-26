@@ -1,27 +1,34 @@
 package protocol
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
-	EventTypeLog                  = "log"
-	EventTypeProgress             = "progress"
-	EventTypeError                = "error"
-	EventTypePromptRequest        = "prompt_request"
-	EventTypeSessionState         = "session_state"
-	EventTypeAgentState           = "agent_state"
-	EventTypeFSListResult         = "fs_list_result"
-	EventTypeFSReadResult         = "fs_read_result"
-	EventTypeStepUpdate           = "step_update"
-	EventTypeFileDiff             = "file_diff"
-	EventTypeRuntimeInfoResult    = "runtime_info_result"
-	EventTypeSessionCreated       = "session_created"
-	EventTypeSessionListResult    = "session_list_result"
-	EventTypeSessionHistory       = "session_history"
-	EventTypeReviewState          = "review_state"
-	EventTypeSkillCatalogResult   = "skill_catalog_result"
-	EventTypeMemoryListResult     = "memory_list_result"
-	EventTypeSessionContextResult = "session_context_result"
-	EventTypeSkillSyncResult      = "skill_sync_result"
+	EventTypeLog                    = "log"
+	EventTypeProgress               = "progress"
+	EventTypeError                  = "error"
+	EventTypePromptRequest          = "prompt_request"
+	EventTypeInteractionRequest     = "interaction_request"
+	EventTypeSessionState           = "session_state"
+	EventTypeAgentState             = "agent_state"
+	EventTypeFSListResult           = "fs_list_result"
+	EventTypeFSReadResult           = "fs_read_result"
+	EventTypeStepUpdate             = "step_update"
+	EventTypeFileDiff               = "file_diff"
+	EventTypeRuntimeInfoResult      = "runtime_info_result"
+	EventTypeSessionCreated         = "session_created"
+	EventTypeSessionListResult      = "session_list_result"
+	EventTypeSessionHistory         = "session_history"
+	EventTypeReviewState            = "review_state"
+	EventTypeSkillCatalogResult     = "skill_catalog_result"
+	EventTypeMemoryListResult       = "memory_list_result"
+	EventTypeCatalogAuthoringResult = "catalog_authoring_result"
+	EventTypeSessionContextResult   = "session_context_result"
+	EventTypeSkillSyncResult        = "skill_sync_result"
+	EventTypeCatalogSyncStatus      = "catalog_sync_status"
+	EventTypeCatalogSyncResult      = "catalog_sync_result"
 )
 
 type RuntimeMeta struct {
@@ -137,21 +144,41 @@ type SessionContextUpdateRequestEvent struct {
 }
 
 type SkillDefinition struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Prompt      string `json:"prompt,omitempty"`
-	ResultView  string `json:"resultView,omitempty"`
-	TargetType  string `json:"targetType,omitempty"`
-	Source      string `json:"source,omitempty"`
-	Editable    bool   `json:"editable,omitempty"`
-	UpdatedAt   string `json:"updatedAt,omitempty"`
+	Name          string `json:"name"`
+	Description   string `json:"description,omitempty"`
+	Prompt        string `json:"prompt,omitempty"`
+	ResultView    string `json:"resultView,omitempty"`
+	TargetType    string `json:"targetType,omitempty"`
+	Source        string `json:"source,omitempty"`
+	SourceOfTruth string `json:"sourceOfTruth,omitempty"`
+	SyncState     string `json:"syncState,omitempty"`
+	Editable      bool   `json:"editable,omitempty"`
+	DriftDetected bool   `json:"driftDetected,omitempty"`
+	UpdatedAt     string `json:"updatedAt,omitempty"`
+	LastSyncedAt  string `json:"lastSyncedAt,omitempty"`
 }
 
 type MemoryItem struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	UpdatedAt string `json:"updatedAt,omitempty"`
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	Content       string `json:"content"`
+	Source        string `json:"source,omitempty"`
+	SourceOfTruth string `json:"sourceOfTruth,omitempty"`
+	SyncState     string `json:"syncState,omitempty"`
+	Editable      bool   `json:"editable,omitempty"`
+	DriftDetected bool   `json:"driftDetected,omitempty"`
+	UpdatedAt     string `json:"updatedAt,omitempty"`
+	LastSyncedAt  string `json:"lastSyncedAt,omitempty"`
+}
+
+type CatalogMetadata struct {
+	Domain        string `json:"domain,omitempty"`
+	SourceOfTruth string `json:"sourceOfTruth,omitempty"`
+	SyncState     string `json:"syncState,omitempty"`
+	DriftDetected bool   `json:"driftDetected,omitempty"`
+	LastSyncedAt  string `json:"lastSyncedAt,omitempty"`
+	VersionToken  string `json:"versionToken,omitempty"`
+	LastError     string `json:"lastError,omitempty"`
 }
 
 type SessionContext struct {
@@ -315,6 +342,8 @@ type SessionHistoryEvent struct {
 	RawTerminalByStream map[string]string   `json:"rawTerminalByStream,omitempty"`
 	TerminalExecutions  []TerminalExecution `json:"terminalExecutions,omitempty"`
 	SessionContext      SessionContext      `json:"sessionContext,omitempty"`
+	SkillCatalogMeta    CatalogMetadata     `json:"skillCatalogMeta,omitempty"`
+	MemoryCatalogMeta   CatalogMetadata     `json:"memoryCatalogMeta,omitempty"`
 	CanResume           bool                `json:"canResume,omitempty"`
 	ResumeRuntimeMeta   RuntimeMeta         `json:"resumeRuntimeMeta,omitempty"`
 }
@@ -327,12 +356,22 @@ type ReviewStateEvent struct {
 
 type SkillCatalogResultEvent struct {
 	Event
+	Meta  CatalogMetadata   `json:"meta,omitempty"`
 	Items []SkillDefinition `json:"items"`
 }
 
 type MemoryListResultEvent struct {
 	Event
-	Items []MemoryItem `json:"items"`
+	Meta  CatalogMetadata `json:"meta,omitempty"`
+	Items []MemoryItem    `json:"items"`
+}
+
+type CatalogAuthoringResultEvent struct {
+	Event
+	Domain  string           `json:"domain,omitempty"`
+	Skill   *SkillDefinition `json:"skill,omitempty"`
+	Memory  *MemoryItem      `json:"memory,omitempty"`
+	Message string           `json:"msg,omitempty"`
 }
 
 type SessionContextResultEvent struct {
@@ -343,6 +382,20 @@ type SessionContextResultEvent struct {
 type SkillSyncResultEvent struct {
 	Event
 	Message string `json:"msg,omitempty"`
+}
+
+type CatalogSyncStatusEvent struct {
+	Event
+	Domain string          `json:"domain,omitempty"`
+	Meta   CatalogMetadata `json:"meta,omitempty"`
+}
+
+type CatalogSyncResultEvent struct {
+	Event
+	Domain  string          `json:"domain,omitempty"`
+	Meta    CatalogMetadata `json:"meta,omitempty"`
+	Success bool            `json:"success"`
+	Message string          `json:"msg,omitempty"`
 }
 
 type RuntimeInfoItem struct {
@@ -381,6 +434,36 @@ type PromptRequestEvent struct {
 	Event
 	Message string   `json:"msg,omitempty"`
 	Options []string `json:"options,omitempty"`
+}
+
+type InteractionAction struct {
+	ID          string `json:"id,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Variant     string `json:"variant,omitempty"`
+	Value       string `json:"value,omitempty"`
+	Decision    string `json:"decision,omitempty"`
+	SubmitMode  string `json:"submitMode,omitempty"`
+	NeedsInput  bool   `json:"needsInput,omitempty"`
+	Destructive bool   `json:"destructive,omitempty"`
+}
+
+type InteractionRequestEvent struct {
+	Event
+	Kind             string              `json:"kind,omitempty"`
+	Title            string              `json:"title,omitempty"`
+	Message          string              `json:"msg,omitempty"`
+	Options          []string            `json:"options,omitempty"`
+	Actions          []InteractionAction `json:"actions,omitempty"`
+	ContextID        string              `json:"contextId,omitempty"`
+	ContextTitle     string              `json:"contextTitle,omitempty"`
+	TargetPath       string              `json:"targetPath,omitempty"`
+	ExecutionID      string              `json:"executionId,omitempty"`
+	GroupID          string              `json:"groupId,omitempty"`
+	GroupTitle       string              `json:"groupTitle,omitempty"`
+	ResumeSessionID  string              `json:"resumeSessionId,omitempty"`
+	PermissionMode   string              `json:"permissionMode,omitempty"`
+	InputLabel       string              `json:"inputLabel,omitempty"`
+	InputPlaceholder string              `json:"inputPlaceholder,omitempty"`
 }
 
 type SessionStateEvent struct {
@@ -497,6 +580,16 @@ func NewPromptRequestEvent(sessionID, message string, options []string) PromptRe
 	}
 }
 
+func NewInteractionRequestEvent(sessionID, kind, title, message string, actions []InteractionAction) InteractionRequestEvent {
+	return InteractionRequestEvent{
+		Event:   NewBaseEvent(EventTypeInteractionRequest, sessionID),
+		Kind:    kind,
+		Title:   title,
+		Message: message,
+		Actions: actions,
+	}
+}
+
 func NewSessionStateEvent(sessionID, state, message string) SessionStateEvent {
 	return SessionStateEvent{
 		Event:   NewBaseEvent(EventTypeSessionState, sessionID),
@@ -572,7 +665,7 @@ func NewSessionListResultEvent(sessionID string, items []SessionSummary) Session
 	}
 }
 
-func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries []HistoryLogEntry, diffs []HistoryContext, currentDiff *HistoryContext, reviewGroups []ReviewGroup, activeReviewGroup *ReviewGroup, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, terminalExecutions []TerminalExecution, sessionContext SessionContext, canResume bool, resumeRuntimeMeta RuntimeMeta) SessionHistoryEvent {
+func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries []HistoryLogEntry, diffs []HistoryContext, currentDiff *HistoryContext, reviewGroups []ReviewGroup, activeReviewGroup *ReviewGroup, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, terminalExecutions []TerminalExecution, sessionContext SessionContext, skillCatalogMeta, memoryCatalogMeta CatalogMetadata, canResume bool, resumeRuntimeMeta RuntimeMeta) SessionHistoryEvent {
 	return SessionHistoryEvent{
 		Event:               NewBaseEvent(EventTypeSessionHistory, sessionID),
 		Summary:             summary,
@@ -586,17 +679,23 @@ func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries
 		RawTerminalByStream: rawTerminalByStream,
 		TerminalExecutions:  terminalExecutions,
 		SessionContext:      sessionContext,
+		SkillCatalogMeta:    skillCatalogMeta,
+		MemoryCatalogMeta:   memoryCatalogMeta,
 		CanResume:           canResume,
 		ResumeRuntimeMeta:   resumeRuntimeMeta,
 	}
 }
 
-func NewSkillCatalogResultEvent(sessionID string, items []SkillDefinition) SkillCatalogResultEvent {
-	return SkillCatalogResultEvent{Event: NewBaseEvent(EventTypeSkillCatalogResult, sessionID), Items: items}
+func NewSkillCatalogResultEvent(sessionID string, meta CatalogMetadata, items []SkillDefinition) SkillCatalogResultEvent {
+	return SkillCatalogResultEvent{Event: NewBaseEvent(EventTypeSkillCatalogResult, sessionID), Meta: meta, Items: items}
 }
 
-func NewMemoryListResultEvent(sessionID string, items []MemoryItem) MemoryListResultEvent {
-	return MemoryListResultEvent{Event: NewBaseEvent(EventTypeMemoryListResult, sessionID), Items: items}
+func NewMemoryListResultEvent(sessionID string, meta CatalogMetadata, items []MemoryItem) MemoryListResultEvent {
+	return MemoryListResultEvent{Event: NewBaseEvent(EventTypeMemoryListResult, sessionID), Meta: meta, Items: items}
+}
+
+func NewCatalogAuthoringResultEvent(sessionID, domain, message string, skill *SkillDefinition, memory *MemoryItem) CatalogAuthoringResultEvent {
+	return CatalogAuthoringResultEvent{Event: NewBaseEvent(EventTypeCatalogAuthoringResult, sessionID), Domain: domain, Skill: skill, Memory: memory, Message: message}
 }
 
 func NewSessionContextResultEvent(sessionID string, sessionContext SessionContext) SessionContextResultEvent {
@@ -605,6 +704,14 @@ func NewSessionContextResultEvent(sessionID string, sessionContext SessionContex
 
 func NewSkillSyncResultEvent(sessionID, message string) SkillSyncResultEvent {
 	return SkillSyncResultEvent{Event: NewBaseEvent(EventTypeSkillSyncResult, sessionID), Message: message}
+}
+
+func NewCatalogSyncStatusEvent(sessionID, domain string, meta CatalogMetadata) CatalogSyncStatusEvent {
+	return CatalogSyncStatusEvent{Event: NewBaseEvent(EventTypeCatalogSyncStatus, sessionID), Domain: domain, Meta: meta}
+}
+
+func NewCatalogSyncResultEvent(sessionID, domain string, success bool, message string, meta CatalogMetadata) CatalogSyncResultEvent {
+	return CatalogSyncResultEvent{Event: NewBaseEvent(EventTypeCatalogSyncResult, sessionID), Domain: domain, Success: success, Message: message, Meta: meta}
 }
 
 func NewReviewStateEvent(sessionID string, groups []ReviewGroup, activeGroup *ReviewGroup) ReviewStateEvent {
@@ -682,6 +789,55 @@ func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
 	return merged
 }
 
+func DefaultInteractionActions(kind string, options []string) []InteractionAction {
+	actions := make([]InteractionAction, 0, len(options))
+	for _, option := range options {
+		value := strings.TrimSpace(option)
+		if value == "" {
+			continue
+		}
+		lower := strings.ToLower(value)
+		label := value
+		variant := "outlined"
+		decision := ""
+		switch kind {
+		case "permission":
+			if lower == "y" || lower == "yes" || lower == "approve" || lower == "allow" {
+				label = "允许"
+				variant = "primary"
+				decision = "approve"
+			} else if lower == "n" || lower == "no" || lower == "deny" || lower == "reject" {
+				label = "拒绝"
+				variant = "tonal"
+				decision = "deny"
+			}
+		case "review":
+			switch lower {
+			case "accept":
+				label = "接受"
+				variant = "primary"
+				decision = "accept"
+			case "revert":
+				label = "撤销"
+				variant = "tonal"
+				decision = "revert"
+			case "revise":
+				label = "继续调整"
+				variant = "outlined"
+				decision = "revise"
+			}
+		}
+		actions = append(actions, InteractionAction{
+			ID:       value,
+			Label:    label,
+			Variant:  variant,
+			Value:    value,
+			Decision: decision,
+		})
+	}
+	return actions
+}
+
 func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 	switch e := event.(type) {
 	case Event:
@@ -694,6 +850,9 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case ErrorEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case InteractionRequestEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case PromptRequestEvent:
@@ -735,10 +894,19 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 	case MemoryListResultEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
+	case CatalogAuthoringResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
 	case SessionContextResultEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case SkillSyncResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case CatalogSyncStatusEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case CatalogSyncResultEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case RuntimeInfoResultEvent:

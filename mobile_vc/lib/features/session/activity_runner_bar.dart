@@ -26,19 +26,23 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1800),
-  )..repeat(reverse: true);
+  );
   Timer? _ticker;
   int _displayElapsedSeconds = 0;
 
   @override
   void initState() {
     super.initState();
+    _syncAnimation();
     _syncTicker();
   }
 
   @override
   void didUpdateWidget(covariant ActivityRunnerBar oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.visible != widget.visible) {
+      _syncAnimation();
+    }
     if (oldWidget.visible != widget.visible ||
         oldWidget.startedAt != widget.startedAt ||
         oldWidget.elapsedSeconds != widget.elapsedSeconds) {
@@ -117,6 +121,17 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
         ],
       ),
     );
+  }
+
+  void _syncAnimation() {
+    if (widget.visible) {
+      if (!_controller.isAnimating) {
+        _controller.repeat(reverse: true);
+      }
+      return;
+    }
+    _controller.stop();
+    _controller.value = 0;
   }
 
   void _syncTicker() {

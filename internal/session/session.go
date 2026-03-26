@@ -76,6 +76,7 @@ type ControllerSnapshot struct {
 	LastStep       string               `json:"lastStep,omitempty"`
 	LastTool       string               `json:"lastTool,omitempty"`
 	ResumeSession  string               `json:"resumeSession,omitempty"`
+	LastUserInput  string               `json:"lastUserInput,omitempty"`
 	ActiveMeta     protocol.RuntimeMeta `json:"activeMeta,omitempty"`
 	RecentDiffs    []DiffContext        `json:"recentDiffs,omitempty"`
 	RecentDiff     DiffContext          `json:"recentDiff,omitempty"`
@@ -91,6 +92,7 @@ type Controller struct {
 	lastStep       string
 	lastTool       string
 	resumeSession  string
+	lastUserInput  string
 	activeMeta     protocol.RuntimeMeta
 	recentDiffs    []DiffContext
 	recentDiff     DiffContext
@@ -101,6 +103,16 @@ type Controller struct {
 	lastStepMsg    string
 	lastStepStatus string
 	lastPromptMsg  string
+}
+
+func (c *Controller) RecordUserInput(input string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return
+	}
+	c.lastUserInput = input
 }
 
 func (c *Controller) UpdatePermissionMode(mode string) {
@@ -131,6 +143,7 @@ func (c *Controller) OnExecStart(command string, meta protocol.RuntimeMeta) []an
 	c.lastTool = ""
 	c.activeMeta = meta
 	c.resumeSession = extractResumeSessionID(command, meta.ResumeSessionID)
+	c.lastUserInput = ""
 	message := "思考中"
 	if meta.SkillName != "" {
 		message = "执行 skill：" + meta.SkillName
@@ -249,6 +262,16 @@ func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {
 func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" || meta.TargetPath != "" {
+		c.activeMeta = protocol.MergeRuntimeMeta(c.activeMeta, meta)
+	}
+	if c.currentState == ControllerStateWaitInput {
+		message := c.lastPromptMsg
+		if strings.TrimSpace(message) == "" {
+			message = "等待输入"
+		}
+		return []any{c.newAgentStateEvent(message, true)}
+	}
 	c.currentState = ControllerStateIdle
 	c.currentCommand = ""
 	c.lastStep = ""
@@ -257,9 +280,6 @@ func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
 	c.lastStepMsg = ""
 	c.lastStepStatus = ""
 	c.lastPromptMsg = ""
-	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" || meta.TargetPath != "" {
-		c.activeMeta = protocol.MergeRuntimeMeta(c.activeMeta, meta)
-	}
 	message := "空闲"
 	if c.resumeSession != "" {
 		message = "会话已暂停，可继续对话"
@@ -289,6 +309,7 @@ func (c *Controller) Snapshot() ControllerSnapshot {
 		LastStep:       c.lastStep,
 		LastTool:       c.lastTool,
 		ResumeSession:  c.resumeSession,
+		LastUserInput:  c.lastUserInput,
 		ActiveMeta:     c.activeMeta,
 		RecentDiffs:    append([]DiffContext(nil), c.recentDiffs...),
 		RecentDiff:     c.recentDiff,
@@ -306,6 +327,7 @@ func (c *Controller) Restore(snapshot ControllerSnapshot) {
 	c.lastStep = snapshot.LastStep
 	c.lastTool = snapshot.LastTool
 	c.resumeSession = snapshot.ResumeSession
+	c.lastUserInput = snapshot.LastUserInput
 	c.activeMeta = snapshot.ActiveMeta
 	c.recentDiffs = append([]DiffContext(nil), snapshot.RecentDiffs...)
 	c.recentDiff = snapshot.RecentDiff

@@ -106,6 +106,7 @@ class SessionController extends ChangeNotifier {
   HistoryContext? _latestError;
   FileReadResult? _openedFile;
   RuntimeMeta _resumeRuntimeMeta = const RuntimeMeta();
+  String _runtimePermissionMode = '';
   SessionContext _sessionContext = const SessionContext();
   CatalogMetadata _skillCatalogMeta = const CatalogMetadata(domain: 'skill');
   CatalogMetadata _memoryCatalogMeta = const CatalogMetadata(domain: 'memory');
@@ -136,6 +137,17 @@ class SessionController extends ChangeNotifier {
   ActionNeededSignal? _actionNeededSignal;
   _ActionNeededSnapshot? _activeActionNeededSnapshot;
   bool _shouldSuppressNextActionNeededSignal = false;
+  bool _autoSessionRequested = false;
+  bool _autoSessionCreating = false;
+  String _autoSessionLoadingId = '';
+  bool _isLoadingSession = false;
+  String _pendingSessionTargetId = '';
+  final Set<String> _pendingToggleSkillNames = <String>{};
+  final Set<String> _pendingToggleMemoryIds = <String>{};
+  bool _isSavingSkill = false;
+  bool _isSavingMemory = false;
+  SessionContext? _pendingSessionContextTarget;
+  SessionContext? _pendingSessionContextRollback;
 
   AppConfig get config => _config;
   bool get connecting => _connecting;
@@ -216,6 +228,16 @@ class SessionController extends ChangeNotifier {
   CatalogMetadata get memoryCatalogMeta => _memoryCatalogMeta;
   String get skillSyncStatus => _skillSyncStatus;
   String get memorySyncStatus => _memorySyncStatus;
+  Set<String> get pendingToggleSkillNames =>
+      Set.unmodifiable(_pendingToggleSkillNames);
+  Set<String> get pendingToggleMemoryIds =>
+      Set.unmodifiable(_pendingToggleMemoryIds);
+  bool get isSavingSkill => _isSavingSkill;
+  bool get isSavingMemory => _isSavingMemory;
+  bool isSkillTogglePending(String name) =>
+      _pendingToggleSkillNames.contains(name.trim());
+  bool isMemoryTogglePending(String id) =>
+      _pendingToggleMemoryIds.contains(id.trim());
   String get enabledSkillSummary {
     final names = _sessionContext.enabledSkillNames;
     if (names.isEmpty) {
@@ -255,15 +277,26 @@ class SessionController extends ChangeNotifier {
       hasPendingPermissionPrompt && !shouldShowReviewChoices;
   bool get hasCompactContextSelection =>
       _skills.isNotEmpty || _memoryItems.isNotEmpty;
+  bool get isLoadingSession => _isLoadingSession;
 
   List<TimelineItem> get timeline => List.unmodifiable(_timeline);
   List<ReviewGroup> get reviewGroups => List.unmodifiable(_reviewGroups);
   ReviewGroup? get activeReviewGroup => _resolvedActiveReviewGroup();
   String get activeReviewGroupId => _activeReviewGroupId;
-  bool get awaitInput =>
-      _agentState?.awaitInput == true || pendingPrompt != null;
+  bool get awaitInput {
+    if (_isLoadingSession) {
+      return false;
+    }
+    return _agentState?.awaitInput == true ||
+        pendingPrompt != null ||
+        pendingInteraction != null;
+  }
+
   ActionNeededSignal? get actionNeededSignal => _actionNeededSignal;
   bool get fastMode => _config.fastMode;
+  String get displayPermissionMode => _runtimePermissionMode.isNotEmpty
+      ? _runtimePermissionMode
+      : _config.permissionMode;
   bool get hasPendingReview => pendingDiffCount > 0;
   int get pendingDiffCount => _pendingDiffs.length;
   int get pendingReviewGroupCount =>
@@ -277,9 +310,9 @@ class SessionController extends ChangeNotifier {
   HistoryContext? get openedFileDiff => _diffForOpenedFile();
   HistoryContext? get openedFilePendingDiff => _pendingDiffForOpenedFile();
   bool get openedFileMatchesPendingDiff => openedFilePendingDiff != null;
-  bool get isAutoAcceptMode => _config.permissionMode == 'acceptEdits';
+  bool get isAutoAcceptMode => displayPermissionMode == 'acceptEdits';
   bool get isBypassPermissionsMode =>
-      _config.permissionMode == 'bypassPermissions';
+      displayPermissionMode == 'bypassPermissions';
   bool get isManualReviewMode => !isAutoAcceptMode;
   bool get shouldShowReviewChoices {
     if (!isManualReviewMode) {
@@ -302,12 +335,7 @@ class SessionController extends ChangeNotifier {
     return 'awaitInput=$awaitInput, agentState=${_agentState?.state ?? '-'}, pendingPrompt=${prompt?.message.trim().isNotEmpty == true ? prompt!.message.trim() : '-'}, shouldShowReviewChoices=$shouldShowReviewChoices, currentReviewDiff=${currentReview?.path.isNotEmpty == true ? currentReview!.path : '-'}, openedFilePendingDiff=${openedPending?.path.isNotEmpty == true ? openedPending!.path : '-'}, openedFile=${_openedFile?.path.isNotEmpty == true ? _openedFile!.path : '-'}';
   }
 
-  void _pushDebug(String label, [String? details]) {
-    final body = details == null || details.trim().isEmpty
-        ? '[debug] $label'
-        : '[debug] $label\n${details.trim()}';
-    _pushSystem('system', body);
-  }
+  void _pushDebug(String label, [String? details]) {}
 
   void setActiveReviewGroup(String groupId) {
     final normalized = groupId.trim();
@@ -415,6 +443,9 @@ class SessionController extends ChangeNotifier {
   }
 
   bool get isSessionBusy {
+    if (_isLoadingSession) {
+      return true;
+    }
     final agentState = (_agentState?.state ?? '').trim().toUpperCase();
     final sessionState = (_sessionState?.state ?? '').trim().toUpperCase();
     if (awaitInput) {
@@ -441,7 +472,10 @@ class SessionController extends ChangeNotifier {
   String get activityToolLabel => _activityToolLabel;
   String get currentStepSummary => _currentStepSummary;
   bool get inClaudeMode {
-    final command = _agentState?.command.trim().toLowerCase() ?? '';
+    if (_isLoadingSession) {
+      return false;
+    }
+    final command = currentMeta.command.trim().toLowerCase();
     return command == 'claude' || command.startsWith('claude ');
   }
 
@@ -455,7 +489,7 @@ class SessionController extends ChangeNotifier {
       RuntimeMeta(
         engine: _config.engine,
         cwd: effectiveCwd,
-        permissionMode: _config.permissionMode,
+        permissionMode: displayPermissionMode,
         targetDiff: _currentDiff?.diff ?? merged.targetDiff,
         targetPath:
             _openedFile?.path ?? _currentDiff?.path ?? merged.targetPath,
@@ -466,6 +500,19 @@ class SessionController extends ChangeNotifier {
             : merged.targetText,
       ),
     );
+  }
+
+  String get _currentDecisionPermissionMode {
+    final interactionMode =
+        pendingInteraction?.runtimeMeta.permissionMode.trim() ?? '';
+    if (interactionMode.isNotEmpty) {
+      return interactionMode;
+    }
+    final promptMode = pendingPrompt?.runtimeMeta.permissionMode.trim() ?? '';
+    if (promptMode.isNotEmpty) {
+      return promptMode;
+    }
+    return displayPermissionMode;
   }
 
   Future<void> initialize() async {
@@ -526,6 +573,10 @@ class SessionController extends ChangeNotifier {
       await _service.connect(_config.wsUrl);
       _connected = true;
       _connectionMessage = '已连接';
+      _autoSessionRequested = false;
+      _autoSessionCreating = false;
+      _autoSessionLoadingId = '';
+      _runtimePermissionMode = '';
       requestSessionList();
       await switchWorkingDirectory(_config.cwd);
       requestRuntimeInfo('context');
@@ -561,6 +612,7 @@ class SessionController extends ChangeNotifier {
     _terminalExecutions.clear();
     _canResumeCurrentSession = false;
     _resumeRuntimeMeta = const RuntimeMeta();
+    _runtimePermissionMode = '';
     _sessionContext = const SessionContext();
     _skillCatalogMeta = const CatalogMetadata(domain: 'skill');
     _memoryCatalogMeta = const CatalogMetadata(domain: 'memory');
@@ -587,17 +639,93 @@ class SessionController extends ChangeNotifier {
     _service.send({'action': 'session_list'});
   }
 
+  void _handleAutoSessionBinding(List<SessionSummary> items) {
+    if (!_connected || _connecting || _autoSessionRequested) {
+      return;
+    }
+    if (_selectedSessionId.trim().isNotEmpty) {
+      final selectedExists = items.any((item) => item.id == _selectedSessionId);
+      if (selectedExists) {
+        return;
+      }
+    }
+    if (_autoSessionCreating) {
+      return;
+    }
+    _autoSessionRequested = true;
+    _autoSessionCreating = true;
+    createSession();
+  }
+
   void createSession([String title = '']) {
+    _beginSessionLoading();
     _service.send(
         {'action': 'session_create', if (title.isNotEmpty) 'title': title});
   }
 
   void loadSession(String sessionId) {
-    _service.send({'action': 'session_load', 'sessionId': sessionId});
+    final targetId = sessionId.trim();
+    if (targetId.isEmpty) {
+      return;
+    }
+    _beginSessionLoading(targetId: targetId);
+    _service.send({'action': 'session_load', 'sessionId': targetId});
   }
 
   void deleteSession(String sessionId) {
-    _service.send({'action': 'session_delete', 'sessionId': sessionId});
+    final targetId = sessionId.trim();
+    if (targetId.isEmpty) {
+      return;
+    }
+    if (targetId == _selectedSessionId) {
+      _beginSessionLoading();
+    }
+    _service.send({'action': 'session_delete', 'sessionId': targetId});
+  }
+
+  void _beginSessionLoading({String targetId = ''}) {
+    _isLoadingSession = true;
+    _pendingSessionTargetId = targetId.trim();
+    _pendingPrompt = null;
+    _pendingInteraction = null;
+    _runtimePermissionMode = '';
+    _agentState = null;
+    _sessionState = null;
+    _currentStep = null;
+    _currentStepSummary = '';
+    _lastStepMessage = '';
+    _lastStepStatus = '';
+    _agentPhaseLabel = '切换会话中';
+    _activityToolLabel = '';
+    _activityStartedAt = null;
+    _activityVisible = false;
+    _resetActionNeededTracking(suppressNextSignal: true);
+    _syncDerivedState();
+    notifyListeners();
+  }
+
+  bool _matchesPendingSessionTarget(String sessionId) {
+    final normalized = sessionId.trim();
+    if (normalized.isEmpty) {
+      return false;
+    }
+    final targetId = _pendingSessionTargetId.trim();
+    if (targetId.isEmpty) {
+      return true;
+    }
+    return normalized == targetId;
+  }
+
+  void _finishSessionLoading({String sessionId = ''}) {
+    if (!_isLoadingSession) {
+      return;
+    }
+    final normalized = sessionId.trim();
+    if (normalized.isNotEmpty) {
+      _pendingSessionTargetId = normalized;
+    }
+    _isLoadingSession = false;
+    _pendingSessionTargetId = '';
   }
 
   void updatePermissionMode(String permissionMode) {
@@ -666,16 +794,87 @@ class SessionController extends ChangeNotifier {
   }
 
   void saveSkill(SkillDefinition definition) {
+    final name = definition.name.trim();
+    if (name.isEmpty || _isSavingSkill) {
+      return;
+    }
+    final existing = _skills.cast<SkillDefinition?>().firstWhere(
+          (item) => item?.name == name,
+          orElse: () => null,
+        );
+    final merged = (existing ?? const SkillDefinition()).copyWith(
+      name: name,
+      description: definition.description.trim(),
+      prompt: definition.prompt.trim(),
+      resultView: definition.resultView.trim(),
+      targetType: definition.targetType.trim(),
+      editable: existing?.editable ?? true,
+    );
+    _isSavingSkill = true;
+    _skillSyncStatus = '正在保存 skill…';
+    notifyListeners();
     _service.send({
       'action': 'skill_catalog_upsert',
       'skill': {
-        'name': definition.name,
-        'description': definition.description,
-        'prompt': definition.prompt,
-        'resultView': definition.resultView,
-        'targetType': definition.targetType,
+        'name': merged.name,
+        'description': merged.description,
+        'prompt': merged.prompt,
+        'resultView': merged.resultView,
+        'targetType': merged.targetType,
       },
     });
+  }
+
+  void saveGeneratedSkill({
+    required String request,
+    SkillDefinition? base,
+  }) {
+    final prompt = buildSkillAuthoringPrompt(request, base: base);
+    if (prompt.isEmpty) {
+      return;
+    }
+    final label = base == null ? '生成 Skill' : '修改 Skill';
+    _skillSyncStatus = base == null ? '正在生成新 skill…' : '正在修改 skill…';
+    notifyListeners();
+    _dispatchContextualClaudeRequest(
+      prompt,
+      label: label,
+      targetType: 'skill',
+      targetTitle: base?.name ?? 'new skill',
+      resultView: 'skill-catalog',
+      skillName: base?.name ?? '',
+    );
+  }
+
+  String buildSkillAuthoringPrompt(String request, {SkillDefinition? base}) {
+    final intent = request.trim();
+    if (intent.isEmpty) {
+      return '';
+    }
+    final lines = <String>[
+      base == null
+          ? '请根据下面需求生成一个新的 Claude skill。'
+          : '请根据下面需求修改这个 Claude skill。',
+      '你必须只返回严格 JSON，不要输出 markdown、解释、代码块标记或额外文字。',
+      '返回 JSON 顶层字段必须是：mobilevcCatalogAuthoring、kind、skill。',
+      '其中 mobilevcCatalogAuthoring 必须为 true，kind 必须为 "skill"。',
+      'skill 对象内必须包含：name、description、prompt、targetType、resultView。',
+      '如需更新现有 skill，请沿用原有 name，除非用户明确要求改名。',
+      '示例格式：{"mobilevcCatalogAuthoring":true,"kind":"skill","skill":{"name":"example-skill","description":"...","prompt":"...","targetType":"diff","resultView":"review-card"}}',
+      if (base != null) ...[
+        'CurrentSkillName: ${base.name}',
+        if (base.description.trim().isNotEmpty)
+          'CurrentDescription: ${base.description.trim()}',
+        if (base.targetType.trim().isNotEmpty)
+          'CurrentTargetType: ${base.targetType.trim()}',
+        if (base.resultView.trim().isNotEmpty)
+          'CurrentResultView: ${base.resultView.trim()}',
+        if (base.prompt.trim().isNotEmpty)
+          'CurrentPrompt:\n${base.prompt.trim()}',
+      ],
+      'UserIntent: $intent',
+    ];
+    return lines.join('\n\n');
   }
 
   void syncSkills() {
@@ -683,7 +882,7 @@ class SessionController extends ChangeNotifier {
   }
 
   void syncMemories() {
-    requestMemoryList();
+    _service.send({'action': 'memory_sync_pull'});
   }
 
   void requestMemoryList() {
@@ -691,14 +890,61 @@ class SessionController extends ChangeNotifier {
   }
 
   void saveMemory(MemoryItem item) {
+    final id = item.id.trim();
+    if (id.isEmpty || _isSavingMemory) {
+      return;
+    }
+    _isSavingMemory = true;
+    _memorySyncStatus = '正在保存 memory…';
+    notifyListeners();
     _service.send({
       'action': 'memory_upsert',
       'item': {
-        'id': item.id,
-        'title': item.title,
-        'content': item.content,
+        'id': id,
+        'title': item.title.trim(),
+        'content': item.content.trim(),
       },
     });
+  }
+
+  void reviseMemoryWithClaude(MemoryItem item, String request) {
+    final prompt = buildMemoryAuthoringPrompt(item, request);
+    if (prompt.isEmpty) {
+      return;
+    }
+    _memorySyncStatus = '正在修改 memory…';
+    notifyListeners();
+    _dispatchContextualClaudeRequest(
+      prompt,
+      label: '修改 Memory',
+      targetType: 'memory',
+      targetTitle: item.title.isNotEmpty ? item.title : item.id,
+      resultView: 'memory-catalog',
+    );
+  }
+
+  String buildMemoryAuthoringPrompt(MemoryItem item, String request) {
+    final intent = request.trim();
+    if (intent.isEmpty) {
+      return '';
+    }
+    final title =
+        item.title.trim().isNotEmpty ? item.title.trim() : item.id.trim();
+    final lines = <String>[
+      '请根据下面需求修改这个 Claude memory。',
+      '你必须只返回严格 JSON，不要输出 markdown、解释、代码块标记或额外文字。',
+      '返回 JSON 顶层字段必须是：mobilevcCatalogAuthoring、kind、memory。',
+      '其中 mobilevcCatalogAuthoring 必须为 true，kind 必须为 "memory"。',
+      'memory 对象内必须包含：id、title、content。',
+      '默认保持原有 id 不变，除非用户明确要求改 id。',
+      '示例格式：{"mobilevcCatalogAuthoring":true,"kind":"memory","memory":{"id":"memory-id","title":"标题","content":"内容"}}',
+      'CurrentMemoryId: ${item.id.trim()}',
+      'CurrentMemoryTitle: $title',
+      if (item.content.trim().isNotEmpty)
+        'CurrentMemoryContent:\n${item.content.trim()}',
+      'UserIntent: $intent',
+    ];
+    return lines.join('\n\n');
   }
 
   void requestSessionContext() {
@@ -713,11 +959,28 @@ class SessionController extends ChangeNotifier {
     List<String>? enabledSkillNames,
     List<String>? enabledMemoryIds,
   }) {
-    final next = SessionContext(
-      enabledSkillNames: enabledSkillNames ?? _sessionContext.enabledSkillNames,
-      enabledMemoryIds: enabledMemoryIds ?? _sessionContext.enabledMemoryIds,
+    final next = _sessionContext.copyWith(
+      enabledSkillNames: enabledSkillNames,
+      enabledMemoryIds: enabledMemoryIds,
     );
+    if (_pendingSessionContextTarget != null) {
+      return;
+    }
+    _pendingSessionContextRollback = _sessionContext;
+    _pendingSessionContextTarget = next;
     _sessionContext = next;
+    _pendingToggleSkillNames
+      ..clear()
+      ..addAll(_diffPendingNames(
+        _pendingSessionContextRollback!.enabledSkillNames,
+        next.enabledSkillNames,
+      ));
+    _pendingToggleMemoryIds
+      ..clear()
+      ..addAll(_diffPendingNames(
+        _pendingSessionContextRollback!.enabledMemoryIds,
+        next.enabledMemoryIds,
+      ));
     _service.send({
       'action': 'session_context_update',
       'enabledSkillNames': next.enabledSkillNames,
@@ -728,7 +991,9 @@ class SessionController extends ChangeNotifier {
 
   void toggleSkillEnabled(String name) {
     final skillName = name.trim();
-    if (skillName.isEmpty) {
+    if (skillName.isEmpty ||
+        isSkillTogglePending(skillName) ||
+        _pendingSessionContextTarget != null) {
       return;
     }
     final next = [..._sessionContext.enabledSkillNames];
@@ -742,7 +1007,9 @@ class SessionController extends ChangeNotifier {
 
   void toggleMemoryEnabled(String id) {
     final memoryId = id.trim();
-    if (memoryId.isEmpty) {
+    if (memoryId.isEmpty ||
+        isMemoryTogglePending(memoryId) ||
+        _pendingSessionContextTarget != null) {
       return;
     }
     final next = [..._sessionContext.enabledMemoryIds];
@@ -770,7 +1037,57 @@ class SessionController extends ChangeNotifier {
     _pushUser('/$skillName', 'Skill');
   }
 
+  void _dispatchContextualClaudeRequest(
+    String prompt, {
+    required String label,
+    String targetType = '',
+    String targetTitle = '',
+    String resultView = '',
+    String skillName = '',
+  }) {
+    final value = prompt.trim();
+    if (value.isEmpty) {
+      return;
+    }
+    if (_isLoadingSession) {
+      _pushSystem('session', '会话切换中，请等待加载完成');
+      return;
+    }
+    if (awaitInput) {
+      _markActionNeededHandled();
+      _submitAwaitingPrompt(value, promptLabel: label, fallbackToInput: true);
+      return;
+    }
+    if (isSessionBusy) {
+      _pushSystem('session', '当前会话仍在运行，暂时不能发起新的请求。');
+      return;
+    }
+    _resetActionNeededTracking();
+    final meta = currentMeta.merge(
+      RuntimeMeta(
+        source: 'catalog-authoring',
+        targetType: targetType,
+        targetTitle: targetTitle,
+        resultView: resultView,
+        skillName: skillName,
+      ),
+    );
+    _service.send({
+      'action': 'exec',
+      'cmd': value,
+      'cwd': effectiveCwd,
+      'mode': 'pty',
+      ...meta.toJson(),
+      'permissionMode': _config.permissionMode,
+    });
+    _pushUser(value, label);
+  }
+
   void continueWithCurrentFile([String text = '基于当前文件继续处理']) {
+    if (_isLoadingSession) {
+      _pushSystem('session', '会话切换中，请等待加载完成');
+      return;
+    }
     final prompt = buildFileScopedPrompt(text);
     if (prompt.isEmpty) {
       _pushSystem('error', '当前没有可用的文件上下文');
@@ -825,8 +1142,8 @@ class SessionController extends ChangeNotifier {
       'cmd': prompt,
       'cwd': effectiveCwd,
       'mode': 'pty',
-      'permissionMode': _config.permissionMode,
       ...meta.toJson(),
+      'permissionMode': _config.permissionMode,
     });
     _pushUser(prompt, '文件命令');
   }
@@ -850,6 +1167,10 @@ class SessionController extends ChangeNotifier {
   void sendInputText(String text) {
     final value = text.trim();
     if (value.isEmpty) {
+      return;
+    }
+    if (_isLoadingSession) {
+      _pushSystem('session', '会话切换中，请等待加载完成');
       return;
     }
     if (awaitInput) {
@@ -876,8 +1197,8 @@ class SessionController extends ChangeNotifier {
       'cmd': value,
       'cwd': effectiveCwd,
       'mode': 'pty',
-      'permissionMode': _config.permissionMode,
       ...meta.toJson(),
+      'permissionMode': _config.permissionMode,
     });
     _pushUser(value, '命令');
   }
@@ -885,6 +1206,10 @@ class SessionController extends ChangeNotifier {
   void submitPromptOption(String value) {
     final normalized = value.trim();
     if (normalized.isEmpty) {
+      return;
+    }
+    if (_isLoadingSession) {
+      _pushSystem('session', '会话切换中，请等待加载完成');
       return;
     }
     _markActionNeededHandled();
@@ -925,6 +1250,10 @@ class SessionController extends ChangeNotifier {
     String promptLabel = '回复',
     bool fallbackToInput = false,
   }) {
+    if (_isLoadingSession) {
+      _pushSystem('session', '会话切换中，请等待加载完成');
+      return;
+    }
     final interaction = pendingInteraction;
     if (interaction != null) {
       _submitInteractionActionValue(interaction, value,
@@ -1030,7 +1359,7 @@ class SessionController extends ChangeNotifier {
       _service.send({
         'action': 'permission_decision',
         'decision': decision,
-        'permissionMode': _config.permissionMode,
+        'permissionMode': _currentDecisionPermissionMode,
         'resumeSessionId': interaction.resumeSessionId,
         'targetPath': interaction.targetPath,
         'contextId': interaction.contextId,
@@ -1054,7 +1383,7 @@ class SessionController extends ChangeNotifier {
     _service.send({
       'action': 'input',
       'data': '$value\n',
-      'permissionMode': _config.permissionMode,
+      'permissionMode': _currentDecisionPermissionMode,
     });
     _pushUser(value, promptLabel);
   }
@@ -1077,7 +1406,7 @@ class SessionController extends ChangeNotifier {
     _service.send({
       'action': 'permission_decision',
       'decision': decision,
-      'permissionMode': _config.permissionMode,
+      'permissionMode': _currentDecisionPermissionMode,
       'resumeSessionId': meta.resumeSessionId,
       'targetPath': targetPath,
       'contextId': meta.contextId,
@@ -1132,8 +1461,8 @@ class SessionController extends ChangeNotifier {
           'command': raw,
           'cwd': effectiveCwd,
           'engine': _config.engine,
-          'permissionMode': _config.permissionMode,
           ...meta.toJson(),
+          'permissionMode': _config.permissionMode,
         });
         _pushUser(raw, 'Slash');
     }
@@ -1146,22 +1475,32 @@ class SessionController extends ChangeNotifier {
 
     switch (event) {
       case SessionCreatedEvent created:
+        _autoSessionRequested = false;
+        _autoSessionCreating = false;
+        _autoSessionLoadingId = '';
         _selectedSessionId = created.summary.id;
         _selectedSessionTitle = created.summary.title;
         _upsertSession(created.summary);
+        _finishSessionLoading(sessionId: created.summary.id);
         break;
       case SessionListResultEvent list:
         _sessions
           ..clear()
           ..addAll(list.items);
+        _handleAutoSessionBinding(list.items);
         break;
       case SessionHistoryEvent history:
+        _autoSessionRequested = false;
+        _autoSessionCreating = false;
+        _autoSessionLoadingId = '';
         _resetActionNeededTracking(suppressNextSignal: true);
         _selectedSessionId = history.summary.id;
         _selectedSessionTitle = history.summary.title;
         _sessionContext = history.sessionContext;
         _skillCatalogMeta = history.skillCatalogMeta;
         _memoryCatalogMeta = history.memoryCatalogMeta;
+        _runtimePermissionMode =
+            history.resumeRuntimeMeta.permissionMode.trim();
         _upsertSession(history.summary);
         _timeline
           ..clear()
@@ -1237,16 +1576,28 @@ class SessionController extends ChangeNotifier {
                   lang: resolved.lang,
                 );
         }
+        if (_matchesPendingSessionTarget(history.summary.id)) {
+          _finishSessionLoading(sessionId: history.summary.id);
+        }
         await switchWorkingDirectory(_config.cwd);
         _pushSystem('session',
             '已加载历史会话${history.summary.title.isNotEmpty ? ' · ${history.summary.title}' : ''}');
         break;
       case SessionStateEvent state:
         _sessionState = state;
+        _syncRuntimePermissionMode();
+        if (_isLoadingSession &&
+            _matchesPendingSessionTarget(state.sessionId)) {
+          _finishSessionLoading(sessionId: state.sessionId);
+        }
         if (_isIdleLikeState(state.state)) {
-          _pendingInteraction = null;
-          _pendingPrompt = null;
-          if (_agentState != null && _isIdleLikeState(_agentState!.state)) {
+          if (!_shouldPreserveBlockingPrompt()) {
+            _pendingInteraction = null;
+            _pendingPrompt = null;
+          }
+          if (_agentState != null &&
+              _isIdleLikeState(_agentState!.state) &&
+              !_shouldPreserveBlockingPrompt()) {
             _agentState = null;
           }
         }
@@ -1256,7 +1607,8 @@ class SessionController extends ChangeNotifier {
         break;
       case AgentStateEvent agent:
         _agentState = agent;
-        if (_isIdleLikeState(agent.state)) {
+        _syncRuntimePermissionMode();
+        if (_isIdleLikeState(agent.state) && !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
           _pendingPrompt = null;
         }
@@ -1303,15 +1655,30 @@ class SessionController extends ChangeNotifier {
             context: _latestError,
           ),
         );
+        _handleMutationFailure(error.message);
         break;
       case PromptRequestEvent prompt:
+        final currentInteraction = _pendingInteraction;
+        final currentPrompt = _pendingPrompt;
+        final keepBlockingPrompt = (currentInteraction?.isPermission == true ||
+                currentInteraction?.isReview == true ||
+                currentPrompt?.looksLikePermissionPrompt == true ||
+                _isReviewDecisionPrompt(currentPrompt)) &&
+            _isGenericContinuePrompt(prompt);
+        if (keepBlockingPrompt) {
+          _pushDebug('忽略通用继续输入 prompt',
+              'incoming=${prompt.message}\n${_debugReviewStateSummary()}');
+          break;
+        }
         _pendingInteraction = null;
         _pendingPrompt = prompt;
+        _syncRuntimePermissionMode();
         _pushDebug('收到 prompt_request', _debugReviewStateSummary());
         break;
       case InteractionRequestEvent interaction:
         _pendingPrompt = null;
         _pendingInteraction = interaction;
+        _syncRuntimePermissionMode();
         _pushDebug('收到 interaction_request', _debugReviewStateSummary());
         break;
       case FSListResultEvent fsList:
@@ -1419,15 +1786,21 @@ class SessionController extends ChangeNotifier {
         _skills
           ..clear()
           ..addAll(result.items);
+        _isSavingSkill = false;
         break;
       case MemoryListResultEvent result:
         _memoryCatalogMeta = result.meta;
         _memoryItems
           ..clear()
           ..addAll(result.items);
+        _isSavingMemory = false;
         break;
       case SessionContextResultEvent result:
         _sessionContext = result.sessionContext;
+        _pendingSessionContextTarget = null;
+        _pendingSessionContextRollback = null;
+        _pendingToggleSkillNames.clear();
+        _pendingToggleMemoryIds.clear();
         break;
       case SkillSyncResultEvent result:
         _skillSyncStatus =
@@ -1463,6 +1836,46 @@ class SessionController extends ChangeNotifier {
     }
     _syncDerivedState();
     notifyListeners();
+  }
+
+  Set<String> _diffPendingNames(List<String> previous, List<String> next) {
+    final changed = <String>{};
+    for (final item in previous) {
+      if (!next.contains(item)) {
+        changed.add(item);
+      }
+    }
+    for (final item in next) {
+      if (!previous.contains(item)) {
+        changed.add(item);
+      }
+    }
+    return changed;
+  }
+
+  void _handleMutationFailure(String message) {
+    if (_pendingSessionContextRollback != null) {
+      _sessionContext = _pendingSessionContextRollback!;
+      _pendingSessionContextRollback = null;
+      _pendingSessionContextTarget = null;
+      _pendingToggleSkillNames.clear();
+      _pendingToggleMemoryIds.clear();
+      if (message.trim().isNotEmpty) {
+        _pushSystem('error', '会话上下文更新失败：$message');
+      }
+    }
+    if (_isSavingSkill) {
+      _isSavingSkill = false;
+      if (message.trim().isNotEmpty) {
+        _skillSyncStatus = '保存 skill 失败：$message';
+      }
+    }
+    if (_isSavingMemory) {
+      _isSavingMemory = false;
+      if (message.trim().isNotEmpty) {
+        _memorySyncStatus = '保存 memory 失败：$message';
+      }
+    }
   }
 
   bool _shouldAdoptEventSessionId(String sessionId) {
@@ -1568,7 +1981,7 @@ class SessionController extends ChangeNotifier {
       'executionId': diff.executionId,
       'groupId': groupId,
       'groupTitle': diff.groupTitle,
-      'permissionMode': _config.permissionMode,
+      'permissionMode': _currentDecisionPermissionMode,
     });
     _pendingPrompt = normalized == 'revise' ? _pendingPrompt : null;
     _markDiffReviewState(
@@ -1920,7 +2333,8 @@ class SessionController extends ChangeNotifier {
       return false;
     }
     final lower = trimmed.toLowerCase();
-    return lower == 'command started' ||
+    return lower.startsWith('[debug]') ||
+        lower == 'command started' ||
         trimmed == 'AI 会话已续接' ||
         lower == 'ai 会话已续接' ||
         lower == 'active' ||
@@ -2483,7 +2897,45 @@ class SessionController extends ChangeNotifier {
     return context.message.isNotEmpty ? context.message : context.title;
   }
 
+  bool _shouldPreserveBlockingPrompt() {
+    return _pendingInteraction?.isPermission == true ||
+        _pendingPrompt?.looksLikePermissionPrompt == true ||
+        _pendingInteraction?.isReview == true ||
+        shouldShowReviewChoices;
+  }
+
+  void _syncRuntimePermissionMode() {
+    final interactionMode =
+        _pendingInteraction?.runtimeMeta.permissionMode.trim() ?? '';
+    if (interactionMode.isNotEmpty) {
+      _runtimePermissionMode = interactionMode;
+      return;
+    }
+    final promptMode = _pendingPrompt?.runtimeMeta.permissionMode.trim() ?? '';
+    if (promptMode.isNotEmpty) {
+      _runtimePermissionMode = promptMode;
+      return;
+    }
+    final sessionMode = _sessionState?.runtimeMeta.permissionMode.trim() ?? '';
+    if (sessionMode.isNotEmpty) {
+      _runtimePermissionMode = sessionMode;
+      return;
+    }
+    final agentMode = _agentState?.runtimeMeta.permissionMode.trim() ?? '';
+    if (agentMode.isNotEmpty) {
+      _runtimePermissionMode = agentMode;
+      return;
+    }
+    final resumeMode = _resumeRuntimeMeta.permissionMode.trim();
+    if (resumeMode.isNotEmpty) {
+      _runtimePermissionMode = resumeMode;
+      return;
+    }
+    _runtimePermissionMode = '';
+  }
+
   void _syncDerivedState() {
+    _syncRuntimePermissionMode();
     _syncReviewGroupsFromRecentDiffs();
     _agentPhaseLabel = _compactAgentMessage();
     _syncActiveReviewSelection();
@@ -2637,6 +3089,14 @@ class SessionController extends ChangeNotifier {
       return true;
     }
     return _isReviewDecisionPrompt(prompt);
+  }
+
+  bool _isGenericContinuePrompt(PromptRequestEvent prompt) {
+    final message = prompt.message.trim();
+    if (message.isEmpty || prompt.options.isNotEmpty) {
+      return false;
+    }
+    return message == 'AI 会话已就绪，可继续输入' || message == 'Claude 会话已就绪，可继续输入';
   }
 
   String _compactAgentMessage() {

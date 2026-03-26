@@ -15,10 +15,10 @@ import (
 )
 
 type FileStore struct {
-	mu              sync.Mutex
-	baseDir         string
-	indexPath       string
-	skillCatalogPath string
+	mu                sync.Mutex
+	baseDir           string
+	indexPath         string
+	skillCatalogPath  string
 	memoryCatalogPath string
 }
 
@@ -34,9 +34,9 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
 	return &FileStore{
-		baseDir:          baseDir,
-		indexPath:        filepath.Join(baseDir, "index.json"),
-		skillCatalogPath: filepath.Join(baseDir, "skills.catalog.json"),
+		baseDir:           baseDir,
+		indexPath:         filepath.Join(baseDir, "index.json"),
+		skillCatalogPath:  filepath.Join(baseDir, "skills.catalog.json"),
 		memoryCatalogPath: filepath.Join(baseDir, "memory.catalog.json"),
 	}, nil
 }
@@ -183,17 +183,37 @@ func (s *FileStore) DeleteSession(ctx context.Context, sessionID string) error {
 }
 
 func (s *FileStore) ListSkillCatalog(ctx context.Context) ([]SkillDefinition, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
+	snapshot, err := s.GetSkillCatalogSnapshot(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return s.readSkillCatalogLocked()
+	return snapshot.Items, nil
 }
 
 func (s *FileStore) SaveSkillCatalog(ctx context.Context, items []SkillDefinition) error {
+	snapshot, err := s.GetSkillCatalogSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	snapshot.Items = items
+	if snapshot.Meta.Domain == "" {
+		snapshot.Meta.Domain = CatalogDomainSkill
+	}
+	return s.SaveSkillCatalogSnapshot(ctx, snapshot)
+}
+
+func (s *FileStore) GetSkillCatalogSnapshot(ctx context.Context) (SkillCatalogSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return SkillCatalogSnapshot{}, ctx.Err()
+	default:
+	}
+	return s.readSkillCatalogSnapshotLocked()
+}
+
+func (s *FileStore) SaveSkillCatalogSnapshot(ctx context.Context, snapshot SkillCatalogSnapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	select {
@@ -201,21 +221,42 @@ func (s *FileStore) SaveSkillCatalog(ctx context.Context, items []SkillDefinitio
 		return ctx.Err()
 	default:
 	}
-	return s.writeJSONFileLocked(s.skillCatalogPath, normalizeSkillCatalog(items), "encode skill catalog")
+	snapshot = normalizeSkillCatalogSnapshot(snapshot)
+	return s.writeJSONFileLocked(s.skillCatalogPath, snapshot, "encode skill catalog")
 }
 
 func (s *FileStore) ListMemoryCatalog(ctx context.Context) ([]MemoryItem, error) {
+	snapshot, err := s.GetMemoryCatalogSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Items, nil
+}
+
+func (s *FileStore) SaveMemoryCatalog(ctx context.Context, items []MemoryItem) error {
+	snapshot, err := s.GetMemoryCatalogSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	snapshot.Items = items
+	if snapshot.Meta.Domain == "" {
+		snapshot.Meta.Domain = CatalogDomainMemory
+	}
+	return s.SaveMemoryCatalogSnapshot(ctx, snapshot)
+}
+
+func (s *FileStore) GetMemoryCatalogSnapshot(ctx context.Context) (MemoryCatalogSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return MemoryCatalogSnapshot{}, ctx.Err()
 	default:
 	}
-	return s.readMemoryCatalogLocked()
+	return s.readMemoryCatalogSnapshotLocked()
 }
 
-func (s *FileStore) SaveMemoryCatalog(ctx context.Context, items []MemoryItem) error {
+func (s *FileStore) SaveMemoryCatalogSnapshot(ctx context.Context, snapshot MemoryCatalogSnapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	select {
@@ -223,7 +264,8 @@ func (s *FileStore) SaveMemoryCatalog(ctx context.Context, items []MemoryItem) e
 		return ctx.Err()
 	default:
 	}
-	return s.writeJSONFileLocked(s.memoryCatalogPath, normalizeMemoryCatalog(items), "encode memory catalog")
+	snapshot = normalizeMemoryCatalogSnapshot(snapshot)
+	return s.writeJSONFileLocked(s.memoryCatalogPath, snapshot, "encode memory catalog")
 }
 
 func (s *FileStore) readIndexLocked() (fileIndex, error) {
@@ -277,20 +319,40 @@ func (s *FileStore) writeSessionLocked(record SessionRecord) error {
 	return os.WriteFile(s.sessionPath(record.Summary.ID), data, 0o644)
 }
 
-func (s *FileStore) readSkillCatalogLocked() ([]SkillDefinition, error) {
-	var items []SkillDefinition
-	if err := s.readJSONFileLocked(s.skillCatalogPath, &items, "read skill catalog", "decode skill catalog"); err != nil {
-		return nil, err
+func (s *FileStore) readSkillCatalogSnapshotLocked() (SkillCatalogSnapshot, error) {
+	data, err := os.ReadFile(s.skillCatalogPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return normalizeSkillCatalogSnapshot(SkillCatalogSnapshot{}), nil
+		}
+		return SkillCatalogSnapshot{}, fmt.Errorf("read skill catalog: %w", err)
 	}
-	return normalizeSkillCatalog(items), nil
+	if len(data) == 0 {
+		return normalizeSkillCatalogSnapshot(SkillCatalogSnapshot{}), nil
+	}
+
+	var snapshot SkillCatalogSnapshot
+	if err := json.Unmarshal(data, &snapshot); err == nil {
+		return normalizeSkillCatalogSnapshot(snapshot), nil
+	}
+
+	var items []SkillDefinition
+	if err := json.Unmarshal(data, &items); err == nil {
+		return normalizeSkillCatalogSnapshot(SkillCatalogSnapshot{Items: items}), nil
+	}
+
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return SkillCatalogSnapshot{}, fmt.Errorf("decode skill catalog: %w", err)
+	}
+	return normalizeSkillCatalogSnapshot(snapshot), nil
 }
 
-func (s *FileStore) readMemoryCatalogLocked() ([]MemoryItem, error) {
-	var items []MemoryItem
-	if err := s.readJSONFileLocked(s.memoryCatalogPath, &items, "read memory catalog", "decode memory catalog"); err != nil {
-		return nil, err
+func (s *FileStore) readMemoryCatalogSnapshotLocked() (MemoryCatalogSnapshot, error) {
+	var snapshot MemoryCatalogSnapshot
+	if err := s.readJSONFileLocked(s.memoryCatalogPath, &snapshot, "read memory catalog", "decode memory catalog"); err != nil {
+		return MemoryCatalogSnapshot{}, err
 	}
-	return normalizeMemoryCatalog(items), nil
+	return normalizeMemoryCatalogSnapshot(snapshot), nil
 }
 
 func (s *FileStore) readJSONFileLocked(path string, target any, readErrLabel, decodeErrLabel string) error {
@@ -359,6 +421,8 @@ func normalizeProjection(projection ProjectionSnapshot) ProjectionSnapshot {
 		projection.ReviewGroups = []session.ReviewGroup{}
 	}
 	projection.SessionContext = normalizeSessionContext(projection.SessionContext)
+	projection.SkillCatalogMeta = normalizeCatalogMetadata(projection.SkillCatalogMeta, CatalogDomainSkill)
+	projection.MemoryCatalogMeta = normalizeCatalogMetadata(projection.MemoryCatalogMeta, CatalogDomainMemory)
 	return projection
 }
 
@@ -366,6 +430,31 @@ func normalizeSessionContext(ctx SessionContext) SessionContext {
 	ctx.EnabledSkillNames = normalizeStringSlice(ctx.EnabledSkillNames)
 	ctx.EnabledMemoryIDs = normalizeStringSlice(ctx.EnabledMemoryIDs)
 	return ctx
+}
+
+func normalizeSkillCatalogSnapshot(snapshot SkillCatalogSnapshot) SkillCatalogSnapshot {
+	snapshot.Meta = normalizeCatalogMetadata(snapshot.Meta, CatalogDomainSkill)
+	snapshot.Items = normalizeSkillCatalog(snapshot.Items)
+	return snapshot
+}
+
+func normalizeMemoryCatalogSnapshot(snapshot MemoryCatalogSnapshot) MemoryCatalogSnapshot {
+	snapshot.Meta = normalizeCatalogMetadata(snapshot.Meta, CatalogDomainMemory)
+	snapshot.Items = normalizeMemoryCatalog(snapshot.Items)
+	return snapshot
+}
+
+func normalizeCatalogMetadata(meta CatalogMetadata, domain CatalogDomain) CatalogMetadata {
+	if meta.Domain == "" {
+		meta.Domain = domain
+	}
+	if meta.SourceOfTruth == "" {
+		meta.SourceOfTruth = CatalogSourceTruthClaude
+	}
+	if meta.SyncState == "" {
+		meta.SyncState = CatalogSyncStateIdle
+	}
+	return meta
 }
 
 func normalizeSkillCatalog(items []SkillDefinition) []SkillDefinition {
@@ -387,7 +476,21 @@ func normalizeSkillCatalog(items []SkillDefinition) []SkillDefinition {
 		if item.Source == "" {
 			item.Source = SkillSourceLocal
 		}
-		item.Editable = item.Source != SkillSourceBuiltin
+		if item.SourceOfTruth == "" {
+			item.SourceOfTruth = CatalogSourceTruthClaude
+		}
+		if item.SyncState == "" {
+			if item.Source == SkillSourceLocal {
+				item.SyncState = CatalogSyncStateDraft
+			} else {
+				item.SyncState = CatalogSyncStateIdle
+			}
+		}
+		if item.Source == SkillSourceBuiltin {
+			item.Editable = false
+		} else if !item.Editable {
+			item.Editable = item.Source == SkillSourceLocal
+		}
 		if _, ok := seen[item.Name]; ok {
 			continue
 		}
@@ -414,6 +517,25 @@ func normalizeMemoryCatalog(items []MemoryItem) []MemoryItem {
 		item.ID = id
 		item.Title = strings.TrimSpace(item.Title)
 		item.Content = strings.TrimSpace(item.Content)
+		item.Source = strings.TrimSpace(item.Source)
+		if item.Source == "" {
+			item.Source = "local"
+		}
+		if item.SourceOfTruth == "" {
+			item.SourceOfTruth = CatalogSourceTruthClaude
+		}
+		if item.SyncState == "" {
+			if item.Source == "local" {
+				item.SyncState = CatalogSyncStateDraft
+			} else {
+				item.SyncState = CatalogSyncStateIdle
+			}
+		}
+		if item.Source == "builtin" {
+			item.Editable = false
+		} else if !item.Editable {
+			item.Editable = item.Source == "local"
+		}
 		if _, ok := seen[item.ID]; ok {
 			continue
 		}

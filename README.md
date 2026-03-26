@@ -63,12 +63,12 @@ Claude Code 很强，但真实工作里总会遇到这些场景：
 * accept / revert / revise
 * 支持一键接受全部待审核 diff
 
-#### 3. Skill / Memory 无感同步与可视化管理
+#### 3. Skill / Memory 无感同步、Claude 生成修改与可视化管理
 
 * Claude 本地目录镜像 + 当前会话启用态
 * UI 显示 `sourceOfTruth`、`syncState`、`driftDetected`、`lastSyncedAt`、`lastError`
-* 顶部 Skill / Memory 胶囊栏，快速切上下文
-* 独立会话记忆，移动端可即时启用/停用
+* Skill / Memory 的启用与关闭统一放在各自管理面板，不再占用主界面顶部
+* 支持直接让 Claude 生成或修改 Skill / Memory，结果会自动回写 catalog 并刷新管理面板
 
 #### 4. 后台通知 — 移动协作的关键能力
 
@@ -98,6 +98,7 @@ Claude Code 很强，但真实工作里总会遇到这些场景：
 * 终端日志按 execution 切换 `stdout` / `stderr`
 * 会话级 Skill / Memory / Context 管理
 * Skill / Memory 与本机 Claude 目录镜像同步
+* 支持一句话让 Claude 生成或修改 Skill / Memory，并自动回写到 catalog
 * runtime info 查看
 * 后台通知触发 action-needed
 * 可选 TTS 语音播报
@@ -269,7 +270,8 @@ MobileVC brings **Claude Code** to your mobile device — not just viewing, but 
    * Group view, switch files in a group, diff/content toggle, accept/revert/revise, bulk accept
 3. **Skill / Memory Management**
 
-   * Directory mirror view, per-session enable/disable, sync with local Claude, capsule UI
+   * Directory mirror view, per-session enable/disable inside dedicated management sheets, sync with local Claude
+   * Ask Claude to generate or revise Skill / Memory, then auto-write the result back into the catalog
 4. **Background Notifications**
 
    * Triggered only when action is needed, edge deduplication prevents spam

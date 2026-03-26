@@ -16,6 +16,9 @@ class CommandInputBar extends StatefulWidget {
     required this.onOpenMemory,
     required this.onPermissionModeChanged,
     required this.showClaudeMode,
+    required this.shouldShowPermissionChoices,
+    required this.shouldShowReviewChoices,
+    required this.isSessionLoading,
   });
 
   final bool awaitInput;
@@ -31,6 +34,9 @@ class CommandInputBar extends StatefulWidget {
   final VoidCallback onOpenMemory;
   final ValueChanged<String> onPermissionModeChanged;
   final bool showClaudeMode;
+  final bool shouldShowPermissionChoices;
+  final bool shouldShowReviewChoices;
+  final bool isSessionLoading;
 
   @override
   State<CommandInputBar> createState() => _CommandInputBarState();
@@ -40,6 +46,34 @@ class _CommandInputBarState extends State<CommandInputBar> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
+  bool get _inputLocked =>
+      widget.isSessionLoading ||
+      widget.shouldShowPermissionChoices ||
+      widget.shouldShowReviewChoices;
+
+  String get _lockedHintText {
+    if (widget.isSessionLoading) {
+      return '会话切换中...';
+    }
+    if (widget.shouldShowPermissionChoices) {
+      return '请先在上方确认授权';
+    }
+    if (widget.shouldShowReviewChoices) {
+      return '请先在上方完成审核';
+    }
+    return '';
+  }
+
+  @override
+  void didUpdateWidget(covariant CommandInputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldLocked = oldWidget.shouldShowPermissionChoices ||
+        oldWidget.shouldShowReviewChoices;
+    if (_inputLocked && !oldLocked) {
+      _focusNode.unfocus();
+    }
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -48,6 +82,11 @@ class _CommandInputBarState extends State<CommandInputBar> {
   }
 
   void _submit() {
+    if (_inputLocked) {
+      _focusNode.unfocus();
+      return;
+    }
+
     final text = _controller.text;
     final normalized = text.trim();
     if (normalized.isEmpty) {
@@ -70,13 +109,19 @@ class _CommandInputBarState extends State<CommandInputBar> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final hintText = widget.awaitInput
-        ? '继续输入'
-        : widget.hasPendingReview
-            ? '先处理待审核 diff，再继续'
-            : widget.isBusy
-                ? '当前会话仍在运行'
-                : '输入命令';
+    final hintText = _inputLocked
+        ? _lockedHintText
+        : widget.awaitInput
+            ? (widget.showClaudeMode ? '继续回复 Claude' : '继续输入')
+            : widget.hasPendingReview
+                ? '先处理待审核 diff，再继续'
+                : widget.isBusy
+                    ? (widget.showClaudeMode ? 'Claude 正在处理中' : '当前 shell 会话仍在运行')
+                    : (widget.showClaudeMode ? '给 Claude 发送消息' : '输入命令');
+    final modeLabel = widget.showClaudeMode ? 'Claude' : 'Shell';
+    final modeColor = widget.showClaudeMode
+        ? scheme.primary
+        : scheme.onSurfaceVariant.withValues(alpha: 0.75);
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -179,6 +224,34 @@ class _CommandInputBarState extends State<CommandInputBar> {
                   ),
                 ),
                 const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: modeColor,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: modeColor.withValues(alpha: 0.28),
+                            blurRadius: 8,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      modeLabel,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: modeColor,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
                 Container(
                   constraints: const BoxConstraints(minHeight: 56),
                   decoration: BoxDecoration(
@@ -195,10 +268,14 @@ class _CommandInputBarState extends State<CommandInputBar> {
                         child: TextField(
                           controller: _controller,
                           focusNode: _focusNode,
+                          enabled: !_inputLocked,
+                          readOnly: _inputLocked,
+                          canRequestFocus: !_inputLocked,
                           minLines: 1,
                           maxLines: 6,
                           textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _submit(),
+                          onTap: _inputLocked ? () => _focusNode.unfocus() : null,
+                          onSubmitted: _inputLocked ? null : (_) => _submit(),
                           textAlignVertical: TextAlignVertical.center,
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                 height: 1.45,
@@ -218,6 +295,7 @@ class _CommandInputBarState extends State<CommandInputBar> {
                             border: InputBorder.none,
                             enabledBorder: InputBorder.none,
                             focusedBorder: InputBorder.none,
+                            disabledBorder: InputBorder.none,
                           ),
                         ),
                       ),
@@ -227,11 +305,15 @@ class _CommandInputBarState extends State<CommandInputBar> {
                           width: 42,
                           height: 42,
                           child: FilledButton(
-                            onPressed: _submit,
+                            onPressed: _inputLocked ? null : _submit,
                             style: FilledButton.styleFrom(
                               elevation: 0,
-                              backgroundColor: scheme.primary,
-                              foregroundColor: scheme.onPrimary,
+                              backgroundColor: _inputLocked
+                                  ? scheme.surfaceContainerHighest
+                                  : scheme.primary,
+                              foregroundColor: _inputLocked
+                                  ? scheme.onSurfaceVariant
+                                  : scheme.onPrimary,
                               padding: EdgeInsets.zero,
                               minimumSize: const Size(42, 42),
                               shape: RoundedRectangleBorder(

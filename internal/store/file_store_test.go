@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestFileStoreDeleteSessionRemovesRecordAndIndex(t *testing.T) {
@@ -74,6 +75,10 @@ func TestFileStorePersistsSessionContext(t *testing.T) {
 			EnabledSkillNames: []string{"review", "analyze"},
 			EnabledMemoryIDs:  []string{"m1", "m2"},
 		},
+		SkillCatalogMeta: CatalogMetadata{
+			SourceOfTruth: CatalogSourceTruthClaude,
+			SyncState:     CatalogSyncStateSynced,
+		},
 	})
 	if err != nil {
 		t.Fatalf("save projection: %v", err)
@@ -95,6 +100,38 @@ func TestFileStorePersistsSessionContext(t *testing.T) {
 	if len(record.Projection.SessionContext.EnabledMemoryIDs) != 2 || record.Projection.SessionContext.EnabledMemoryIDs[1] != "m2" {
 		t.Fatalf("unexpected enabled memories: %#v", record.Projection.SessionContext)
 	}
+	if record.Projection.SkillCatalogMeta.SyncState != CatalogSyncStateSynced {
+		t.Fatalf("expected skill catalog meta persisted, got %#v", record.Projection.SkillCatalogMeta)
+	}
+}
+
+func TestFileStoreReadsLegacySkillCatalogArray(t *testing.T) {
+	fs, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	legacy := `[
+	  {
+	    "name": "legacy-review",
+	    "description": "legacy",
+	    "prompt": "review it",
+	    "resultView": "review-card",
+	    "targetType": "diff"
+	  }
+	]`
+	if err := os.WriteFile(fs.skillCatalogPath, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("write legacy skill catalog: %v", err)
+	}
+	snapshot, err := fs.GetSkillCatalogSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("get skill snapshot: %v", err)
+	}
+	if snapshot.Meta.Domain != CatalogDomainSkill {
+		t.Fatalf("expected skill domain metadata, got %#v", snapshot.Meta)
+	}
+	if len(snapshot.Items) != 1 || snapshot.Items[0].Name != "legacy-review" {
+		t.Fatalf("unexpected legacy skill catalog items: %#v", snapshot.Items)
+	}
 }
 
 func TestFileStoreSkillAndMemoryCatalogRoundTrip(t *testing.T) {
@@ -102,38 +139,138 @@ func TestFileStoreSkillAndMemoryCatalogRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new file store: %v", err)
 	}
-	err = fs.SaveSkillCatalog(context.Background(), []SkillDefinition{{
-		Name:        "local-review",
-		Description: "desc",
-		Prompt:      "prompt",
-		ResultView:  "review-card",
-		TargetType:  "diff",
-		Source:      SkillSourceLocal,
-		Editable:    true,
-	}})
+	skillSyncedAt := mustTime("2026-03-25T10:00:00Z")
+	memorySyncedAt := mustTime("2026-03-25T11:00:00Z")
+	err = fs.SaveSkillCatalogSnapshot(context.Background(), SkillCatalogSnapshot{
+		Meta: CatalogMetadata{
+			Domain:        CatalogDomainSkill,
+			SourceOfTruth: CatalogSourceTruthClaude,
+			SyncState:     CatalogSyncStateSynced,
+			DriftDetected: false,
+			LastSyncedAt:  skillSyncedAt,
+			VersionToken:  "skill-v1",
+		},
+		Items: []SkillDefinition{{
+			Name:          "local-review",
+			Description:   "desc",
+			Prompt:        "prompt",
+			ResultView:    "review-card",
+			TargetType:    "diff",
+			Source:        SkillSourceLocal,
+			SourceOfTruth: CatalogSourceTruthClaude,
+			SyncState:     CatalogSyncStateDraft,
+			Editable:      true,
+			DriftDetected: true,
+			LastSyncedAt:  skillSyncedAt,
+		}},
+	})
 	if err != nil {
 		t.Fatalf("save skill catalog: %v", err)
 	}
-	err = fs.SaveMemoryCatalog(context.Background(), []MemoryItem{{
-		ID:      "mem-1",
-		Title:   "Memory 1",
-		Content: "content",
-	}})
+	err = fs.SaveMemoryCatalogSnapshot(context.Background(), MemoryCatalogSnapshot{
+		Meta: CatalogMetadata{
+			Domain:        CatalogDomainMemory,
+			SourceOfTruth: CatalogSourceTruthClaude,
+			SyncState:     CatalogSyncStateDraft,
+			DriftDetected: true,
+			LastSyncedAt:  memorySyncedAt,
+			VersionToken:  "memory-v1",
+		},
+		Items: []MemoryItem{{
+			ID:            "mem-1",
+			Title:         "Memory 1",
+			Content:       "content",
+			Source:        "local",
+			SourceOfTruth: CatalogSourceTruthClaude,
+			SyncState:     CatalogSyncStateSynced,
+			Editable:      true,
+			DriftDetected: false,
+			LastSyncedAt:  memorySyncedAt,
+		}},
+	})
 	if err != nil {
 		t.Fatalf("save memory catalog: %v", err)
 	}
-	skills, err := fs.ListSkillCatalog(context.Background())
+	skillSnapshot, err := fs.GetSkillCatalogSnapshot(context.Background())
 	if err != nil {
-		t.Fatalf("list skill catalog: %v", err)
+		t.Fatalf("get skill snapshot: %v", err)
 	}
-	if len(skills) != 1 || skills[0].Name != "local-review" {
-		t.Fatalf("unexpected skill catalog: %#v", skills)
+	if skillSnapshot.Meta.SyncState != CatalogSyncStateSynced || skillSnapshot.Meta.VersionToken != "skill-v1" {
+		t.Fatalf("unexpected skill snapshot meta: %#v", skillSnapshot.Meta)
 	}
-	memory, err := fs.ListMemoryCatalog(context.Background())
+	if len(skillSnapshot.Items) != 1 || skillSnapshot.Items[0].Name != "local-review" || skillSnapshot.Items[0].LastSyncedAt.IsZero() {
+		t.Fatalf("unexpected skill catalog: %#v", skillSnapshot.Items)
+	}
+	memorySnapshot, err := fs.GetMemoryCatalogSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("get memory snapshot: %v", err)
+	}
+	if memorySnapshot.Meta.SyncState != CatalogSyncStateDraft || !memorySnapshot.Meta.DriftDetected {
+		t.Fatalf("unexpected memory snapshot meta: %#v", memorySnapshot.Meta)
+	}
+	if len(memorySnapshot.Items) != 1 || memorySnapshot.Items[0].ID != "mem-1" || memorySnapshot.Items[0].SyncState != CatalogSyncStateSynced {
+		t.Fatalf("unexpected memory catalog: %#v", memorySnapshot.Items)
+	}
+}
+
+func TestFileStoreMemoryCatalogUpsertReadBackIncludesNewItem(t *testing.T) {
+	fs, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	updatedAt := mustTime("2026-03-25T12:00:00Z")
+	if err := fs.SaveMemoryCatalogSnapshot(context.Background(), MemoryCatalogSnapshot{
+		Meta: CatalogMetadata{Domain: CatalogDomainMemory},
+		Items: []MemoryItem{{
+			ID:        "mem-new",
+			Title:     "Remember",
+			Content:   "remember this",
+			Source:    "local",
+			Editable:  true,
+			UpdatedAt: updatedAt,
+		}},
+	}); err != nil {
+		t.Fatalf("save memory catalog snapshot: %v", err)
+	}
+	items, err := fs.ListMemoryCatalog(context.Background())
 	if err != nil {
 		t.Fatalf("list memory catalog: %v", err)
 	}
-	if len(memory) != 1 || memory[0].ID != "mem-1" {
-		t.Fatalf("unexpected memory catalog: %#v", memory)
+	if len(items) != 1 || items[0].ID != "mem-new" || items[0].Content != "remember this" {
+		t.Fatalf("unexpected memory items: %#v", items)
 	}
+}
+
+func TestFileStoreMemoryCatalogNormalizationDefaultsDomainAndSyncState(t *testing.T) {
+	fs, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	if err := fs.SaveMemoryCatalogSnapshot(context.Background(), MemoryCatalogSnapshot{
+		Meta: CatalogMetadata{},
+		Items: []MemoryItem{{ID: "mem-1", Title: "Memory 1", Content: "hello"}},
+	}); err != nil {
+		t.Fatalf("save memory catalog snapshot: %v", err)
+	}
+	snapshot, err := fs.GetMemoryCatalogSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("get memory snapshot: %v", err)
+	}
+	if snapshot.Meta.Domain != CatalogDomainMemory {
+		t.Fatalf("expected memory domain, got %#v", snapshot.Meta)
+	}
+	if snapshot.Meta.SyncState != CatalogSyncStateIdle {
+		t.Fatalf("expected idle sync state, got %#v", snapshot.Meta)
+	}
+	if len(snapshot.Items) != 1 || snapshot.Items[0].ID != "mem-1" {
+		t.Fatalf("unexpected memory snapshot items: %#v", snapshot.Items)
+	}
+}
+
+func mustTime(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		panic(err)
+	}
+	return parsed
 }

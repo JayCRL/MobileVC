@@ -7,6 +7,54 @@ import 'package:mobile_vc/features/files/file_viewer_sheet.dart';
 
 void main() {
   group('FileViewerSheet', () {
+    testWidgets('permission 场景下文件输入框禁用并提示先确认授权', (tester) async {
+      await tester.pumpWidget(
+        _buildTestApp(
+          pendingInteraction: _permissionInteraction(),
+          shouldShowPermissionChoices: true,
+        ),
+      );
+
+      final field = tester.widget<TextField>(
+        find.byKey(const ValueKey('fileViewer.input')),
+      );
+      final sendButton = tester.widget<IconButton>(
+        find.byKey(const ValueKey('fileViewer.sendButton')),
+      );
+
+      expect(field.enabled, isFalse);
+      expect(field.readOnly, isTrue);
+      expect(field.canRequestFocus, isFalse);
+      expect(field.decoration?.hintText, '请先在上方确认授权');
+      expect(sendButton.onPressed, isNull);
+    });
+
+    testWidgets('review 场景下文件输入框禁用并提示先完成审核', (tester) async {
+      await tester.pumpWidget(
+        _buildTestApp(
+          showReviewActions: true,
+          shouldShowReviewChoices: true,
+          reviewDiff: _reviewDiffs.first,
+          pendingDiffs: [_reviewDiffs.first],
+          reviewGroups: const [],
+          activeReviewDiffId: 'diff-1',
+        ),
+      );
+
+      final field = tester.widget<TextField>(
+        find.byKey(const ValueKey('fileViewer.input')),
+      );
+      final sendButton = tester.widget<IconButton>(
+        find.byKey(const ValueKey('fileViewer.sendButton')),
+      );
+
+      expect(field.enabled, isFalse);
+      expect(field.readOnly, isTrue);
+      expect(field.canRequestFocus, isFalse);
+      expect(field.decoration?.hintText, '请先在上方完成审核');
+      expect(sendButton.onPressed, isNull);
+    });
+
     testWidgets('仅有 pendingInteraction permission 时也显示权限按钮', (tester) async {
       String? submitted;
       await tester.pumpWidget(
@@ -23,6 +71,24 @@ void main() {
       await tester.pump();
 
       expect(submitted, 'y');
+    });
+
+    testWidgets('权限按钮点击后只透传权限值，不附带额外文本', (tester) async {
+      String? submitted;
+      String? filePrompt;
+      await tester.pumpWidget(
+        _buildTestApp(
+          pendingInteraction: _permissionInteraction(),
+          onSubmitPrompt: (value) => submitted = value,
+          onSendFilePrompt: (value) => filePrompt = value,
+        ),
+      );
+
+      await tester.tap(find.text('拒绝'));
+      await tester.pump();
+
+      expect(submitted, 'n');
+      expect(filePrompt, isNull);
     });
 
     testWidgets('review 场景优先显示 review 操作，不被权限栏覆盖', (tester) async {
@@ -67,7 +133,26 @@ void main() {
       expect(submitted, 'y');
     });
 
-    testWidgets('普通会话 prompt 下输入继续走文件上下文发送', (tester) async {
+    testWidgets('pendingInteraction permission 下输入走授权提交', (tester) async {
+      String? filePrompt;
+      String? submittedPrompt;
+      await tester.pumpWidget(
+        _buildTestApp(
+          pendingInteraction: _permissionInteraction(),
+          onSendFilePrompt: (value) => filePrompt = value,
+          onSubmitPrompt: (value) => submittedPrompt = value,
+        ),
+      );
+
+      await tester.enterText(find.byType(TextField), 'y');
+      await tester.tap(find.byIcon(Icons.send));
+      await tester.pump();
+
+      expect(submittedPrompt, 'y');
+      expect(filePrompt, isNull);
+    });
+
+    testWidgets('普通文件 prompt 仍走文件上下文发送', (tester) async {
       String? filePrompt;
       String? submittedPrompt;
       await tester.pumpWidget(
@@ -153,6 +238,7 @@ Widget _buildTestApp({
   ValueChanged<String>? onSubmitPrompt,
   bool showReviewActions = false,
   bool isDiffMode = false,
+  bool shouldShowPermissionChoices = false,
   bool shouldShowReviewChoices = false,
   HistoryContext? reviewDiff,
   List<HistoryContext> pendingDiffs = const [],
@@ -183,6 +269,7 @@ Widget _buildTestApp({
         activeReviewGroupId: activeReviewGroupId,
         activeReviewDiffId: activeReviewDiffId,
         isAutoAcceptMode: false,
+        shouldShowPermissionChoices: shouldShowPermissionChoices,
         shouldShowReviewChoices: shouldShowReviewChoices,
         pendingPrompt: pendingPrompt,
         pendingInteraction: pendingInteraction,

@@ -344,6 +344,36 @@ class SkillDefinition {
   final DateTime? updatedAt;
   final DateTime? lastSyncedAt;
 
+  SkillDefinition copyWith({
+    String? name,
+    String? description,
+    String? prompt,
+    String? resultView,
+    String? targetType,
+    String? source,
+    String? sourceOfTruth,
+    String? syncState,
+    bool? editable,
+    bool? driftDetected,
+    DateTime? updatedAt,
+    DateTime? lastSyncedAt,
+  }) {
+    return SkillDefinition(
+      name: name ?? this.name,
+      description: description ?? this.description,
+      prompt: prompt ?? this.prompt,
+      resultView: resultView ?? this.resultView,
+      targetType: targetType ?? this.targetType,
+      source: source ?? this.source,
+      sourceOfTruth: sourceOfTruth ?? this.sourceOfTruth,
+      syncState: syncState ?? this.syncState,
+      editable: editable ?? this.editable,
+      driftDetected: driftDetected ?? this.driftDetected,
+      updatedAt: updatedAt ?? this.updatedAt,
+      lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
+    );
+  }
+
   factory SkillDefinition.fromJson(Map<String, dynamic> json) {
     return SkillDefinition(
       name: (json['name'] ?? '').toString(),
@@ -386,6 +416,32 @@ class MemoryItem {
   final bool driftDetected;
   final DateTime? updatedAt;
   final DateTime? lastSyncedAt;
+
+  MemoryItem copyWith({
+    String? id,
+    String? title,
+    String? content,
+    String? source,
+    String? sourceOfTruth,
+    String? syncState,
+    bool? editable,
+    bool? driftDetected,
+    DateTime? updatedAt,
+    DateTime? lastSyncedAt,
+  }) {
+    return MemoryItem(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      content: content ?? this.content,
+      source: source ?? this.source,
+      sourceOfTruth: sourceOfTruth ?? this.sourceOfTruth,
+      syncState: syncState ?? this.syncState,
+      editable: editable ?? this.editable,
+      driftDetected: driftDetected ?? this.driftDetected,
+      updatedAt: updatedAt ?? this.updatedAt,
+      lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
+    );
+  }
 
   factory MemoryItem.fromJson(Map<String, dynamic> json) {
     return MemoryItem(
@@ -445,6 +501,16 @@ class SessionContext {
 
   final List<String> enabledSkillNames;
   final List<String> enabledMemoryIds;
+
+  SessionContext copyWith({
+    List<String>? enabledSkillNames,
+    List<String>? enabledMemoryIds,
+  }) {
+    return SessionContext(
+      enabledSkillNames: enabledSkillNames ?? this.enabledSkillNames,
+      enabledMemoryIds: enabledMemoryIds ?? this.enabledMemoryIds,
+    );
+  }
 
   factory SessionContext.fromJson(Map<String, dynamic> json) {
     return SessionContext(

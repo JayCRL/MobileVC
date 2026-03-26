@@ -8,28 +8,83 @@ import (
 
 type SkillSource string
 
+type CatalogDomain string
+
+type CatalogSyncState string
+
+type CatalogSourceOfTruth string
+
 const (
 	SkillSourceBuiltin  SkillSource = "builtin"
 	SkillSourceLocal    SkillSource = "local"
 	SkillSourceExternal SkillSource = "external"
 )
 
+const (
+	CatalogDomainSkill  CatalogDomain = "skill"
+	CatalogDomainMemory CatalogDomain = "memory"
+)
+
+const (
+	CatalogSyncStateIdle     CatalogSyncState = "idle"
+	CatalogSyncStateSyncing  CatalogSyncState = "syncing"
+	CatalogSyncStateSynced   CatalogSyncState = "synced"
+	CatalogSyncStateDrifted  CatalogSyncState = "drifted"
+	CatalogSyncStateDraft    CatalogSyncState = "draft"
+	CatalogSyncStateFailed   CatalogSyncState = "failed"
+)
+
+const (
+	CatalogSourceTruthLocalMirror CatalogSourceOfTruth = "mobilevc-mirror"
+	CatalogSourceTruthClaude      CatalogSourceOfTruth = "claude"
+)
+
+type CatalogMetadata struct {
+	Domain        CatalogDomain        `json:"domain,omitempty"`
+	SourceOfTruth CatalogSourceOfTruth `json:"sourceOfTruth,omitempty"`
+	SyncState     CatalogSyncState     `json:"syncState,omitempty"`
+	DriftDetected bool                 `json:"driftDetected,omitempty"`
+	LastSyncedAt  time.Time            `json:"lastSyncedAt,omitempty"`
+	VersionToken  string               `json:"versionToken,omitempty"`
+	LastError     string               `json:"lastError,omitempty"`
+}
+
 type SkillDefinition struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description,omitempty"`
-	Prompt      string      `json:"prompt,omitempty"`
-	ResultView  string      `json:"resultView,omitempty"`
-	TargetType  string      `json:"targetType,omitempty"`
-	Source      SkillSource `json:"source,omitempty"`
-	Editable    bool        `json:"editable,omitempty"`
-	UpdatedAt   time.Time   `json:"updatedAt,omitempty"`
+	Name          string               `json:"name"`
+	Description   string               `json:"description,omitempty"`
+	Prompt        string               `json:"prompt,omitempty"`
+	ResultView    string               `json:"resultView,omitempty"`
+	TargetType    string               `json:"targetType,omitempty"`
+	Source        SkillSource          `json:"source,omitempty"`
+	SourceOfTruth CatalogSourceOfTruth `json:"sourceOfTruth,omitempty"`
+	SyncState     CatalogSyncState     `json:"syncState,omitempty"`
+	Editable      bool                 `json:"editable,omitempty"`
+	DriftDetected bool                 `json:"driftDetected,omitempty"`
+	UpdatedAt     time.Time            `json:"updatedAt,omitempty"`
+	LastSyncedAt  time.Time            `json:"lastSyncedAt,omitempty"`
 }
 
 type MemoryItem struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Content   string    `json:"content"`
-	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+	ID            string               `json:"id"`
+	Title         string               `json:"title"`
+	Content       string               `json:"content"`
+	Source        string               `json:"source,omitempty"`
+	SourceOfTruth CatalogSourceOfTruth `json:"sourceOfTruth,omitempty"`
+	SyncState     CatalogSyncState     `json:"syncState,omitempty"`
+	Editable      bool                 `json:"editable,omitempty"`
+	DriftDetected bool                 `json:"driftDetected,omitempty"`
+	UpdatedAt     time.Time            `json:"updatedAt,omitempty"`
+	LastSyncedAt  time.Time            `json:"lastSyncedAt,omitempty"`
+}
+
+type SkillCatalogSnapshot struct {
+	Meta  CatalogMetadata   `json:"meta,omitempty"`
+	Items []SkillDefinition `json:"items,omitempty"`
+}
+
+type MemoryCatalogSnapshot struct {
+	Meta  CatalogMetadata `json:"meta,omitempty"`
+	Items []MemoryItem    `json:"items,omitempty"`
 }
 
 type SessionContext struct {
@@ -118,6 +173,8 @@ type ProjectionSnapshot struct {
 	Controller          session.ControllerSnapshot `json:"controller,omitempty"`
 	Runtime             SessionRuntime             `json:"runtime,omitempty"`
 	SessionContext      SessionContext             `json:"sessionContext,omitempty"`
+	SkillCatalogMeta    CatalogMetadata            `json:"skillCatalogMeta,omitempty"`
+	MemoryCatalogMeta   CatalogMetadata            `json:"memoryCatalogMeta,omitempty"`
 }
 
 type SessionRecord struct {
@@ -133,6 +190,10 @@ type Store interface {
 	DeleteSession(ctx context.Context, sessionID string) error
 	ListSkillCatalog(ctx context.Context) ([]SkillDefinition, error)
 	SaveSkillCatalog(ctx context.Context, items []SkillDefinition) error
+	GetSkillCatalogSnapshot(ctx context.Context) (SkillCatalogSnapshot, error)
+	SaveSkillCatalogSnapshot(ctx context.Context, snapshot SkillCatalogSnapshot) error
 	ListMemoryCatalog(ctx context.Context) ([]MemoryItem, error)
 	SaveMemoryCatalog(ctx context.Context, items []MemoryItem) error
+	GetMemoryCatalogSnapshot(ctx context.Context) (MemoryCatalogSnapshot, error)
+	SaveMemoryCatalogSnapshot(ctx context.Context, snapshot MemoryCatalogSnapshot) error
 }

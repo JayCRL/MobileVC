@@ -223,6 +223,27 @@ func TestBuildClaudePromptCommandIncludesResume(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeStreamJSONCommandIncludesStructuredIOFlags(t *testing.T) {
+	got := buildClaudeStreamJSONCommand("claude")
+	lower := strings.ToLower(got)
+	for _, expected := range []string{
+		"--output-format stream-json",
+		"--input-format stream-json",
+		"--permission-prompt-tool stdio",
+	} {
+		if !strings.Contains(lower, expected) {
+			t.Fatalf("expected %q in %q", expected, got)
+		}
+	}
+}
+
+func TestBuildClaudeStreamJSONCommandDoesNotDuplicatePermissionPromptTool(t *testing.T) {
+	got := buildClaudeStreamJSONCommand("claude --permission-prompt-tool stdio")
+	if strings.Count(strings.ToLower(got), "--permission-prompt-tool") != 1 {
+		t.Fatalf("expected single --permission-prompt-tool in %q", got)
+	}
+}
+
 func TestShellEnvironmentRemovesClaudeCodeForClaudeCommand(t *testing.T) {
 	const key = "CLAUDECODE"
 	old := os.Getenv(key)

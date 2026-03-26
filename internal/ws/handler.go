@@ -201,10 +201,41 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	emitAndPersistFor := func(sessionID string) func(any) {
 		return func(event any) {
-			emit(event)
-			snapshot, ok := applyEventToProjection(buildProjectionSnapshotFor(sessionID), event)
-			if ok {
-				persistProjectionFor(sessionID, snapshot)
+			switch e := event.(type) {
+			case protocol.CatalogAuthoringResultEvent:
+				if e.Domain == "skill" {
+					if e.Skill == nil {
+						emit(protocol.NewErrorEvent(sessionID, "catalog authoring 缺少 skill payload", ""))
+						return
+					}
+					if err := upsertLocalSkill(h.SessionStore, ctx, *e.Skill); err != nil {
+						emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+						return
+					}
+					h.SkillLauncher = skills.NewLauncher(h.SessionStore)
+					emitSkillCatalogResult(emit, h.SessionStore, ctx, sessionID)
+					return
+				}
+				if e.Domain == "memory" {
+					if e.Memory == nil {
+						emit(protocol.NewErrorEvent(sessionID, "catalog authoring 缺少 memory payload", ""))
+						return
+					}
+					if err := upsertMemoryItem(h.SessionStore, ctx, *e.Memory); err != nil {
+						emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+						return
+					}
+					emitMemoryListResult(emit, h.SessionStore, ctx, sessionID)
+					return
+				}
+				emit(protocol.NewErrorEvent(sessionID, "未知 catalog authoring domain", ""))
+				return
+			default:
+				emit(event)
+				snapshot, ok := applyEventToProjection(buildProjectionSnapshotFor(sessionID), event)
+				if ok {
+					persistProjectionFor(sessionID, snapshot)
+				}
 			}
 		}
 	}
@@ -449,6 +480,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			emit(protocol.NewCatalogSyncResultEvent(selectedSessionID, string(store.CatalogDomainSkill), true, "skill 同步完成", toProtocolCatalogMetadata(updatedSnapshot.Meta)))
 			emitSkillCatalogResult(emit, h.SessionStore, ctx, selectedSessionID)
 		case "memory_list":
+			emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
+		case "memory_sync_pull":
+			if h.SessionStore == nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
+				continue
+			}
+			snapshot, err := h.SessionStore.GetMemoryCatalogSnapshot(ctx)
+			if err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+			snapshot.Meta.SyncState = store.CatalogSyncStateSyncing
+			snapshot.Meta.LastError = ""
+			if err := h.SessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			emit(protocol.NewCatalogSyncStatusEvent(selectedSessionID, string(store.CatalogDomainMemory), toProtocolCatalogMetadata(snapshot.Meta)))
+			if err := syncExternalMemories(h.SessionStore, ctx); err != nil {
+				snapshot.Meta.SyncState = store.CatalogSyncStateFailed
+				snapshot.Meta.LastError = err.Error()
+				_ = h.SessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot)
+				emit(protocol.NewCatalogSyncResultEvent(selectedSessionID, string(store.CatalogDomainMemory), false, err.Error(), toProtocolCatalogMetadata(snapshot.Meta)))
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			updatedSnapshot, err := h.SessionStore.GetMemoryCatalogSnapshot(ctx)
+			if err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			emit(protocol.NewCatalogSyncResultEvent(selectedSessionID, string(store.CatalogDomainMemory), true, "memory 同步完成", toProtocolCatalogMetadata(updatedSnapshot.Meta)))
 			emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
 		case "memory_upsert":
 			var req protocol.MemoryRequestEvent
@@ -1199,6 +1263,7 @@ func upsertMemoryItem(sessionStore store.Store, ctx context.Context, item protoc
 	if err != nil {
 		return err
 	}
+	now := time.Now().UTC()
 	next := store.MemoryItem{
 		ID:            strings.TrimSpace(item.ID),
 		Title:         strings.TrimSpace(item.Title),
@@ -1208,10 +1273,10 @@ func upsertMemoryItem(sessionStore store.Store, ctx context.Context, item protoc
 		SyncState:     store.CatalogSyncStateDraft,
 		Editable:      true,
 		DriftDetected: true,
-		UpdatedAt:     time.Now().UTC(),
+		UpdatedAt:     now,
 	}
 	if next.ID == "" {
-		next.ID = fmt.Sprintf("memory-%d", time.Now().UTC().UnixNano())
+		next.ID = fmt.Sprintf("memory-%d", now.UnixNano())
 	}
 	if next.Title == "" {
 		return fmt.Errorf("memory title is required")
@@ -1219,6 +1284,7 @@ func upsertMemoryItem(sessionStore store.Store, ctx context.Context, item protoc
 	found := false
 	for i := range snapshot.Items {
 		if snapshot.Items[i].ID == next.ID {
+			next.LastSyncedAt = snapshot.Items[i].LastSyncedAt
 			snapshot.Items[i] = next
 			found = true
 			break
@@ -1231,6 +1297,35 @@ func upsertMemoryItem(sessionStore store.Store, ctx context.Context, item protoc
 	snapshot.Meta.SyncState = store.CatalogSyncStateDraft
 	snapshot.Meta.DriftDetected = true
 	snapshot.Meta.LastError = ""
+	return sessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot)
+}
+
+func syncExternalMemories(sessionStore store.Store, ctx context.Context) error {
+	if sessionStore == nil {
+		return fmt.Errorf("session store unavailable")
+	}
+	snapshot, err := sessionStore.GetMemoryCatalogSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	filtered := make([]store.MemoryItem, 0, len(snapshot.Items))
+	for _, item := range snapshot.Items {
+		if item.Source == "local" {
+			item.SourceOfTruth = store.CatalogSourceTruthClaude
+			item.SyncState = store.CatalogSyncStateDraft
+			item.Editable = true
+			item.DriftDetected = true
+			filtered = append(filtered, item)
+		}
+	}
+	snapshot.Items = filtered
+	snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+	snapshot.Meta.SyncState = store.CatalogSyncStateSynced
+	snapshot.Meta.DriftDetected = false
+	snapshot.Meta.LastSyncedAt = now
+	snapshot.Meta.LastError = ""
+	snapshot.Meta.VersionToken = fmt.Sprintf("memory-%d", now.UnixNano())
 	return sessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot)
 }
 

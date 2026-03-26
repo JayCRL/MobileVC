@@ -51,6 +51,7 @@ type PtyRunner struct {
 	lastToolName            string
 	lastToolTarget          string
 	fileSnapshots           map[string]fileSnapshot
+	catalogAuthoringBuffer  strings.Builder
 }
 
 type fileSnapshot struct {
@@ -402,6 +403,7 @@ func (r *PtyRunner) clear() {
 	r.lastToolName = ""
 	r.lastToolTarget = ""
 	r.fileSnapshots = nil
+	r.catalogAuthoringBuffer.Reset()
 	r.lazyStart = false
 	r.interactive = false
 	r.awaitingReadyPrompt = false
@@ -1146,6 +1148,23 @@ type claudeStreamEnvelope struct {
 	} `json:"message"`
 }
 
+type claudeCatalogAuthoringPayload struct {
+	MobileVCCatalogAuthoring bool   `json:"mobilevcCatalogAuthoring"`
+	Kind                     string `json:"kind"`
+	Skill                    struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Prompt      string `json:"prompt"`
+		TargetType  string `json:"targetType"`
+		ResultView  string `json:"resultView"`
+	} `json:"skill,omitempty"`
+	Memory struct {
+		ID      string `json:"id"`
+		Title   string `json:"title"`
+		Content string `json:"content"`
+	} `json:"memory,omitempty"`
+}
+
 func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, sessionID string, sink EventSink) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), scannerMaxTokenSize)
@@ -1213,6 +1232,7 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 					sendEvent(sink, protocol.NewStepUpdateEvent(sessionID, block.Name, "running", target, block.Name, ""))
 				case "text":
 					if text := strings.TrimSpace(block.Text); text != "" {
+						r.tryEmitCatalogAuthoringResult(sessionID, text, sink)
 						isPrompt, options, reason := ptyPromptDebugDecision(text)
 						ptyLogPromptClassification(sessionID, "readClaudeStreamJSON", "assistant_text", text, isPrompt, options, "assistant_text_"+reason)
 						var event any = protocol.NewLogEvent(sessionID, text, "stdout")
@@ -1259,6 +1279,7 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		case "result":
 			if text := strings.TrimSpace(envelope.Result); text != "" {
 				logx.Info("pty", "claude result text: sessionID=%s preview=%q", sessionID, ptyDebugPreview(text))
+				r.tryEmitCatalogAuthoringResult(sessionID, text, sink)
 				sendEvent(sink, protocol.ApplyRuntimeMeta(
 					protocol.NewLogEvent(sessionID, text, "stdout"),
 					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
@@ -1279,6 +1300,80 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		}
 		sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read claude stream: %v", err), ""))
 	}
+}
+
+func (r *PtyRunner) tryEmitCatalogAuthoringResult(sessionID, text string, sink EventSink) {
+	if strings.TrimSpace(r.pendingReq.Source) != "catalog-authoring" {
+		return
+	}
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return
+	}
+
+	r.mu.Lock()
+	if r.catalogAuthoringBuffer.Len() > 0 {
+		r.catalogAuthoringBuffer.WriteByte('\n')
+	}
+	r.catalogAuthoringBuffer.WriteString(trimmed)
+	combined := strings.TrimSpace(r.catalogAuthoringBuffer.String())
+	r.mu.Unlock()
+
+	payload, ok := parseCatalogAuthoringPayload(combined)
+	if !ok {
+		return
+	}
+
+	var event any
+	switch payload.Kind {
+	case "skill":
+		skill := &protocol.SkillDefinition{
+			Name:        strings.TrimSpace(payload.Skill.Name),
+			Description: strings.TrimSpace(payload.Skill.Description),
+			Prompt:      strings.TrimSpace(payload.Skill.Prompt),
+			TargetType:  strings.TrimSpace(payload.Skill.TargetType),
+			ResultView:  strings.TrimSpace(payload.Skill.ResultView),
+		}
+		event = protocol.NewCatalogAuthoringResultEvent(sessionID, "skill", "", skill, nil)
+	case "memory":
+		memory := &protocol.MemoryItem{
+			ID:      strings.TrimSpace(payload.Memory.ID),
+			Title:   strings.TrimSpace(payload.Memory.Title),
+			Content: strings.TrimSpace(payload.Memory.Content),
+		}
+		event = protocol.NewCatalogAuthoringResultEvent(sessionID, "memory", "", nil, memory)
+	default:
+		return
+	}
+
+	r.mu.Lock()
+	r.catalogAuthoringBuffer.Reset()
+	meta := r.pendingReq.RuntimeMeta
+	r.mu.Unlock()
+	sendEvent(sink, protocol.ApplyRuntimeMeta(event, meta))
+}
+
+func parseCatalogAuthoringPayload(text string) (claudeCatalogAuthoringPayload, bool) {
+	var payload claudeCatalogAuthoringPayload
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		return claudeCatalogAuthoringPayload{}, false
+	}
+	if !payload.MobileVCCatalogAuthoring {
+		return claudeCatalogAuthoringPayload{}, false
+	}
+	switch strings.TrimSpace(payload.Kind) {
+	case "skill":
+		if strings.TrimSpace(payload.Skill.Name) == "" || strings.TrimSpace(payload.Skill.Prompt) == "" {
+			return claudeCatalogAuthoringPayload{}, false
+		}
+	case "memory":
+		if strings.TrimSpace(payload.Memory.Title) == "" || strings.TrimSpace(payload.Memory.Content) == "" {
+			return claudeCatalogAuthoringPayload{}, false
+		}
+	default:
+		return claudeCatalogAuthoringPayload{}, false
+	}
+	return payload, true
 }
 
 func parseClaudeToolUseResult(raw json.RawMessage) (targetPath string, message string, ok bool) {
