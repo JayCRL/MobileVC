@@ -20,29 +20,62 @@ import (
 )
 
 type stubRunner struct {
-	mu                 sync.Mutex
-	events             []any
-	writeCh            chan []byte
-	writeErr           error
-	holdOpen           bool
-	lastPermissionMode string
-	permissionModes    []string
+	mu                        sync.Mutex
+	events                    []any
+	writeCh                   chan []byte
+	writeErr                  error
+	holdOpen                  bool
+	interactive               bool
+	started                   chan struct{}
+	lastPermissionMode        string
+	permissionModes           []string
+	onStart                   func()
+	hasPendingPermission      bool
+	permissionResponseErr     error
+	permissionResponseWriteCh chan string
+	claudeSessionID           string
+	lastReq                   runner.ExecRequest
+	closedCh                  chan struct{}
 }
 
 func newStubRunner(events ...any) *stubRunner {
 	return &stubRunner{
-		events:  events,
-		writeCh: make(chan []byte, 8),
+		events:                    events,
+		writeCh:                   make(chan []byte, 8),
+		started:                   make(chan struct{}),
+		permissionResponseWriteCh: make(chan string, 8),
+		closedCh:                  make(chan struct{}, 1),
 	}
 }
 
 func newHoldingStubRunner(events ...any) *stubRunner {
 	runner := newStubRunner(events...)
 	runner.holdOpen = true
+	runner.interactive = true
+	runner.hasPendingPermission = true
+	return runner
+}
+
+func newNonInteractiveHoldingStubRunner(events ...any) *stubRunner {
+	runner := newStubRunner(events...)
+	runner.holdOpen = true
+	runner.interactive = false
+	runner.hasPendingPermission = true
 	return runner
 }
 
 func (s *stubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
+	s.mu.Lock()
+	s.lastReq = req
+	s.mu.Unlock()
+	select {
+	case <-s.started:
+	default:
+		close(s.started)
+	}
+	if s.onStart != nil {
+		s.onStart()
+	}
 	for _, event := range s.events {
 		sink(event)
 	}
@@ -66,6 +99,10 @@ func (s *stubRunner) Write(ctx context.Context, data []byte) error {
 }
 
 func (s *stubRunner) Close() error {
+	select {
+	case s.closedCh <- struct{}{}:
+	default:
+	}
 	return nil
 }
 
@@ -74,6 +111,85 @@ func (s *stubRunner) SetPermissionMode(mode string) {
 	defer s.mu.Unlock()
 	s.lastPermissionMode = mode
 	s.permissionModes = append(s.permissionModes, mode)
+}
+
+func (s *stubRunner) CanAcceptInteractiveInput() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.interactive
+}
+
+func (s *stubRunner) HasPendingPermissionRequest() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hasPendingPermission
+}
+
+func (s *stubRunner) WritePermissionResponse(ctx context.Context, decision string) error {
+	if s.permissionResponseErr != nil {
+		return s.permissionResponseErr
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.permissionResponseWriteCh <- decision:
+		s.mu.Lock()
+		s.hasPendingPermission = false
+		s.mu.Unlock()
+		return nil
+	}
+}
+
+func (s *stubRunner) WaitStarted(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not start")
+	}
+}
+
+func (s *stubRunner) WaitClosed(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.closedCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner was not closed")
+	}
+}
+
+func (s *stubRunner) ClaudeSessionID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.claudeSessionID
+}
+
+type writeOnlyStubRunner struct {
+	base *stubRunner
+}
+
+func (s *writeOnlyStubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
+	return s.base.Run(ctx, req, sink)
+}
+
+func (s *writeOnlyStubRunner) Write(ctx context.Context, data []byte) error {
+	return s.base.Write(ctx, data)
+}
+
+func (s *writeOnlyStubRunner) Close() error {
+	return s.base.Close()
+}
+
+func (s *writeOnlyStubRunner) SetPermissionMode(mode string) {
+	s.base.SetPermissionMode(mode)
+}
+
+func (s *writeOnlyStubRunner) CanAcceptInteractiveInput() bool {
+	return s.base.CanAcceptInteractiveInput()
+}
+
+func (s *writeOnlyStubRunner) WaitStarted(t *testing.T) {
+	s.base.WaitStarted(t)
 }
 
 func newTestHandler() *Handler {
@@ -174,6 +290,10 @@ func (s *switchableStubRunner) Close() error {
 		close(s.closed)
 	}
 	return nil
+}
+
+func (s *switchableStubRunner) CanAcceptInteractiveInput() bool {
+	return true
 }
 
 func (s *switchableStubRunner) Emit(event any) {
@@ -355,10 +475,21 @@ func TestHandlerSkillCatalogLifecycle(t *testing.T) {
 	if syncEvent["msg"] != "skill 同步完成" {
 		t.Fatalf("unexpected skill sync event: %#v", syncEvent)
 	}
+	syncResult := readUntilType(t, conn, protocol.EventTypeCatalogSyncResult)
+	if syncResult["domain"] != "skill" || syncResult["success"] != true {
+		t.Fatalf("unexpected catalog sync result: %#v", syncResult)
+	}
 	syncedCatalog := readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
 	syncedItems, ok := syncedCatalog["items"].([]any)
 	if !ok {
 		t.Fatalf("expected synced skill catalog items, got %#v", syncedCatalog)
+	}
+	meta, ok := syncedCatalog["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected skill catalog meta, got %#v", syncedCatalog)
+	}
+	if meta["syncState"] != string(store.CatalogSyncStateSynced) || meta["sourceOfTruth"] != string(store.CatalogSourceTruthClaude) {
+		t.Fatalf("unexpected skill catalog meta: %#v", meta)
 	}
 	foundExternal := false
 	for _, raw := range syncedItems {
@@ -367,6 +498,9 @@ func TestHandlerSkillCatalogLifecycle(t *testing.T) {
 			foundExternal = true
 			if item["source"] != string(store.SkillSourceExternal) {
 				t.Fatalf("expected external source, got %#v", item)
+			}
+			if item["syncState"] != string(store.CatalogSyncStateSynced) {
+				t.Fatalf("expected synced item state, got %#v", item)
 			}
 		}
 	}
@@ -406,12 +540,251 @@ func TestHandlerMemoryListAndUpsert(t *testing.T) {
 	}
 	upsertEvent := readUntilType(t, conn, protocol.EventTypeMemoryListResult)
 	upsertItems, ok := upsertEvent["items"].([]any)
-	if !ok || len(upsertItems) != 1 {
-		t.Fatalf("expected one memory item, got %#v", upsertEvent)
+	if !ok {
+		t.Fatalf("expected memory items array after upsert, got %#v", upsertEvent)
 	}
-	first, _ := upsertItems[0].(map[string]any)
-	if first["id"] != "m-test" || first["title"] != "Test Memory" {
-		t.Fatalf("unexpected memory item: %#v", first)
+	if len(upsertItems) != 1 {
+		t.Fatalf("expected one memory item after upsert, got %#v", upsertItems)
+	}
+	item, _ := upsertItems[0].(map[string]any)
+	if item["id"] != "m-test" || item["content"] != "remember this" {
+		t.Fatalf("unexpected memory item payload: %#v", item)
+	}
+	persisted, err := tempStore.ListMemoryCatalog(context.Background())
+	if err != nil {
+		t.Fatalf("list persisted memory catalog: %v", err)
+	}
+	if len(persisted) != 1 || persisted[0].ID != "m-test" {
+		t.Fatalf("unexpected persisted memory items: %#v", persisted)
+	}
+}
+
+func TestHandlerPermissionDecisionWithoutActiveClaudeRunnerDoesNotResumeLoop(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	runnerStub := newStubRunner()
+	h.NewPtyRunner = func() runner.Runner { return runnerStub }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "permission-session")
+
+	if _, err := tempStore.SaveProjection(context.Background(), sessionID, store.ProjectionSnapshot{
+		RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+		Runtime: store.SessionRuntime{
+			Command:         "bash",
+			ResumeSessionID: "resume-123",
+			PermissionMode:  "default",
+			CWD:             "/workspace",
+		},
+	}); err != nil {
+		t.Fatalf("save projection: %v", err)
+	}
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:     protocol.ClientEvent{Action: "permission_decision"},
+		Decision:        "approve",
+		PermissionMode:  "default",
+		ResumeSessionID: "resume-123",
+		PromptMessage:   "Allow write?",
+		FallbackCommand: "bash",
+		FallbackCWD:     "/workspace",
+	}); err != nil {
+		t.Fatalf("write permission_decision request: %v", err)
+	}
+
+	errorEvent := readUntilType(t, conn, protocol.EventTypeError)
+	msg, _ := errorEvent["msg"].(string)
+	if msg != "当前没有可交互的 Claude 会话，无法继续处理该权限请求" {
+		t.Fatalf("unexpected error event: %#v", errorEvent)
+	}
+	select {
+	case data := <-runnerStub.writeCh:
+		t.Fatalf("expected no permission input replay, got %q", string(data))
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestHandlerInitialConnectionDoesNotTreatConnectionIDAsSession(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	first, second := readInitialEvents(t, conn)
+	requireEventType(t, first, protocol.EventTypeSessionState)
+	requireAgentState(t, second, "IDLE", false)
+	if sessionID, _ := first["sessionId"].(string); sessionID != "" {
+		t.Fatalf("expected empty initial session id, got %#v", first)
+	}
+	for i := 0; i < 3; i++ {
+		event := readEventMap(t, conn)
+		if event["type"] == protocol.EventTypeError {
+			msg, _ := event["msg"].(string)
+			if strings.Contains(msg, "session not found: conn-") {
+				t.Fatalf("unexpected connection-id session lookup error: %#v", event)
+			}
+		}
+	}
+}
+
+func TestHandlerSessionContextGetWithoutSelectedSessionReturnsEmptyResult(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	_ = readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "session_context_get"}); err != nil {
+		t.Fatalf("write session_context_get request: %v", err)
+	}
+	event := readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+	ctx, ok := event["sessionContext"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sessionContext payload, got %#v", event)
+	}
+	if len(ctx) != 0 {
+		t.Fatalf("expected empty session context, got %#v", ctx)
+	}
+}
+
+func TestHandlerSessionContextUpdateWithoutSelectedSessionReturnsError(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	_ = readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	if err := conn.WriteJSON(protocol.SessionContextUpdateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_context_update"}, EnabledSkillNames: []string{"review"}}); err != nil {
+		t.Fatalf("write session_context_update request: %v", err)
+	}
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	msg, _ := event["msg"].(string)
+	if !strings.Contains(msg, "请先创建或加载会话") {
+		t.Fatalf("expected explicit no-session error, got %#v", event)
+	}
+}
+
+func TestHandlerExecWithoutSelectedSessionReturnsError(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	_ = readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	msg, _ := event["msg"].(string)
+	if !strings.Contains(msg, "请先创建或加载会话") {
+		t.Fatalf("expected explicit no-session error, got %#v", event)
+	}
+	items, err := tempStore.ListSessions(context.Background())
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no projection/session writes, got %#v", items)
+	}
+}
+
+func TestHandlerInputWithoutSelectedSessionReturnsError(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	_ = readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        "hello\n",
+	}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	msg, _ := event["msg"].(string)
+	if !strings.Contains(msg, "请先创建或加载会话") {
+		t.Fatalf("expected explicit no-session error, got %#v", event)
+	}
+	items, err := tempStore.ListSessions(context.Background())
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no projection/session writes, got %#v", items)
+	}
+}
+
+func TestHandlerDeleteCurrentSessionFallsBackToEmptyState(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	_ = readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "only-session")
+	if err := conn.WriteJSON(protocol.SessionDeleteRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_delete"}, SessionID: sessionID}); err != nil {
+		t.Fatalf("write session_delete request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	event := readUntilType(t, conn, protocol.EventTypeSessionState)
+	if sessionValue, _ := event["sessionId"].(string); sessionValue != "" {
+		t.Fatalf("expected empty session after delete fallback, got %#v", event)
+	}
+	if state, _ := event["state"].(string); state != string(session.StateActive) {
+		t.Fatalf("expected active empty state, got %#v", event)
+	}
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request after delete: %v", err)
+	}
+	guardEvent := readUntilType(t, conn, protocol.EventTypeError)
+	msg, _ := guardEvent["msg"].(string)
+	if !strings.Contains(msg, "请先创建或加载会话") {
+		t.Fatalf("expected explicit no-session error after delete fallback, got %#v", guardEvent)
 	}
 }
 
@@ -465,6 +838,9 @@ func TestHandlerSessionContextGetUpdateAndRestore(t *testing.T) {
 	}
 	if len(record.Projection.SessionContext.EnabledSkillNames) != 2 || len(record.Projection.SessionContext.EnabledMemoryIDs) != 2 {
 		t.Fatalf("unexpected persisted session context: %#v", record.Projection.SessionContext)
+	}
+	if record.Projection.SkillCatalogMeta.SyncState != store.CatalogSyncStateIdle || record.Projection.MemoryCatalogMeta.SyncState != store.CatalogSyncStateIdle {
+		t.Fatalf("session context update should preserve catalog sync state defaults: %#v %#v", record.Projection.SkillCatalogMeta, record.Projection.MemoryCatalogMeta)
 	}
 
 	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_load"}, SessionID: sessionID}); err != nil {
@@ -535,6 +911,9 @@ func TestHandlerSessionContextUpdateAndRestore(t *testing.T) {
 	}
 	if len(record.Projection.SessionContext.EnabledSkillNames) != 2 || len(record.Projection.SessionContext.EnabledMemoryIDs) != 2 {
 		t.Fatalf("unexpected persisted session context: %#v", record.Projection.SessionContext)
+	}
+	if record.Projection.SkillCatalogMeta.SyncState != store.CatalogSyncStateIdle || record.Projection.MemoryCatalogMeta.SyncState != store.CatalogSyncStateIdle {
+		t.Fatalf("session context update should preserve catalog sync state defaults: %#v %#v", record.Projection.SkillCatalogMeta, record.Projection.MemoryCatalogMeta)
 	}
 
 	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_load"}, SessionID: sessionID}); err != nil {
@@ -617,12 +996,18 @@ func TestHandlerExecFlow(t *testing.T) {
 	)
 
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewExecRunner = func() runner.Runner { return execRunner }
 
 	conn := newTestConn(t, h)
 	first, second := readInitialEvents(t, conn)
 	requireEventType(t, first, protocol.EventTypeSessionState)
 	requireAgentState(t, second, "IDLE", false)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "exec-flow")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "exec"},
@@ -682,11 +1067,11 @@ func TestApplyReviewDecisionToProjectionUpdatesReviewState(t *testing.T) {
 		}},
 	})
 	snapshot = applyReviewDecisionToProjection(snapshot, protocol.ReviewDecisionRequestEvent{
-		Decision:   "accept",
-		ContextID:  "diff-1",
-		TargetPath: "internal/ws/handler.go",
+		Decision:    "accept",
+		ContextID:   "diff-1",
+		TargetPath:  "internal/ws/handler.go",
 		ExecutionID: "exec-1",
-		GroupID:    "group-1",
+		GroupID:     "group-1",
 	}, "accept", session.DiffContext{})
 	if len(snapshot.ReviewGroups) != 1 {
 		t.Fatalf("expected one review group, got %#v", snapshot.ReviewGroups)
@@ -804,10 +1189,16 @@ func TestHandlerPtyInputFlow(t *testing.T) {
 	)
 
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "pty-input-flow")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "exec"},
@@ -847,10 +1238,16 @@ func TestHandlerEmitsAgentStateForToolEventsAndFinish(t *testing.T) {
 	)
 
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "tool-events")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "exec"},
@@ -878,10 +1275,16 @@ func TestHandlerClaudeSessionStartsInWaitInput(t *testing.T) {
 	)
 
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "claude-wait-input")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "exec"},
@@ -896,8 +1299,87 @@ func TestHandlerClaudeSessionStartsInWaitInput(t *testing.T) {
 	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
 }
 
+func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
+	firstRunner := newHoldingStubRunner(protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
+		protocol.RuntimeMeta{ResumeSessionID: "resume-input-123"},
+	))
+	firstRunner.claudeSessionID = "resume-input-123"
+	secondRunner := newHoldingStubRunner()
+	runnerIndex := 0
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner {
+		runnerIndex++
+		if runnerIndex == 1 {
+			return firstRunner
+		}
+		return secondRunner
+	}
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "input-restore-safe")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty", PermissionMode: "default"}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "请创建 README.md 并写入 hello\n"}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+	select {
+	case payload := <-firstRunner.writeCh:
+		if string(payload) != "请创建 README.md 并写入 hello\n" {
+			t.Fatalf("unexpected initial input payload: %q", string(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive initial input payload")
+	}
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{ClientEvent: protocol.ClientEvent{Action: "permission_decision"}, Decision: "approve", PermissionMode: "default", TargetPath: "README.md", PromptMessage: "写 README 需要你的授权"}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+	firstRunner.WaitClosed(t)
+	secondRunner.WaitStarted(t)
+	select {
+	case payload := <-secondRunner.writeCh:
+		if got := string(payload); got != hotSwapApproveContinuation(protocol.PermissionDecisionRequestEvent{Decision: "approve", TargetPath: "README.md", PromptMessage: "写 README 需要你的授权"}) {
+			t.Fatalf("unexpected continuation payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive continuation payload")
+	}
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "next\n"}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+	select {
+	case payload := <-secondRunner.writeCh:
+		if string(payload) != "next\n" {
+			t.Fatalf("unexpected restored input payload: %q", string(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive restored input payload")
+	}
+	if secondRunner.lastReq.PermissionMode != "default" {
+		t.Fatalf("expected default permission mode after restore, got %#v", secondRunner.lastReq)
+	}
+}
+
 func TestHandlerInputWithoutRunner(t *testing.T) {
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	server := httptest.NewServer(h)
 	defer server.Close()
 
@@ -918,6 +1400,7 @@ func TestHandlerInputWithoutRunner(t *testing.T) {
 	if err := conn.ReadJSON(&initialAgent); err != nil {
 		t.Fatalf("read initial agent event: %v", err)
 	}
+	_ = createHistorySessionForHandlerTest(t, h, conn, "input-without-runner")
 
 	if err := conn.WriteJSON(protocol.InputRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "input"},
@@ -945,6 +1428,11 @@ func TestHandlerInputRejectedForExecRunner(t *testing.T) {
 	execRunner.writeErr = runner.ErrInputNotSupported
 
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewExecRunner = func() runner.Runner { return execRunner }
 
 	server := httptest.NewServer(h)
@@ -963,6 +1451,7 @@ func TestHandlerInputRejectedForExecRunner(t *testing.T) {
 	if err := conn.ReadJSON(&initial); err != nil {
 		t.Fatalf("read initial event: %v", err)
 	}
+	_ = createHistorySessionForHandlerTest(t, h, conn, "input-exec-runner")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "exec"},
@@ -1004,6 +1493,11 @@ func TestHandlerRecoversRunnerPanicAndReturnsErrorEvent(t *testing.T) {
 	defer log.SetFlags(originalFlags)
 
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.Upgrader = websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
@@ -1017,6 +1511,7 @@ func TestHandlerRecoversRunnerPanicAndReturnsErrorEvent(t *testing.T) {
 
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "panic-runner")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "exec"},
@@ -1162,6 +1657,11 @@ func TestHandlerUnknownAction(t *testing.T) {
 
 func TestHandlerUnknownMode(t *testing.T) {
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	server := httptest.NewServer(h)
 	defer server.Close()
 
@@ -1178,6 +1678,15 @@ func TestHandlerUnknownMode(t *testing.T) {
 	if err := conn.ReadJSON(&initial); err != nil {
 		t.Fatalf("read initial event: %v", err)
 	}
+	var initialAgent map[string]any
+	if err := conn.ReadJSON(&initialAgent); err != nil {
+		t.Fatalf("read initial agent event: %v", err)
+	}
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_create"}, Title: "unknown-mode"}); err != nil {
+		t.Fatalf("write session create request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionCreated)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "exec"},
@@ -1201,12 +1710,27 @@ func TestHandlerUnknownMode(t *testing.T) {
 	}
 }
 
-func TestHandlerPermissionDecisionApproveSendsRecoveryPromptToRunner(t *testing.T) {
-	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
+func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
+	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
+	firstRunner.claudeSessionID = "resume-approve-123"
+	secondRunner := newHoldingStubRunner()
 	h := newTestHandler()
-	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	runnerIndex := 0
+	h.NewPtyRunner = func() runner.Runner {
+		runnerIndex++
+		if runnerIndex == 1 {
+			return firstRunner
+		}
+		return secondRunner
+	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-approve")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "exec"},
@@ -1216,12 +1740,24 @@ func TestHandlerPermissionDecisionApproveSendsRecoveryPromptToRunner(t *testing.
 	}); err != nil {
 		t.Fatalf("write exec request: %v", err)
 	}
-	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	firstRunner.WaitStarted(t)
 	prompt := readUntilType(t, conn, protocol.EventTypePromptRequest)
 	if prompt["msg"] != "写 README 需要你的授权" {
 		t.Fatalf("unexpected prompt event: %#v", prompt)
 	}
 	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "请创建 README.md 并写入 hello\n"}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+	select {
+	case payload := <-firstRunner.writeCh:
+		if string(payload) != "请创建 README.md 并写入 hello\n" {
+			t.Fatalf("unexpected initial input payload: %q", string(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive initial input payload")
+	}
 
 	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
@@ -1234,37 +1770,66 @@ func TestHandlerPermissionDecisionApproveSendsRecoveryPromptToRunner(t *testing.
 		t.Fatalf("write permission decision request: %v", err)
 	}
 
+	firstRunner.WaitClosed(t)
+	secondRunner.WaitStarted(t)
 	select {
-	case payload := <-ptyRunner.writeCh:
-		got := string(payload)
-		if !strings.Contains(got, "用户已批准刚才请求的文件修改/写入权限") {
-			t.Fatalf("unexpected permission payload: %q", got)
-		}
-		if !strings.Contains(got, "TargetPath: README.md") {
-			t.Fatalf("expected target path in payload: %q", got)
+	case payload := <-secondRunner.writeCh:
+		if got := string(payload); got != hotSwapApproveContinuation(protocol.PermissionDecisionRequestEvent{Decision: "approve", TargetPath: "README.md", PromptMessage: "写 README 需要你的授权"}) {
+			t.Fatalf("unexpected continuation payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive permission recovery payload")
+		t.Fatal("did not receive continuation payload on hot-swapped runner")
+	}
+	if secondRunner.lastReq.PermissionMode != "acceptEdits" {
+		t.Fatalf("expected acceptEdits restart, got %#v", secondRunner.lastReq)
+	}
+	if !strings.Contains(secondRunner.lastReq.Command, "--resume ") {
+		t.Fatalf("expected resume command, got %q", secondRunner.lastReq.Command)
+	}
+	if !strings.Contains(secondRunner.lastReq.Command, "--print") {
+		t.Fatalf("expected print mode on hot-swapped command, got %q", secondRunner.lastReq.Command)
+	}
+	if strings.Contains(secondRunner.lastReq.Command, "--session-id") {
+		t.Fatalf("did not expect managed session id on hot-swapped command, got %q", secondRunner.lastReq.Command)
+	}
+	select {
+	case decision := <-firstRunner.permissionResponseWriteCh:
+		t.Fatalf("unexpected structured decision: %q", decision)
+	case <-time.After(200 * time.Millisecond):
 	}
 
-	thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
+	var thinking map[string]any
+	for i := 0; i < 6; i++ {
+		event := readUntilType(t, conn, protocol.EventTypeAgentState)
+		if event["source"] == "permission-decision" {
+			thinking = event
+			break
+		}
+	}
+	if thinking == nil {
+		t.Fatal("did not receive permission-decision agent state")
+	}
 	if thinking["state"] != "THINKING" {
 		t.Fatalf("expected THINKING state, got %#v", thinking)
 	}
 	if thinking["source"] != "permission-decision" {
 		t.Fatalf("expected permission-decision source, got %#v", thinking)
 	}
-	if thinking["permissionMode"] != "default" {
-		t.Fatalf("expected default permission mode, got %#v", thinking)
-	}
 }
 
-func TestHandlerPermissionDecisionDenySendsRecoveryPromptToRunner(t *testing.T) {
+func TestHandlerPermissionDecisionDenySendsPromptAsNormalInput(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
+	ptyRunner.claudeSessionID = "resume-deny-123"
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-deny")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "exec"},
@@ -1290,12 +1855,16 @@ func TestHandlerPermissionDecisionDenySendsRecoveryPromptToRunner(t *testing.T) 
 
 	select {
 	case payload := <-ptyRunner.writeCh:
-		got := string(payload)
-		if !strings.Contains(got, "用户拒绝了刚才请求的文件修改/写入权限") {
-			t.Fatalf("unexpected deny payload: %q", got)
+		if !strings.Contains(string(payload), "用户拒绝了刚才请求的文件修改/写入权限") {
+			t.Fatalf("unexpected deny payload: %q", string(payload))
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive permission deny payload")
+		t.Fatal("did not receive deny prompt payload")
+	}
+	select {
+	case decision := <-ptyRunner.permissionResponseWriteCh:
+		t.Fatalf("unexpected structured deny decision: %q", decision)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
@@ -1315,20 +1884,22 @@ func TestHandlerPermissionDecisionWithoutRunnerReturnsError(t *testing.T) {
 	}
 
 	event := readUntilType(t, conn, protocol.EventTypeError)
-	if event["msg"] != "当前没有可恢复的 Claude 会话，无法继续处理该权限请求" {
+	if event["msg"] != "当前没有可交互的 Claude 会话，无法继续处理该权限请求" {
 		t.Fatalf("unexpected error event: %#v", event)
 	}
 }
 
-func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
-	firstRunner := newStubRunner(protocol.ApplyRuntimeMeta(
-		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
-		protocol.RuntimeMeta{ResumeSessionID: "resume-123"},
-	))
+func TestHandlerPermissionDecisionWithManagedFreshClaudeSessionCanHotSwap(t *testing.T) {
+	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
 	secondRunner := newHoldingStubRunner()
 	runnerIndex := 0
 
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner {
 		runnerIndex++
 		if runnerIndex == 1 {
@@ -1338,6 +1909,7 @@ func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
 	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-no-pending")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "exec"},
@@ -1347,10 +1919,124 @@ func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write exec request: %v", err)
 	}
-	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	firstRunner.WaitStarted(t)
 	prompt := readUntilType(t, conn, protocol.EventTypePromptRequest)
-	if prompt["resumeSessionId"] != "resume-123" {
-		t.Fatalf("expected resume session id on prompt, got %#v", prompt)
+	if resumeID, _ := prompt["resumeSessionId"].(string); strings.TrimSpace(resumeID) == "" {
+		t.Fatalf("expected managed resume session id on prompt, got %#v", prompt)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
+		Decision:       "approve",
+		PermissionMode: "default",
+		TargetPath:     "README.md",
+		PromptMessage:  "写 README 需要你的授权",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	firstRunner.WaitClosed(t)
+	secondRunner.WaitStarted(t)
+	select {
+	case <-secondRunner.writeCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive continuation payload on hot-swapped runner")
+	}
+}
+
+func TestHandlerPermissionDecisionWithoutHotSwapSupportReturnsError(t *testing.T) {
+	base := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
+	runnerWithoutClaudeSession := &writeOnlyStubRunner{base: base}
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return runnerWithoutClaudeSession }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-no-control-support")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "bash",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	runnerWithoutClaudeSession.WaitStarted(t)
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
+		Decision:       "approve",
+		PermissionMode: "default",
+		TargetPath:     "README.md",
+		PromptMessage:  "写 README 需要你的授权",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "当前活跃会话不是可热重启恢复的 Claude PTY 会话" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+	select {
+	case payload := <-base.writeCh:
+		t.Fatalf("unexpected normal input payload: %q", string(payload))
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
+	firstRunner := newStubRunner(protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
+		protocol.RuntimeMeta{ResumeSessionID: "resume-123"},
+	))
+	secondRunner := newHoldingStubRunner()
+	secondRunner.interactive = false
+	secondRunner.onStart = func() {
+		go func() {
+			time.Sleep(80 * time.Millisecond)
+			secondRunner.mu.Lock()
+			secondRunner.interactive = true
+			secondRunner.hasPendingPermission = true
+			secondRunner.mu.Unlock()
+		}()
+	}
+	runnerIndex := 0
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner {
+		runnerIndex++
+		if runnerIndex == 1 {
+			return firstRunner
+		}
+		return secondRunner
+	}
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-resume")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "claude",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+	prompt := readUntilType(t, conn, protocol.EventTypePromptRequest)
+	if resumeID, _ := prompt["resumeSessionId"].(string); strings.TrimSpace(resumeID) == "" {
+		t.Fatalf("expected managed resume session id on prompt, got %#v", prompt)
 	}
 	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
 	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
@@ -1365,55 +2051,138 @@ func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
 		t.Fatalf("write permission decision request: %v", err)
 	}
 
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "当前没有可交互的 Claude 会话，无法继续处理该权限请求" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
 	select {
+	case decision := <-secondRunner.permissionResponseWriteCh:
+		t.Fatalf("unexpected structured decision on resumed runner: %q", decision)
 	case payload := <-secondRunner.writeCh:
-		got := string(payload)
-		if !strings.Contains(got, "用户已批准刚才请求的文件修改/写入权限") {
-			t.Fatalf("unexpected resumed payload: %q", got)
-		}
-		if !strings.Contains(got, "ResumeSessionID: resume-123") {
-			t.Fatalf("expected resume session id in payload: %q", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive resumed permission payload")
+		t.Fatalf("unexpected normal input payload on resumed runner: %q", string(payload))
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
-func TestHandlerPermissionDecisionWithoutResumeCommandReturnsError(t *testing.T) {
+func TestHandlerPermissionDecisionWithNonInteractiveRunnerStillHotSwaps(t *testing.T) {
+	firstRunner := newNonInteractiveHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
+	firstRunner.claudeSessionID = "resume-non-interactive-123"
+	secondRunner := newHoldingStubRunner()
+	runnerIndex := 0
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner {
+		runnerIndex++
+		if runnerIndex == 1 {
+			return firstRunner
+		}
+		return secondRunner
+	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-non-interactive")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "claude",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "请创建 README.md 并写入 hello\n"}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+	select {
+	case payload := <-firstRunner.writeCh:
+		if string(payload) != "请创建 README.md 并写入 hello\n" {
+			t.Fatalf("unexpected initial input payload: %q", string(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive initial input payload")
+	}
 
 	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
-		ClientEvent:     protocol.ClientEvent{Action: "permission_decision"},
-		Decision:        "approve",
-		PermissionMode:  "default",
-		ResumeSessionID: "resume-123",
-		TargetPath:      "README.md",
-		PromptMessage:   "写 README 需要你的授权",
+		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
+		Decision:       "approve",
+		PermissionMode: "default",
+		TargetPath:     "README.md",
+		PromptMessage:  "写 README 需要你的授权",
 	}); err != nil {
 		t.Fatalf("write permission decision request: %v", err)
 	}
+	firstRunner.WaitClosed(t)
+	secondRunner.WaitStarted(t)
+	select {
+	case payload := <-secondRunner.writeCh:
+		if got := string(payload); got != hotSwapApproveContinuation(protocol.PermissionDecisionRequestEvent{Decision: "approve", TargetPath: "README.md", PromptMessage: "写 README 需要你的授权"}) {
+			t.Fatalf("unexpected continuation payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive continuation payload")
+	}
+	thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
+	if thinking["state"] != "THINKING" {
+		t.Fatalf("expected THINKING state, got %#v", thinking)
+	}
+}
+
+func TestHandlerReviewDecisionWithNonInteractiveRunnerReturnsError(t *testing.T) {
+	ptyRunner := newNonInteractiveHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "review-non-interactive")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty"}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	ptyRunner.WaitStarted(t)
+
+	if err := conn.WriteJSON(protocol.ReviewDecisionRequestEvent{ClientEvent: protocol.ClientEvent{Action: "review_decision"}, Decision: "accept"}); err != nil {
+		t.Fatalf("write review decision request: %v", err)
+	}
 
 	event := readUntilType(t, conn, protocol.EventTypeError)
-	if event["msg"] != "当前没有可恢复的 Claude 会话，无法继续处理该权限请求" {
+	if event["msg"] != "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交审核决策" {
 		t.Fatalf("unexpected error event: %#v", event)
+	}
+	select {
+	case payload := <-ptyRunner.writeCh:
+		t.Fatalf("unexpected payload written to non-interactive runner: %q", string(payload))
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
 func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "review-session")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty"}); err != nil {
 		t.Fatalf("write exec request: %v", err)
 	}
-	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
-	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
-	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	ptyRunner.WaitStarted(t)
 
 	if err := conn.WriteJSON(protocol.ReviewDecisionRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "review_decision"},
@@ -1436,7 +2205,17 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 		t.Fatal("did not receive review decision payload")
 	}
 
-	thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
+	var thinking map[string]any
+	for i := 0; i < 5; i++ {
+		event := readUntilType(t, conn, protocol.EventTypeAgentState)
+		if event["source"] == "review-decision" {
+			thinking = event
+			break
+		}
+	}
+	if thinking == nil {
+		t.Fatal("did not receive review-decision agent state")
+	}
 	if thinking["state"] != "THINKING" {
 		t.Fatalf("expected THINKING state, got %#v", thinking)
 	}
@@ -1451,22 +2230,36 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-mode-session")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty", PermissionMode: "acceptEdits"}); err != nil {
 		t.Fatalf("write exec request: %v", err)
 	}
-	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
-	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
-	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	ptyRunner.WaitStarted(t)
 
 	if err := conn.WriteJSON(protocol.PermissionModeUpdateRequestEvent{ClientEvent: protocol.ClientEvent{Action: "set_permission_mode"}, PermissionMode: "default"}); err != nil {
 		t.Fatalf("write permission mode request: %v", err)
 	}
 
-	state := readUntilType(t, conn, protocol.EventTypeAgentState)
+	var state map[string]any
+	for i := 0; i < 5; i++ {
+		event := readUntilType(t, conn, protocol.EventTypeAgentState)
+		if event["permissionMode"] == "default" {
+			state = event
+			break
+		}
+	}
+	if state == nil {
+		t.Fatal("did not receive updated permissionMode agent state")
+	}
 	if state["permissionMode"] != "default" {
 		t.Fatalf("expected updated permission mode, got %#v", state)
 	}
@@ -1478,9 +2271,15 @@ func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-mode-active-session")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "exec"},
@@ -1490,9 +2289,7 @@ func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write exec request: %v", err)
 	}
-	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
-	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
-	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	ptyRunner.WaitStarted(t)
 
 	if err := conn.WriteJSON(protocol.PermissionModeUpdateRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "set_permission_mode"},
@@ -1501,7 +2298,17 @@ func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 		t.Fatalf("write set_permission_mode request: %v", err)
 	}
 
-	state := readUntilType(t, conn, protocol.EventTypeAgentState)
+	var state map[string]any
+	for i := 0; i < 5; i++ {
+		event := readUntilType(t, conn, protocol.EventTypeAgentState)
+		if event["permissionMode"] == "default" {
+			state = event
+			break
+		}
+	}
+	if state == nil {
+		t.Fatal("did not receive updated permissionMode agent state")
+	}
 	if state["permissionMode"] != "default" {
 		t.Fatalf("expected permissionMode to be default, got %#v", state)
 	}
@@ -1528,9 +2335,15 @@ func TestHandlerReviewDecisionWithoutRunner(t *testing.T) {
 func TestHandlerReviewDecisionAcceptAllowedInDefaultMode(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
 	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "review-default-mode")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty", PermissionMode: "default"}); err != nil {
 		t.Fatalf("write exec request: %v", err)

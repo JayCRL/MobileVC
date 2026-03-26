@@ -22,6 +22,7 @@ class FileViewerSheet extends StatefulWidget {
     required this.isAutoAcceptMode,
     required this.shouldShowReviewChoices,
     required this.pendingPrompt,
+    required this.pendingInteraction,
     required this.onAccept,
     required this.onRevert,
     required this.onRevise,
@@ -45,6 +46,7 @@ class FileViewerSheet extends StatefulWidget {
   final bool isAutoAcceptMode;
   final bool shouldShowReviewChoices;
   final PromptRequestEvent? pendingPrompt;
+  final InteractionRequestEvent? pendingInteraction;
   final VoidCallback onAccept;
   final VoidCallback onRevert;
   final VoidCallback onRevise;
@@ -79,11 +81,12 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
     final multiPending = groupDiffs.length > 1;
     final multiGroup = widget.reviewGroups.length > 1;
     final prompt = widget.pendingPrompt;
-    final showPermissionBar =
-        !widget.shouldShowReviewChoices &&
-        prompt != null &&
-        prompt.hasVisiblePrompt &&
-        prompt.looksLikePermissionPrompt;
+    final interaction = widget.pendingInteraction;
+    final showPermissionBar = !widget.shouldShowReviewChoices &&
+        ((interaction?.isPermission == true) ||
+            (prompt != null &&
+                prompt.hasVisiblePrompt &&
+                prompt.looksLikePermissionPrompt));
     return SafeArea(
       top: false,
       child: AnimatedPadding(
@@ -257,6 +260,18 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                                   .onSurfaceVariant,
                             ),
                       ),
+                      if ((diff?.path ?? '').isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '当前文件：${_shortLabel(diff!)}',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 8,
@@ -268,13 +283,24 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                             compact: true,
                           ),
                           _MetaChip(
-                            label: '文件',
-                            value: '${activeGroup.files.length}',
+                            label: '进度',
+                            value:
+                                '${activeGroup.pendingCount} / ${activeGroup.files.length}',
                             compact: true,
                           ),
                           _MetaChip(
-                            label: '待处理',
-                            value: '${activeGroup.pendingCount}',
+                            label: '已同意',
+                            value: '${activeGroup.acceptedCount}',
+                            compact: true,
+                          ),
+                          _MetaChip(
+                            label: '已撤销',
+                            value: '${activeGroup.revertedCount}',
+                            compact: true,
+                          ),
+                          _MetaChip(
+                            label: '继续调整',
+                            value: '${activeGroup.revisedCount}',
                             compact: true,
                           ),
                         ],
@@ -290,7 +316,8 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                           separatorBuilder: (_, __) => const SizedBox(width: 8),
                           itemBuilder: (context, index) {
                             final group = widget.reviewGroups[index];
-                            final selected = group.id == _resolvedActiveReviewGroupId();
+                            final selected =
+                                group.id == _resolvedActiveReviewGroupId();
                             return ChoiceChip(
                               selected: selected,
                               label: Text(group.title.isNotEmpty
@@ -318,8 +345,8 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                             return ChoiceChip(
                               selected: selected,
                               label: Text('${index + 1}. ${_shortLabel(item)}'),
-                              onSelected: (_) =>
-                                  widget.onSelectReviewDiff(_diffIdentity(item)),
+                              onSelected: (_) => widget
+                                  .onSelectReviewDiff(_diffIdentity(item)),
                             );
                           },
                         ),
@@ -382,6 +409,7 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
               _PermissionActionBar(
                 key: const ValueKey('fileViewer.permissionBar'),
                 prompt: prompt,
+                interaction: interaction,
                 onSubmit: widget.onSubmitPrompt,
               ),
             ],
@@ -513,8 +541,7 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
       return;
     }
     final prompt = widget.pendingPrompt;
-    final shouldSubmitPrompt =
-        !widget.shouldShowReviewChoices &&
+    final shouldSubmitPrompt = !widget.shouldShowReviewChoices &&
         prompt != null &&
         prompt.hasVisiblePrompt &&
         (prompt.options.isNotEmpty || prompt.looksLikePermissionPrompt);
@@ -643,16 +670,19 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
 class _PermissionActionBar extends StatelessWidget {
   const _PermissionActionBar({
     super.key,
-    required this.prompt,
+    this.prompt,
+    this.interaction,
     required this.onSubmit,
   });
 
-  final PromptRequestEvent prompt;
+  final PromptRequestEvent? prompt;
+  final InteractionRequestEvent? interaction;
   final ValueChanged<String> onSubmit;
 
   @override
   Widget build(BuildContext context) {
     final options = _resolvedOptions();
+    final message = _resolvedMessage();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
@@ -660,17 +690,14 @@ class _PermissionActionBar extends StatelessWidget {
         color: Theme.of(context).colorScheme.primaryContainer,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: Theme.of(context)
-              .colorScheme
-              .primary
-              .withValues(alpha: 0.22),
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.22),
         ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            prompt.message.trim().isEmpty ? '当前操作需要你的授权。' : prompt.message.trim(),
+            message,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onPrimaryContainer,
                 ),
@@ -681,8 +708,10 @@ class _PermissionActionBar extends StatelessWidget {
             runSpacing: 8,
             children: options
                 .map((option) => _PromptOptionAction(
-                      key: ValueKey('fileViewer.permissionAction.${option.value.trim().toLowerCase()}'),
-                      label: _promptOptionLabel(option.value, option.displayText),
+                      key: ValueKey(
+                          'fileViewer.permissionAction.${option.value.trim().toLowerCase()}'),
+                      label:
+                          _promptOptionLabel(option.value, option.displayText),
                       style: _promptOptionStyle(option.value),
                       onPressed: () => onSubmit(option.value),
                     ))
@@ -694,9 +723,10 @@ class _PermissionActionBar extends StatelessWidget {
   }
 
   List<PromptOption> _resolvedOptions() {
-    final options = prompt.options
-        .where((option) => option.displayText.isNotEmpty)
-        .toList(growable: false);
+    final options =
+        (prompt?.options ?? interaction?.options ?? const <PromptOption>[])
+            .where((option) => option.displayText.isNotEmpty)
+            .toList(growable: false);
     if (options.isNotEmpty) {
       return options;
     }
@@ -704,6 +734,22 @@ class _PermissionActionBar extends StatelessWidget {
       PromptOption(value: 'y', label: '允许'),
       PromptOption(value: 'n', label: '拒绝'),
     ];
+  }
+
+  String _resolvedMessage() {
+    final promptMessage = prompt?.message.trim() ?? '';
+    if (promptMessage.isNotEmpty) {
+      return promptMessage;
+    }
+    final interactionMessage = interaction?.message.trim() ?? '';
+    if (interactionMessage.isNotEmpty) {
+      return interactionMessage;
+    }
+    final interactionTitle = interaction?.title.trim() ?? '';
+    if (interactionTitle.isNotEmpty) {
+      return interactionTitle;
+    }
+    return '当前操作需要你的授权。';
   }
 
   String _promptOptionLabel(String value, String fallback) {
@@ -769,7 +815,8 @@ class _PromptRequestSection extends StatelessWidget {
               runSpacing: 8,
               children: options
                   .map((option) => _PromptOptionAction(
-                        label: _promptOptionLabel(option.value, option.displayText),
+                        label: _promptOptionLabel(
+                            option.value, option.displayText),
                         style: _promptOptionStyle(option.value),
                         onPressed: () => onSubmit(option.value),
                       ))

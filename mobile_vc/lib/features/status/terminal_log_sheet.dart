@@ -22,6 +22,9 @@ class TerminalLogSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final hasExecutions = executions.isNotEmpty;
+    final activeExecution = _activeExecution();
+    final resolvedStdout = activeExecution?.stdout ?? stdout;
+    final resolvedStderr = activeExecution?.stderr ?? stderr;
     return DefaultTabController(
       length: 2,
       child: SafeArea(
@@ -39,7 +42,9 @@ class TerminalLogSheet extends StatelessWidget {
                         Text('运行日志', style: theme.textTheme.titleLarge),
                         const SizedBox(height: 4),
                         Text(
-                          hasExecutions ? '按命令选择并查看 stdout / stderr。' : '当前仅有原始 stdout / stderr 日志。',
+                          hasExecutions
+                              ? '按命令查看执行详情、来源以及 stdout / stderr。'
+                              : '当前仅有原始 stdout / stderr 日志。',
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
@@ -49,10 +54,14 @@ class TerminalLogSheet extends StatelessWidget {
                   ),
                 ],
               ),
+              if (activeExecution != null) ...[
+                const SizedBox(height: 12),
+                _ExecutionDetailCard(item: activeExecution),
+              ],
               if (hasExecutions) ...[
                 const SizedBox(height: 12),
                 SizedBox(
-                  height: 168,
+                  height: 188,
                   child: ListView.separated(
                     itemCount: executions.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
@@ -79,8 +88,8 @@ class TerminalLogSheet extends StatelessWidget {
               Expanded(
                 child: TabBarView(
                   children: [
-                    _LogPane(text: stdout),
-                    _LogPane(text: stderr),
+                    _LogPane(text: resolvedStdout),
+                    _LogPane(text: resolvedStderr),
                   ],
                 ),
               ),
@@ -89,6 +98,18 @@ class TerminalLogSheet extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  TerminalExecution? _activeExecution() {
+    final normalized = activeExecutionId.trim();
+    if (normalized.isNotEmpty) {
+      for (final item in executions) {
+        if (item.executionId == normalized) {
+          return item;
+        }
+      }
+    }
+    return executions.isEmpty ? null : executions.first;
   }
 }
 
@@ -106,11 +127,9 @@ class _ExecutionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final startedAt = item.startedAt;
     final subtitle = <String>[
       if (item.cwd.trim().isNotEmpty) item.cwd.trim(),
-      if (startedAt != null)
-        '${startedAt.month.toString().padLeft(2, '0')}-${startedAt.day.toString().padLeft(2, '0')} ${startedAt.hour.toString().padLeft(2, '0')}:${startedAt.minute.toString().padLeft(2, '0')}',
+      if (item.sourceLabel.trim().isNotEmpty) item.sourceLabel.trim(),
       if (item.running)
         '运行中'
       else if (item.exitCode != null)
@@ -156,6 +175,94 @@ class _ExecutionCard extends StatelessWidget {
   }
 }
 
+class _ExecutionDetailCard extends StatelessWidget {
+  const _ExecutionDetailCard({required this.item});
+
+  final TerminalExecution item;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            item.title,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _MetaChip(label: '状态', value: _statusLabel(item)),
+              if (item.cwd.trim().isNotEmpty)
+                _MetaChip(label: 'CWD', value: item.cwd.trim()),
+              if (_sourceLabel(item).isNotEmpty)
+                _MetaChip(label: '来源', value: _sourceLabel(item)),
+              if (item.contextTitle.trim().isNotEmpty)
+                _MetaChip(label: '上下文', value: item.contextTitle.trim()),
+              if (item.groupTitle.trim().isNotEmpty)
+                _MetaChip(label: '修改组', value: item.groupTitle.trim()),
+              if (_timeRangeLabel(item).isNotEmpty)
+                _MetaChip(label: '时间', value: _timeRangeLabel(item)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _statusLabel(TerminalExecution item) {
+    if (item.running) {
+      return '运行中';
+    }
+    if (item.exitCode != null) {
+      return 'exit ${item.exitCode}';
+    }
+    return '已结束';
+  }
+
+  String _sourceLabel(TerminalExecution item) {
+    if (item.sourceLabel.trim().isNotEmpty) {
+      return item.sourceLabel.trim();
+    }
+    return item.source.trim();
+  }
+
+  String _timeRangeLabel(TerminalExecution item) {
+    final started = item.startedAt;
+    final completed = item.completedAt;
+    if (started == null && completed == null) {
+      return '';
+    }
+    final parts = <String>[];
+    if (started != null) {
+      parts.add(_formatTime(started));
+    }
+    if (completed != null) {
+      parts.add(_formatTime(completed));
+    }
+    return parts.join(' → ');
+  }
+
+  String _formatTime(DateTime value) {
+    return '${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+  }
+}
+
 class _LogPane extends StatelessWidget {
   const _LogPane({required this.text});
 
@@ -182,6 +289,34 @@ class _LogPane extends StatelessWidget {
             height: 1.45,
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _MetaChip extends StatelessWidget {
+  const _MetaChip({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '$label: $value',
+        style: Theme.of(context)
+            .textTheme
+            .labelSmall
+            ?.copyWith(fontWeight: FontWeight.w700),
       ),
     );
   }

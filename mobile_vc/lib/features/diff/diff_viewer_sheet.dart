@@ -202,9 +202,37 @@ class DiffViewerSheet extends StatelessWidget {
                       _MetaChip(label: '显示', value: 'Unified diff'),
                       _MetaChip(label: '变更', value: summary),
                       if (activeGroup != null)
-                        _MetaChip(label: '修改组', value: activeGroup.title.isNotEmpty ? activeGroup.title : activeGroup.id),
+                        _MetaChip(
+                          label: '修改组',
+                          value: activeGroup.title.isNotEmpty
+                              ? activeGroup.title
+                              : activeGroup.id,
+                        ),
                       if (activeGroup != null)
-                        _MetaChip(label: '待审核', value: '${activeGroup.pendingCount} / ${activeGroup.files.length}'),
+                        _MetaChip(
+                          label: '状态',
+                          value: _reviewStatusLabel(activeGroup.reviewStatus),
+                        ),
+                      if (activeGroup != null)
+                        _MetaChip(
+                          label: '进度',
+                          value: '${activeGroup.pendingCount} / ${activeGroup.files.length} 待审核',
+                        ),
+                      if (activeGroup != null)
+                        _MetaChip(
+                          label: '已同意',
+                          value: '${activeGroup.acceptedCount}',
+                        ),
+                      if (activeGroup != null)
+                        _MetaChip(
+                          label: '已撤销',
+                          value: '${activeGroup.revertedCount}',
+                        ),
+                      if (activeGroup != null)
+                        _MetaChip(
+                          label: '继续调整',
+                          value: '${activeGroup.revisedCount}',
+                        ),
                     ],
                   ),
                 ],
@@ -261,7 +289,12 @@ class DiffViewerSheet extends StatelessWidget {
         return group;
       }
     }
-    return reviewGroups.last;
+    for (final group in reviewGroups) {
+      if (group.pendingCount > 0) {
+        return group;
+      }
+    }
+    return reviewGroups.first;
   }
 
   List<HistoryContext> _groupDiffs(ReviewGroup? group) {
@@ -292,7 +325,11 @@ class DiffViewerSheet extends StatelessWidget {
     if (reviewGroups.isEmpty) {
       return '';
     }
-    return reviewGroups.last.id;
+    final pendingGroup = reviewGroups.where((group) => group.pendingCount > 0);
+    if (pendingGroup.isNotEmpty) {
+      return pendingGroup.first.id;
+    }
+    return reviewGroups.first.id;
   }
 
   String _resolvedActiveDiffId(ReviewGroup? activeGroup) {
@@ -303,7 +340,7 @@ class DiffViewerSheet extends StatelessWidget {
     if (candidates.isEmpty) {
       return '';
     }
-    return _diffIdentity(candidates.last);
+    return _diffIdentity(candidates.first);
   }
 
   String _diffIdentity(HistoryContext diff) {
@@ -323,6 +360,23 @@ class DiffViewerSheet extends StatelessWidget {
     final normalized = source.replaceAll('\\', '/');
     final segments = normalized.split('/');
     return segments.isEmpty ? source : segments.last;
+  }
+
+  String _reviewStatusLabel(String value) {
+    switch (value.trim()) {
+      case 'pending':
+        return '待审核';
+      case 'accepted':
+        return '已同意';
+      case 'reverted':
+        return '已撤销';
+      case 'revised':
+        return '继续调整';
+      case 'mixed':
+        return '混合';
+      default:
+        return '进行中';
+    }
   }
 
   String _diffSummary(String value) {

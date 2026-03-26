@@ -147,20 +147,27 @@ class _SessionHomePageState extends State<SessionHomePage> {
                               Expanded(
                                 child: ChatTimeline(
                                   items: controller.timeline,
-                                  activeReviewDiff: controller.currentReviewDiff,
-                                  activeReviewGroup: controller.activeReviewGroup,
+                                  activeReviewDiff:
+                                      controller.currentReviewDiff,
+                                  activeReviewGroup:
+                                      controller.activeReviewGroup,
                                   pendingDiffCount: controller.pendingDiffCount,
                                   pendingReviewGroupCount:
                                       controller.pendingReviewGroupCount,
-                                  isManualReviewMode: controller.isManualReviewMode,
+                                  isManualReviewMode:
+                                      controller.isManualReviewMode,
                                   isAutoAcceptMode: controller.isAutoAcceptMode,
                                   pendingPrompt: controller.pendingPrompt,
+                                  pendingInteraction:
+                                      controller.pendingInteraction,
                                   shouldShowReviewChoices:
                                       controller.shouldShowReviewChoices,
                                   onOpenDiff: () => _openDiff(context),
-                                  onOpenRuntimeInfo: () => _openRuntimeInfo(context),
+                                  onOpenRuntimeInfo: () =>
+                                      _openRuntimeInfo(context),
                                   onOpenFile: () => _openFileViewer(context),
-                                  onReviewDecision: controller.sendReviewDecision,
+                                  onReviewDecision:
+                                      controller.sendReviewDecision,
                                   onAcceptAll: controller.acceptAllPendingDiffs,
                                   onPromptSubmit: controller.submitPromptOption,
                                 ),
@@ -371,14 +378,15 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     isAutoAcceptMode: controller.isAutoAcceptMode,
                     shouldShowReviewChoices:
                         controller.shouldShowReviewChoices &&
-                        controller.openedFilePendingDiff != null &&
-                        controller.currentReviewDiff != null &&
-                        ((controller.openedFilePendingDiff!.id.isNotEmpty &&
-                                controller.openedFilePendingDiff!.id ==
-                                    controller.currentReviewDiff!.id) ||
-                            controller.openedFilePendingDiff!.path ==
-                                controller.currentReviewDiff!.path),
+                            controller.openedFilePendingDiff != null &&
+                            controller.currentReviewDiff != null &&
+                            ((controller.openedFilePendingDiff!.id.isNotEmpty &&
+                                    controller.openedFilePendingDiff!.id ==
+                                        controller.currentReviewDiff!.id) ||
+                                controller.openedFilePendingDiff!.path ==
+                                    controller.currentReviewDiff!.path),
                     pendingPrompt: controller.pendingPrompt,
+                    pendingInteraction: controller.pendingInteraction,
                     onSelectReviewGroup: controller.setActiveReviewGroup,
                     onSelectReviewDiff: controller.setActiveReviewDiff,
                     onOpenDiffList: () => _openDiff(context),
@@ -476,6 +484,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     enabledSkillNames:
                         controller.sessionContext.enabledSkillNames,
                     syncStatus: controller.skillSyncStatus,
+                    catalogMeta: controller.skillCatalogMeta,
                     onToggleEnabled: controller.toggleSkillEnabled,
                     onSave: controller.saveSkill,
                     onSync: controller.syncSkills,
@@ -508,10 +517,13 @@ class _SessionHomePageState extends State<SessionHomePage> {
                 builder: (context, _) {
                   return MemoryManagementSheet(
                     items: controller.memoryItems,
+                    syncStatus: controller.memorySyncStatus,
+                    catalogMeta: controller.memoryCatalogMeta,
                     enabledMemoryIds:
                         controller.sessionContext.enabledMemoryIds,
                     onToggleEnabled: controller.toggleMemoryEnabled,
                     onSave: controller.saveMemory,
+                    onSync: controller.syncMemories,
                   );
                 },
               ),
@@ -773,7 +785,8 @@ class _ContextSelectionBar extends StatelessWidget {
                     child: FilterChip(
                       selected: selected,
                       label: Text(item.name.isEmpty ? '未命名 skill' : item.name),
-                      onSelected: (_) => controller.toggleSkillEnabled(item.name),
+                      onSelected: (_) =>
+                          controller.toggleSkillEnabled(item.name),
                     ),
                   );
                 }).toList(growable: false),
@@ -796,13 +809,15 @@ class _ContextSelectionBar extends StatelessWidget {
                 children: controller.memoryItems.map((item) {
                   final selected = controller.sessionContext.enabledMemoryIds
                       .contains(item.id);
-                  final label = item.title.trim().isNotEmpty ? item.title : item.id;
+                  final label =
+                      item.title.trim().isNotEmpty ? item.title : item.id;
                   return Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: FilterChip(
                       selected: selected,
                       label: Text(label.isEmpty ? '未命名 memory' : label),
-                      onSelected: (_) => controller.toggleMemoryEnabled(item.id),
+                      onSelected: (_) =>
+                          controller.toggleMemoryEnabled(item.id),
                     ),
                   );
                 }).toList(growable: false),

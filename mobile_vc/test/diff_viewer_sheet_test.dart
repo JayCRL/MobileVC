@@ -64,7 +64,7 @@ void main() {
       expect(revised, isTrue);
     });
 
-    testWidgets('无 active id 时回退到最后一个修改组和文件', (tester) async {
+    testWidgets('无 active id 时优先回退到第一个待审修改组和文件', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -79,9 +79,13 @@ void main() {
         ),
       );
 
-      expect(find.text('test_c.dart'), findsWidgets);
-      expect(find.text('/workspace/test_c.dart'), findsOneWidget);
-      expect(find.text('组二'), findsWidgets);
+      expect(find.text('test_a.dart'), findsWidgets);
+      expect(find.text('/workspace/test_a.dart'), findsOneWidget);
+      expect(find.text('组一'), findsWidgets);
+      expect(find.text('状态: 待审核'), findsOneWidget);
+      expect(find.text('已同意: 0'), findsOneWidget);
+      expect(find.text('已撤销: 0'), findsOneWidget);
+      expect(find.text('继续调整: 0'), findsOneWidget);
     });
   });
 }

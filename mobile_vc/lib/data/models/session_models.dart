@@ -251,6 +251,12 @@ class TerminalExecution {
     this.executionId = '',
     this.command = '',
     this.cwd = '',
+    this.source = '',
+    this.sourceLabel = '',
+    this.contextId = '',
+    this.contextTitle = '',
+    this.groupId = '',
+    this.groupTitle = '',
     this.startedAt,
     this.completedAt,
     this.running = false,
@@ -262,6 +268,12 @@ class TerminalExecution {
   final String executionId;
   final String command;
   final String cwd;
+  final String source;
+  final String sourceLabel;
+  final String contextId;
+  final String contextTitle;
+  final String groupId;
+  final String groupTitle;
   final DateTime? startedAt;
   final DateTime? completedAt;
   final bool running;
@@ -287,6 +299,12 @@ class TerminalExecution {
       executionId: (json['executionId'] ?? '').toString(),
       command: (json['command'] ?? '').toString(),
       cwd: (json['cwd'] ?? '').toString(),
+      source: (json['source'] ?? '').toString(),
+      sourceLabel: (json['sourceLabel'] ?? '').toString(),
+      contextId: (json['contextId'] ?? '').toString(),
+      contextTitle: (json['contextTitle'] ?? '').toString(),
+      groupId: (json['groupId'] ?? '').toString(),
+      groupTitle: (json['groupTitle'] ?? '').toString(),
       startedAt: _parseDate(json['startedAt']?.toString()),
       completedAt: _parseDate(json['completedAt']?.toString()),
       running: json['running'] == true,
@@ -305,8 +323,12 @@ class SkillDefinition {
     this.resultView = '',
     this.targetType = '',
     this.source = '',
+    this.sourceOfTruth = '',
+    this.syncState = '',
     this.editable = false,
+    this.driftDetected = false,
     this.updatedAt,
+    this.lastSyncedAt,
   });
 
   final String name;
@@ -315,8 +337,12 @@ class SkillDefinition {
   final String resultView;
   final String targetType;
   final String source;
+  final String sourceOfTruth;
+  final String syncState;
   final bool editable;
+  final bool driftDetected;
   final DateTime? updatedAt;
+  final DateTime? lastSyncedAt;
 
   factory SkillDefinition.fromJson(Map<String, dynamic> json) {
     return SkillDefinition(
@@ -326,8 +352,12 @@ class SkillDefinition {
       resultView: (json['resultView'] ?? '').toString(),
       targetType: (json['targetType'] ?? '').toString(),
       source: (json['source'] ?? '').toString(),
+      sourceOfTruth: (json['sourceOfTruth'] ?? '').toString(),
+      syncState: (json['syncState'] ?? '').toString(),
       editable: json['editable'] == true,
+      driftDetected: json['driftDetected'] == true,
       updatedAt: _parseDate(json['updatedAt']?.toString()),
+      lastSyncedAt: _parseDate(json['lastSyncedAt']?.toString()),
     );
   }
 }
@@ -337,20 +367,72 @@ class MemoryItem {
     this.id = '',
     this.title = '',
     this.content = '',
+    this.source = '',
+    this.sourceOfTruth = '',
+    this.syncState = '',
+    this.editable = false,
+    this.driftDetected = false,
     this.updatedAt,
+    this.lastSyncedAt,
   });
 
   final String id;
   final String title;
   final String content;
+  final String source;
+  final String sourceOfTruth;
+  final String syncState;
+  final bool editable;
+  final bool driftDetected;
   final DateTime? updatedAt;
+  final DateTime? lastSyncedAt;
 
   factory MemoryItem.fromJson(Map<String, dynamic> json) {
     return MemoryItem(
       id: (json['id'] ?? '').toString(),
       title: (json['title'] ?? '').toString(),
       content: (json['content'] ?? '').toString(),
+      source: (json['source'] ?? '').toString(),
+      sourceOfTruth: (json['sourceOfTruth'] ?? '').toString(),
+      syncState: (json['syncState'] ?? '').toString(),
+      editable: json['editable'] == true,
+      driftDetected: json['driftDetected'] == true,
       updatedAt: _parseDate(json['updatedAt']?.toString()),
+      lastSyncedAt: _parseDate(json['lastSyncedAt']?.toString()),
+    );
+  }
+}
+
+class CatalogMetadata {
+  const CatalogMetadata({
+    this.domain = '',
+    this.sourceOfTruth = '',
+    this.syncState = '',
+    this.driftDetected = false,
+    this.lastSyncedAt,
+    this.versionToken = '',
+    this.lastError = '',
+  });
+
+  final String domain;
+  final String sourceOfTruth;
+  final String syncState;
+  final bool driftDetected;
+  final DateTime? lastSyncedAt;
+  final String versionToken;
+  final String lastError;
+
+  bool get isSyncing => syncState == 'syncing';
+
+  factory CatalogMetadata.fromJson(Map<String, dynamic> json) {
+    return CatalogMetadata(
+      domain: (json['domain'] ?? '').toString(),
+      sourceOfTruth: (json['sourceOfTruth'] ?? '').toString(),
+      syncState: (json['syncState'] ?? '').toString(),
+      driftDetected: json['driftDetected'] == true,
+      lastSyncedAt: _parseDate(json['lastSyncedAt']?.toString()),
+      versionToken: (json['versionToken'] ?? '').toString(),
+      lastError: (json['lastError'] ?? '').toString(),
     );
   }
 }

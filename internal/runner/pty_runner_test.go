@@ -3,14 +3,21 @@ package runner
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"mobilevc/internal/protocol"
 )
+
+type nopWriteCloser struct {
+	strings.Builder
+}
+
+func (w *nopWriteCloser) Close() error {
+	return nil
+}
 
 func TestPtyRunnerPromptAndInput(t *testing.T) {
 	runner := NewPtyRunner()
@@ -264,10 +271,10 @@ func TestIsLiveTailPromptTextDoesNotMisclassifyLogs(t *testing.T) {
 
 func TestPromptOptionsRecognizesPermissionPrompts(t *testing.T) {
 	tests := map[string][]string{
-		"Proceed? [y/N]":                                              {"y", "n"},
-		"Approve?":                                                    {"yes", "no"},
+		"Proceed? [y/N]": {"y", "n"},
+		"Approve?":       {"yes", "no"},
 		"p写 README 需要你的授权。拿到权限后我会直接覆盖成新的对外展示版。": {"y", "n"},
-		"你授权后，我就只改这一个位置。":                                   {"y", "n"},
+		"你授权后，我就只改这一个位置。":                       {"y", "n"},
 	}
 
 	for text, want := range tests {
@@ -292,6 +299,179 @@ func TestClaudeStreamWriterWrapsInputAsJSON(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, `"type":"user"`) || !strings.Contains(output, `"content":"hello"`) {
 		t.Fatalf("unexpected encoded payload: %q", output)
+	}
+}
+
+func TestPtyRunnerCachesControlRequestIDAndEmitsPrompt(t *testing.T) {
+	runner := NewPtyRunner()
+	var events []any
+	sink := func(event any) { events = append(events, event) }
+
+	envelope, err := json.Marshal(map[string]any{
+		"type":       "control_request",
+		"session_id": "resume-control",
+		"request_id": "req-123",
+		"message": map[string]any{
+			"content": []map[string]any{{
+				"type": "text",
+				"text": "Claude 请求写入 README.md，是否允许？",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal control_request envelope: %v", err)
+	}
+
+	reader := strings.NewReader(string(envelope) + "\n")
+	runner.readClaudeStreamJSON(context.Background(), reader, "s-control", sink)
+
+	if !runner.HasPendingPermissionRequest() {
+		t.Fatal("expected pending control request to be cached")
+	}
+
+	var promptEvent *protocol.PromptRequestEvent
+	for _, event := range events {
+		if v, ok := event.(protocol.PromptRequestEvent); ok {
+			promptEvent = &v
+			break
+		}
+	}
+	if promptEvent == nil {
+		t.Fatalf("expected prompt request event, got %#v", events)
+	}
+	if !strings.Contains(promptEvent.Message, "是否允许") {
+		t.Fatalf("unexpected prompt message: %q", promptEvent.Message)
+	}
+}
+
+func TestPtyRunnerWritePermissionResponseApproveEncodesControlResponse(t *testing.T) {
+	buf := &nopWriteCloser{}
+	runner := NewPtyRunner()
+	runner.writer = buf
+	runner.pendingReq = ExecRequest{SessionID: "s-control-approve"}
+	runner.pendingControlRequestID = "req-approve"
+
+	if err := runner.WritePermissionResponse(context.Background(), "approve"); err != nil {
+		t.Fatalf("write permission response: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `"type":"control_response"`) {
+		t.Fatalf("expected control_response payload, got %q", output)
+	}
+	if !strings.Contains(output, `"request_id":"req-approve"`) {
+		t.Fatalf("expected request_id in payload, got %q", output)
+	}
+	if !strings.Contains(output, `"behavior":"allow"`) {
+		t.Fatalf("expected allow behavior, got %q", output)
+	}
+	if runner.HasPendingPermissionRequest() {
+		t.Fatal("expected pending control request to be cleared after successful write")
+	}
+}
+
+func TestPtyRunnerWritePermissionResponseDenyEncodesControlResponse(t *testing.T) {
+	buf := &nopWriteCloser{}
+	runner := NewPtyRunner()
+	runner.writer = buf
+	runner.pendingReq = ExecRequest{SessionID: "s-control-deny"}
+	runner.pendingControlRequestID = "req-deny"
+
+	if err := runner.WritePermissionResponse(context.Background(), "deny"); err != nil {
+		t.Fatalf("write permission response: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `"behavior":"deny"`) {
+		t.Fatalf("expected deny behavior, got %q", output)
+	}
+}
+
+func TestPtyRunnerWritePermissionResponseWithoutPendingIDReturnsError(t *testing.T) {
+	buf := &nopWriteCloser{}
+	runner := NewPtyRunner()
+	runner.writer = buf
+
+	if err := runner.WritePermissionResponse(context.Background(), "approve"); !errors.Is(err, ErrNoPendingControlRequest) {
+		t.Fatalf("expected ErrNoPendingControlRequest, got %v", err)
+	}
+}
+
+func TestPtyRunnerClaudeResumeUsesInteractiveWriter(t *testing.T) {
+	runner := NewPtyRunner()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	eventsCh := make(chan any, 32)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runner.runClaudeResumeInteractive(ctx, ExecRequest{
+			SessionID: "s-resume",
+			Command: shellTestCommand(
+				"printf 'resume ready> '; IFS= read -r line; printf 'got:%s\n' \"$line\"",
+				"Write-Host -NoNewline 'resume ready> '; $line = Read-Host; Write-Output ('got:' + $line)",
+				"<nul set /p =resume ready^>  & set /p line= & echo got:%line%",
+			),
+			Mode: ModePTY,
+		}, ".", func(event any) {
+			eventsCh <- event
+		})
+	}()
+
+	var sawPrompt bool
+	deadline := time.After(5 * time.Second)
+	for !sawPrompt {
+		select {
+		case event := <-eventsCh:
+			switch v := event.(type) {
+			case protocol.PromptRequestEvent:
+				if strings.Contains(v.Message, "resume ready>") || strings.Contains(v.Message, "Claude 会话已恢复") {
+					sawPrompt = true
+				}
+			case protocol.LogEvent:
+				if strings.Contains(v.Message, "resume ready>") {
+					sawPrompt = true
+				}
+			}
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("resume runner failed before prompt: %v", err)
+			}
+		case <-deadline:
+			t.Fatal("did not receive resume prompt")
+		}
+	}
+
+	runner.mu.Lock()
+	_, isStreamWriter := runner.writer.(*claudeStreamWriter)
+	interactive := runner.interactive
+	runner.mu.Unlock()
+	if isStreamWriter {
+		t.Fatal("expected resume runner to avoid claudeStreamWriter and use interactive writer")
+	}
+	if !interactive {
+		t.Fatal("expected resume runner to be interactive")
+	}
+
+	if err := runner.Write(context.Background(), []byte("y\n")); err != nil {
+		t.Fatalf("write resume input: %v", err)
+	}
+
+	var sawOutput bool
+	deadline = time.After(5 * time.Second)
+	for !sawOutput {
+		select {
+		case event := <-eventsCh:
+			if v, ok := event.(protocol.LogEvent); ok && strings.Contains(v.Message, "got:y") {
+				sawOutput = true
+			}
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("resume runner failed: %v", err)
+			}
+		case <-deadline:
+			t.Fatal("did not receive echoed resume input")
+		}
 	}
 }
 
@@ -323,9 +503,13 @@ func TestPtyRunnerClaudeLazyStartExposesPromptBeforeInput(t *testing.T) {
 
 	runner.mu.Lock()
 	lazyStart := runner.lazyStart
+	interactive := runner.interactive
 	runner.mu.Unlock()
 	if !lazyStart {
 		t.Fatal("expected runner to remain in lazy-start mode before first input")
+	}
+	if interactive {
+		t.Fatal("expected runner to remain non-interactive before first input")
 	}
 
 	cancel()
@@ -333,6 +517,21 @@ func TestPtyRunnerClaudeLazyStartExposesPromptBeforeInput(t *testing.T) {
 	case <-errCh:
 	case <-time.After(3 * time.Second):
 		t.Fatal("runner did not exit after cancel")
+	}
+}
+
+func TestPtyRunnerCanAcceptInteractiveInputReflectsState(t *testing.T) {
+	runner := NewPtyRunner()
+	if runner.CanAcceptInteractiveInput() {
+		t.Fatal("expected empty runner to reject interactive input")
+	}
+	runner.mu.Lock()
+	runner.interactive = true
+	runner.closed = false
+	runner.writer = &claudeStreamWriter{writer: &strings.Builder{}}
+	runner.mu.Unlock()
+	if !runner.CanAcceptInteractiveInput() {
+		t.Fatal("expected interactive runner to accept direct input")
 	}
 }
 
@@ -417,71 +616,206 @@ func TestPtyRunnerClaudeToolResultPermissionErrorBecomesPrompt(t *testing.T) {
 	}
 }
 
-func TestPtyRunnerSyntheticFileDiffAfterEditToolResult(t *testing.T) {
-	tempDir := t.TempDir()
-	filePath := filepath.Join(tempDir, "hello.txt")
-	if err := os.WriteFile(filePath, []byte("alpha\n"), 0o644); err != nil {
-		t.Fatalf("write initial file: %v", err)
-	}
-
+func TestPtyRunnerCloseSuppressesResumeExitError(t *testing.T) {
 	runner := NewPtyRunner()
-	runner.currentDir = tempDir
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	toolInput, err := json.Marshal(map[string]any{"file_path": filePath})
-	if err != nil {
-		t.Fatalf("marshal tool input: %v", err)
-	}
+	eventsCh := make(chan any, 32)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runner.runClaudeResumeInteractive(ctx, ExecRequest{
+			SessionID: "s-resume-close",
+			Command: shellTestCommand(
+				"printf 'resume ready> '; sleep 10",
+				"Write-Host -NoNewline 'resume ready> '; Start-Sleep -Seconds 10",
+				"<nul set /p =resume ready^>  & ping -n 11 127.0.0.1 >nul",
+			),
+			Mode: ModePTY,
+		}, ".", func(event any) {
+			eventsCh <- event
+		})
+	}()
 
-	var events []any
-	sink := func(event any) { events = append(events, event) }
-
-	assistantEnvelope, err := json.Marshal(map[string]any{
-		"type": "assistant",
-		"message": map[string]any{
-			"content": []map[string]any{{
-				"type":  "tool_use",
-				"name":  "Edit",
-				"input": json.RawMessage(toolInput),
-			}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal assistant envelope: %v", err)
-	}
-	userEnvelope, err := json.Marshal(map[string]any{
-		"type": "user",
-		"tool_use_result": map[string]any{
-			"type":     "tool completed",
-			"filePath": filePath,
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal user envelope: %v", err)
-	}
-
-	reader := strings.NewReader(string(assistantEnvelope) + "\n")
-	runner.readClaudeStreamJSON(context.Background(), reader, "s4", sink)
-
-	if err := os.WriteFile(filePath, []byte("beta\n"), 0o644); err != nil {
-		t.Fatalf("write updated file: %v", err)
-	}
-	reader = strings.NewReader(string(userEnvelope) + "\n")
-	runner.readClaudeStreamJSON(context.Background(), reader, "s4", sink)
-
-	var diffEvent *protocol.FileDiffEvent
-	for _, event := range events {
-		if v, ok := event.(protocol.FileDiffEvent); ok {
-			diffEvent = &v
-			break
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-eventsCh:
+			switch v := event.(type) {
+			case protocol.PromptRequestEvent:
+				if strings.Contains(v.Message, "resume ready>") || strings.Contains(v.Message, "Claude 会话已恢复") {
+					goto ready
+				}
+			case protocol.LogEvent:
+				if strings.Contains(v.Message, "resume ready>") {
+					goto ready
+				}
+			}
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("resume runner failed before close: %v", err)
+			}
+			t.Fatal("resume runner exited before close")
+		case <-deadline:
+			t.Fatal("did not receive resume prompt before close")
 		}
 	}
-	if diffEvent == nil {
-		t.Fatalf("expected synthetic file diff event, got %#v", events)
+
+ready:
+	if err := runner.Close(); err != nil {
+		t.Fatalf("close runner: %v", err)
 	}
-	if diffEvent.Path != "hello.txt" {
-		t.Fatalf("expected relative path hello.txt, got %q", diffEvent.Path)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected nil after intentional close, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not exit after close")
 	}
-	if !strings.Contains(diffEvent.Diff, "-alpha") || !strings.Contains(diffEvent.Diff, "+beta") {
-		t.Fatalf("expected diff to contain old/new content, got %q", diffEvent.Diff)
+
+	for {
+		select {
+		case event := <-eventsCh:
+			if _, ok := event.(protocol.ErrorEvent); ok {
+				t.Fatalf("unexpected error event after intentional close: %#v", event)
+			}
+		default:
+			return
+		}
 	}
+}
+
+func TestPtyRunnerClaudeSessionIDPrefersManagedSessionIDAndFallsBackToStreamSession(t *testing.T) {
+	runner := NewPtyRunner()
+	runner.pendingReq = ExecRequest{Command: "claude --session-id managed-session-123 --resume managed-session-123"}
+	if got := runner.ClaudeSessionID(); got != "managed-session-123" {
+		t.Fatalf("expected managed session id, got %q", got)
+	}
+	runner.claudeSessionID = "stream-session-456"
+	if got := runner.ClaudeSessionID(); got != "managed-session-123" {
+		t.Fatalf("expected managed session id to win, got %q", got)
+	}
+	runner.pendingReq = ExecRequest{Command: "claude"}
+	if got := runner.ClaudeSessionID(); got != "stream-session-456" {
+		t.Fatalf("expected stream session fallback, got %q", got)
+	}
+}
+
+func TestPtyRunnerResumeCommandAddsPermissionMode(t *testing.T) {
+	cmd := appendPermissionModeToCommand("claude --resume resume-xyz", "acceptEdits")
+	if !strings.Contains(cmd, "--permission-mode acceptEdits") {
+		t.Fatalf("expected acceptEdits permission mode in resume command, got %q", cmd)
+	}
+	if strings.Count(cmd, "--permission-mode") != 1 {
+		t.Fatalf("expected single permission mode flag, got %q", cmd)
+	}
+	unchanged := appendPermissionModeToCommand(cmd, "default")
+	if unchanged != cmd {
+		t.Fatalf("expected existing permission mode to remain unchanged, got %q", unchanged)
+	}
+}
+
+func TestNewClaudeStreamCommandPreservesResumeAndPermissionMode(t *testing.T) {
+	cmd := newClaudeStreamCommand(context.Background(), "claude --resume resume-xyz", "resume-xyz", "acceptEdits")
+	joined := strings.Join(cmd.Args, " ")
+	if strings.Count(joined, "--resume") != 1 {
+		t.Fatalf("expected single --resume, got %q", joined)
+	}
+	if strings.Contains(joined, "--session-id") {
+		t.Fatalf("did not expect --session-id on resume command, got %q", joined)
+	}
+	if !strings.Contains(joined, "resume-xyz") {
+		t.Fatalf("expected resume id value, got %q", joined)
+	}
+	if !strings.Contains(joined, "--permission-mode acceptEdits") {
+		t.Fatalf("expected acceptEdits permission mode, got %q", joined)
+	}
+}
+
+func TestNewClaudePromptCommandPreservesResumeAndPermissionMode(t *testing.T) {
+	cmd := newClaudePromptCommand(context.Background(), "claude --resume resume-xyz", "hello", "resume-xyz", "default")
+	joined := strings.Join(cmd.Args, " ")
+	if strings.Count(joined, "--resume") != 1 {
+		t.Fatalf("expected single --resume, got %q", joined)
+	}
+	if strings.Contains(joined, "--session-id") {
+		t.Fatalf("did not expect --session-id on resume command, got %q", joined)
+	}
+	if !strings.Contains(joined, "resume-xyz") {
+		t.Fatalf("expected resume id value, got %q", joined)
+	}
+	if !strings.Contains(joined, "--permission-mode default") {
+		t.Fatalf("expected default permission mode, got %q", joined)
+	}
+}
+
+func TestPtyRunnerLazyStartUsesRuntimeMetaResumeSessionID(t *testing.T) {
+	runner := NewPtyRunner()
+	runner.mu.Lock()
+	runner.lazyStart = true
+	runner.permissionMode = "acceptEdits"
+	runner.pendingReq = ExecRequest{
+		SessionID:      "s-resume-meta",
+		Command:        "claude",
+		Mode:           ModePTY,
+		PermissionMode: "acceptEdits",
+		RuntimeMeta:    protocol.RuntimeMeta{ResumeSessionID: "resume-meta-xyz"},
+	}
+	runner.pendingCWD = "/tmp"
+	runner.closed = false
+	runner.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := runner.startClaudeStreamOnFirstInput(ctx, runner.pendingReq, "/tmp", func(any) {}, []byte("继续\n")); err != nil {
+		t.Fatalf("start lazy prompt command: %v", err)
+	}
+
+	runner.mu.Lock()
+	cmd := runner.cmd
+	runner.mu.Unlock()
+	if cmd == nil {
+		t.Fatal("expected lazy prompt command to start")
+	}
+	joined := strings.Join(cmd.Args, " ")
+	if !strings.Contains(joined, "--resume resume-meta-xyz") {
+		t.Fatalf("expected resume id from runtime meta, got %q", joined)
+	}
+	_ = runner.Close()
+}
+
+func TestPtyRunnerLazyStartDoesNotTreatManagedSessionIDAsResume(t *testing.T) {
+	runner := NewPtyRunner()
+	runner.mu.Lock()
+	runner.lazyStart = true
+	runner.permissionMode = "default"
+	runner.pendingReq = ExecRequest{
+		SessionID:      "s-managed-session",
+		Command:        "claude --session-id managed-xyz",
+		Mode:           ModePTY,
+		PermissionMode: "default",
+		RuntimeMeta:    protocol.RuntimeMeta{ResumeSessionID: "managed-xyz"},
+	}
+	runner.pendingCWD = "/tmp"
+	runner.closed = false
+	runner.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := runner.startClaudeStreamOnFirstInput(ctx, runner.pendingReq, "/tmp", func(any) {}, []byte("hello\n")); err != nil {
+		t.Fatalf("start lazy prompt command: %v", err)
+	}
+
+	runner.mu.Lock()
+	cmd := runner.cmd
+	runner.mu.Unlock()
+	if cmd == nil {
+		t.Fatal("expected lazy prompt command to start")
+	}
+	joined := strings.Join(cmd.Args, " ")
+	if strings.Contains(joined, "--resume managed-xyz") {
+		t.Fatalf("did not expect managed session id to be reused as resume, got %q", joined)
+	}
+	_ = runner.Close()
 }

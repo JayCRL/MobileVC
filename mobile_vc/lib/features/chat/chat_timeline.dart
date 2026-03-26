@@ -15,6 +15,7 @@ class ChatTimeline extends StatefulWidget {
     this.isManualReviewMode = true,
     this.isAutoAcceptMode = false,
     this.pendingPrompt,
+    this.pendingInteraction,
     this.shouldShowReviewChoices = false,
     this.onOpenDiff,
     this.onOpenRuntimeInfo,
@@ -32,6 +33,7 @@ class ChatTimeline extends StatefulWidget {
   final bool isManualReviewMode;
   final bool isAutoAcceptMode;
   final PromptRequestEvent? pendingPrompt;
+  final InteractionRequestEvent? pendingInteraction;
   final bool shouldShowReviewChoices;
   final VoidCallback? onOpenDiff;
   final VoidCallback? onOpenRuntimeInfo;
@@ -58,9 +60,15 @@ class _ChatTimelineState extends State<ChatTimeline> {
   void didUpdateWidget(covariant ChatTimeline oldWidget) {
     super.didUpdateWidget(oldWidget);
     final currentCount = widget.items.length +
-        (widget.pendingPrompt?.hasVisiblePrompt == true ? 1 : 0);
+        ((widget.pendingInteraction?.hasVisiblePrompt == true ||
+                widget.pendingPrompt?.hasVisiblePrompt == true)
+            ? 1
+            : 0);
     final previousCount = oldWidget.items.length +
-        (oldWidget.pendingPrompt?.hasVisiblePrompt == true ? 1 : 0);
+        ((oldWidget.pendingInteraction?.hasVisiblePrompt == true ||
+                oldWidget.pendingPrompt?.hasVisiblePrompt == true)
+            ? 1
+            : 0);
     if (currentCount > previousCount || widget.items.length > _lastCount) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!_scrollController.hasClients) {
@@ -82,9 +90,16 @@ class _ChatTimelineState extends State<ChatTimeline> {
   Widget build(BuildContext context) {
     final visiblePrompt = widget.shouldShowReviewChoices
         ? null
-        : (widget.pendingPrompt?.hasVisiblePrompt == true
-            ? widget.pendingPrompt
-            : null);
+        : (widget.pendingInteraction?.hasVisiblePrompt == true
+            ? widget.pendingInteraction
+            : (widget.pendingPrompt?.hasVisiblePrompt == true
+                ? widget.pendingPrompt
+                : null));
+    final visiblePromptMessage = visiblePrompt is InteractionRequestEvent
+        ? visiblePrompt.message
+        : visiblePrompt is PromptRequestEvent
+            ? visiblePrompt.message
+            : '';
     final reviewAnchorIndex = _reviewAnchorIndex(widget.items);
     final items = [
       for (var i = 0; i < widget.items.length; i++) ...[
@@ -112,10 +127,16 @@ class _ChatTimelineState extends State<ChatTimeline> {
       if (visiblePrompt != null)
         TimelineItem(
           id: 'pending-prompt-${visiblePrompt.timestamp.microsecondsSinceEpoch}',
-          kind: 'prompt_request',
+          kind: visiblePrompt is InteractionRequestEvent
+              ? 'interaction_request'
+              : 'prompt_request',
           timestamp: visiblePrompt.timestamp,
-          title: '授权确认',
-          body: visiblePrompt.message,
+          title: visiblePrompt is InteractionRequestEvent
+              ? (visiblePrompt.title.isNotEmpty
+                  ? visiblePrompt.title
+                  : '交互确认')
+              : '授权确认',
+          body: visiblePromptMessage,
           meta: visiblePrompt.runtimeMeta,
         ),
     ];
@@ -145,11 +166,17 @@ class _ChatTimelineState extends State<ChatTimeline> {
             onAcceptAll: widget.onAcceptAll,
           );
         }
-        if (item.kind == 'prompt_request' && visiblePrompt != null) {
-          return _PromptRequestCard(
-            prompt: visiblePrompt,
-            onSubmit: widget.onPromptSubmit,
-          );
+        if ((item.kind == 'prompt_request' || item.kind == 'interaction_request') &&
+            visiblePrompt != null) {
+          return visiblePrompt is InteractionRequestEvent
+              ? _InteractionRequestCard(
+                  interaction: visiblePrompt,
+                  onSubmit: widget.onPromptSubmit,
+                )
+              : _PromptRequestCard(
+                  prompt: visiblePrompt as PromptRequestEvent,
+                  onSubmit: widget.onPromptSubmit,
+                );
         }
         return EventCard(
           item: item,
@@ -192,6 +219,113 @@ class _ChatTimelineState extends State<ChatTimeline> {
       return left.id == right.id;
     }
     return left.path == right.path;
+  }
+}
+
+class _InteractionRequestCard extends StatelessWidget {
+  const _InteractionRequestCard({
+    required this.interaction,
+    this.onSubmit,
+  });
+
+  final InteractionRequestEvent interaction;
+  final ValueChanged<String>? onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final actions = interaction.actions;
+    final options = interaction.options
+        .where((option) => option.displayText.isNotEmpty)
+        .toList();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (interaction.title.trim().isNotEmpty) ...[
+            Text(
+              interaction.title.trim(),
+              style: Theme.of(context)
+                  .textTheme
+                  .titleSmall
+                  ?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (interaction.message.trim().isNotEmpty)
+            Text(interaction.message.trim()),
+          if (actions.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: actions
+                  .map(
+                    (action) => _InteractionActionButton(
+                      action: action,
+                      onPressed: onSubmit == null
+                          ? null
+                          : () => onSubmit!(action.decision.isNotEmpty
+                              ? action.decision
+                              : (action.value.isNotEmpty
+                                  ? action.value
+                                  : action.id)),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ] else if (options.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: options
+                  .map((option) => _PromptOptionButton(
+                        option: option,
+                        onPressed: onSubmit == null
+                            ? null
+                            : () => onSubmit!(option.value),
+                      ))
+                  .toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _InteractionActionButton extends StatelessWidget {
+  const _InteractionActionButton({
+    required this.action,
+    this.onPressed,
+  });
+
+  final InteractionAction action;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (action.variant) {
+      case 'primary':
+        return FilledButton(onPressed: onPressed, child: Text(action.displayLabel));
+      case 'tonal':
+        return FilledButton.tonal(
+            onPressed: onPressed, child: Text(action.displayLabel));
+      default:
+        return OutlinedButton(onPressed: onPressed, child: Text(action.displayLabel));
+    }
   }
 }
 

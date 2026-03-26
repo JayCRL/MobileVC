@@ -128,6 +128,129 @@ class PromptOption {
       label.trim().isNotEmpty ? label.trim() : value.trim();
 }
 
+class InteractionAction {
+  const InteractionAction({
+    required this.id,
+    this.label = '',
+    this.variant = '',
+    this.value = '',
+    this.decision = '',
+    this.submitMode = '',
+    this.needsInput = false,
+    this.destructive = false,
+  });
+
+  final String id;
+  final String label;
+  final String variant;
+  final String value;
+  final String decision;
+  final String submitMode;
+  final bool needsInput;
+  final bool destructive;
+
+  String get displayLabel {
+    if (label.trim().isNotEmpty) {
+      return label.trim();
+    }
+    if (value.trim().isNotEmpty) {
+      return value.trim();
+    }
+    return id.trim();
+  }
+
+  factory InteractionAction.fromJson(Map<String, dynamic> json) {
+    return InteractionAction(
+      id: (json['id'] ?? json['value'] ?? '').toString(),
+      label: (json['label'] ?? '').toString(),
+      variant: (json['variant'] ?? '').toString(),
+      value: (json['value'] ?? '').toString(),
+      decision: (json['decision'] ?? '').toString(),
+      submitMode: (json['submitMode'] ?? '').toString(),
+      needsInput: json['needsInput'] == true,
+      destructive: json['destructive'] == true,
+    );
+  }
+}
+
+class InteractionRequestEvent extends AppEvent {
+  const InteractionRequestEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.kind = '',
+    this.title = '',
+    this.message = '',
+    this.options = const [],
+    this.actions = const [],
+    this.contextId = '',
+    this.contextTitle = '',
+    this.targetPath = '',
+    this.executionId = '',
+    this.groupId = '',
+    this.groupTitle = '',
+    this.resumeSessionId = '',
+    this.permissionMode = '',
+    this.inputLabel = '',
+    this.inputPlaceholder = '',
+  }) : super(type: 'interaction_request');
+
+  final String kind;
+  final String title;
+  final String message;
+  final List<PromptOption> options;
+  final List<InteractionAction> actions;
+  final String contextId;
+  final String contextTitle;
+  final String targetPath;
+  final String executionId;
+  final String groupId;
+  final String groupTitle;
+  final String resumeSessionId;
+  final String permissionMode;
+  final String inputLabel;
+  final String inputPlaceholder;
+
+  bool get hasVisiblePrompt =>
+      title.trim().isNotEmpty ||
+      message.trim().isNotEmpty ||
+      actions.any((action) => action.displayLabel.isNotEmpty) ||
+      options.any((option) => option.displayText.isNotEmpty);
+
+  bool get isPermission => kind.trim().toLowerCase() == 'permission';
+  bool get isReview => kind.trim().toLowerCase() == 'review';
+  bool get isChoice => kind.trim().toLowerCase() == 'choice';
+  bool get isInput => kind.trim().toLowerCase() == 'input';
+
+  factory InteractionRequestEvent.fromJson(Map<String, dynamic> json) {
+    return InteractionRequestEvent(
+      timestamp: _readTimestamp(json),
+      sessionId: (json['sessionId'] ?? '').toString(),
+      runtimeMeta: RuntimeMeta.fromJson(json),
+      raw: json,
+      kind: (json['kind'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      message: _readPromptMessage(json),
+      options: _readPromptOptions(json),
+      actions: ((json['actions'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(InteractionAction.fromJson)
+          .toList(),
+      contextId: (json['contextId'] ?? '').toString(),
+      contextTitle: (json['contextTitle'] ?? '').toString(),
+      targetPath: (json['targetPath'] ?? '').toString(),
+      executionId: (json['executionId'] ?? '').toString(),
+      groupId: (json['groupId'] ?? '').toString(),
+      groupTitle: (json['groupTitle'] ?? '').toString(),
+      resumeSessionId: (json['resumeSessionId'] ?? '').toString(),
+      permissionMode: (json['permissionMode'] ?? '').toString(),
+      inputLabel: (json['inputLabel'] ?? '').toString(),
+      inputPlaceholder: (json['inputPlaceholder'] ?? '').toString(),
+    );
+  }
+}
+
 class PromptRequestEvent extends AppEvent {
   const PromptRequestEvent({
     required super.timestamp,
@@ -151,10 +274,16 @@ class PromptRequestEvent extends AppEvent {
         haystack.contains('approve') ||
         haystack.contains('permission') ||
         haystack.contains('confirm') ||
+        haystack.contains('deny') ||
+        haystack.contains('reject') ||
+        haystack.contains('cancel') ||
         haystack.contains('授权') ||
         haystack.contains('确认') ||
         haystack.contains('允许') ||
-        haystack.contains('批准');
+        haystack.contains('批准') ||
+        haystack.contains('同意') ||
+        haystack.contains('拒绝') ||
+        haystack.contains('取消');
   }
 
   bool get looksLikeEditPermissionPrompt {
@@ -591,6 +720,8 @@ class SessionHistoryEvent extends AppEvent {
     this.currentStep,
     this.latestError,
     this.sessionContext = const SessionContext(),
+    this.skillCatalogMeta = const CatalogMetadata(domain: 'skill'),
+    this.memoryCatalogMeta = const CatalogMetadata(domain: 'memory'),
     this.rawTerminalByStream = const {},
     this.terminalExecutions = const [],
     this.canResume = false,
@@ -606,6 +737,8 @@ class SessionHistoryEvent extends AppEvent {
   final HistoryContext? currentStep;
   final HistoryContext? latestError;
   final SessionContext sessionContext;
+  final CatalogMetadata skillCatalogMeta;
+  final CatalogMetadata memoryCatalogMeta;
   final Map<String, String> rawTerminalByStream;
   final List<TerminalExecution> terminalExecutions;
   final bool canResume;
@@ -651,6 +784,14 @@ class SessionHistoryEvent extends AppEvent {
             ? SessionContext.fromJson(
                 json['sessionContext'] as Map<String, dynamic>)
             : const SessionContext(),
+        skillCatalogMeta: json['skillCatalogMeta'] is Map<String, dynamic>
+            ? CatalogMetadata.fromJson(
+                json['skillCatalogMeta'] as Map<String, dynamic>)
+            : const CatalogMetadata(domain: 'skill'),
+        memoryCatalogMeta: json['memoryCatalogMeta'] is Map<String, dynamic>
+            ? CatalogMetadata.fromJson(
+                json['memoryCatalogMeta'] as Map<String, dynamic>)
+            : const CatalogMetadata(domain: 'memory'),
         rawTerminalByStream: ((json['rawTerminalByStream'] as Map?) ?? const {})
             .map((key, value) => MapEntry(key.toString(), value.toString())),
         terminalExecutions: ((json['terminalExecutions'] as List?) ?? const [])
@@ -700,9 +841,11 @@ class SkillCatalogResultEvent extends AppEvent {
     required super.sessionId,
     required super.runtimeMeta,
     required super.raw,
+    this.meta = const CatalogMetadata(),
     this.items = const [],
   }) : super(type: 'skill_catalog_result');
 
+  final CatalogMetadata meta;
   final List<SkillDefinition> items;
 
   factory SkillCatalogResultEvent.fromJson(Map<String, dynamic> json) =>
@@ -711,6 +854,9 @@ class SkillCatalogResultEvent extends AppEvent {
         sessionId: (json['sessionId'] ?? '').toString(),
         runtimeMeta: RuntimeMeta.fromJson(json),
         raw: json,
+        meta: json['meta'] is Map<String, dynamic>
+            ? CatalogMetadata.fromJson(json['meta'] as Map<String, dynamic>)
+            : const CatalogMetadata(),
         items: ((json['items'] as List?) ?? const [])
             .whereType<Map<String, dynamic>>()
             .map(SkillDefinition.fromJson)
@@ -724,9 +870,11 @@ class MemoryListResultEvent extends AppEvent {
     required super.sessionId,
     required super.runtimeMeta,
     required super.raw,
+    this.meta = const CatalogMetadata(),
     this.items = const [],
   }) : super(type: 'memory_list_result');
 
+  final CatalogMetadata meta;
   final List<MemoryItem> items;
 
   factory MemoryListResultEvent.fromJson(Map<String, dynamic> json) =>
@@ -735,6 +883,9 @@ class MemoryListResultEvent extends AppEvent {
         sessionId: (json['sessionId'] ?? '').toString(),
         runtimeMeta: RuntimeMeta.fromJson(json),
         raw: json,
+        meta: json['meta'] is Map<String, dynamic>
+            ? CatalogMetadata.fromJson(json['meta'] as Map<String, dynamic>)
+            : const CatalogMetadata(),
         items: ((json['items'] as List?) ?? const [])
             .whereType<Map<String, dynamic>>()
             .map(MemoryItem.fromJson)
@@ -783,6 +934,64 @@ class SkillSyncResultEvent extends AppEvent {
         sessionId: (json['sessionId'] ?? '').toString(),
         runtimeMeta: RuntimeMeta.fromJson(json),
         raw: json,
+        message: (json['msg'] ?? '').toString(),
+      );
+}
+
+class CatalogSyncStatusEvent extends AppEvent {
+  const CatalogSyncStatusEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.domain = '',
+    this.meta = const CatalogMetadata(),
+  }) : super(type: 'catalog_sync_status');
+
+  final String domain;
+  final CatalogMetadata meta;
+
+  factory CatalogSyncStatusEvent.fromJson(Map<String, dynamic> json) =>
+      CatalogSyncStatusEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        domain: (json['domain'] ?? '').toString(),
+        meta: json['meta'] is Map<String, dynamic>
+            ? CatalogMetadata.fromJson(json['meta'] as Map<String, dynamic>)
+            : const CatalogMetadata(),
+      );
+}
+
+class CatalogSyncResultEvent extends AppEvent {
+  const CatalogSyncResultEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.domain = '',
+    this.meta = const CatalogMetadata(),
+    this.success = false,
+    this.message = '',
+  }) : super(type: 'catalog_sync_result');
+
+  final String domain;
+  final CatalogMetadata meta;
+  final bool success;
+  final String message;
+
+  factory CatalogSyncResultEvent.fromJson(Map<String, dynamic> json) =>
+      CatalogSyncResultEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        domain: (json['domain'] ?? '').toString(),
+        meta: json['meta'] is Map<String, dynamic>
+            ? CatalogMetadata.fromJson(json['meta'] as Map<String, dynamic>)
+            : const CatalogMetadata(),
+        success: json['success'] == true,
         message: (json['msg'] ?? '').toString(),
       );
 }
