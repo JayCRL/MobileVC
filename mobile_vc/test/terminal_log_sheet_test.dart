@@ -15,13 +15,20 @@ void main() {
                 executionId: 'exec-1',
                 command: 'npm test',
                 cwd: '/workspace/app',
+                source: 'user',
+                sourceLabel: '用户输入',
+                contextTitle: '单元测试',
+                groupTitle: '测试组',
                 stdout: 'pass 1',
                 stderr: '',
+                exitCode: 0,
               ),
               TerminalExecution(
                 executionId: 'exec-2',
                 command: 'flutter test',
                 cwd: '/workspace/mobile_vc',
+                source: 'review-follow-up',
+                sourceLabel: '审核后续',
                 stdout: 'running',
                 stderr: 'warning',
                 running: true,
@@ -36,11 +43,15 @@ void main() {
       ),
     );
 
-    expect(find.text('npm test'), findsOneWidget);
+    expect(find.text('npm test'), findsWidgets);
     expect(find.text('flutter test'), findsOneWidget);
     expect(find.text('pass 1'), findsOneWidget);
+    expect(find.text('来源: 用户输入'), findsOneWidget);
+    expect(find.text('上下文: 单元测试'), findsOneWidget);
+    expect(find.text('修改组: 测试组'), findsOneWidget);
+    expect(find.text('状态: exit 0'), findsOneWidget);
 
-    await tester.tap(find.text('flutter test'));
+    await tester.tap(find.text('flutter test').first);
     await tester.pump();
 
     expect(selectedExecutionId, 'exec-2');

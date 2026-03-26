@@ -15,6 +15,8 @@ class MobileVcMapper {
         return ErrorEvent.fromJson(json);
       case 'prompt_request':
         return PromptRequestEvent.fromJson(json);
+      case 'interaction_request':
+        return InteractionRequestEvent.fromJson(json);
       case 'session_state':
         return SessionStateEvent.fromJson(json);
       case 'agent_state':
@@ -45,6 +47,10 @@ class MobileVcMapper {
         return SessionContextResultEvent.fromJson(json);
       case 'skill_sync_result':
         return SkillSyncResultEvent.fromJson(json);
+      case 'catalog_sync_status':
+        return CatalogSyncStatusEvent.fromJson(json);
+      case 'catalog_sync_result':
+        return CatalogSyncResultEvent.fromJson(json);
       default:
         return UnknownEvent(
           type: type,

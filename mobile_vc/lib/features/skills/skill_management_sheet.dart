@@ -8,6 +8,7 @@ class SkillManagementSheet extends StatefulWidget {
     required this.skills,
     required this.enabledSkillNames,
     required this.syncStatus,
+    required this.catalogMeta,
     required this.onToggleEnabled,
     required this.onSave,
     required this.onSync,
@@ -16,6 +17,7 @@ class SkillManagementSheet extends StatefulWidget {
   final List<SkillDefinition> skills;
   final List<String> enabledSkillNames;
   final String syncStatus;
+  final CatalogMetadata catalogMeta;
   final ValueChanged<String> onToggleEnabled;
   final ValueChanged<SkillDefinition> onSave;
   final VoidCallback onSync;
@@ -54,6 +56,7 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final meta = widget.catalogMeta;
     return SafeArea(
       top: false,
       child: Padding(
@@ -96,8 +99,14 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
                       ),
                       FilledButton.tonalIcon(
                         onPressed: widget.onSync,
-                        icon: const Icon(Icons.sync),
-                        label: const Text('同步 skill'),
+                        icon: meta.isSyncing
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.sync),
+                        label: Text(meta.isSyncing ? '同步中' : '同步 skill'),
                       ),
                     ],
                   ),
@@ -108,6 +117,20 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
                       color: theme.colorScheme.onSurfaceVariant,
                       height: 1.45,
                     ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _SummaryChip(label: 'sourceOfTruth', value: meta.sourceOfTruth.isEmpty ? '-' : meta.sourceOfTruth),
+                      _SummaryChip(label: 'syncState', value: meta.syncState.isEmpty ? '-' : meta.syncState),
+                      _SummaryChip(label: 'driftDetected', value: meta.driftDetected ? 'yes' : 'no'),
+                      if (meta.lastSyncedAt != null)
+                        _SummaryChip(label: 'lastSyncedAt', value: '${meta.lastSyncedAt}'),
+                      if (meta.lastError.trim().isNotEmpty)
+                        _SummaryChip(label: 'lastError', value: meta.lastError),
+                    ],
                   ),
                 ],
               ),
@@ -174,10 +197,15 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
                               spacing: 8,
                               runSpacing: 8,
                               children: [
-                                _Tag(text: item.targetType.isEmpty ? 'target: -' : 'target: ${item.targetType}'),
-                                _Tag(text: item.resultView.isEmpty ? 'view: -' : 'view: ${item.resultView}'),
-                                _Tag(text: item.source.isEmpty ? 'source: -' : 'source: ${item.source}'),
-                                _Tag(text: item.editable ? '可编辑' : '只读'),
+                                _SummaryChip(label: 'target', value: item.targetType.isEmpty ? '-' : item.targetType),
+                                _SummaryChip(label: 'view', value: item.resultView.isEmpty ? '-' : item.resultView),
+                                _SummaryChip(label: 'source', value: item.source.isEmpty ? '-' : item.source),
+                                _SummaryChip(label: 'truth', value: item.sourceOfTruth.isEmpty ? '-' : item.sourceOfTruth),
+                                _SummaryChip(label: 'sync', value: item.syncState.isEmpty ? '-' : item.syncState),
+                                _SummaryChip(label: 'drift', value: item.driftDetected ? 'yes' : 'no'),
+                                if (item.lastSyncedAt != null)
+                                  _SummaryChip(label: 'lastSyncedAt', value: '${item.lastSyncedAt}'),
+                                _SummaryChip(label: '编辑', value: item.editable ? '可编辑' : '只读'),
                               ],
                             ),
                             if (item.editable) ...[
@@ -286,24 +314,6 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
       ),
     );
     _clearForm();
-  }
-}
-
-class _Tag extends StatelessWidget {
-  const _Tag({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(text),
-    );
   }
 }
 

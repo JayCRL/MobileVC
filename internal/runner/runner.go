@@ -20,6 +20,7 @@ const (
 )
 
 var ErrInputNotSupported = errors.New("input not supported")
+var ErrNoPendingControlRequest = errors.New("no pending control request")
 
 type ExecRequest struct {
 	Command        string
@@ -36,6 +37,19 @@ type Runner interface {
 	Run(ctx context.Context, req ExecRequest, sink EventSink) error
 	Write(ctx context.Context, data []byte) error
 	Close() error
+}
+
+type InteractiveStateProvider interface {
+	CanAcceptInteractiveInput() bool
+}
+
+type PermissionResponseWriter interface {
+	WritePermissionResponse(ctx context.Context, decision string) error
+	HasPendingPermissionRequest() bool
+}
+
+type ClaudeSessionProvider interface {
+	ClaudeSessionID() string
 }
 
 type shellSpec struct {
@@ -118,6 +132,7 @@ func newClaudeStreamCommand(ctx context.Context, command string, resumeSessionID
 		if !containsArg(args, "--input-format") {
 			args = append(args, "--input-format", "stream-json")
 		}
+		args = appendPermissionPromptTool(args)
 		args = appendPermissionMode(args, permissionMode)
 		cmd := exec.CommandContext(ctx, nodeEntry, args...)
 		cmd.Env = shellEnvironment(spec, command)
@@ -248,6 +263,9 @@ func buildClaudeStreamJSONCommand(command string) string {
 	if !strings.Contains(lower, "--input-format") {
 		parts = append(parts, "--input-format", "stream-json")
 	}
+	if !strings.Contains(lower, "--permission-prompt-tool") {
+		parts = append(parts, "--permission-prompt-tool", "stdio")
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -272,6 +290,15 @@ func buildClaudePromptCommand(command string, prompt string, resumeSessionID str
 	}
 	parts = append(parts, shellEscapeForBash(prompt))
 	return strings.Join(parts, " ")
+}
+
+func appendPermissionPromptTool(args []string) []string {
+	for _, arg := range args {
+		if arg == "--permission-prompt-tool" {
+			return args
+		}
+	}
+	return append(args, "--permission-prompt-tool", "stdio")
 }
 
 func appendPermissionMode(args []string, permissionMode string) []string {

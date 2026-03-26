@@ -16,30 +16,41 @@ import (
 	"github.com/creack/pty"
 
 	"mobilevc/internal/adapter"
+	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/session"
 )
 
-const ptyReadBufferSize = 4096
+const (
+	ptyReadBufferSize    = 4096
+	ptyDebugPreviewLimit = 240
+	ptyDebugReasonLog    = "log"
+	ptyDebugReasonPrompt = "prompt_request"
+	ptyDebugReasonError  = "error"
+)
 
 type PtyRunner struct {
-	mu              sync.Mutex
-	writer          io.WriteCloser
-	closer          io.Closer
-	cmd             *exec.Cmd
-	closed          bool
-	lazyStart       bool
-	processDone     chan struct{}
-	processErr      error
-	pendingReq      ExecRequest
-	pendingCWD      string
-	currentDir      string
-	sink            EventSink
-	claudeSessionID string
-	permissionMode  string
-	lastToolName    string
-	lastToolTarget  string
-	fileSnapshots   map[string]fileSnapshot
+	mu                      sync.Mutex
+	writer                  io.WriteCloser
+	closer                  io.Closer
+	cmd                     *exec.Cmd
+	closed                  bool
+	suppressExitError       bool
+	lazyStart               bool
+	interactive             bool
+	awaitingReadyPrompt     bool
+	processDone             chan struct{}
+	processErr              error
+	pendingReq              ExecRequest
+	pendingCWD              string
+	currentDir              string
+	sink                    EventSink
+	claudeSessionID         string
+	permissionMode          string
+	pendingControlRequestID string
+	lastToolName            string
+	lastToolTarget          string
+	fileSnapshots           map[string]fileSnapshot
 }
 
 type fileSnapshot struct {
@@ -59,7 +70,10 @@ func (w *claudeShellOnceWriter) Write(data []byte) (int, error) {
 	req := w.runner.pendingReq
 	cwd := w.runner.pendingCWD
 	sink := w.runner.sink
+	permMode := w.runner.permissionMode
+	resumeSessionID := w.runner.claudeSessionID
 	w.runner.mu.Unlock()
+	logx.Info("pty", "lazy shell writer received input: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q preview=%q", req.SessionID, cwd, permMode, resumeSessionID, ptyDebugPreview(string(data)))
 	if err := w.runner.startClaudeStreamOnFirstInput(context.Background(), req, cwd, sink, data); err != nil {
 		return 0, err
 	}
@@ -98,16 +112,33 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		}
 	}
 
-	if shouldUseClaudeResumeStreamJSON(req.Command) {
+	if shouldUseClaudeResumeInteractive(req.Command) {
 		r.mu.Lock()
 		r.permissionMode = req.PermissionMode
+		r.interactive = false
 		r.mu.Unlock()
-		return r.runClaudeStream(ctx, req, cwd, sink)
+		return r.runClaudeResumeInteractive(ctx, req, cwd, sink)
 	}
 
 	if shouldUseClaudeStreamJSON(req.Command) {
+		if extractResumeArg(req.Command) != "" && strings.Contains(strings.ToLower(req.Command), " --print") {
+			r.mu.Lock()
+			r.permissionMode = req.PermissionMode
+			r.interactive = false
+			r.pendingReq = req
+			r.pendingCWD = cwd
+			r.currentDir = cwd
+			r.sink = sink
+			r.closed = false
+			r.processDone = make(chan struct{})
+			r.processErr = nil
+			r.lazyStart = false
+			r.mu.Unlock()
+			return r.runClaudeStream(ctx, req, cwd, sink)
+		}
 		r.mu.Lock()
 		r.lazyStart = true
+		r.interactive = false
 		r.pendingReq = req
 		r.pendingCWD = cwd
 		r.currentDir = cwd
@@ -198,14 +229,18 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
 
 	r.mu.Lock()
 	lazyStart := r.lazyStart
+	interactive := r.interactive
 	writer := r.writer
 	closed := r.closed
 	req := r.pendingReq
 	cwd := r.pendingCWD
 	sink := r.sink
+	permissionMode := r.permissionMode
+	resumeSessionID := r.claudeSessionID
 	r.mu.Unlock()
+	logx.Info("pty", "runner write requested: sessionID=%s lazyStart=%t interactive=%t closed=%t cwd=%q permissionMode=%q resumeSessionID=%q preview=%q", req.SessionID, lazyStart, interactive, closed, cwd, permissionMode, resumeSessionID, ptyDebugPreview(string(data)))
 
-	if lazyStart {
+	if lazyStart && !interactive {
 		return r.startClaudeStreamOnFirstInput(ctx, req, cwd, sink, data)
 	}
 
@@ -215,11 +250,14 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
 
 	// 关键修复：对于交互式 AI 工具，确保发送 \r\n 触发执行
 	finalData := data
+	convertedNewline := false
 	if isAICommandName(req.Command) && len(data) > 0 && data[len(data)-1] == '\n' {
 		if len(data) == 1 || data[len(data)-2] != '\r' {
 			finalData = append(data[:len(data)-1], '\r', '\n')
+			convertedNewline = true
 		}
 	}
+	logx.Info("pty", "runner writing to active session: sessionID=%s convertedNewline=%t preview=%q finalPreview=%q", req.SessionID, convertedNewline, ptyDebugPreview(string(data)), ptyDebugPreview(string(finalData)))
 
 	writeDone := make(chan error, 1)
 	go func() {
@@ -238,11 +276,98 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
 	}
 }
 
+func (r *PtyRunner) CanAcceptInteractiveInput() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.interactive && r.writer != nil && !r.closed
+}
+
+func (r *PtyRunner) HasPendingPermissionRequest() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return strings.TrimSpace(r.pendingControlRequestID) != ""
+}
+
+func (r *PtyRunner) ClaudeSessionID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if sessionID := extractClaudeSessionIDArg(r.pendingReq.Command); sessionID != "" {
+		return sessionID
+	}
+	if sessionID := strings.TrimSpace(r.claudeSessionID); sessionID != "" {
+		return sessionID
+	}
+	return ""
+}
+
+func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string) error {
+	behavior := ""
+	switch strings.TrimSpace(strings.ToLower(decision)) {
+	case "approve":
+		behavior = "allow"
+	case "deny":
+		behavior = "deny"
+	default:
+		return errors.New("permission decision must be one of: approve, deny")
+	}
+
+	r.mu.Lock()
+	writer := r.writer
+	closed := r.closed
+	requestID := strings.TrimSpace(r.pendingControlRequestID)
+	req := r.pendingReq
+	r.mu.Unlock()
+
+	if writer == nil || closed {
+		return errors.New("no active pty session")
+	}
+	if requestID == "" {
+		return ErrNoPendingControlRequest
+	}
+
+	payload := map[string]any{
+		"type":       "control_response",
+		"request_id": requestID,
+		"response": map[string]any{
+			"behavior": behavior,
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal control response: %w", err)
+	}
+	encoded = append(encoded, '\n')
+	logx.Info("pty", "runner writing control response: sessionID=%s requestID=%q behavior=%q preview=%q", req.SessionID, requestID, behavior, ptyDebugPreview(string(encoded)))
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := writer.Write(encoded)
+		writeDone <- err
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-writeDone:
+		if err != nil {
+			return fmt.Errorf("write control response: %w", err)
+		}
+	}
+
+	r.mu.Lock()
+	if r.pendingControlRequestID == requestID {
+		r.pendingControlRequestID = ""
+	}
+	r.mu.Unlock()
+	return nil
+}
+
 func (r *PtyRunner) Close() error {
 	r.mu.Lock()
 	closer := r.closer
 	cmd := r.cmd
 	r.closed = true
+	r.suppressExitError = true
 	r.mu.Unlock()
 
 	if closer != nil {
@@ -252,6 +377,13 @@ func (r *PtyRunner) Close() error {
 		_ = cmd.Process.Kill()
 	}
 	return nil
+}
+
+func (r *PtyRunner) markInteractiveReady() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.awaitingReadyPrompt = false
+	r.interactive = true
 }
 
 func (r *PtyRunner) SetPermissionMode(mode string) {
@@ -270,11 +402,17 @@ func (r *PtyRunner) clear() {
 	r.lastToolName = ""
 	r.lastToolTarget = ""
 	r.fileSnapshots = nil
+	r.lazyStart = false
+	r.interactive = false
+	r.awaitingReadyPrompt = false
+	r.pendingControlRequestID = ""
 	r.closed = true
+	r.suppressExitError = false
 }
 
 func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd string, sink EventSink) error {
 	cmd := newClaudeStreamCommand(ctx, req.Command, r.claudeSessionID, r.permissionMode)
+	logx.Info("pty", "run claude stream: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q commandPreview=%q", req.SessionID, cwd, r.permissionMode, r.claudeSessionID, ptyDebugPreview(req.Command))
 	cmd.Dir = cwd
 
 	stdin, err := cmd.StdinPipe()
@@ -298,14 +436,19 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("start claude stream command: %v", err), ""))
+		logx.Error("pty", "start claude stream command failed: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q err=%v", req.SessionID, cwd, r.permissionMode, r.claudeSessionID, err)
 		return fmt.Errorf("start claude stream command: %w", err)
 	}
+	logx.Info("pty", "started claude stream command: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q", req.SessionID, cwd, r.permissionMode, r.claudeSessionID)
 
 	r.mu.Lock()
 	r.writer = &claudeStreamWriter{writer: stdin}
 	r.closer = stdin
 	r.cmd = cmd
 	r.currentDir = cwd
+	r.lazyStart = false
+	r.interactive = true
+	r.awaitingReadyPrompt = false
 	r.closed = false
 	r.mu.Unlock()
 	defer r.clear()
@@ -343,22 +486,91 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	return nil
 }
 
+func (r *PtyRunner) runClaudeResumeInteractive(ctx context.Context, req ExecRequest, cwd string, sink EventSink) error {
+	command := appendPermissionModeToCommand(req.Command, req.PermissionMode)
+	cmd := newShellCommand(ctx, command, req.Mode)
+	cmd.Dir = cwd
+	logx.Info("pty", "run claude resume interactive: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q commandPreview=%q", req.SessionID, cwd, r.permissionMode, r.claudeSessionID, ptyDebugPreview(command))
+
+	interactive, err := startInteractiveCommand(cmd)
+	if err != nil {
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("start claude resume interactive command: %v", err), ""))
+		return fmt.Errorf("start claude resume interactive command: %w", err)
+	}
+	defer interactive.closer.Close()
+
+	r.mu.Lock()
+	r.writer = interactive.writer
+	r.closer = interactive.closer
+	r.cmd = cmd
+	r.pendingReq = req
+	r.pendingCWD = cwd
+	r.currentDir = cwd
+	r.lazyStart = false
+	r.interactive = false
+	r.awaitingReadyPrompt = true
+	r.closed = false
+	r.suppressExitError = false
+	r.mu.Unlock()
+	defer r.clear()
+
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+
+	var readWG sync.WaitGroup
+	readWG.Add(1)
+	go func() {
+		defer readWG.Done()
+		r.readOutput(ctx, interactive.stdout, req.SessionID, "stdout", true, sink)
+	}()
+	if interactive.stderr != nil {
+		readWG.Add(1)
+		go func() {
+			defer readWG.Done()
+			r.readOutput(ctx, interactive.stderr, req.SessionID, "stderr", false, sink)
+		}()
+	}
+
+	waitErr := cmd.Wait()
+	_ = interactive.closer.Close()
+	readWG.Wait()
+
+	if waitErr != nil {
+		if r.shouldSuppressExitError() {
+			sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
+			return nil
+		}
+		message := waitErr.Error()
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			message = fmt.Sprintf("command exited with code %d", exitErr.ExitCode())
+		}
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, message, ""))
+		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished with error"))
+		return waitErr
+	}
+
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
+	return nil
+}
+
+func (r *PtyRunner) shouldSuppressExitError() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.suppressExitError
+}
+
 func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecRequest, cwd string, sink EventSink, firstInput []byte) error {
 	r.mu.Lock()
 	if !r.lazyStart {
 		writer := r.writer
 		closed := r.closed
+		interactive := r.interactive
+		permissionMode := r.permissionMode
+		resumeSessionID := r.claudeSessionID
 		r.mu.Unlock()
-		if writer == nil || closed {
-			return errors.New("no active pty session")
-		}
-		// Avoid infinite recursion: if writer is still a claudeShellOnceWriter,
-		// treat this as a new lazy-start cycle instead of calling Write again.
-		if _, ok := writer.(*claudeShellOnceWriter); ok {
-			r.mu.Lock()
-			r.lazyStart = true
-			r.mu.Unlock()
-			return r.startClaudeStreamOnFirstInput(ctx, req, cwd, sink, firstInput)
+		logx.Info("pty", "startClaudeStreamOnFirstInput reuse existing writer: sessionID=%s interactive=%t closed=%t permissionMode=%q resumeSessionID=%q preview=%q", req.SessionID, interactive, closed, permissionMode, resumeSessionID, ptyDebugPreview(string(firstInput)))
+		if !interactive || writer == nil || closed {
+			return errors.New("runner is not ready for interactive input")
 		}
 		_, err := writer.Write(firstInput)
 		return err
@@ -376,8 +588,91 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 	if resumeSessionID == "" {
 		resumeSessionID = extractResumeArg(req.Command)
 	}
+	if resumeSessionID == "" && !hasClaudeSessionIDArg(req.Command) {
+		resumeSessionID = strings.TrimSpace(req.RuntimeMeta.ResumeSessionID)
+	}
 	permMode := r.permissionMode
 	r.mu.Unlock()
+	logx.Info("pty", "starting claude stream on first input: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q preview=%q", req.SessionID, cwd, permMode, resumeSessionID, ptyDebugPreview(text))
+
+	lowerCommand := strings.ToLower(strings.TrimSpace(req.Command))
+	if strings.Contains(lowerCommand, "--input-format") || strings.Contains(lowerCommand, "stream-json") || strings.Contains(lowerCommand, "--permission-prompt-tool") {
+		cmd := newClaudeStreamCommand(ctx, req.Command, resumeSessionID, permMode)
+		cmd.Dir = cwd
+
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			r.finishLazyProcess(err, sink, req.SessionID)
+			return fmt.Errorf("create claude stdin pipe: %w", err)
+		}
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			_ = stdin.Close()
+			r.finishLazyProcess(err, sink, req.SessionID)
+			return fmt.Errorf("create claude stdout pipe: %w", err)
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			_ = stdin.Close()
+			r.finishLazyProcess(err, sink, req.SessionID)
+			return fmt.Errorf("create claude stderr pipe: %w", err)
+		}
+		if err := cmd.Start(); err != nil {
+			_ = stdin.Close()
+			r.finishLazyProcess(err, sink, req.SessionID)
+			logx.Error("pty", "start claude stream command failed from first input: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q err=%v", req.SessionID, cwd, permMode, resumeSessionID, err)
+			return fmt.Errorf("start claude stream command: %w", err)
+		}
+		logx.Info("pty", "started claude stream command from first input: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q", req.SessionID, cwd, permMode, resumeSessionID)
+
+		streamWriter := &claudeStreamWriter{writer: stdin}
+		r.mu.Lock()
+		r.cmd = cmd
+		r.currentDir = cwd
+		r.closed = false
+		r.interactive = true
+		r.awaitingReadyPrompt = false
+		r.writer = streamWriter
+		r.closer = stdin
+		r.pendingReq = req
+		r.pendingCWD = cwd
+		r.permissionMode = permMode
+		r.mu.Unlock()
+
+		go func() {
+			var readWG sync.WaitGroup
+			readWG.Add(2)
+			go func() {
+				defer readWG.Done()
+				r.readClaudeStreamJSON(ctx, stdout, req.SessionID, sink)
+			}()
+			go func() {
+				defer readWG.Done()
+				r.readOutput(ctx, stderr, req.SessionID, "stderr", false, sink)
+			}()
+			waitErr := cmd.Wait()
+			readWG.Wait()
+			if waitErr != nil {
+				message := waitErr.Error()
+				var exitErr *exec.ExitError
+				if errors.As(waitErr, &exitErr) {
+					message = fmt.Sprintf("command exited with code %d", exitErr.ExitCode())
+				}
+				sendEvent(sink, protocol.NewErrorEvent(req.SessionID, message, ""))
+				sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished with error"))
+				r.finishLazyProcess(waitErr, sink, req.SessionID)
+				return
+			}
+			r.finishLazyProcess(nil, sink, req.SessionID)
+		}()
+
+		if _, err := streamWriter.Write(firstInput); err != nil {
+			_ = stdin.Close()
+			r.finishLazyProcess(err, sink, req.SessionID)
+			return fmt.Errorf("write first claude stream input: %w", err)
+		}
+		return nil
+	}
 
 	cmd := newClaudePromptCommand(ctx, req.Command, text, resumeSessionID, permMode)
 	cmd.Dir = cwd
@@ -394,14 +689,17 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 	}
 	if err := cmd.Start(); err != nil {
 		r.finishLazyProcess(err, sink, req.SessionID)
+		logx.Error("pty", "start claude prompt command failed: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q err=%v", req.SessionID, cwd, permMode, resumeSessionID, err)
 		return fmt.Errorf("start claude prompt command: %w", err)
 	}
+	logx.Info("pty", "started claude prompt command: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q", req.SessionID, cwd, permMode, resumeSessionID)
 
 	r.mu.Lock()
 	r.cmd = cmd
 	r.currentDir = cwd
 	r.closed = false
-	r.writer = &claudeShellOnceWriter{runner: r}
+	r.interactive = false
+	r.writer = nil
 	r.mu.Unlock()
 
 	go func() {
@@ -428,15 +726,6 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 			r.finishLazyProcess(waitErr, sink, req.SessionID)
 			return
 		}
-		r.mu.Lock()
-		r.lazyStart = true
-		r.writer = &claudeShellOnceWriter{runner: r}
-		r.cmd = nil
-		r.closed = false
-		r.processDone = make(chan struct{})
-		r.processErr = nil
-		r.mu.Unlock()
-		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "AI 会话已就绪，可继续输入", nil))
 		r.finishLazyProcess(nil, sink, req.SessionID)
 	}()
 
@@ -461,17 +750,24 @@ func shouldUseClaudeStreamJSON(command string) bool {
 	return isClaudeCommandName(command)
 }
 
-func shouldUseClaudeResumeStreamJSON(command string) bool {
+func shouldUseClaudeResumeInteractive(command string) bool {
 	if !isClaudeCommandName(command) {
 		return false
 	}
 	fields := strings.Fields(strings.TrimSpace(command))
+	hasResume := false
+	hasPrint := false
 	for i := 0; i < len(fields); i++ {
-		if fields[i] == "--resume" && i+1 < len(fields) {
-			return true
+		switch fields[i] {
+		case "--resume":
+			if i+1 < len(fields) {
+				hasResume = true
+			}
+		case "--print", "-p":
+			hasPrint = true
 		}
 	}
-	return false
+	return hasResume && !hasPrint
 }
 
 func extractToolTarget(toolName string, rawInput json.RawMessage) string {
@@ -582,6 +878,42 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func ptyDebugPreview(value string) string {
+	trimmed := strings.ReplaceAll(strings.TrimSpace(value), "\n", `\n`)
+	trimmed = strings.ReplaceAll(trimmed, "\r", `\r`)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= ptyDebugPreviewLimit {
+		return trimmed
+	}
+	return string(runes[:ptyDebugPreviewLimit]) + "…"
+}
+
+func ptyPromptDebugDecision(text string) (bool, []string, string) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false, nil, "empty_text"
+	}
+	if !isPromptText(trimmed) {
+		return false, nil, "is_prompt_false"
+	}
+	options := promptOptions(trimmed)
+	if len(options) == 0 {
+		return false, nil, "no_prompt_options"
+	}
+	return true, options, "prompt_detected"
+}
+
+func ptyLogPromptClassification(sessionID, location, sourceKind, text string, isPrompt bool, options []string, reason string) {
+	classification := ptyDebugReasonLog
+	if isPrompt {
+		classification = ptyDebugReasonPrompt
+	}
+	logx.Info("pty", "classify claude text: sessionID=%s location=%s source=%s classification=%s reason=%s options=%v preview=%q", sessionID, location, sourceKind, classification, reason, options, ptyDebugPreview(text))
 }
 
 func resolveToolPath(cwd, target string) string {
@@ -742,6 +1074,20 @@ func extractResumeArg(command string) string {
 	return ""
 }
 
+func hasClaudeSessionIDArg(command string) bool {
+	return extractClaudeSessionIDArg(command) != ""
+}
+
+func extractClaudeSessionIDArg(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	for i := 0; i < len(fields); i++ {
+		if fields[i] == "--session-id" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
 type claudeStreamWriter struct {
 	writer io.Writer
 }
@@ -751,6 +1097,7 @@ func (w *claudeStreamWriter) Write(data []byte) (int, error) {
 	if text == "" {
 		return len(data), nil
 	}
+	logx.Info("pty", "claude stream writer received input: preview=%q", ptyDebugPreview(text))
 	payload := map[string]any{
 		"type": "user",
 		"message": map[string]any{
@@ -778,18 +1125,16 @@ func (w *claudeStreamWriter) Close() error {
 }
 
 type claudeStreamEnvelope struct {
-	Type          string  `json:"type"`
-	Subtype       string  `json:"subtype,omitempty"`
-	SessionID     string  `json:"session_id,omitempty"`
-	Result        string  `json:"result,omitempty"`
-	DurationMs    int64   `json:"duration_ms,omitempty"`
-	NumTurns      int     `json:"num_turns,omitempty"`
-	TotalCost     float64 `json:"total_cost_usd,omitempty"`
-	ToolUseResult *struct {
-		Type     string `json:"type,omitempty"`
-		FilePath string `json:"filePath,omitempty"`
-	} `json:"tool_use_result,omitempty"`
-	Message struct {
+	Type          string          `json:"type"`
+	Subtype       string          `json:"subtype,omitempty"`
+	SessionID     string          `json:"session_id,omitempty"`
+	RequestID     string          `json:"request_id,omitempty"`
+	Result        string          `json:"result,omitempty"`
+	DurationMs    int64           `json:"duration_ms,omitempty"`
+	NumTurns      int             `json:"num_turns,omitempty"`
+	TotalCost     float64         `json:"total_cost_usd,omitempty"`
+	ToolUseResult json.RawMessage `json:"tool_use_result,omitempty"`
+	Message       struct {
 		Content []struct {
 			Type    string          `json:"type"`
 			Text    string          `json:"text,omitempty"`
@@ -814,11 +1159,14 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		if line == "" {
 			continue
 		}
+		logx.Info("pty", "claude stream raw line: sessionID=%s preview=%q", sessionID, ptyDebugPreview(line))
 		var envelope claudeStreamEnvelope
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			logx.Warn("pty", "claude stream json parse failed: sessionID=%s reason=json_unmarshal_failed err=%v preview=%q", sessionID, err, ptyDebugPreview(line))
 			sendEvent(sink, protocol.NewLogEvent(sessionID, line, "stdout"))
 			continue
 		}
+		logx.Info("pty", "claude stream json parsed: sessionID=%s type=%s subtype=%s requestID=%q envelopeSessionID=%q contentBlocks=%d", sessionID, envelope.Type, envelope.Subtype, envelope.RequestID, envelope.SessionID, len(envelope.Message.Content))
 		if envelope.SessionID != "" {
 			r.mu.Lock()
 			changed := r.claudeSessionID != envelope.SessionID
@@ -829,18 +1177,48 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			}
 		}
 		switch envelope.Type {
+		case "control_request":
+			requestID := strings.TrimSpace(envelope.RequestID)
+			if requestID != "" {
+				r.mu.Lock()
+				r.pendingControlRequestID = requestID
+				r.mu.Unlock()
+				logx.Info("pty", "cached control request: sessionID=%s requestID=%q", sessionID, requestID)
+			}
+			for _, block := range envelope.Message.Content {
+				if block.Type != "text" {
+					continue
+				}
+				if text := strings.TrimSpace(block.Text); text != "" {
+					isPrompt, options, reason := ptyPromptDebugDecision(text)
+					ptyLogPromptClassification(sessionID, "readClaudeStreamJSON", "control_request_text", text, isPrompt, options, "control_request_"+reason)
+					var event any = protocol.NewLogEvent(sessionID, text, "stdout")
+					if isPrompt {
+						r.markInteractiveReady()
+						event = protocol.NewPromptRequestEvent(sessionID, text, options)
+					}
+					sendEvent(sink, protocol.ApplyRuntimeMeta(
+						event,
+						protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+					))
+				}
+			}
 		case "assistant":
 			for _, block := range envelope.Message.Content {
 				switch block.Type {
 				case "tool_use":
 					target := extractToolTarget(block.Name, block.Input)
+					logx.Info("pty", "claude assistant tool_use: sessionID=%s tool=%s target=%q", sessionID, block.Name, target)
 					r.noteToolUse(block.Name, target)
 					sendEvent(sink, protocol.NewStepUpdateEvent(sessionID, block.Name, "running", target, block.Name, ""))
 				case "text":
 					if text := strings.TrimSpace(block.Text); text != "" {
+						isPrompt, options, reason := ptyPromptDebugDecision(text)
+						ptyLogPromptClassification(sessionID, "readClaudeStreamJSON", "assistant_text", text, isPrompt, options, "assistant_text_"+reason)
 						var event any = protocol.NewLogEvent(sessionID, text, "stdout")
-						if shouldEmitClaudeTextAsPrompt(text) {
-							event = protocol.NewPromptRequestEvent(sessionID, text, promptOptions(text))
+						if isPrompt {
+							r.markInteractiveReady()
+							event = protocol.NewPromptRequestEvent(sessionID, text, options)
 						}
 						sendEvent(sink, protocol.ApplyRuntimeMeta(
 							event,
@@ -854,9 +1232,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			for _, block := range envelope.Message.Content {
 				if block.Type == "tool_result" && block.IsError {
 					text := strings.TrimSpace(block.Content)
-					if shouldEmitClaudeTextAsPrompt(text) {
+					isPrompt, options, reason := ptyPromptDebugDecision(text)
+					ptyLogPromptClassification(sessionID, "readClaudeStreamJSON", "tool_result_error", text, isPrompt, options, "tool_result_"+reason)
+					if isPrompt {
+						r.markInteractiveReady()
 						sendEvent(sink, protocol.ApplyRuntimeMeta(
-							protocol.NewPromptRequestEvent(sessionID, text, promptOptions(text)),
+							protocol.NewPromptRequestEvent(sessionID, text, options),
 							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
 						))
 						continue
@@ -867,10 +1248,8 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 					continue
 				}
 			}
-			if envelope.ToolUseResult != nil {
-				target := envelope.ToolUseResult.FilePath
+			if target, message, ok := parseClaudeToolUseResult(envelope.ToolUseResult); ok {
 				status := "done"
-				message := envelope.ToolUseResult.Type
 				if message == "" {
 					message = "tool completed"
 				}
@@ -879,6 +1258,7 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			}
 		case "result":
 			if text := strings.TrimSpace(envelope.Result); text != "" {
+				logx.Info("pty", "claude result text: sessionID=%s preview=%q", sessionID, ptyDebugPreview(text))
 				sendEvent(sink, protocol.ApplyRuntimeMeta(
 					protocol.NewLogEvent(sessionID, text, "stdout"),
 					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
@@ -899,6 +1279,27 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		}
 		sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read claude stream: %v", err), ""))
 	}
+}
+
+func parseClaudeToolUseResult(raw json.RawMessage) (targetPath string, message string, ok bool) {
+	if len(raw) == 0 {
+		return "", "", false
+	}
+
+	var objectPayload struct {
+		Type     string `json:"type,omitempty"`
+		FilePath string `json:"filePath,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &objectPayload); err == nil {
+		return strings.TrimSpace(objectPayload.FilePath), strings.TrimSpace(objectPayload.Type), true
+	}
+
+	var stringPayload string
+	if err := json.Unmarshal(raw, &stringPayload); err == nil {
+		return "", strings.TrimSpace(stringPayload), true
+	}
+
+	return "", "", false
 }
 
 func startInteractiveCommand(cmd *exec.Cmd) (*interactiveSession, error) {
@@ -974,6 +1375,10 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 		if n > 0 {
 			rawChunk := string(buf[:n])
 			chunk := adapter.StripANSI(rawChunk)
+			if strings.Contains(chunk, "❯") {
+				r.markInteractiveReady()
+			}
+			logx.Info("pty", "read output chunk: sessionID=%s stream=%s detectPrompt=%t rawPreview=%q strippedPreview=%q", sessionID, stream, detectPrompt, ptyDebugPreview(rawChunk), ptyDebugPreview(chunk))
 
 			// 如果 chunk 以 \r 开头，代表它是对当前行的重写
 			// 我们需要保留这个 \r 给前端
@@ -1022,6 +1427,7 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 			trimmedPending := strings.TrimSuffix(pending, "\r")
 			if trimmedPending != "" {
 				liveTailPrompt := detectPrompt && isLiveTailPromptText(trimmedPending)
+				logx.Info("pty", "evaluate live tail: sessionID=%s stream=%s detectPrompt=%t isPrompt=%t options=%v preview=%q", sessionID, stream, detectPrompt, liveTailPrompt, promptOptions(trimmedPending), ptyDebugPreview(trimmedPending))
 				if shouldFlushParserBeforeLiveTail(trimmedPending, liveTailPrompt) {
 					for _, event := range parser.Flush(sessionID, stream) {
 						sendEvent(sink, event)
@@ -1029,10 +1435,13 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 				}
 				if liveTailPrompt {
 					if !promptSent {
+						r.markInteractiveReady()
+						ptyLogPromptClassification(sessionID, "readOutput.liveTail", stream, trimmedPending, true, promptOptions(trimmedPending), "live_tail_prompt")
 						sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, trimmedPending, promptOptions(trimmedPending)))
 						promptSent = true
 					}
 				} else if trimmedPending != emittedTail {
+					ptyLogPromptClassification(sessionID, "readOutput.liveTail", stream, trimmedPending, false, nil, "normal_output")
 					sendEvent(sink, protocol.NewLogEvent(sessionID, trimmedPending, stream))
 					emittedTail = trimmedPending
 				}
@@ -1054,8 +1463,11 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 	pending = strings.TrimSuffix(pending, "\r")
 	if pending != "" {
 		if detectPrompt && isLiveTailPromptText(pending) && !promptSent {
+			r.markInteractiveReady()
+			ptyLogPromptClassification(sessionID, "readOutput.finalPending", stream, pending, true, promptOptions(pending), "final_live_tail_prompt")
 			sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, pending, promptOptions(pending)))
 		} else if pending != emittedTail {
+			ptyLogPromptClassification(sessionID, "readOutput.finalPending", stream, pending, false, nil, "final_normal_output")
 			sendEvent(sink, protocol.NewLogEvent(sessionID, pending, stream))
 		}
 	}
@@ -1080,39 +1492,46 @@ func parserHasPendingDiff(parser interface{ HasPendingDiff() bool }) bool {
 func isPromptText(text string) bool {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
+		logx.Info("pty", "isPromptText: result=false reason=empty_text preview=%q", ptyDebugPreview(text))
 		return false
 	}
 
 	for _, suffix := range []string{"[y/N]", "[Y/n]", "(y/n)", "(Y/n)", " (y/n)"} {
 		if strings.Contains(trimmed, suffix) || strings.HasSuffix(trimmed, suffix) {
+			logx.Info("pty", "isPromptText: result=true reason=suffix_match suffix=%q preview=%q", suffix, ptyDebugPreview(trimmed))
 			return true
 		}
 	}
 
 	lower := strings.ToLower(trimmed)
 	if isLiveTailPromptText(trimmed) {
+		logx.Info("pty", "isPromptText: result=true reason=live_tail_prompt preview=%q", ptyDebugPreview(trimmed))
 		return true
 	}
 
 	// Gemini CLI 使用 ">" 作为提示符
 	if trimmed == ">" || strings.HasSuffix(trimmed, " >") || strings.HasSuffix(trimmed, "\n>") {
+		logx.Info("pty", "isPromptText: result=true reason=gemini_prompt preview=%q", ptyDebugPreview(trimmed))
 		return true
 	}
 
 	if strings.HasSuffix(trimmed, "?") || strings.HasSuffix(trimmed, ":") || strings.HasSuffix(trimmed, ">") {
 		for _, keyword := range []string{"continue", "confirm", "password", "input", "select", "proceed", "approve", "yes/no", "message"} {
 			if strings.Contains(lower, keyword) {
+				logx.Info("pty", "isPromptText: result=true reason=keyword_match keyword=%q preview=%q", keyword, ptyDebugPreview(trimmed))
 				return true
 			}
 		}
 	}
 
+	logx.Info("pty", "isPromptText: result=false reason=no_match preview=%q", ptyDebugPreview(trimmed))
 	return false
 }
 
 func isLiveTailPromptText(text string) bool {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
+		logx.Info("pty", "isLiveTailPromptText: result=false reason=empty_text preview=%q", ptyDebugPreview(text))
 		return false
 	}
 
@@ -1120,6 +1539,7 @@ func isLiveTailPromptText(text string) bool {
 
 	for _, suffix := range []string{"[y/N]", "[Y/n]", "(y/n)", "(Y/n)", "[yes/no]", "(yes/no)"} {
 		if strings.HasSuffix(trimmed, suffix) {
+			logx.Info("pty", "isLiveTailPromptText: result=true reason=suffix_match suffix=%q preview=%q", suffix, ptyDebugPreview(trimmed))
 			return true
 		}
 	}
@@ -1141,6 +1561,7 @@ func isLiveTailPromptText(text string) bool {
 			strings.Contains(trimmed, "编辑") ||
 			strings.Contains(trimmed, "修改") ||
 			strings.Contains(trimmed, "覆盖") {
+			logx.Info("pty", "isLiveTailPromptText: result=true reason=permission_write_hint preview=%q", ptyDebugPreview(trimmed))
 			return true
 		}
 	}
@@ -1149,12 +1570,14 @@ func isLiveTailPromptText(text string) bool {
 		strings.Contains(trimmed, "需要你的授权") ||
 		strings.Contains(trimmed, "拿到权限后") ||
 		strings.Contains(trimmed, "你授权后") {
+		logx.Info("pty", "isLiveTailPromptText: result=true reason=permission_phrase preview=%q", ptyDebugPreview(trimmed))
 		return true
 	}
 
 	if strings.HasSuffix(trimmed, ">") {
 		base := strings.TrimSpace(strings.TrimSuffix(lower, ">"))
 		if base == "decision" || strings.HasSuffix(base, " decision") || strings.HasSuffix(base, " input") {
+			logx.Info("pty", "isLiveTailPromptText: result=true reason=decision_suffix preview=%q", ptyDebugPreview(trimmed))
 			return true
 		}
 	}
@@ -1162,6 +1585,7 @@ func isLiveTailPromptText(text string) bool {
 	if strings.HasSuffix(trimmed, ":") {
 		base := strings.TrimSpace(strings.TrimSuffix(lower, ":"))
 		if base == "password" || strings.HasPrefix(base, "enter ") || strings.HasPrefix(base, "input ") || strings.HasPrefix(base, "select ") {
+			logx.Info("pty", "isLiveTailPromptText: result=true reason=colon_prompt preview=%q", ptyDebugPreview(trimmed))
 			return true
 		}
 	}
@@ -1169,22 +1593,36 @@ func isLiveTailPromptText(text string) bool {
 	if strings.HasSuffix(trimmed, "?") {
 		for _, prefix := range []string{"continue", "proceed", "confirm", "approve"} {
 			if strings.HasPrefix(lower, prefix) {
+				logx.Info("pty", "isLiveTailPromptText: result=true reason=question_prefix prefix=%q preview=%q", prefix, ptyDebugPreview(trimmed))
 				return true
 			}
 		}
 	}
 
+	if strings.HasPrefix(trimmed, "❯") || strings.HasPrefix(trimmed, ">") {
+		logx.Info("pty", "isLiveTailPromptText: result=true reason=shell_prompt_prefix preview=%q", ptyDebugPreview(trimmed))
+		return true
+	}
+
+	if strings.HasSuffix(trimmed, ">") {
+		if strings.Contains(trimmed, " ") || strings.Contains(trimmed, "ready") || strings.Contains(trimmed, "resume") {
+			logx.Info("pty", "isLiveTailPromptText: result=true reason=generic_gt_prompt preview=%q", ptyDebugPreview(trimmed))
+			return true
+		}
+	}
+	logx.Info("pty", "isLiveTailPromptText: result=false reason=no_match preview=%q", ptyDebugPreview(trimmed))
 	return false
 }
 
 func promptOptions(text string) []string {
 	trimmed := strings.TrimSpace(text)
 	lower := strings.ToLower(trimmed)
+	var options []string
 	switch {
 	case strings.Contains(trimmed, "[y/N]"), strings.Contains(trimmed, "[Y/n]"), strings.Contains(trimmed, "(y/n)"), strings.Contains(trimmed, "(Y/n)"):
-		return []string{"y", "n"}
+		options = []string{"y", "n"}
 	case strings.Contains(lower, "should i proceed"), strings.Contains(lower, "proceed"), strings.Contains(lower, "approve"), strings.Contains(lower, "yes/no"):
-		return []string{"yes", "no"}
+		options = []string{"yes", "no"}
 	case strings.Contains(lower, "permission") ||
 		strings.Contains(lower, "authorize") ||
 		strings.Contains(lower, "allow once") ||
@@ -1196,19 +1634,26 @@ func promptOptions(text string) []string {
 		strings.Contains(trimmed, "需要你的授权") ||
 		strings.Contains(trimmed, "拿到权限后") ||
 		strings.Contains(trimmed, "你授权后"):
-		return []string{"y", "n"}
+		options = []string{"y", "n"}
 	default:
-		return nil
+		options = nil
 	}
+	logx.Info("pty", "promptOptions: options=%v preview=%q", options, ptyDebugPreview(trimmed))
+	return options
 }
 
 func shouldEmitClaudeTextAsPrompt(text string) bool {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
+		logx.Info("pty", "shouldEmitClaudeTextAsPrompt: result=false reason=empty_text preview=%q", ptyDebugPreview(text))
 		return false
 	}
 	if !isPromptText(trimmed) {
+		logx.Info("pty", "shouldEmitClaudeTextAsPrompt: result=false reason=is_prompt_false preview=%q", ptyDebugPreview(trimmed))
 		return false
 	}
-	return len(promptOptions(trimmed)) > 0
+	options := promptOptions(trimmed)
+	result := len(options) > 0
+	logx.Info("pty", "shouldEmitClaudeTextAsPrompt: result=%t reason=options_check options=%v preview=%q", result, options, ptyDebugPreview(trimmed))
+	return result
 }

@@ -7,6 +7,48 @@ import 'package:mobile_vc/features/files/file_viewer_sheet.dart';
 
 void main() {
   group('FileViewerSheet', () {
+    testWidgets('仅有 pendingInteraction permission 时也显示权限按钮', (tester) async {
+      String? submitted;
+      await tester.pumpWidget(
+        _buildTestApp(
+          pendingInteraction: _permissionInteraction(),
+          onSubmitPrompt: (value) => submitted = value,
+        ),
+      );
+
+      expect(find.text('允许'), findsOneWidget);
+      expect(find.text('拒绝'), findsOneWidget);
+
+      await tester.tap(find.text('允许'));
+      await tester.pump();
+
+      expect(submitted, 'y');
+    });
+
+    testWidgets('review 场景优先显示 review 操作，不被权限栏覆盖', (tester) async {
+      tester.view.physicalSize = const Size(1200, 2200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        _buildTestApp(
+          showReviewActions: true,
+          pendingInteraction: _permissionInteraction(),
+          reviewDiff: _reviewDiffs.first,
+          pendingDiffs: [_reviewDiffs.first],
+          reviewGroups: const [],
+          activeReviewGroupId: '',
+          activeReviewDiffId: 'diff-1',
+          shouldShowReviewChoices: true,
+        ),
+      );
+
+      expect(find.text('同意'), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('fileViewer.permissionBar')), findsNothing);
+    });
+
     testWidgets('权限 prompt 没有 options 时仍显示允许和拒绝按钮', (tester) async {
       String? submitted;
       await tester.pumpWidget(
@@ -85,6 +127,9 @@ void main() {
       expect(find.text('组一'), findsWidgets);
       expect(find.text('组二'), findsWidgets);
       expect(find.text('进入 differ 逐个审核'), findsOneWidget);
+      expect(find.text('已同意: 0'), findsOneWidget);
+      expect(find.text('已撤销: 0'), findsOneWidget);
+      expect(find.text('继续调整: 0'), findsOneWidget);
 
       await tester.tap(find.text('组二'));
       await tester.pump();
@@ -103,10 +148,12 @@ void main() {
 
 Widget _buildTestApp({
   PromptRequestEvent? pendingPrompt,
+  InteractionRequestEvent? pendingInteraction,
   ValueChanged<String>? onSendFilePrompt,
   ValueChanged<String>? onSubmitPrompt,
   bool showReviewActions = false,
   bool isDiffMode = false,
+  bool shouldShowReviewChoices = false,
   HistoryContext? reviewDiff,
   List<HistoryContext> pendingDiffs = const [],
   List<ReviewGroup> reviewGroups = const [],
@@ -136,8 +183,9 @@ Widget _buildTestApp({
         activeReviewGroupId: activeReviewGroupId,
         activeReviewDiffId: activeReviewDiffId,
         isAutoAcceptMode: false,
-        shouldShowReviewChoices: false,
+        shouldShowReviewChoices: shouldShowReviewChoices,
         pendingPrompt: pendingPrompt,
+        pendingInteraction: pendingInteraction,
         onAccept: () {},
         onRevert: () {},
         onRevise: () {},
@@ -196,8 +244,10 @@ const _reviewGroups = [
     reviewStatus: 'pending',
     pendingCount: 2,
     files: [
-      ReviewFile(id: 'diff-1', path: '/workspace/test_a.dart', title: 'test_a.dart'),
-      ReviewFile(id: 'diff-2', path: '/workspace/test_b.dart', title: 'test_b.dart'),
+      ReviewFile(
+          id: 'diff-1', path: '/workspace/test_a.dart', title: 'test_a.dart'),
+      ReviewFile(
+          id: 'diff-2', path: '/workspace/test_b.dart', title: 'test_b.dart'),
     ],
   ),
   ReviewGroup(
@@ -207,12 +257,17 @@ const _reviewGroups = [
     reviewStatus: 'pending',
     pendingCount: 1,
     files: [
-      ReviewFile(id: 'diff-3', path: '/workspace/test_c.dart', title: 'test_c.dart'),
+      ReviewFile(
+          id: 'diff-3', path: '/workspace/test_c.dart', title: 'test_c.dart'),
     ],
   ),
 ];
 
-PromptRequestEvent _permissionPrompt({List<PromptOption> options = const [PromptOption(value: 'y'), PromptOption(value: 'n')]}) {
+PromptRequestEvent _permissionPrompt(
+    {List<PromptOption> options = const [
+      PromptOption(value: 'y'),
+      PromptOption(value: 'n')
+    ]}) {
   return PromptRequestEvent(
     timestamp: DateTime(2026),
     sessionId: 'session-1',
@@ -223,6 +278,24 @@ PromptRequestEvent _permissionPrompt({List<PromptOption> options = const [Prompt
     },
     message: 'Claude requested permissions to write to README.md',
     options: options,
+  );
+}
+
+InteractionRequestEvent _permissionInteraction() {
+  return InteractionRequestEvent(
+    timestamp: DateTime(2026),
+    sessionId: 'session-1',
+    runtimeMeta: const RuntimeMeta(),
+    raw: const {
+      'type': 'interaction_request',
+      'kind': 'permission',
+      'title': 'Permission required',
+      'message': 'Claude needs permission to write README.md',
+    },
+    kind: 'permission',
+    title: 'Permission required',
+    message: 'Claude needs permission to write README.md',
+    options: const [PromptOption(value: 'y'), PromptOption(value: 'n')],
   );
 }
 

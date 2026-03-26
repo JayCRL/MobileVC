@@ -6,15 +6,21 @@ class MemoryManagementSheet extends StatefulWidget {
   const MemoryManagementSheet({
     super.key,
     required this.items,
+    required this.syncStatus,
+    required this.catalogMeta,
     required this.enabledMemoryIds,
     required this.onToggleEnabled,
     required this.onSave,
+    required this.onSync,
   });
 
   final List<MemoryItem> items;
+  final String syncStatus;
+  final CatalogMetadata catalogMeta;
   final List<String> enabledMemoryIds;
   final ValueChanged<String> onToggleEnabled;
   final ValueChanged<MemoryItem> onSave;
+  final VoidCallback onSync;
 
   @override
   State<MemoryManagementSheet> createState() => _MemoryManagementSheetState();
@@ -44,6 +50,7 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final meta = widget.catalogMeta;
     return SafeArea(
       top: false,
       child: Padding(
@@ -73,24 +80,67 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Memory 管理',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.2,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Memory 管理',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: widget.onSync,
+                        icon: meta.isSyncing
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.sync),
+                        label: Text(meta.isSyncing ? '同步中' : '同步 memory'),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '这是 MobileVC 内部显式记忆层，不是 Claude 隐式 /memory。',
+                    '这是 MobileVC 的 Claude memory 镜像视图；启用态只影响当前会话上下文。',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                       height: 1.45,
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _SummaryChip(label: 'sourceOfTruth', value: meta.sourceOfTruth.isEmpty ? '-' : meta.sourceOfTruth),
+                      _SummaryChip(label: 'syncState', value: meta.syncState.isEmpty ? '-' : meta.syncState),
+                      _SummaryChip(label: 'driftDetected', value: meta.driftDetected ? 'yes' : 'no'),
+                      if (meta.lastSyncedAt != null)
+                        _SummaryChip(label: 'lastSyncedAt', value: '${meta.lastSyncedAt}'),
+                      if (meta.lastError.trim().isNotEmpty)
+                        _SummaryChip(label: 'lastError', value: meta.lastError),
+                    ],
+                  ),
                 ],
               ),
             ),
+            if (widget.syncStatus.trim().isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(widget.syncStatus),
+              ),
+            ],
             const SizedBox(height: 12),
             Expanded(
               child: ListView(
@@ -136,19 +186,35 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
                               const SizedBox(height: 6),
                               Text('ID: ${item.id}', style: theme.textTheme.bodySmall),
                             ],
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                _SummaryChip(label: 'source', value: item.source.isEmpty ? '-' : item.source),
+                                _SummaryChip(label: 'truth', value: item.sourceOfTruth.isEmpty ? '-' : item.sourceOfTruth),
+                                _SummaryChip(label: 'sync', value: item.syncState.isEmpty ? '-' : item.syncState),
+                                _SummaryChip(label: 'drift', value: item.driftDetected ? 'yes' : 'no'),
+                                if (item.lastSyncedAt != null)
+                                  _SummaryChip(label: 'lastSyncedAt', value: '${item.lastSyncedAt}'),
+                                _SummaryChip(label: '编辑', value: item.editable ? '可编辑' : '只读'),
+                              ],
+                            ),
                             if (item.content.isNotEmpty) ...[
                               const SizedBox(height: 8),
                               SelectableText(item.content),
                             ],
-                            const SizedBox(height: 10),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: TextButton.icon(
-                                onPressed: () => _fillForm(item),
-                                icon: const Icon(Icons.edit_outlined),
-                                label: const Text('编辑'),
+                            if (item.editable) ...[
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: TextButton.icon(
+                                  onPressed: () => _fillForm(item),
+                                  icon: const Icon(Icons.edit_outlined),
+                                  label: const Text('编辑'),
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),

@@ -24,6 +24,8 @@ import (
 	"mobilevc/internal/store"
 )
 
+const wsDebugPreviewLimit = 240
+
 type Handler struct {
 	AuthToken     string
 	NewExecRunner func() runner.Runner
@@ -56,7 +58,7 @@ func NewHandler(authToken string, sessionStore store.Store) *Handler {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	connectionID := fmt.Sprintf("conn-%d", time.Now().UTC().UnixNano())
-	selectedSessionID := connectionID
+	selectedSessionID := ""
 	remoteAddr := r.RemoteAddr
 	connected := false
 	var conn *websocket.Conn
@@ -343,7 +345,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !deletingCurrent {
 				continue
 			}
-			fallbackSessionID := connectionID
+			fallbackSessionID := ""
 			for _, item := range items {
 				if strings.TrimSpace(item.ID) != "" {
 					fallbackSessionID = item.ID
@@ -351,7 +353,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			switchRuntimeSession(fallbackSessionID)
-			if fallbackSessionID == connectionID {
+			if fallbackSessionID == "" {
 				emitEmptySessionState()
 				continue
 			}
@@ -364,6 +366,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			emit(newSessionHistoryEventFromRecord(record))
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
 		case "session_context_get":
+			if strings.TrimSpace(selectedSessionID) == "" {
+				emit(protocol.NewSessionContextResultEvent(selectedSessionID, toProtocolSessionContext(store.SessionContext{})))
+				continue
+			}
 			record, ok := loadSelectedSessionRecord(h.SessionStore, ctx, selectedSessionID, emit)
 			if !ok {
 				continue
@@ -376,6 +382,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(payload, &req); err != nil {
 				logx.Warn("ws", "invalid session_context_update request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_context_update request: %v", err), ""))
+				continue
+			}
+			if strings.TrimSpace(selectedSessionID) == "" {
+				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再更新 session context", ""))
 				continue
 			}
 			record, ok := loadSelectedSessionRecord(h.SessionStore, ctx, selectedSessionID, emit)
@@ -404,12 +414,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.SkillLauncher = skills.NewLauncher(h.SessionStore)
 			emitSkillCatalogResult(emit, h.SessionStore, ctx, selectedSessionID)
 		case "skill_sync_pull":
+			if h.SessionStore == nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
+				continue
+			}
+			snapshot, err := h.SessionStore.GetSkillCatalogSnapshot(ctx)
+			if err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+			snapshot.Meta.SyncState = store.CatalogSyncStateSyncing
+			snapshot.Meta.LastError = ""
+			if err := h.SessionStore.SaveSkillCatalogSnapshot(ctx, snapshot); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			emit(protocol.NewCatalogSyncStatusEvent(selectedSessionID, string(store.CatalogDomainSkill), toProtocolCatalogMetadata(snapshot.Meta)))
 			if err := syncExternalSkills(h.SessionStore, ctx); err != nil {
+				snapshot.Meta.SyncState = store.CatalogSyncStateFailed
+				snapshot.Meta.LastError = err.Error()
+				_ = h.SessionStore.SaveSkillCatalogSnapshot(ctx, snapshot)
+				emit(protocol.NewCatalogSyncResultEvent(selectedSessionID, string(store.CatalogDomainSkill), false, err.Error(), toProtocolCatalogMetadata(snapshot.Meta)))
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
 			h.SkillLauncher = skills.NewLauncher(h.SessionStore)
+			updatedSnapshot, err := h.SessionStore.GetSkillCatalogSnapshot(ctx)
+			if err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
 			emit(protocol.NewSkillSyncResultEvent(selectedSessionID, "skill 同步完成"))
+			emit(protocol.NewCatalogSyncResultEvent(selectedSessionID, string(store.CatalogDomainSkill), true, "skill 同步完成", toProtocolCatalogMetadata(updatedSnapshot.Meta)))
 			emitSkillCatalogResult(emit, h.SessionStore, ctx, selectedSessionID)
 		case "memory_list":
 			emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
@@ -432,9 +469,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid exec request: %v", err), ""))
 				continue
 			}
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=exec cmd=%q cwd=%q mode=%q permissionMode=%q source=%q target=%q targetType=%q contextID=%q preview=%q", connectionID, selectedSessionID, remoteAddr, reqEvent.Command, reqEvent.CWD, reqEvent.Mode, reqEvent.PermissionMode, reqEvent.Source, reqEvent.Target, reqEvent.TargetType, reqEvent.ContextID, wsDebugPreview(reqEvent.Command))
 			if strings.TrimSpace(reqEvent.Command) == "" {
 				logx.Warn("ws", "reject empty exec command: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(selectedSessionID, "cmd is required", ""))
+				continue
+			}
+			if strings.TrimSpace(selectedSessionID) == "" || selectedSessionID == connectionID {
+				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
 				continue
 			}
 			sessionID := selectedSessionID
@@ -447,6 +489,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 				continue
 			}
+			logx.Info("ws", "dispatch exec: connectionID=%s sessionID=%s remoteAddr=%s action=exec mode=%s cwd=%q permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, mode, reqEvent.CWD, reqEvent.PermissionMode, wsDebugPreview(reqEvent.Command))
 			err = service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
 				Command:        reqEvent.Command,
 				CWD:            reqEvent.CWD,
@@ -479,19 +522,57 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid input request: %v", err), ""))
 				continue
 			}
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=input permissionMode=%q dataPreview=%q", connectionID, selectedSessionID, remoteAddr, inputEvent.PermissionMode, wsDebugPreview(inputEvent.Data))
 			if inputEvent.Data == "" {
 				logx.Warn("ws", "reject empty input payload: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(selectedSessionID, "input data is required", ""))
+				continue
+			}
+			if strings.TrimSpace(selectedSessionID) == "" || selectedSessionID == connectionID {
+				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
 				continue
 			}
 			sessionID := selectedSessionID
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
 			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
+			service.RecordUserInput(inputEvent.Data)
 			inputMeta := protocol.RuntimeMeta{}
 			if pm := inputEvent.PermissionMode; pm != "" {
 				service.UpdatePermissionMode(pm)
 				inputMeta.PermissionMode = pm
+			}
+			logx.Info("ws", "dispatch input: connectionID=%s sessionID=%s remoteAddr=%s action=input permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, inputMeta.PermissionMode, wsDebugPreview(inputEvent.Data))
+			snapshot := service.RuntimeSnapshot()
+			if snapshot.TemporaryElevated {
+				restoreReq := runtimepkg.ExecuteRequest{
+					Command:        firstNonEmptyString(snapshot.ActiveMeta.Command, service.ControllerSnapshot().CurrentCommand),
+					CWD:            snapshot.ActiveMeta.CWD,
+					Mode:           runner.ModePTY,
+					PermissionMode: firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
+					RuntimeMeta: protocol.RuntimeMeta{
+						Source:          "input",
+						ResumeSessionID: firstNonEmptyString(snapshot.ResumeSessionID, snapshot.ActiveMeta.ResumeSessionID),
+						Command:         firstNonEmptyString(snapshot.ActiveMeta.Command, service.ControllerSnapshot().CurrentCommand),
+						CWD:             snapshot.ActiveMeta.CWD,
+						PermissionMode:  firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
+					},
+				}
+				if err := service.RestoreSafePermissionModeBeforeInput(ctx, sessionID, restoreReq, inputEvent.Data, emitAndPersist); err != nil {
+					message := err.Error()
+					if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {
+						message = "当前没有可恢复的 Claude 会话，无法先恢复到安全权限模式"
+					} else if errors.Is(err, runtimepkg.ErrHotSwapUnsupportedRunner) {
+						message = "当前活跃会话不是可热重启恢复的 Claude PTY 会话"
+					} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
+						message = "Claude 恢复到安全模式后未进入可输入状态，请稍后重试"
+					} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+						message = "安全权限模式恢复失败，当前没有可交互会话"
+					}
+					logx.Warn("ws", "restore safe permission mode before input failed: connectionID=%s sessionID=%s remoteAddr=%s action=input err=%v", connectionID, sessionID, remoteAddr, err)
+					emit(protocol.NewErrorEvent(sessionID, message, ""))
+				}
+				continue
 			}
 			if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: inputEvent.Data, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
 				message := err.Error()
@@ -508,6 +589,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid review decision request: %v", err), ""))
 				continue
 			}
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=review_decision decision=%q permissionMode=%q executionID=%q groupID=%q targetPath=%q contextID=%q", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision, reviewEvent.PermissionMode, reviewEvent.ExecutionID, reviewEvent.GroupID, reviewEvent.TargetPath, reviewEvent.ContextID)
 			decision := strings.TrimSpace(strings.ToLower(reviewEvent.Decision))
 			if decision != "accept" && decision != "revert" && decision != "revise" {
 				logx.Warn("ws", "reject invalid review decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%q", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision)
@@ -527,7 +609,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if effectivePermissionMode != "" {
 				service.UpdatePermissionMode(effectivePermissionMode)
 			}
+			logx.Info("ws", "dispatch review decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%s permissionMode=%q executionID=%q groupID=%q contextID=%q targetPath=%q", connectionID, sessionID, remoteAddr, decision, effectivePermissionMode, reviewEvent.ExecutionID, reviewEvent.GroupID, reviewEvent.ContextID, reviewEvent.TargetPath)
 			projection := buildProjectionSnapshotFor(sessionID)
+			if !service.CanAcceptInteractiveInput() {
+				if service.IsRunning() {
+					emit(protocol.NewErrorEvent(sessionID, "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交审核决策", ""))
+					continue
+				}
+			}
 			var currentDiff session.DiffContext
 			if projection.CurrentDiff != nil {
 				currentDiff = *projection.CurrentDiff
@@ -552,8 +641,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				message := err.Error()
 				if errors.Is(err, runner.ErrInputNotSupported) {
 					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
-				} else if strings.Contains(message, "no active runner") {
+				} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
 					message = "当前没有可交互会话，请先恢复会话后再审核 diff"
+				} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
+					message = "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交审核决策"
 				}
 				logx.Warn("ws", "send review decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
@@ -565,6 +656,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid permission decision request: %v", err), ""))
 				continue
 			}
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=permission_decision decision=%q permissionMode=%q resumeSessionID=%q targetPath=%q contextID=%q fallbackCWD=%q fallbackCommandPreview=%q promptPreview=%q", connectionID, selectedSessionID, remoteAddr, permissionEvent.Decision, permissionEvent.PermissionMode, permissionEvent.ResumeSessionID, permissionEvent.TargetPath, permissionEvent.ContextID, permissionEvent.FallbackCWD, wsDebugPreview(permissionEvent.FallbackCommand), wsDebugPreview(permissionEvent.PromptMessage))
 			decision := strings.TrimSpace(strings.ToLower(permissionEvent.Decision))
 			if decision != "approve" && decision != "deny" {
 				logx.Warn("ws", "reject invalid permission decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%q", connectionID, selectedSessionID, remoteAddr, permissionEvent.Decision)
@@ -586,29 +678,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if effectivePermissionMode != "" {
 				service.UpdatePermissionMode(effectivePermissionMode)
 			}
-			resumeSessionID := firstNonEmptyString(permissionEvent.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID)
-			targetPath := firstNonEmptyString(permissionEvent.TargetPath, controller.ActiveMeta.TargetPath)
-			contextID := firstNonEmptyString(permissionEvent.ContextID, controller.ActiveMeta.ContextID)
-			contextTitle := firstNonEmptyString(permissionEvent.ContextTitle, controller.ActiveMeta.ContextTitle)
-			promptText, err := buildPermissionDecisionPrompt(decision, protocol.PermissionDecisionRequestEvent{
-				Decision:        decision,
-				PermissionMode:  effectivePermissionMode,
-				ResumeSessionID: resumeSessionID,
-				TargetPath:      targetPath,
-				ContextID:       contextID,
-				ContextTitle:    contextTitle,
-				PromptMessage:   permissionEvent.PromptMessage,
-			})
-			if err != nil {
-				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+			currentRunner := service.CurrentRunner()
+			if currentRunner == nil {
+				logx.Warn("ws", "permission decision rejected without active runner: connectionID=%s sessionID=%s remoteAddr=%s decision=%s", connectionID, sessionID, remoteAddr, decision)
+				emit(protocol.NewErrorEvent(sessionID, "当前没有可交互的 Claude 会话，无法继续处理该权限请求", ""))
 				continue
 			}
 			inputMeta := protocol.RuntimeMeta{
 				Source:          "permission-decision",
-				ResumeSessionID: resumeSessionID,
-				ContextID:       contextID,
-				ContextTitle:    contextTitle,
-				TargetPath:      targetPath,
+				ResumeSessionID: firstNonEmptyString(permissionEvent.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID),
+				ContextID:       firstNonEmptyString(permissionEvent.ContextID, controller.ActiveMeta.ContextID),
+				ContextTitle:    firstNonEmptyString(permissionEvent.ContextTitle, controller.ActiveMeta.ContextTitle),
+				TargetPath:      firstNonEmptyString(permissionEvent.TargetPath, controller.ActiveMeta.TargetPath),
 				TargetText:      decision,
 				Command:         firstNonEmptyString(permissionEvent.FallbackCommand, projection.Runtime.Command, controller.CurrentCommand, controller.ActiveMeta.Command),
 				Engine:          firstNonEmptyString(permissionEvent.FallbackEngine, controller.ActiveMeta.Engine),
@@ -617,39 +698,49 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				TargetType:      firstNonEmptyString(permissionEvent.FallbackTargetType, controller.ActiveMeta.TargetType),
 				PermissionMode:  effectivePermissionMode,
 			}
-			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimSpace(promptText), "权限决策", connectionID, remoteAddr)
-			if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: promptText, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
-				if strings.Contains(err.Error(), "no active runner") {
-					fallbackCommand := firstNonEmptyString(inputMeta.Command, projection.Runtime.Command)
-					if strings.TrimSpace(fallbackCommand) == "" || strings.TrimSpace(resumeSessionID) == "" {
-						emit(protocol.NewErrorEvent(sessionID, "当前没有可恢复的 Claude 会话，无法继续处理该权限请求", ""))
-						continue
-					}
-					if !strings.Contains(strings.ToLower(fallbackCommand), " --resume") {
-						fallbackCommand = strings.TrimSpace(fallbackCommand) + " --resume " + resumeSessionID
-					}
-					if err := service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
-						Command:        fallbackCommand,
-						CWD:            firstNonEmptyString(inputMeta.CWD, projection.Runtime.CWD),
-						Mode:           runner.ModePTY,
-						PermissionMode: effectivePermissionMode,
-						RuntimeMeta:    inputMeta,
-					}, emitAndPersist); err != nil {
-						logx.Warn("ws", "resume permission decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
-						emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
-						continue
-					}
-					if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: promptText, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
-						logx.Warn("ws", "resume permission follow-up input failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
-						emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
-					}
+			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimSpace(permissionEvent.PromptMessage), "权限决策", connectionID, remoteAddr)
+			if decision == "deny" {
+				prompt, err := buildPermissionDecisionPrompt(decision, permissionEvent)
+				if err != nil {
+					logx.Warn("ws", "build permission deny prompt failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
+					emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 					continue
 				}
-				message := err.Error()
-				if errors.Is(err, runner.ErrInputNotSupported) {
-					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
+				if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: prompt, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
+					message := err.Error()
+					if errors.Is(err, runner.ErrInputNotSupported) {
+						message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
+					} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+						message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
+					} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
+						message = "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交权限决策"
+					}
+					logx.Warn("ws", "send permission deny prompt failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
+					emit(protocol.NewErrorEvent(sessionID, message, ""))
 				}
-				logx.Warn("ws", "send permission decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
+				continue
+			}
+			replayInput := hotSwapApproveContinuation(permissionEvent)
+			if err := service.HotSwapApproveWithTemporaryElevation(ctx, sessionID, runtimepkg.ExecuteRequest{
+				Command:        inputMeta.Command,
+				CWD:            inputMeta.CWD,
+				Mode:           runner.ModePTY,
+				PermissionMode: inputMeta.PermissionMode,
+				RuntimeMeta:    inputMeta,
+			}, replayInput, emitAndPersist); err != nil {
+				message := err.Error()
+				if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+					message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
+				} else if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {
+					message = "当前没有可恢复的 Claude 会话，无法通过热重启继续此次权限批准"
+				} else if errors.Is(err, runtimepkg.ErrHotSwapUnsupportedRunner) {
+					message = "当前活跃会话不是可热重启恢复的 Claude PTY 会话"
+				} else if errors.Is(err, runtimepkg.ErrResumeConversationNotFound) {
+					message = "当前 Claude 会话的 resume id 已失效或不存在，无法通过热重启继续此次权限批准"
+				} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
+					message = "Claude 恢复后未进入可输入状态，无法继续刚才的操作"
+				}
+				logx.Warn("ws", "hot swap approve failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
 			}
 		case "set_permission_mode":
@@ -784,11 +875,61 @@ func appendUserProjectionEntry(sessionStore store.Store, ctx context.Context, se
 	}
 }
 
+func hotSwapApproveContinuation(req protocol.PermissionDecisionRequestEvent) string {
+	targetPath := strings.TrimSpace(req.TargetPath)
+	promptMessage := strings.TrimSpace(req.PromptMessage)
+
+	// 1. 核心修复：清理 promptMessage 中的换行符，防止在 PTY 中触发过早的提交碎片
+	promptMessage = strings.ReplaceAll(promptMessage, "\r", " ")
+	promptMessage = strings.ReplaceAll(promptMessage, "\n", " ")
+
+	lines := []string{
+		"我已经批准这次文件修改权限。",
+		"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。",
+	}
+
+	if targetPath != "" {
+		lines = append(lines, "本次已授权的目标文件：`"+targetPath+"`。")
+	}
+
+	lines = append(lines, "不要再次请求权限，不要只做解释，直接完成这次文件修改。")
+
+	if promptMessage != "" {
+		lines = append(lines, "你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入："+promptMessage)
+	}
+
+	// 2. 核心修复：用空格拼接，而不是 \n\n，确保这是一整行完整的命令
+	finalPrompt := strings.Join(lines, "  ")
+
+	// 3. 仅在最后加上一个 \n 触发 PTY 提交
+	return finalPrompt + "\n"
+}
+
 func fallback(value, defaultValue string) string {
 	if strings.TrimSpace(value) == "" {
 		return defaultValue
 	}
 	return value
+}
+
+func wsDebugPreview(value string) string {
+	trimmed := strings.ReplaceAll(strings.TrimSpace(value), "\n", `\n`)
+	trimmed = strings.ReplaceAll(trimmed, "\r", `\r`)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= wsDebugPreviewLimit {
+		return trimmed
+	}
+	return string(runes[:wsDebugPreviewLimit]) + "…"
+}
+
+func wsDebugBoolLabel(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }
 
 func readProjectionFromSessionStore(sessionStore store.Store, ctx context.Context, sessionID, connectionID, remoteAddr string) store.ProjectionSnapshot {
@@ -850,6 +991,22 @@ func toProtocolSummaries(items []store.SessionSummary) []protocol.SessionSummary
 	return result
 }
 
+func toProtocolCatalogMetadata(meta store.CatalogMetadata) protocol.CatalogMetadata {
+	lastSyncedAt := ""
+	if !meta.LastSyncedAt.IsZero() {
+		lastSyncedAt = meta.LastSyncedAt.Format(time.RFC3339)
+	}
+	return protocol.CatalogMetadata{
+		Domain:        string(meta.Domain),
+		SourceOfTruth: string(meta.SourceOfTruth),
+		SyncState:     string(meta.SyncState),
+		DriftDetected: meta.DriftDetected,
+		LastSyncedAt:  lastSyncedAt,
+		VersionToken:  meta.VersionToken,
+		LastError:     meta.LastError,
+	}
+}
+
 func toProtocolSessionContext(ctx store.SessionContext) protocol.SessionContext {
 	return protocol.SessionContext{
 		EnabledSkillNames: append([]string(nil), ctx.EnabledSkillNames...),
@@ -864,15 +1021,23 @@ func toProtocolSkillDefinitions(items []store.SkillDefinition) []protocol.SkillD
 		if !item.UpdatedAt.IsZero() {
 			updatedAt = item.UpdatedAt.Format(time.RFC3339)
 		}
+		lastSyncedAt := ""
+		if !item.LastSyncedAt.IsZero() {
+			lastSyncedAt = item.LastSyncedAt.Format(time.RFC3339)
+		}
 		result = append(result, protocol.SkillDefinition{
-			Name:        item.Name,
-			Description: item.Description,
-			Prompt:      item.Prompt,
-			ResultView:  item.ResultView,
-			TargetType:  item.TargetType,
-			Source:      string(item.Source),
-			Editable:    item.Editable,
-			UpdatedAt:   updatedAt,
+			Name:          item.Name,
+			Description:   item.Description,
+			Prompt:        item.Prompt,
+			ResultView:    item.ResultView,
+			TargetType:    item.TargetType,
+			Source:        string(item.Source),
+			SourceOfTruth: string(item.SourceOfTruth),
+			SyncState:     string(item.SyncState),
+			Editable:      item.Editable,
+			DriftDetected: item.DriftDetected,
+			UpdatedAt:     updatedAt,
+			LastSyncedAt:  lastSyncedAt,
 		})
 	}
 	return result
@@ -885,7 +1050,22 @@ func toProtocolMemoryItems(items []store.MemoryItem) []protocol.MemoryItem {
 		if !item.UpdatedAt.IsZero() {
 			updatedAt = item.UpdatedAt.Format(time.RFC3339)
 		}
-		result = append(result, protocol.MemoryItem{ID: item.ID, Title: item.Title, Content: item.Content, UpdatedAt: updatedAt})
+		lastSyncedAt := ""
+		if !item.LastSyncedAt.IsZero() {
+			lastSyncedAt = item.LastSyncedAt.Format(time.RFC3339)
+		}
+		result = append(result, protocol.MemoryItem{
+			ID:            item.ID,
+			Title:         item.Title,
+			Content:       item.Content,
+			Source:        item.Source,
+			SourceOfTruth: string(item.SourceOfTruth),
+			SyncState:     string(item.SyncState),
+			Editable:      item.Editable,
+			DriftDetected: item.DriftDetected,
+			UpdatedAt:     updatedAt,
+			LastSyncedAt:  lastSyncedAt,
+		})
 	}
 	return result
 }
@@ -908,12 +1088,12 @@ func emitSkillCatalogResult(emit func(any), sessionStore store.Store, ctx contex
 		emit(protocol.NewErrorEvent(sessionID, "session store unavailable", ""))
 		return
 	}
-	items, err := sessionStore.ListSkillCatalog(ctx)
+	snapshot, err := sessionStore.GetSkillCatalogSnapshot(ctx)
 	if err != nil {
 		emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 		return
 	}
-	emit(protocol.NewSkillCatalogResultEvent(sessionID, toProtocolSkillDefinitions(items)))
+	emit(protocol.NewSkillCatalogResultEvent(sessionID, toProtocolCatalogMetadata(snapshot.Meta), toProtocolSkillDefinitions(snapshot.Items)))
 }
 
 func emitMemoryListResult(emit func(any), sessionStore store.Store, ctx context.Context, sessionID string) {
@@ -921,86 +1101,115 @@ func emitMemoryListResult(emit func(any), sessionStore store.Store, ctx context.
 		emit(protocol.NewErrorEvent(sessionID, "session store unavailable", ""))
 		return
 	}
-	items, err := sessionStore.ListMemoryCatalog(ctx)
+	snapshot, err := sessionStore.GetMemoryCatalogSnapshot(ctx)
 	if err != nil {
 		emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 		return
 	}
-	emit(protocol.NewMemoryListResultEvent(sessionID, toProtocolMemoryItems(items)))
+	emit(protocol.NewMemoryListResultEvent(sessionID, toProtocolCatalogMetadata(snapshot.Meta), toProtocolMemoryItems(snapshot.Items)))
 }
 
 func upsertLocalSkill(sessionStore store.Store, ctx context.Context, item protocol.SkillDefinition) error {
 	if sessionStore == nil {
 		return fmt.Errorf("session store unavailable")
 	}
-	items, err := sessionStore.ListSkillCatalog(ctx)
+	snapshot, err := sessionStore.GetSkillCatalogSnapshot(ctx)
 	if err != nil {
 		return err
 	}
 	updatedAt := time.Now().UTC()
 	next := store.SkillDefinition{
-		Name:        strings.TrimSpace(item.Name),
-		Description: strings.TrimSpace(item.Description),
-		Prompt:      strings.TrimSpace(item.Prompt),
-		ResultView:  strings.TrimSpace(item.ResultView),
-		TargetType:  strings.TrimSpace(item.TargetType),
-		Source:      store.SkillSourceLocal,
-		Editable:    true,
-		UpdatedAt:   updatedAt,
+		Name:          strings.TrimSpace(item.Name),
+		Description:   strings.TrimSpace(item.Description),
+		Prompt:        strings.TrimSpace(item.Prompt),
+		ResultView:    strings.TrimSpace(item.ResultView),
+		TargetType:    strings.TrimSpace(item.TargetType),
+		Source:        store.SkillSourceLocal,
+		SourceOfTruth: store.CatalogSourceTruthClaude,
+		SyncState:     store.CatalogSyncStateDraft,
+		Editable:      true,
+		DriftDetected: true,
+		UpdatedAt:     updatedAt,
 	}
 	if next.Name == "" {
 		return fmt.Errorf("skill name is required")
 	}
 	found := false
-	for i := range items {
-		if items[i].Name == next.Name {
-			items[i] = next
+	for i := range snapshot.Items {
+		if snapshot.Items[i].Name == next.Name {
+			snapshot.Items[i] = next
 			found = true
 			break
 		}
 	}
 	if !found {
-		items = append(items, next)
+		snapshot.Items = append(snapshot.Items, next)
 	}
-	return sessionStore.SaveSkillCatalog(ctx, items)
+	snapshot.Meta.SyncState = store.CatalogSyncStateDraft
+	snapshot.Meta.DriftDetected = true
+	snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+	snapshot.Meta.LastError = ""
+	return sessionStore.SaveSkillCatalogSnapshot(ctx, snapshot)
 }
 
 func syncExternalSkills(sessionStore store.Store, ctx context.Context) error {
 	if sessionStore == nil {
 		return fmt.Errorf("session store unavailable")
 	}
-	items, err := sessionStore.ListSkillCatalog(ctx)
+	snapshot, err := sessionStore.GetSkillCatalogSnapshot(ctx)
 	if err != nil {
 		return err
 	}
-	filtered := make([]store.SkillDefinition, 0, len(items)+1)
-	for _, item := range items {
-		if item.Source != store.SkillSourceExternal {
+	now := time.Now().UTC()
+	filtered := make([]store.SkillDefinition, 0, len(snapshot.Items)+1)
+	for _, item := range snapshot.Items {
+		if item.Source == store.SkillSourceLocal {
 			filtered = append(filtered, item)
 		}
 	}
 	filtered = append(filtered, store.SkillDefinition{
-		Name:        "external-diff-summary",
-		Description: "外部同步示例 skill",
-		Prompt:      "请总结下面上下文的关键变化、影响范围和验证建议。",
-		ResultView:  "review-card",
-		TargetType:  "diff",
-		Source:      store.SkillSourceExternal,
-		Editable:    true,
-		UpdatedAt:   time.Now().UTC(),
+		Name:          "external-diff-summary",
+		Description:   "外部同步示例 skill",
+		Prompt:        "请总结下面上下文的关键变化、影响范围和验证建议。",
+		ResultView:    "review-card",
+		TargetType:    "diff",
+		Source:        store.SkillSourceExternal,
+		SourceOfTruth: store.CatalogSourceTruthClaude,
+		SyncState:     store.CatalogSyncStateSynced,
+		Editable:      false,
+		DriftDetected: false,
+		UpdatedAt:     now,
+		LastSyncedAt:  now,
 	})
-	return sessionStore.SaveSkillCatalog(ctx, filtered)
+	snapshot.Items = filtered
+	snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+	snapshot.Meta.SyncState = store.CatalogSyncStateSynced
+	snapshot.Meta.DriftDetected = false
+	snapshot.Meta.LastSyncedAt = now
+	snapshot.Meta.LastError = ""
+	snapshot.Meta.VersionToken = fmt.Sprintf("skills-%d", now.UnixNano())
+	return sessionStore.SaveSkillCatalogSnapshot(ctx, snapshot)
 }
 
 func upsertMemoryItem(sessionStore store.Store, ctx context.Context, item protocol.MemoryItem) error {
 	if sessionStore == nil {
 		return fmt.Errorf("session store unavailable")
 	}
-	items, err := sessionStore.ListMemoryCatalog(ctx)
+	snapshot, err := sessionStore.GetMemoryCatalogSnapshot(ctx)
 	if err != nil {
 		return err
 	}
-	next := store.MemoryItem{ID: strings.TrimSpace(item.ID), Title: strings.TrimSpace(item.Title), Content: strings.TrimSpace(item.Content), UpdatedAt: time.Now().UTC()}
+	next := store.MemoryItem{
+		ID:            strings.TrimSpace(item.ID),
+		Title:         strings.TrimSpace(item.Title),
+		Content:       strings.TrimSpace(item.Content),
+		Source:        firstNonEmptyString(strings.TrimSpace(item.Source), "local"),
+		SourceOfTruth: store.CatalogSourceTruthClaude,
+		SyncState:     store.CatalogSyncStateDraft,
+		Editable:      true,
+		DriftDetected: true,
+		UpdatedAt:     time.Now().UTC(),
+	}
 	if next.ID == "" {
 		next.ID = fmt.Sprintf("memory-%d", time.Now().UTC().UnixNano())
 	}
@@ -1008,17 +1217,21 @@ func upsertMemoryItem(sessionStore store.Store, ctx context.Context, item protoc
 		return fmt.Errorf("memory title is required")
 	}
 	found := false
-	for i := range items {
-		if items[i].ID == next.ID {
-			items[i] = next
+	for i := range snapshot.Items {
+		if snapshot.Items[i].ID == next.ID {
+			snapshot.Items[i] = next
 			found = true
 			break
 		}
 	}
 	if !found {
-		items = append(items, next)
+		snapshot.Items = append(snapshot.Items, next)
 	}
-	return sessionStore.SaveMemoryCatalog(ctx, items)
+	snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+	snapshot.Meta.SyncState = store.CatalogSyncStateDraft
+	snapshot.Meta.DriftDetected = true
+	snapshot.Meta.LastError = ""
+	return sessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot)
 }
 
 func toHistoryContext(ctx *store.SnapshotContext) *protocol.HistoryContext {
@@ -1389,6 +1602,8 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 		record.Projection.RawTerminalByStream,
 		executions,
 		toProtocolSessionContext(record.Projection.SessionContext),
+		toProtocolCatalogMetadata(record.Projection.SkillCatalogMeta),
+		toProtocolCatalogMetadata(record.Projection.MemoryCatalogMeta),
 		canResume,
 		resumeMeta,
 	)
@@ -1677,6 +1892,18 @@ func buildReviewDecisionPrompt(decision string, req protocol.ReviewDecisionReque
 	}
 }
 
+func buildPermissionDecisionReply(decision string) (string, error) {
+	decision = strings.TrimSpace(strings.ToLower(decision))
+	switch decision {
+	case "approve":
+		return "y\n", nil
+	case "deny":
+		return "n\n", nil
+	default:
+		return "", fmt.Errorf("permission decision must be one of: approve, deny")
+	}
+}
+
 func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecisionRequestEvent) (string, error) {
 	decision = strings.TrimSpace(strings.ToLower(decision))
 	if decision == "" {
@@ -1710,11 +1937,37 @@ func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecis
 	}
 	switch decision {
 	case "approve":
-		return fmt.Sprintf("用户已批准刚才请求的文件修改/写入权限。请在当前已保存的会话上下文中继续完成刚才因未授权而中断的操作；如有必要，请直接重新执行刚才被拦截的编辑或写入工具调用。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
+		return fmt.Sprintf("用户已批准刚才请求的文件修改/写入权限。请在当前已保存的会话上下文中继续刚才被权限拦截的任务。执行要求：先重新读取目标文件的当前内容，再基于最新内容继续刚才的修改；只有在重新读取完成后，才重试刚才被拦截的编辑或写入工具调用。不要再次向用户请求同一权限，直接继续完成即可。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
 	case "deny":
 		return fmt.Sprintf("用户拒绝了刚才请求的文件修改/写入权限。请不要继续写入或编辑该目标，并基于当前上下文给出不写文件的替代方案或下一步建议。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
 	default:
 		return "", fmt.Errorf("permission decision must be one of: approve, deny")
+	}
+}
+
+func waitForInteractiveRuntime(ctx context.Context, service *runtimepkg.Service, timeout time.Duration) error {
+	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if service.CanAcceptInteractiveInput() {
+			return nil
+		}
+		if !service.IsRunning() {
+			return runtimepkg.ErrNoActiveRunner
+		}
+		select {
+		case <-deadlineCtx.Done():
+			if service.CanAcceptInteractiveInput() {
+				return nil
+			}
+			if !service.IsRunning() {
+				return runtimepkg.ErrNoActiveRunner
+			}
+			return runtimepkg.ErrRunnerNotInteractive
+		case <-ticker.C:
+		}
 	}
 }
 
