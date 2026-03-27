@@ -52,6 +52,7 @@ Claude Code 很强，但真实工作里总会遇到这些场景：
 
 * **继续输入**：Claude 需要你补一句话
 * **权限确认**：允许或拒绝操作
+* **Plan Mode**：处理 Claude 的规划阶段与多轮计划问答
 * **代码审核**：accept / revert / revise
 * **继续回复**：推动下一步等待态
 
@@ -73,8 +74,8 @@ Claude Code 很强，但真实工作里总会遇到这些场景：
 #### 4. 后台通知 — 移动协作的关键能力
 
 * Claude 等待你操作时才通知
-* 支持继续输入、权限确认、代码审核
-* 去重边沿触发，避免重复通知
+* 支持继续输入、权限确认、Plan Mode、代码审核
+* 统一由 action-needed 信号驱动，并做边沿去重，避免重复通知
 
 #### 5. 完整工作台体验
 
@@ -99,6 +100,7 @@ Claude Code 很强，但真实工作里总会遇到这些场景：
 * 会话级 Skill / Memory / Context 管理
 * Skill / Memory 与本机 Claude 目录镜像同步
 * 支持一句话让 Claude 生成或修改 Skill / Memory，并自动回写到 catalog
+* 支持以 `catalog-authoring` 源驱动 Skill / Memory 自动回写闭环
 * runtime info 查看
 * 后台通知触发 action-needed
 * 可选 TTS 语音播报
@@ -132,6 +134,7 @@ Mobile browser / Flutter app
 * 分发 action
 * 同步 session、skill、memory
 * 汇总 runtime、store、文件系统为事件流
+* 输出 `runtime_phase`、`interaction_request`、`session_history`、`skill_catalog_result`、`memory_list_result` 等结构化事件
 * 持久化 session projection
 
 #### Claude 运行时链路
@@ -139,6 +142,7 @@ Mobile browser / Flutter app
 * Flutter/Web 输入 -> Go 后端
 * active runner 管理
 * exec / pty / claude 会话
+* 计划模式、权限确认、普通输入分别走不同决策分支
 * 输出映射成结构化事件回前端
 
 #### 会话存储
@@ -250,6 +254,7 @@ MobileVC brings **Claude Code** to your mobile device — not just viewing, but 
 
 * Continue conversations
 * Handle permission confirmations
+* Handle Plan Mode prompts and multi-step decisions
 * Review & switch multi-file diffs
 * Browse files & logs
 * Resume past sessions
@@ -264,7 +269,7 @@ MobileVC brings **Claude Code** to your mobile device — not just viewing, but 
 
 1. **Mobile-First Interaction**
 
-   * Input, permissions, code review, next-step decisions separated for mobile UI
+   * Input, permissions, Plan Mode, code review, next-step decisions separated for mobile UI
 2. **Multi-File Diff Review**
 
    * Group view, switch files in a group, diff/content toggle, accept/revert/revise, bulk accept
