@@ -1,117 +1,141 @@
 ---
 
-# 📱 MobileVC — Claude Code 移动端全工作流控制台 ✨
-
-![Go](https://img.shields.io/badge/Go-1.21-blue) ![Flutter](https://img.shields.io/badge/Flutter-3.13-blue) ![License](https://img.shields.io/badge/License-MIT-green)
+# 📱 MobileVC — 手机就是你的 Claude Code 控制台
 
 <p align="center">
   <img src="mobile_vc/lib/logo-2.png" alt="MobileVC logo" width="220" />
 </p>
 
----
+<p align="center">
+  <strong>摆脱键盘和鼠标的束缚，用手机随时接管电脑上的 Claude Code。</strong>
+</p>
 
-## 中文版
+<p align="center">
+  <em>MobileVC 把 Claude Code 的等待、审批、审核和继续执行，变成一套专为移动端设计的操作闭环。</em>
+</p>
 
-### 简介
-
-> 把 **Claude Code** 真正带到手机上。不是远程看一眼，而是 **用移动端逻辑完整接管你的 Claude Code 工作流**。
-
-MobileVC 是一个面向手机浏览器与 Flutter App 的移动工作台，让你在离开电脑后，依然能继续控制本机正在运行的 Claude Code：
-
-* 继续对话
-* 处理权限确认
-* 审核和切换多文件 diff
-* 浏览文件与日志
-* 恢复历史 session
-* 管理会话上下文里的 Skill / Memory
-* 在后台收到“Claude 现在需要你”的提醒
-
-它不是把桌面界面硬塞到手机上，而是围绕 **手机上的决策动作** 重新组织了 Claude Code 的核心流程。
-
-> 建议仅在本机或可信局域网中使用，不要直接暴露到公网。
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.21-blue" />
+  <img src="https://img.shields.io/badge/Flutter-3.13-blue" />
+  <img src="https://img.shields.io/badge/License-MIT-green" />
+</p>
 
 ---
 
-### 为什么它有意思
+## 这是什么
 
-Claude Code 很强，但真实工作里总会遇到这些场景：
+MobileVC 不是桌面终端的镜像，也不是远程桌面的替代品。
 
-* 你离开电脑了，但 Claude 正在等你确认权限
-* 它已经改了多份文件，等你逐个审核 diff
-* 你只想在手机上快速看日志、看文件、回一句话
-* 你想恢复刚才那轮 session，而不是重新讲一遍上下文
+它做的是一件更直接的事：**把电脑上的 Claude Code 变成可以被手机完整操控的工作台。**
 
-**MobileVC 的目标**：把这些“必须回到电脑上才能做”的动作，变成手机上就能完成的自然操作。
+你不在电脑前，也能继续把任务推进下去：
 
-* 拆分 Claude Code 的等待态，适合移动端交互
-* 将 diff 审核变成点、切、批量操作的工作流
-* Skill / Memory 成为会话上下文的一部分
-* 将“需要你介入”的时机转成后台通知
+- 继续跟 Claude 对话
+- 批准或拒绝权限请求
+- 接住 Plan Mode 的多轮计划交互
+- 审核 diff、接受或回滚修改
+- 浏览文件、日志和运行状态
+- 恢复历史会话
+- 管理 Skill / Memory / Session Context
+- 在 Claude 需要你时收到提醒
 
----
+MobileVC 解决的不是“怎么远程看见电脑”，而是：
 
-### 核心卖点
-
-#### 1. 真正围绕手机操作重构 Claude Code
-
-* **继续输入**：Claude 需要你补一句话
-* **权限确认**：允许或拒绝操作
-* **Plan Mode**：处理 Claude 的规划阶段与多轮计划问答
-* **代码审核**：accept / revert / revise
-* **继续回复**：推动下一步等待态
-
-#### 2. 多文件 diff 审核 — 手机上也丝滑
-
-* 按修改组查看待审核内容
-* 在同一组内切换多个文件
-* 文件内容 / diff 双模式切换
-* accept / revert / revise
-* 支持一键接受全部待审核 diff
-
-#### 3. Skill / Memory 无感同步、Claude 生成修改与可视化管理
-
-* Claude 本地目录镜像 + 当前会话启用态
-* UI 显示 `sourceOfTruth`、`syncState`、`driftDetected`、`lastSyncedAt`、`lastError`
-* Skill / Memory 的启用与关闭统一放在各自管理面板，不再占用主界面顶部
-* 支持直接让 Claude 生成或修改 Skill / Memory，结果会自动回写 catalog 并刷新管理面板
-
-#### 4. 后台通知 — 移动协作的关键能力
-
-* Claude 等待你操作时才通知
-* 支持继续输入、权限确认、Plan Mode、代码审核
-* 统一由 action-needed 信号驱动，并做边沿去重，避免重复通知
-
-#### 5. 完整工作台体验
-
-* 会话创建 / 切换 / 删除 / 恢复
-* 聊天时间线与步骤状态
-* 终端日志、execution 切换
-* 文件树浏览、读取、下载
-* runtime info 诊断
-* pending / recent diff 恢复
+> **怎么让你只靠手机，就能完成电脑上的几乎全部 Claude Code 工作流。**
 
 ---
 
-### 核心能力总结
+## 核心价值
 
-* 在手机上连接本机 Claude Code
-* 新建 / 切换 / 恢复 session
-* 区分普通输入、权限授权、diff 审核
-* 浏览聊天时间线、步骤状态、错误与运行状态
-* 文件树浏览、读取、下载
-* 多文件 diff 审核（修改组、切换、批量操作）
-* 终端日志按 execution 切换 `stdout` / `stderr`
-* 会话级 Skill / Memory / Context 管理
-* Skill / Memory 与本机 Claude 目录镜像同步
-* 支持一句话让 Claude 生成或修改 Skill / Memory，并自动回写到 catalog
-* 支持以 `catalog-authoring` 源驱动 Skill / Memory 自动回写闭环
-* runtime info 查看
-* 后台通知触发 action-needed
-* 可选 TTS 语音播报
+### 1. 为手机重写 Claude Code 的交互
+
+手机上的操作不该依赖键盘盲输。
+MobileVC 把 Claude Code 的关键等待态拆出来，变成更适合触摸屏的决策动作：
+
+- 普通输入
+- 权限确认
+- Plan Mode 继续/推进
+- 代码审查
+- 会话恢复
+
+### 2. 让你离开电脑也不掉线
+
+你不需要守在桌面前，也不需要回到键盘旁。
+
+- 出门在外也能继续推进任务
+- 电脑不在身边也能批准修改
+- Claude 正在等待你时，手机能立即介入
+- 复杂工作流不会因为离开键盘而中断
+
+### 3. 把电脑上的工作流，变成手机上的高频动作
+
+MobileVC 不是为了展示“能远程看见什么”，而是为了让你真正把事做完：
+
+- 看
+- 选
+- 批准
+- 回退
+- 继续
+- 恢复
+- 追踪
+
+这是一套为手机设计的 Claude Code 控制台。
 
 ---
 
-### 架构与工作原理
+## 主要功能
+
+### 1. 手机直接接管 Claude Code
+
+- 在手机上连接本机 Claude Code 会话
+- 继续当前任务，而不是重新开始
+- 支持创建、切换、加载、删除会话
+
+### 2. 权限确认与 Plan Mode
+
+- 支持权限请求的允许 / 拒绝
+- 支持 Claude 进入 Plan Mode 后的多轮计划交互
+- 计划、权限、普通输入分流处理
+- 移动端用按钮推进流程，不再依赖 CLI 盲输
+
+### 3. 多文件 Diff 审核
+
+- 按修改组查看待审内容
+- 在同一组内切换多个文件
+- 查看文件内容或 diff
+- 支持 accept / revert / revise
+- 支持一键接受全部待审核 diff
+
+### 4. 文件、日志与运行状态查看
+
+- 浏览项目文件树
+- 读取文件内容
+- 通过 HTTP 下载文件
+- 查看终端执行日志
+- 在不同 execution 间切换 stdout / stderr
+- 查看 runtime info 和 session 历史
+
+### 5. Skill / Memory / Session Context 管理
+
+- 查看和管理当前会话启用的 Skill / Memory
+- 与本机 Claude 目录同步
+- 支持 Claude 生成或修改 Skill / Memory
+- 结果可自动回写 catalog 并刷新管理面板
+
+### 6. 后台提醒
+
+- 当 Claude 需要你操作时发送提醒
+- 覆盖继续输入、权限确认、Plan Mode、代码审核
+- 通过 action-needed 信号去重，避免重复打扰
+
+### 7. 可选 TTS
+
+- 支持把 Claude 的关键信息转成语音
+- 更适合移动中、通勤中或不方便盯屏的场景
+
+---
+
+## 系统架构
 
 ```text
 Mobile browser / Flutter app
@@ -125,68 +149,72 @@ Mobile browser / Flutter app
          └─ Python ChatTTS sidecar (optional)
 ```
 
-#### Go 服务入口
+### Go 后端
 
-* `cmd/server/main.go`
-* 支持 `/ws`、`/healthz`、`/download`、`/api/tts/synthesize`、静态 Web 工作台
-* 读取 `AUTH_TOKEN` 和 `PORT`，默认 8001
+- 入口：`cmd/server/main.go`
+- 负责 `/ws`、`/healthz`、`/download`、`/api/tts/synthesize`
+- 通过 WebSocket 驱动完整会话状态流
+- 管理 PTY runner、session store、Skill / Memory、文件系统与 TTS
 
-#### WebSocket 编排
+### Flutter 客户端
 
-* 校验 token
-* 建立长连接
-* 分发 action
-* 同步 session、skill、memory
-* 汇总 runtime、store、文件系统为事件流
-* 输出 `runtime_phase`、`interaction_request`、`session_history`、`skill_catalog_result`、`memory_list_result` 等结构化事件
-* 持久化 session projection
+- 入口：`mobile_vc/lib/main.dart` -> `mobile_vc/lib/app/app.dart`
+- 根状态由 `SessionController` 驱动
+- 首页是 `SessionHomePage`
+- 负责把后端事件变成手机上可操作的 UI 状态
 
-#### Claude 运行时链路
+### 后端协议
 
-* Flutter/Web 输入 -> Go 后端
-* active runner 管理
-* exec / pty / claude 会话
-* 计划模式、权限确认、普通输入分别走不同决策分支
-* 输出映射成结构化事件回前端
+Go 后端通过结构化事件流向前端推送状态，例如：
 
-#### 会话存储
-
-* 默认路径：`~/.mobilevc/sessions`
-* 持久化 `skills.catalog.json`、`memory.catalog.json`
+- `runtime_phase`
+- `interaction_request`
+- `session_history`
+- `skill_catalog_result`
+- `memory_list_result`
+- `file_diff`
+- `prompt_request`
+- `agent_state`
 
 ---
 
-### 快速启动
+## 工作原理
 
-#### 1. 环境准备
+1. Flutter 连接 Go 后端 WebSocket
+2. Go 后端启动或恢复 Claude Code 的 PTY 会话
+3. Claude 在执行中发出等待态、权限态、计划态等结构化信号
+4. Flutter 将这些信号渲染成适合手机的操作界面
+5. 用户在手机上批准、继续、回退、审核或输入
+6. 决策再回灌给 Claude，形成完整闭环
 
-* Go
-* Claude Code
-* 设置 `AUTH_TOKEN`
+这套设计的核心不是“远程操作一台电脑”，而是：
+
+> **让手机成为你操控电脑上 Claude Code 的主入口。**
+
+---
+
+## 快速开始
+
+### 1. 启动 Go 服务
 
 ```bash
 export AUTH_TOKEN=test
-```
-
-#### 2. 启动 Go 服务
-
-```bash
 AUTH_TOKEN=test go run ./cmd/server
 ```
 
-#### 3. 健康检查
+### 2. 健康检查
 
 ```bash
 curl http://127.0.0.1:8001/healthz
 ```
 
-#### 4. 打开工作台
+### 3. 打开 Web 工作台
 
 ```text
 http://127.0.0.1:8001/
 ```
 
-#### 5. 启动 Claude 会话
+### 4. 启动 Claude 会话
 
 ```text
 claude
@@ -194,7 +222,7 @@ claude
 
 ---
 
-### Flutter 客户端
+## Flutter 客户端
 
 ```bash
 cd mobile_vc
@@ -202,43 +230,28 @@ flutter pub get
 flutter run
 ```
 
-> 确保 host/port/token 配置正确
+> 确保 host / port / token 配置正确。
 
 ---
 
-### 可选 TTS
+## 测试
+
+### Go
 
 ```bash
-cd sidecar/chattts
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-PYTHON_BIN="$PWD/.venv/bin/python" \
-CHATTTS_MODEL_DIR="$HOME/.cache/mobilevc/chattts" \
-bash run.sh
+go test ./...
 ```
 
----
-
-### 测试
-
-#### Flutter
+### Flutter
 
 ```bash
 cd mobile_vc
 flutter test
 ```
 
-#### Go
-
-```bash
-go test ./...
-```
-
 ---
 
-### 项目结构
+## 项目结构
 
 ```text
 cmd/server/        # Go 服务入口
@@ -250,64 +263,28 @@ sidecar/chattts/   # 可选 TTS 侧车
 
 ---
 
-## English Version
+## English Summary
 
-### Overview
+MobileVC turns your phone into the control center for Claude Code running on your computer.
 
-MobileVC brings **Claude Code** to your mobile device — not just viewing, but **taking full control of your workflow** on the go.
+It is built for the moments when you are away from the keyboard but still need to keep shipping: approve permissions, handle Plan Mode, review diffs, inspect files and logs, resume sessions, and keep the workflow moving.
 
-* Continue conversations
-* Handle permission confirmations
-* Handle Plan Mode prompts and multi-step decisions
-* Review & switch multi-file diffs
-* Browse files & logs
-* Resume past sessions
-* Manage session Skill / Memory
-* Receive notifications when Claude needs you
+### What it gives you
 
-> Recommended for local or trusted LAN use only.
+- Mobile Claude Code control
+- Permission confirmations
+- Plan Mode handling
+- Multi-file diff review
+- File / log / runtime inspection
+- Session resume and history
+- Skill / Memory / Context management
+- Optional TTS notifications
 
----
+### The idea
 
-### Core Features
+Not a terminal mirror.
+Not a desktop clone.
 
-1. **Mobile-First Interaction**
-
-   * Input, permissions, Plan Mode, code review, next-step decisions separated for mobile UI
-2. **Multi-File Diff Review**
-
-   * Group view, switch files in a group, diff/content toggle, accept/revert/revise, bulk accept
-3. **Skill / Memory Management**
-
-   * Directory mirror view, per-session enable/disable inside dedicated management sheets, sync with local Claude
-   * Ask Claude to generate or revise Skill / Memory, then auto-write the result back into the catalog
-4. **Background Notifications**
-
-   * Triggered only when action is needed, edge deduplication prevents spam
-5. **Full Workflow Console**
-
-   * Session creation/switch/delete/resume, timeline, terminal logs, runtime info, file tree, pending diffs
+**A phone-first workflow that lets you operate Claude Code on your computer almost entirely from mobile.**
 
 ---
-
-### Architecture
-
-```text
-Mobile browser / Flutter app
-         │
-         ▼
-  MobileVC Go server
-         │
-         ├─ WebSocket event stream
-         ├─ Claude Code runtime / PTY runner
-         ├─ session + projection store
-         └─ Python ChatTTS sidecar (optional)
-```
-
-* Go Server: session orchestration, runtime bridge, event protocol
-* WebSocket layer: real-time state sync
-* Claude runtime: native PTY support
-* File-based session
-
-
-
