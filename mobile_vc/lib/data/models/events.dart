@@ -173,6 +173,44 @@ class InteractionAction {
   }
 }
 
+class PlanQuestion {
+  const PlanQuestion({
+    required this.id,
+    this.title = '',
+    this.message = '',
+    this.options = const [],
+  });
+
+  final String id;
+  final String title;
+  final String message;
+  final List<PromptOption> options;
+
+  String get displayLabel {
+    if (title.trim().isNotEmpty) {
+      return title.trim();
+    }
+    if (message.trim().isNotEmpty) {
+      return message.trim();
+    }
+    return id.trim();
+  }
+
+  bool get hasVisiblePrompt =>
+      title.trim().isNotEmpty ||
+      message.trim().isNotEmpty ||
+      options.any((option) => option.displayText.isNotEmpty);
+
+  factory PlanQuestion.fromJson(Map<String, dynamic> json) {
+    return PlanQuestion(
+      id: (json['id'] ?? json['questionId'] ?? json['key'] ?? '').toString(),
+      title: (json['title'] ?? json['label'] ?? '').toString(),
+      message: _readPromptMessage(json),
+      options: _readPromptOptions(json),
+    );
+  }
+}
+
 class InteractionRequestEvent extends AppEvent {
   const InteractionRequestEvent({
     required super.timestamp,
@@ -184,6 +222,7 @@ class InteractionRequestEvent extends AppEvent {
     this.message = '',
     this.options = const [],
     this.actions = const [],
+    this.planQuestions = const [],
     this.contextId = '',
     this.contextTitle = '',
     this.targetPath = '',
@@ -201,6 +240,7 @@ class InteractionRequestEvent extends AppEvent {
   final String message;
   final List<PromptOption> options;
   final List<InteractionAction> actions;
+  final List<PlanQuestion> planQuestions;
   final String contextId;
   final String contextTitle;
   final String targetPath;
@@ -216,12 +256,14 @@ class InteractionRequestEvent extends AppEvent {
       title.trim().isNotEmpty ||
       message.trim().isNotEmpty ||
       actions.any((action) => action.displayLabel.isNotEmpty) ||
-      options.any((option) => option.displayText.isNotEmpty);
+      options.any((option) => option.displayText.isNotEmpty) ||
+      planQuestions.any((question) => question.hasVisiblePrompt);
 
   bool get isPermission => kind.trim().toLowerCase() == 'permission';
   bool get isReview => kind.trim().toLowerCase() == 'review';
   bool get isChoice => kind.trim().toLowerCase() == 'choice';
   bool get isInput => kind.trim().toLowerCase() == 'input';
+  bool get isPlan => kind.trim().toLowerCase() == 'plan';
 
   factory InteractionRequestEvent.fromJson(Map<String, dynamic> json) {
     return InteractionRequestEvent(
@@ -237,6 +279,7 @@ class InteractionRequestEvent extends AppEvent {
           .whereType<Map<String, dynamic>>()
           .map(InteractionAction.fromJson)
           .toList(),
+      planQuestions: _readPlanQuestions(json),
       contextId: (json['contextId'] ?? '').toString(),
       contextTitle: (json['contextTitle'] ?? '').toString(),
       targetPath: (json['targetPath'] ?? '').toString(),
@@ -267,43 +310,6 @@ class PromptRequestEvent extends AppEvent {
   bool get hasVisiblePrompt =>
       message.trim().isNotEmpty ||
       options.any((option) => option.displayText.isNotEmpty);
-
-  bool get looksLikePermissionPrompt {
-    final haystack = _promptSearchText(raw, message, options).toLowerCase();
-    final keywordMatch = haystack.contains('allow') ||
-        haystack.contains('approve') ||
-        haystack.contains('permission') ||
-        haystack.contains('confirm') ||
-        haystack.contains('deny') ||
-        haystack.contains('reject') ||
-        haystack.contains('cancel') ||
-        haystack.contains('授权') ||
-        haystack.contains('确认') ||
-        haystack.contains('允许') ||
-        haystack.contains('批准') ||
-        haystack.contains('同意') ||
-        haystack.contains('拒绝') ||
-        haystack.contains('取消');
-    return keywordMatch || _looksLikeBinaryPermissionOptions(options);
-  }
-
-  bool get looksLikeEditPermissionPrompt {
-    final haystack = _promptSearchText(raw, message, options).toLowerCase();
-    final mentionsEditAction = haystack.contains('write') ||
-        haystack.contains('edit') ||
-        haystack.contains('modify') ||
-        haystack.contains('update') ||
-        haystack.contains('create file') ||
-        haystack.contains('delete file') ||
-        haystack.contains('overwrite') ||
-        haystack.contains('patch') ||
-        haystack.contains('文件') ||
-        haystack.contains('写入') ||
-        haystack.contains('修改') ||
-        haystack.contains('编辑') ||
-        haystack.contains('删除');
-    return looksLikePermissionPrompt && mentionsEditAction;
-  }
 
   factory PromptRequestEvent.fromJson(Map<String, dynamic> json) =>
       PromptRequestEvent(
@@ -419,83 +425,63 @@ List<PromptOption> _parsePromptOptions(Object? source) {
   return options;
 }
 
-String _promptSearchText(
-  Map<String, dynamic> raw,
-  String message,
-  List<PromptOption> options,
-) {
-  final parts = <String>[
-    message,
-    ...options.map((option) => option.value),
-    ...options.map((option) => option.displayText),
-    raw['type']?.toString() ?? '',
-    raw['msg']?.toString() ?? '',
-    raw['message']?.toString() ?? '',
-    raw['prompt']?.toString() ?? '',
-    raw['question']?.toString() ?? '',
-    raw['targetPath']?.toString() ?? '',
-    raw['tool']?.toString() ?? '',
-    raw['action']?.toString() ?? '',
+List<PlanQuestion> _readPlanQuestions(Map<String, dynamic> json) {
+  final sources = <Object?>[
+    json['questions'],
+    json['planQuestions'],
+    json['steps'],
   ];
 
-  final details = raw['details'];
-  if (details is Map) {
-    parts.addAll([
-      details['msg']?.toString() ?? '',
-      details['message']?.toString() ?? '',
-      details['prompt']?.toString() ?? '',
-      details['question']?.toString() ?? '',
-      details['targetPath']?.toString() ?? '',
-      details['tool']?.toString() ?? '',
-      details['action']?.toString() ?? '',
+  final details = json['details'];
+  if (details is Map<String, dynamic>) {
+    sources.addAll([
+      details['questions'],
+      details['planQuestions'],
+      details['steps'],
     ]);
   }
 
-  return parts.where((part) => part.trim().isNotEmpty).join('\n');
+  for (final source in sources) {
+    final parsed = _parsePlanQuestions(source);
+    if (parsed.isNotEmpty) {
+      return parsed;
+    }
+  }
+  return const [];
 }
 
-bool _looksLikeBinaryPermissionOptions(List<PromptOption> options) {
-  if (options.length != 2) {
-    return false;
+List<PlanQuestion> _parsePlanQuestions(Object? source) {
+  if (source is! List) {
+    return const [];
   }
 
-  final normalized = options
-      .map((option) => _normalizePromptOptionToken(option.displayText))
-      .where((token) => token.isNotEmpty)
-      .toList(growable: false);
-  if (normalized.length != 2) {
-    return false;
+  final questions = <PlanQuestion>[];
+  for (final item in source) {
+    if (item is String) {
+      final value = item.trim();
+      if (value.isNotEmpty) {
+        questions.add(PlanQuestion(id: value, title: value));
+      }
+      continue;
+    }
+    if (item is Map<String, dynamic>) {
+      final options = _parsePromptOptions(
+        item['options'] ?? item['choices'] ?? item['buttons'] ?? item['selections'],
+      );
+      questions.add(PlanQuestion(
+        id: (item['id'] ?? item['questionId'] ?? item['key'] ?? '').toString(),
+        title: (item['title'] ?? item['label'] ?? '').toString(),
+        message: _readPromptMessage(item),
+        options: options,
+      ));
+      continue;
+    }
+    if (item is Map) {
+      questions.add(PlanQuestion.fromJson(item.cast<String, dynamic>()));
+    }
   }
-
-  final tokenSet = normalized.toSet();
-  if (tokenSet.length != 2) {
-    return false;
-  }
-
-  if (_reviewOptionTokens.difference(tokenSet).isEmpty) {
-    return false;
-  }
-
-  return _binaryPermissionOptionPairs.any(
-    (pair) => pair.difference(tokenSet).isEmpty,
-  );
+  return questions;
 }
-
-String _normalizePromptOptionToken(String value) {
-  return value.trim().toLowerCase();
-}
-
-const Set<String> _reviewOptionTokens = {'accept', 'revert', 'revise'};
-
-const List<Set<String>> _binaryPermissionOptionPairs = [
-  {'y', 'n'},
-  {'yes', 'no'},
-  {'allow', 'deny'},
-  {'approve', 'reject'},
-  {'允许', '拒绝'},
-  {'同意', '取消'},
-  {'批准', '拒绝'},
-];
 
 class SessionStateEvent extends AppEvent {
   const SessionStateEvent({
@@ -517,6 +503,34 @@ class SessionStateEvent extends AppEvent {
         runtimeMeta: RuntimeMeta.fromJson(json),
         raw: json,
         state: (json['state'] ?? '').toString(),
+        message: (json['msg'] ?? '').toString(),
+      );
+}
+
+class RuntimePhaseEvent extends AppEvent {
+  const RuntimePhaseEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.phase = '',
+    this.kind = '',
+    this.message = '',
+  }) : super(type: 'runtime_phase');
+
+  final String phase;
+  final String kind;
+  final String message;
+
+  bool get isPermissionBlocked => phase.trim().toLowerCase() == 'permission_blocked';
+
+  factory RuntimePhaseEvent.fromJson(Map<String, dynamic> json) => RuntimePhaseEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        phase: (json['phase'] ?? '').toString(),
+        kind: (json['kind'] ?? '').toString(),
         message: (json['msg'] ?? '').toString(),
       );
 }

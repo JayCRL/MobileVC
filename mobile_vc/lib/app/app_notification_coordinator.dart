@@ -15,6 +15,7 @@ class AppNotificationCoordinator {
 
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   int _lastHandledSignalId = 0;
+  bool _initialized = false;
 
   bool get isAppActive =>
       _lifecycleState == AppLifecycleState.resumed ||
@@ -26,8 +27,22 @@ class AppNotificationCoordinator {
   }
 
   Future<void> initialize() async {
-    await _notificationService.initialize();
-    _drainNotificationSignal();
+    debugPrint('[startup] notification coordinator init start');
+    try {
+      await _notificationService.initialize();
+      _initialized = _notificationService.isAvailable;
+      debugPrint(
+        '[startup] notification coordinator init end available=$_initialized',
+      );
+    } catch (error, stack) {
+      _initialized = false;
+      debugPrint('[startup] notification coordinator init failed: $error');
+      debugPrintStack(
+        stackTrace: stack,
+        label: '[startup] notification coordinator init stack',
+      );
+    }
+    await _drainNotificationSignal();
   }
 
   void handleControllerChanged() {
@@ -40,14 +55,22 @@ class AppNotificationCoordinator {
       return;
     }
     _lastHandledSignalId = signal.id;
-    if (isAppActive) {
+    if (isAppActive || !_initialized) {
       return;
     }
-    await _notificationService.showActionNeededNotification(
-      NotificationPayload(
-        title: 'MobileVC',
-        body: signal.message,
-      ),
-    );
+    try {
+      await _notificationService.showActionNeededNotification(
+        NotificationPayload(
+          title: 'MobileVC',
+          body: signal.message,
+        ),
+      );
+    } catch (error, stack) {
+      debugPrint('[startup] notification drain failed: $error');
+      debugPrintStack(
+        stackTrace: stack,
+        label: '[startup] notification drain stack',
+      );
+    }
   }
 }

@@ -18,6 +18,7 @@ class CommandInputBar extends StatefulWidget {
     required this.showClaudeMode,
     required this.shouldShowPermissionChoices,
     required this.shouldShowReviewChoices,
+    required this.shouldShowPlanChoices,
     required this.isSessionLoading,
   });
 
@@ -36,6 +37,7 @@ class CommandInputBar extends StatefulWidget {
   final bool showClaudeMode;
   final bool shouldShowPermissionChoices;
   final bool shouldShowReviewChoices;
+  final bool shouldShowPlanChoices;
   final bool isSessionLoading;
 
   @override
@@ -49,7 +51,8 @@ class _CommandInputBarState extends State<CommandInputBar> {
   bool get _inputLocked =>
       widget.isSessionLoading ||
       widget.shouldShowPermissionChoices ||
-      widget.shouldShowReviewChoices;
+      widget.shouldShowReviewChoices ||
+      widget.shouldShowPlanChoices;
 
   String get _lockedHintText {
     if (widget.isSessionLoading) {
@@ -61,6 +64,9 @@ class _CommandInputBarState extends State<CommandInputBar> {
     if (widget.shouldShowReviewChoices) {
       return '请先在上方完成审核';
     }
+    if (widget.shouldShowPlanChoices) {
+      return '请先在上方完成计划选择';
+    }
     return '';
   }
 
@@ -68,7 +74,8 @@ class _CommandInputBarState extends State<CommandInputBar> {
   void didUpdateWidget(covariant CommandInputBar oldWidget) {
     super.didUpdateWidget(oldWidget);
     final oldLocked = oldWidget.shouldShowPermissionChoices ||
-        oldWidget.shouldShowReviewChoices;
+        oldWidget.shouldShowReviewChoices ||
+        oldWidget.shouldShowPlanChoices;
     if (_inputLocked && !oldLocked) {
       _focusNode.unfocus();
     }

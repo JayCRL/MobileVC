@@ -607,17 +607,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				inputMeta.PermissionMode = pm
 			}
 			logx.Info("ws", "dispatch input: connectionID=%s sessionID=%s remoteAddr=%s action=input permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, inputMeta.PermissionMode, wsDebugPreview(inputEvent.Data))
+			controller := service.ControllerSnapshot()
+			projection := buildProjectionSnapshotFor(sessionID)
 			snapshot := service.RuntimeSnapshot()
 			if snapshot.TemporaryElevated {
 				restoreReq := runtimepkg.ExecuteRequest{
-					Command:        firstNonEmptyString(snapshot.ActiveMeta.Command, service.ControllerSnapshot().CurrentCommand),
+					Command:        firstNonEmptyString(snapshot.ActiveMeta.Command, controller.CurrentCommand),
 					CWD:            snapshot.ActiveMeta.CWD,
 					Mode:           runner.ModePTY,
 					PermissionMode: firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
 					RuntimeMeta: protocol.RuntimeMeta{
 						Source:          "input",
 						ResumeSessionID: firstNonEmptyString(snapshot.ResumeSessionID, snapshot.ActiveMeta.ResumeSessionID),
-						Command:         firstNonEmptyString(snapshot.ActiveMeta.Command, service.ControllerSnapshot().CurrentCommand),
+						Command:         firstNonEmptyString(snapshot.ActiveMeta.Command, controller.CurrentCommand),
 						CWD:             snapshot.ActiveMeta.CWD,
 						PermissionMode:  firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
 					},
@@ -638,79 +640,70 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: inputEvent.Data, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
+			resumeReq := runtimepkg.ExecuteRequest{
+				Command: firstNonEmptyString(
+					snapshot.ActiveMeta.Command,
+					controller.CurrentCommand,
+					projection.Runtime.Command,
+					"claude",
+				),
+				CWD: firstNonEmptyString(
+					snapshot.ActiveMeta.CWD,
+					controller.ActiveMeta.CWD,
+					projection.Runtime.CWD,
+				),
+				Mode: runner.ModePTY,
+				PermissionMode: firstNonEmptyString(
+					inputEvent.PermissionMode,
+					snapshot.SafePermissionMode,
+					snapshot.ActiveMeta.PermissionMode,
+					controller.ActiveMeta.PermissionMode,
+					projection.Runtime.PermissionMode,
+					"default",
+				),
+				RuntimeMeta: protocol.RuntimeMeta{
+					Source: "input",
+					ResumeSessionID: firstNonEmptyString(
+						snapshot.ResumeSessionID,
+						snapshot.ActiveMeta.ResumeSessionID,
+						controller.ResumeSession,
+						projection.Runtime.ResumeSessionID,
+					),
+					Command: firstNonEmptyString(
+						snapshot.ActiveMeta.Command,
+						controller.CurrentCommand,
+						projection.Runtime.Command,
+						"claude",
+					),
+					CWD: firstNonEmptyString(
+						snapshot.ActiveMeta.CWD,
+						controller.ActiveMeta.CWD,
+						projection.Runtime.CWD,
+					),
+					PermissionMode: firstNonEmptyString(
+						inputEvent.PermissionMode,
+						snapshot.SafePermissionMode,
+						snapshot.ActiveMeta.PermissionMode,
+						controller.ActiveMeta.PermissionMode,
+						projection.Runtime.PermissionMode,
+						"default",
+					),
+				},
+			}
+			if err := service.SendInputOrResume(ctx, sessionID, resumeReq, runtimepkg.InputRequest{Data: inputEvent.Data, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
 				message := err.Error()
 				if errors.Is(err, runner.ErrInputNotSupported) {
 					message = "input is only supported for pty sessions"
+				} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+					message = "当前没有活跃会话，且没有可恢复的 Claude 会话，请重新发起命令"
+				} else if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {
+					message = "当前没有 resume id，无法恢复 Claude 会话，请重新发起命令"
+				} else if errors.Is(err, runtimepkg.ErrResumeConversationNotFound) {
+					message = "当前 Claude 会话的 resume id 已失效或不存在，请重新发起命令"
+				} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
+					message = "Claude 恢复后未进入可输入状态，请稍后重试"
 				}
 				logx.Warn("ws", "service send input failed: connectionID=%s sessionID=%s remoteAddr=%s action=input err=%v", connectionID, sessionID, remoteAddr, err)
-				emit(protocol.NewErrorEvent(sessionID, message, ""))
-			}
-		case "review_decision":
-			var reviewEvent protocol.ReviewDecisionRequestEvent
-			if err := json.Unmarshal(payload, &reviewEvent); err != nil {
-				logx.Warn("ws", "invalid review decision request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
-				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid review decision request: %v", err), ""))
-				continue
-			}
-			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=review_decision decision=%q permissionMode=%q executionID=%q groupID=%q targetPath=%q contextID=%q", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision, reviewEvent.PermissionMode, reviewEvent.ExecutionID, reviewEvent.GroupID, reviewEvent.TargetPath, reviewEvent.ContextID)
-			decision := strings.TrimSpace(strings.ToLower(reviewEvent.Decision))
-			if decision != "accept" && decision != "revert" && decision != "revise" {
-				logx.Warn("ws", "reject invalid review decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%q", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision)
-				emit(protocol.NewErrorEvent(selectedSessionID, "review decision must be one of: accept, revert, revise", ""))
-				continue
-			}
-			sessionID := selectedSessionID
-			service := runtimeSvc
-			emitAndPersist := emitAndPersistFor(sessionID)
-			effectivePermissionMode := strings.TrimSpace(reviewEvent.PermissionMode)
-			if effectivePermissionMode == "" {
-				effectivePermissionMode = strings.TrimSpace(service.ControllerSnapshot().ActiveMeta.PermissionMode)
-			}
-			if effectivePermissionMode == "" {
-				effectivePermissionMode = strings.TrimSpace(buildProjectionSnapshotFor(sessionID).Runtime.PermissionMode)
-			}
-			if effectivePermissionMode != "" {
-				service.UpdatePermissionMode(effectivePermissionMode)
-			}
-			logx.Info("ws", "dispatch review decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%s permissionMode=%q executionID=%q groupID=%q contextID=%q targetPath=%q", connectionID, sessionID, remoteAddr, decision, effectivePermissionMode, reviewEvent.ExecutionID, reviewEvent.GroupID, reviewEvent.ContextID, reviewEvent.TargetPath)
-			projection := buildProjectionSnapshotFor(sessionID)
-			if !service.CanAcceptInteractiveInput() {
-				if service.IsRunning() {
-					emit(protocol.NewErrorEvent(sessionID, "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交审核决策", ""))
-					continue
-				}
-			}
-			var currentDiff session.DiffContext
-			if projection.CurrentDiff != nil {
-				currentDiff = *projection.CurrentDiff
-			}
-			projection = applyReviewDecisionToProjection(projection, reviewEvent, decision, currentDiff)
-			persistProjectionFor(sessionID, projection)
-			emitReviewStateFromProjection(emit, sessionID, projection)
-			if err := service.ReviewDecision(ctx, sessionID, runtimepkg.ReviewDecisionRequest{
-				Decision: decision,
-				RuntimeMeta: protocol.RuntimeMeta{
-					Source:         "review-decision",
-					ExecutionID:    firstNonEmptyString(reviewEvent.ExecutionID, currentDiff.ExecutionID),
-					GroupID:        firstNonEmptyString(reviewEvent.GroupID, reviewEvent.ExecutionID, currentDiff.GroupID, reviewEvent.ContextID),
-					GroupTitle:     firstNonEmptyString(reviewEvent.GroupTitle, currentDiff.GroupTitle, reviewEvent.ContextTitle),
-					ContextID:      reviewEvent.ContextID,
-					ContextTitle:   reviewEvent.ContextTitle,
-					TargetPath:     reviewEvent.TargetPath,
-					TargetText:     decision,
-					PermissionMode: effectivePermissionMode,
-				},
-			}, emitAndPersist); err != nil {
-				message := err.Error()
-				if errors.Is(err, runner.ErrInputNotSupported) {
-					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
-				} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-					message = "当前没有可交互会话，请先恢复会话后再审核 diff"
-				} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
-					message = "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交审核决策"
-				}
-				logx.Warn("ws", "send review decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
 			}
 		case "permission_decision":
@@ -743,11 +736,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				service.UpdatePermissionMode(effectivePermissionMode)
 			}
 			currentRunner := service.CurrentRunner()
-			if currentRunner == nil {
-				logx.Warn("ws", "permission decision rejected without active runner: connectionID=%s sessionID=%s remoteAddr=%s decision=%s", connectionID, sessionID, remoteAddr, decision)
-				emit(protocol.NewErrorEvent(sessionID, "当前没有可交互的 Claude 会话，无法继续处理该权限请求", ""))
-				continue
-			}
 			inputMeta := protocol.RuntimeMeta{
 				Source:          "permission-decision",
 				ResumeSessionID: firstNonEmptyString(permissionEvent.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID),
@@ -785,13 +773,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			replayInput := hotSwapApproveContinuation(permissionEvent)
-			if err := service.HotSwapApproveWithTemporaryElevation(ctx, sessionID, runtimepkg.ExecuteRequest{
+			req := runtimepkg.ExecuteRequest{
 				Command:        inputMeta.Command,
 				CWD:            inputMeta.CWD,
 				Mode:           runner.ModePTY,
 				PermissionMode: inputMeta.PermissionMode,
 				RuntimeMeta:    inputMeta,
-			}, replayInput, emitAndPersist); err != nil {
+			}
+			err := func() error {
+				if currentRunner != nil {
+					if err := service.HotSwapApproveWithTemporaryElevation(ctx, sessionID, req, replayInput, emitAndPersist); err == nil || !errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+						return err
+					}
+				}
+				if !service.CanHotSwapClaudeSession(req) || !service.HasResumeSession(req) {
+					return runtimepkg.ErrNoActiveRunner
+				}
+				return service.HotSwapApproveFromResume(ctx, sessionID, req, replayInput, emitAndPersist)
+			}()
+			if err != nil {
 				message := err.Error()
 				if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
 					message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
@@ -806,6 +806,46 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				logx.Warn("ws", "hot swap approve failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
+			}
+		case "plan_decision":
+			var planEvent protocol.PlanDecisionRequestEvent
+			if err := json.Unmarshal(payload, &planEvent); err != nil {
+				logx.Warn("ws", "invalid plan decision request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid plan decision request: %v", err), ""))
+				continue
+			}
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=plan_decision decision=%q executionID=%q groupID=%q contextID=%q promptPreview=%q", connectionID, selectedSessionID, remoteAddr, planEvent.Decision, planEvent.ExecutionID, planEvent.GroupID, planEvent.ContextID, wsDebugPreview(planEvent.PromptMessage))
+			service := runtimeSvc
+			emitAndPersist := emitAndPersistFor(selectedSessionID)
+			req := runtimepkg.PlanDecisionRequest{
+				Decision: planEvent.Decision,
+				RuntimeMeta: protocol.RuntimeMeta{
+					Source:          "plan-decision",
+					ResumeSessionID: planEvent.ResumeSessionID,
+					ExecutionID:     planEvent.ExecutionID,
+					GroupID:         planEvent.GroupID,
+					GroupTitle:      planEvent.GroupTitle,
+					ContextID:       planEvent.ContextID,
+					ContextTitle:    planEvent.ContextTitle,
+					TargetPath:      planEvent.TargetPath,
+					TargetText:      planEvent.TargetText,
+					Command:         firstNonEmptyString(planEvent.Command, service.ControllerSnapshot().ActiveMeta.Command, buildProjectionSnapshotFor(selectedSessionID).Runtime.Command),
+					Engine:          firstNonEmptyString(planEvent.Engine, service.ControllerSnapshot().ActiveMeta.Engine),
+					CWD:             firstNonEmptyString(planEvent.CWD, service.ControllerSnapshot().ActiveMeta.CWD, buildProjectionSnapshotFor(selectedSessionID).Runtime.CWD),
+					Target:          firstNonEmptyString(planEvent.Target, service.ControllerSnapshot().ActiveMeta.Target),
+					TargetType:      firstNonEmptyString(planEvent.TargetType, service.ControllerSnapshot().ActiveMeta.TargetType),
+					PermissionMode:  firstNonEmptyString(planEvent.PermissionMode, service.ControllerSnapshot().ActiveMeta.PermissionMode, buildProjectionSnapshotFor(selectedSessionID).Runtime.PermissionMode),
+				},
+			}
+			if err := service.PlanDecision(ctx, selectedSessionID, req, emitAndPersist); err != nil {
+				message := err.Error()
+				if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+					message = "当前没有可交互的 Claude 会话，无法继续处理该 plan 请求"
+				} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
+					message = "当前 Claude 会话尚未进入可提交 plan 的交互阶段，请先等待当前会话就绪后再提交"
+				}
+				logx.Warn("ws", "send plan decision failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, message, ""))
 			}
 		case "set_permission_mode":
 			var modeEvent protocol.PermissionModeUpdateRequestEvent
@@ -939,11 +979,58 @@ func appendUserProjectionEntry(sessionStore store.Store, ctx context.Context, se
 	}
 }
 
+func fallback(value, defaultValue string) string {
+	if strings.TrimSpace(value) == "" {
+		return defaultValue
+	}
+	return value
+}
+
+func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecisionRequestEvent) (string, error) {
+	decision = strings.TrimSpace(strings.ToLower(decision))
+	if decision == "" {
+		return "", fmt.Errorf("permission decision is required")
+	}
+	subject := strings.TrimSpace(req.TargetPath)
+	if subject == "" {
+		subject = strings.TrimSpace(req.ContextTitle)
+	}
+	if subject == "" {
+		subject = "刚才请求的操作"
+	}
+	lines := []string{}
+	if req.ResumeSessionID != "" {
+		lines = append(lines, fmt.Sprintf("ResumeSessionID: %s", req.ResumeSessionID))
+	}
+	if req.TargetPath != "" {
+		lines = append(lines, fmt.Sprintf("TargetPath: %s", req.TargetPath))
+	}
+	if req.ContextID != "" {
+		lines = append(lines, fmt.Sprintf("ContextID: %s", req.ContextID))
+	}
+	if req.ContextTitle != "" {
+		lines = append(lines, fmt.Sprintf("ContextTitle: %s", req.ContextTitle))
+	}
+	if req.PermissionMode != "" {
+		lines = append(lines, fmt.Sprintf("PermissionMode: %s", req.PermissionMode))
+	}
+	if strings.TrimSpace(req.PromptMessage) != "" {
+		lines = append(lines, fmt.Sprintf("OriginalPrompt: %s", strings.TrimSpace(req.PromptMessage)))
+	}
+	switch decision {
+	case "approve":
+		return fmt.Sprintf("用户已批准刚才请求的文件修改/写入权限。请在当前已保存的会话上下文中继续刚才被权限拦截的任务。执行要求：先重新读取目标文件的当前内容，再基于最新内容继续刚才的修改；只有在重新读取完成后，才重试刚才被拦截的编辑或写入工具调用。不要再次向用户请求同一权限，直接继续完成即可。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
+	case "deny":
+		return fmt.Sprintf("用户拒绝了刚才请求的文件修改/写入权限。请不要继续写入或编辑该目标，并基于当前上下文给出不写文件的替代方案或下一步建议。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
+	default:
+		return "", fmt.Errorf("permission decision must be one of: approve, deny")
+	}
+}
+
 func hotSwapApproveContinuation(req protocol.PermissionDecisionRequestEvent) string {
 	targetPath := strings.TrimSpace(req.TargetPath)
 	promptMessage := strings.TrimSpace(req.PromptMessage)
 
-	// 1. 核心修复：清理 promptMessage 中的换行符，防止在 PTY 中触发过早的提交碎片
 	promptMessage = strings.ReplaceAll(promptMessage, "\r", " ")
 	promptMessage = strings.ReplaceAll(promptMessage, "\n", " ")
 
@@ -962,18 +1049,8 @@ func hotSwapApproveContinuation(req protocol.PermissionDecisionRequestEvent) str
 		lines = append(lines, "你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入："+promptMessage)
 	}
 
-	// 2. 核心修复：用空格拼接，而不是 \n\n，确保这是一整行完整的命令
 	finalPrompt := strings.Join(lines, "  ")
-
-	// 3. 仅在最后加上一个 \n 触发 PTY 提交
 	return finalPrompt + "\n"
-}
-
-func fallback(value, defaultValue string) string {
-	if strings.TrimSpace(value) == "" {
-		return defaultValue
-	}
-	return value
 }
 
 func wsDebugPreview(value string) string {
@@ -1984,59 +2061,6 @@ func buildReviewDecisionPrompt(decision string, req protocol.ReviewDecisionReque
 		return fmt.Sprintf("请基于刚刚展示的 diff 继续调整并重新修改。目标：%s\n", subject), nil
 	default:
 		return "", fmt.Errorf("review decision must be one of: accept, revert, revise")
-	}
-}
-
-func buildPermissionDecisionReply(decision string) (string, error) {
-	decision = strings.TrimSpace(strings.ToLower(decision))
-	switch decision {
-	case "approve":
-		return "y\n", nil
-	case "deny":
-		return "n\n", nil
-	default:
-		return "", fmt.Errorf("permission decision must be one of: approve, deny")
-	}
-}
-
-func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecisionRequestEvent) (string, error) {
-	decision = strings.TrimSpace(strings.ToLower(decision))
-	if decision == "" {
-		return "", fmt.Errorf("permission decision is required")
-	}
-	subject := strings.TrimSpace(req.TargetPath)
-	if subject == "" {
-		subject = strings.TrimSpace(req.ContextTitle)
-	}
-	if subject == "" {
-		subject = "刚才请求的操作"
-	}
-	lines := []string{}
-	if req.ResumeSessionID != "" {
-		lines = append(lines, fmt.Sprintf("ResumeSessionID: %s", req.ResumeSessionID))
-	}
-	if req.TargetPath != "" {
-		lines = append(lines, fmt.Sprintf("TargetPath: %s", req.TargetPath))
-	}
-	if req.ContextID != "" {
-		lines = append(lines, fmt.Sprintf("ContextID: %s", req.ContextID))
-	}
-	if req.ContextTitle != "" {
-		lines = append(lines, fmt.Sprintf("ContextTitle: %s", req.ContextTitle))
-	}
-	if req.PermissionMode != "" {
-		lines = append(lines, fmt.Sprintf("PermissionMode: %s", req.PermissionMode))
-	}
-	if strings.TrimSpace(req.PromptMessage) != "" {
-		lines = append(lines, fmt.Sprintf("OriginalPrompt: %s", strings.TrimSpace(req.PromptMessage)))
-	}
-	switch decision {
-	case "approve":
-		return fmt.Sprintf("用户已批准刚才请求的文件修改/写入权限。请在当前已保存的会话上下文中继续刚才被权限拦截的任务。执行要求：先重新读取目标文件的当前内容，再基于最新内容继续刚才的修改；只有在重新读取完成后，才重试刚才被拦截的编辑或写入工具调用。不要再次向用户请求同一权限，直接继续完成即可。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
-	case "deny":
-		return fmt.Sprintf("用户拒绝了刚才请求的文件修改/写入权限。请不要继续写入或编辑该目标，并基于当前上下文给出不写文件的替代方案或下一步建议。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
-	default:
-		return "", fmt.Errorf("permission decision must be one of: approve, deny")
 	}
 }
 

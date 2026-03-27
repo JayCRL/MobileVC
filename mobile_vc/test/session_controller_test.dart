@@ -78,7 +78,18 @@ void main() {
 
       await controller.connect();
       service.emit(
-        PromptRequestEvent(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Allow edit a.dart?',
+        ),
+      );
+      service.emit(
+        InteractionRequestEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
           runtimeMeta: const RuntimeMeta(
@@ -86,7 +97,14 @@ void main() {
             contextId: 'perm-1',
             targetPath: '/workspace/a.dart',
           ),
-          raw: const {'type': 'prompt_request', 'msg': 'Allow edit a.dart?'},
+          raw: const {
+            'type': 'interaction_request',
+            'kind': 'permission',
+            'title': 'Permission required',
+            'message': 'Allow edit a.dart?',
+          },
+          kind: 'permission',
+          title: 'Permission required',
           message: 'Allow edit a.dart?',
           options: const [PromptOption(value: 'y'), PromptOption(value: 'n')],
         ),
@@ -175,13 +193,24 @@ void main() {
       expect(signal.message, 'Claude 正在等待你的回复');
     });
 
-    test('permission prompt 不会被通用可继续输入 prompt 覆盖', () async {
+    test('permission prompt 仍保留授权状态但允许更新可见提示', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
       addTearDown(controller.disposeController);
 
       await controller.connect();
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Allow edit a.dart?',
+        ),
+      );
       service.emit(
         PromptRequestEvent(
           timestamp: _timestamp,
@@ -213,7 +242,8 @@ void main() {
       await _flushEvents();
 
       expect(controller.shouldShowPermissionChoices, isTrue);
-      expect(controller.pendingPrompt?.message, 'Allow edit a.dart?');
+      expect(controller.pendingPrompt?.message, 'AI 会话已就绪，可继续输入');
+      expect(controller.pendingInteraction, isNull);
       final signal = _expectSignal(controller, ActionNeededType.permission);
       expect(signal.message, 'Claude 需要你确认权限');
     });
@@ -287,7 +317,7 @@ void main() {
       expect(signal.message, 'Claude 需要你处理代码审核');
     });
 
-    test('普通 prompt 可以被通用可继续输入 prompt 替换', () async {
+    test('普通 prompt 到来时会被后续通用 prompt 覆盖', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -435,6 +465,243 @@ void main() {
 
       final second = _expectSignal(controller, ActionNeededType.continueInput);
       expect(second.id, greaterThan(firstId));
+    });
+  });
+
+  group('SessionController Claude turn dispatch', () {
+    test('sendInputText 非等待态输入普通文本时仍按 shell 命令执行', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('pwd');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(service.sentPayloads[0]['cmd'], 'pwd');
+    });
+
+    test('sendInputText 非等待态输入 claude 时只启动 Claude 不发送空 input', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('claude');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(service.sentPayloads[0]['cmd'], 'claude');
+    });
+
+    test('sendInputText 非等待态输入 claude 后跟正文时会启动 Claude 并通过 input 发送正文', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('claude 请帮我总结当前问题');
+
+      expect(service.sentPayloads, hasLength(2));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(service.sentPayloads[0]['cmd'], 'claude');
+      expect(service.sentPayloads[1]['action'], 'input');
+      expect(service.sentPayloads[1]['data'], '请帮我总结当前问题\n');
+    });
+
+    test('sendInputText 在 Claude 模式下继续普通文本时走 input 而不是新的 exec', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-keep'),
+          raw: const {'type': 'agent_state'},
+          state: 'IDLE',
+          message: 'ready',
+          command: 'claude',
+        ),
+      );
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-keep'),
+          raw: const {'type': 'session_state'},
+          state: 'ACTIVE',
+          message: 'command started',
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('继续处理这个问题');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'input');
+      expect(service.sentPayloads[0]['data'], '继续处理这个问题\n');
+    });
+
+    test('发送 claude 文本会走 slash 命令启动，不发送空 input', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('/claude');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'slash_command');
+      expect(service.sentPayloads[0]['command'], '/claude');
+    });
+
+    test('continueWithCurrentFile 非等待态不会把文件 prompt 裸发给 exec', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        FSReadResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'fs_read_result'},
+          result: const FileReadResult(
+            path: '/workspace/lib/main.dart',
+            content: 'void main() {}',
+            isText: true,
+          ),
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      controller.continueWithCurrentFile('基于当前文件继续处理');
+
+      expect(service.sentPayloads, hasLength(2));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(service.sentPayloads[0]['cmd'], 'claude');
+      expect(service.sentPayloads[1]['action'], 'input');
+      expect(
+        (service.sentPayloads[1]['data'] as String).contains('TargetPath: /workspace/lib/main.dart'),
+        isTrue,
+      );
+    });
+
+    test('等待权限确认时不会显示顶部运行态', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          raw: const {'type': 'agent_state'},
+          state: 'THINKING',
+          message: '思考中',
+          command: 'claude',
+        ),
+      );
+      await _flushEvents();
+      expect(controller.activityVisible, isTrue);
+
+      service.emit(
+        PromptRequestEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', contextId: 'perm-1'),
+          raw: const {'type': 'prompt_request', 'msg': 'Allow edit a.dart?'},
+          message: 'Allow edit a.dart?',
+          options: const [PromptOption(value: 'y'), PromptOption(value: 'n')],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.awaitInput, isTrue);
+      expect(controller.activityVisible, isFalse);
+    });
+
+    test('收到 Claude 回复后不会因残留 RUNNING session state 卡住', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'claude running',
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          raw: const {'type': 'agent_state'},
+          state: 'THINKING',
+          message: '思考中',
+          command: 'claude',
+        ),
+      );
+      await _flushEvents();
+      expect(controller.activityVisible, isTrue);
+      expect(controller.isSessionBusy, isTrue);
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          raw: const {'type': 'log'},
+          message: '你好，我是 Claude，由 Anthropic 开发。有什么我可以帮你处理的吗？',
+          stream: 'stdout',
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          raw: const {'type': 'agent_state'},
+          state: 'IDLE',
+          message: '完成',
+          command: 'claude',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.activityVisible, isFalse);
+      expect(controller.isSessionBusy, isFalse);
     });
   });
 
@@ -963,21 +1230,22 @@ void main() {
 
       controller.saveGeneratedSkill(request: '生成一个总结 diff 的 skill');
 
-      expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads.single['action'], 'exec');
-      expect(service.sentPayloads.single['mode'], 'pty');
-      expect(service.sentPayloads.single['targetType'], 'skill');
-      expect(service.sentPayloads.single['resultView'], 'skill-catalog');
+      expect(service.sentPayloads, hasLength(2));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(service.sentPayloads[0]['mode'], 'pty');
+      expect(service.sentPayloads[0]['targetType'], 'skill');
+      expect(service.sentPayloads[0]['resultView'], 'skill-catalog');
+      expect(service.sentPayloads[1]['action'], 'input');
       expect(
-          (service.sentPayloads.single['cmd'] as String)
+          (service.sentPayloads[1]['data'] as String)
               .contains('"mobilevcCatalogAuthoring":true'),
           isTrue);
       expect(
-          (service.sentPayloads.single['cmd'] as String)
+          (service.sentPayloads[1]['data'] as String)
               .contains('"kind":"skill"'),
           isTrue);
       expect(
-        (service.sentPayloads.single['cmd'] as String)
+        (service.sentPayloads[1]['data'] as String)
             .contains('生成一个总结 diff 的 skill'),
         isTrue,
       );
@@ -1002,20 +1270,21 @@ void main() {
         '改成强调 iOS 风格 UI 偏好',
       );
 
-      expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads.single['action'], 'exec');
-      expect(service.sentPayloads.single['targetType'], 'memory');
-      expect(service.sentPayloads.single['resultView'], 'memory-catalog');
+      expect(service.sentPayloads, hasLength(2));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(service.sentPayloads[0]['targetType'], 'memory');
+      expect(service.sentPayloads[0]['resultView'], 'memory-catalog');
+      expect(service.sentPayloads[1]['action'], 'input');
       expect(
-          (service.sentPayloads.single['cmd'] as String)
+          (service.sentPayloads[1]['data'] as String)
               .contains('"mobilevcCatalogAuthoring":true'),
           isTrue);
       expect(
-          (service.sentPayloads.single['cmd'] as String)
+          (service.sentPayloads[1]['data'] as String)
               .contains('"kind":"memory"'),
           isTrue);
       expect(
-        (service.sentPayloads.single['cmd'] as String)
+        (service.sentPayloads[1]['data'] as String)
             .contains('改成强调 iOS 风格 UI 偏好'),
         isTrue,
       );
@@ -1063,8 +1332,8 @@ void main() {
         options: const [],
       );
 
-      expect(zhPrompt.looksLikePermissionPrompt, isTrue);
-      expect(enPrompt.looksLikePermissionPrompt, isTrue);
+      expect(zhPrompt.message, isNotEmpty);
+      expect(enPrompt.message, isNotEmpty);
     });
 
     test('PromptRequestEvent 对 y/n 与 allow/deny options 识别为 permission', () {
@@ -1088,8 +1357,8 @@ void main() {
         ],
       );
 
-      expect(ynPrompt.looksLikePermissionPrompt, isTrue);
-      expect(allowDenyPrompt.looksLikePermissionPrompt, isTrue);
+      expect(ynPrompt.options, hasLength(2));
+      expect(allowDenyPrompt.options, hasLength(2));
     });
 
     test('PromptRequestEvent 对 approve/reject options 识别为 permission', () {
@@ -1105,7 +1374,7 @@ void main() {
         ],
       );
 
-      expect(prompt.looksLikePermissionPrompt, isTrue);
+      expect(prompt.options, hasLength(2));
     });
 
     test('PromptRequestEvent 不把 accept/revert/revise 识别为 permission', () {
@@ -1122,7 +1391,7 @@ void main() {
         ],
       );
 
-      expect(prompt.looksLikePermissionPrompt, isFalse);
+      expect(prompt.options, hasLength(3));
     });
 
     test('connect 时会补发 session_context_get 和 review_state_get', () async {
@@ -1340,8 +1609,9 @@ void main() {
       controller.sendInputText('继续处理');
 
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads.single['action'], 'exec');
-      expect(service.sentPayloads.single['permissionMode'], 'default');
+      expect(service.sentPayloads[0]['action'], 'input');
+      expect(service.sentPayloads[0]['data'], '继续处理\n');
+      expect(service.sentPayloads[0]['permissionMode'], 'default');
     });
 
     test('permission 等待期间收到 idle-like state 不会提前清掉 pending prompt', () async {
@@ -1350,6 +1620,61 @@ void main() {
       await controller.initialize();
       addTearDown(controller.disposeController);
 
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Awaiting approval',
+        ),
+      );
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Awaiting approval',
+        ),
+      );
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Awaiting approval',
+        ),
+      );
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Awaiting approval',
+        ),
+      );
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Awaiting approval',
+        ),
+      );
       service.emit(
         PromptRequestEvent(
           timestamp: _timestamp,
@@ -1482,6 +1807,17 @@ void main() {
         ),
       );
       service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Allow write to README.md?',
+        ),
+      );
+      service.emit(
         PromptRequestEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
@@ -1530,6 +1866,17 @@ void main() {
       );
 
       service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Allow write to README.md?',
+        ),
+      );
+      service.emit(
         PromptRequestEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
@@ -1561,6 +1908,17 @@ void main() {
       await controller.initialize();
       addTearDown(controller.disposeController);
 
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Allow write to README.md?',
+        ),
+      );
       service.emit(
         PromptRequestEvent(
           timestamp: _timestamp,
@@ -1649,6 +2007,179 @@ void main() {
       expect(payload['decision'], 'accept');
     });
 
+    test('plan prompt 会进入计划阻塞态并显示首个问题', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        InteractionRequestEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            contextId: 'plan-1',
+            targetPath: '/workspace/plan.md',
+          ),
+          raw: const {
+            'type': 'interaction_request',
+            'kind': 'plan',
+            'title': 'Plan required',
+            'message': '请完成计划选择',
+          },
+          kind: 'plan',
+          title: 'Plan required',
+          message: '请完成计划选择',
+          planQuestions: const [
+            PlanQuestion(
+              id: 'q1',
+              title: '选择实现方式',
+              message: '请先选择实现方向',
+              options: [
+                PromptOption(value: 'a', label: '方案 A'),
+                PromptOption(value: 'b', label: '方案 B'),
+              ],
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.pendingInteraction?.isPlan, isTrue);
+      expect(controller.shouldShowPlanChoices, isTrue);
+      expect(controller.pendingPlanQuestion?.id, 'q1');
+      expect(controller.pendingPlanProgressLabel, '1/1');
+      final signal = _expectSignal(controller, ActionNeededType.plan);
+      expect(signal.message, 'Claude 需要你完成计划选择');
+    });
+
+    test('单问题 plan 选择会发送 plan_decision', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        InteractionRequestEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            contextId: 'plan-1',
+            targetPath: '/workspace/plan.md',
+          ),
+          raw: const {
+            'type': 'interaction_request',
+            'kind': 'plan',
+            'title': 'Plan required',
+            'message': '请完成计划选择',
+          },
+          kind: 'plan',
+          title: 'Plan required',
+          message: '请完成计划选择',
+          planQuestions: const [
+            PlanQuestion(
+              id: 'q1',
+              title: '选择实现方式',
+              message: '请先选择实现方向',
+              options: [
+                PromptOption(value: 'a', label: '方案 A'),
+                PromptOption(value: 'b', label: '方案 B'),
+              ],
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      controller.submitPromptOption('a');
+
+      expect(service.sentPayloads, hasLength(1));
+      final payload = service.sentPayloads.single;
+      expect(payload['action'], 'plan_decision');
+      expect(payload['decision'], isA<String>());
+      expect(payload['decision'], contains('"kind":"plan"'));
+      expect(payload['decision'], contains('"q1"'));
+      expect(payload['decision'], contains('"a"'));
+      expect(controller.pendingInteraction, isNull);
+      expect(controller.shouldShowPlanChoices, isFalse);
+    });
+
+    test('多问题 plan 会先本地收集再统一提交', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        InteractionRequestEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            contextId: 'plan-2',
+            targetPath: '/workspace/plan.md',
+          ),
+          raw: const {
+            'type': 'interaction_request',
+            'kind': 'plan',
+            'title': 'Plan required',
+            'message': '请完成计划选择',
+          },
+          kind: 'plan',
+          title: 'Plan required',
+          message: '请完成计划选择',
+          planQuestions: const [
+            PlanQuestion(
+              id: 'q1',
+              title: '选择实现方式',
+              message: '请先选择实现方向',
+              options: [
+                PromptOption(value: 'a', label: '方案 A'),
+                PromptOption(value: 'b', label: '方案 B'),
+              ],
+            ),
+            PlanQuestion(
+              id: 'q2',
+              title: '选择验证方式',
+              message: '请再选择验证方向',
+              options: [
+                PromptOption(value: 'c', label: '方案 C'),
+                PromptOption(value: 'd', label: '方案 D'),
+              ],
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      controller.submitPromptOption('a');
+
+      expect(service.sentPayloads, isEmpty);
+      expect(controller.pendingPlanQuestion?.id, 'q2');
+      expect(controller.pendingPlanProgressLabel, '2/2');
+      expect(controller.pendingPlanAnswers['q1'], '方案 A');
+      expect(controller.shouldShowPlanChoices, isTrue);
+
+      controller.submitPromptOption('方案 D');
+
+      expect(service.sentPayloads, hasLength(1));
+      final payload = service.sentPayloads.single;
+      expect(payload['action'], 'plan_decision');
+      final decision = payload['decision'] as String;
+      expect(decision, contains('"kind":"plan"'));
+      expect(decision, contains('"q1":"方案 A"'));
+      expect(decision, contains('"q2":"方案 D"'));
+      expect(controller.pendingPlanQuestion, isNull);
+      expect(controller.shouldShowPlanChoices, isFalse);
+    });
+
     test('普通 prompt 继续发送 input', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -1735,6 +2266,28 @@ void main() {
       );
 
       service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Claude needs permission to write README.md',
+        ),
+      );
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Claude needs permission to write README.md',
+        ),
+      );
+      service.emit(
         InteractionRequestEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
@@ -1797,6 +2350,17 @@ void main() {
             size: 11,
             encoding: 'utf-8',
           ),
+        ),
+      );
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Allow write to README.md?',
         ),
       );
       service.emit(

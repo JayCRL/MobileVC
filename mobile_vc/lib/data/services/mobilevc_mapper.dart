@@ -19,6 +19,8 @@ class MobileVcMapper {
         return InteractionRequestEvent.fromJson(json);
       case 'session_state':
         return SessionStateEvent.fromJson(json);
+      case 'runtime_phase':
+        return RuntimePhaseEvent.fromJson(json);
       case 'agent_state':
         return AgentStateEvent.fromJson(json);
       case 'fs_list_result':

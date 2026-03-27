@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationPayload {
@@ -11,6 +12,8 @@ class NotificationPayload {
 }
 
 abstract class LocalNotificationService {
+  bool get isAvailable;
+
   Future<void> initialize();
 
   Future<void> showActionNeededNotification(NotificationPayload payload);
@@ -40,28 +43,47 @@ class FlutterLocalNotificationService implements LocalNotificationService {
 
   final FlutterLocalNotificationsPlugin _plugin;
   bool _initialized = false;
+  bool _available = true;
+
+  @override
+  bool get isAvailable => _available;
 
   @override
   Future<void> initialize() async {
-    if (_initialized) {
+    if (_initialized || !_available) {
       return;
     }
-    const settings = InitializationSettings(
-      android: _androidInitializationSettings,
-      iOS: _darwinInitializationSettings,
-      macOS: _darwinInitializationSettings,
-    );
-    await _plugin.initialize(settings);
-    final androidPlugin = _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.createNotificationChannel(_channel);
-    _initialized = true;
+    debugPrint('[startup] notification init start');
+    try {
+      const settings = InitializationSettings(
+        android: _androidInitializationSettings,
+        iOS: _darwinInitializationSettings,
+        macOS: _darwinInitializationSettings,
+      );
+      await _plugin.initialize(settings);
+      final androidPlugin = _plugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
+      await androidPlugin?.createNotificationChannel(_channel);
+      _initialized = true;
+      debugPrint('[startup] notification init end');
+    } catch (error, stack) {
+      _available = false;
+      debugPrint('[startup] notification init failed: $error');
+      debugPrintStack(
+        stackTrace: stack,
+        label: '[startup] notification init stack',
+      );
+    }
   }
 
   @override
   Future<void> showActionNeededNotification(NotificationPayload payload) async {
     await initialize();
+    if (!_initialized || !_available) {
+      debugPrint('[startup] notification skipped: service unavailable');
+      return;
+    }
     final details = NotificationDetails(
       android: AndroidNotificationDetails(
         _channel.id,
@@ -73,11 +95,19 @@ class FlutterLocalNotificationService implements LocalNotificationService {
       iOS: const DarwinNotificationDetails(),
       macOS: const DarwinNotificationDetails(),
     );
-    await _plugin.show(
-      1001,
-      payload.title,
-      payload.body,
-      details,
-    );
+    try {
+      await _plugin.show(
+        1001,
+        payload.title,
+        payload.body,
+        details,
+      );
+    } catch (error, stack) {
+      debugPrint('[startup] notification show failed: $error');
+      debugPrintStack(
+        stackTrace: stack,
+        label: '[startup] notification show stack',
+      );
+    }
   }
 }

@@ -22,6 +22,7 @@ class FileViewerSheet extends StatefulWidget {
     required this.isAutoAcceptMode,
     required this.shouldShowPermissionChoices,
     required this.shouldShowReviewChoices,
+    required this.shouldShowPlanChoices,
     required this.pendingPrompt,
     required this.pendingInteraction,
     required this.onAccept,
@@ -47,6 +48,7 @@ class FileViewerSheet extends StatefulWidget {
   final bool isAutoAcceptMode;
   final bool shouldShowPermissionChoices;
   final bool shouldShowReviewChoices;
+  final bool shouldShowPlanChoices;
   final PromptRequestEvent? pendingPrompt;
   final InteractionRequestEvent? pendingInteraction;
   final VoidCallback onAccept;
@@ -68,7 +70,9 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
   final FocusNode _focusNode = FocusNode();
 
   bool get _inputLocked =>
-      widget.shouldShowPermissionChoices || widget.shouldShowReviewChoices;
+      widget.shouldShowPermissionChoices ||
+      widget.shouldShowReviewChoices ||
+      widget.shouldShowPlanChoices;
 
   String get _lockedHintText {
     if (widget.shouldShowPermissionChoices) {
@@ -77,15 +81,19 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
     if (widget.shouldShowReviewChoices) {
       return '请先在上方完成审核';
     }
+    if (widget.shouldShowPlanChoices) {
+      return '请先在上方完成计划选择';
+    }
     return '输入针对当前文件的请求';
   }
 
   @override
   void didUpdateWidget(covariant FileViewerSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_inputLocked &&
-        (!oldWidget.shouldShowPermissionChoices &&
-            !oldWidget.shouldShowReviewChoices)) {
+    final oldLocked = oldWidget.shouldShowPermissionChoices ||
+        oldWidget.shouldShowReviewChoices ||
+        oldWidget.shouldShowPlanChoices;
+    if (_inputLocked && !oldLocked) {
       _focusNode.unfocus();
     }
   }
@@ -109,11 +117,8 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
     final multiGroup = widget.reviewGroups.length > 1;
     final prompt = widget.pendingPrompt;
     final interaction = widget.pendingInteraction;
-    final showPermissionBar = !widget.shouldShowReviewChoices &&
-        ((interaction?.isPermission == true) ||
-            (prompt != null &&
-                prompt.hasVisiblePrompt &&
-                prompt.looksLikePermissionPrompt));
+    final showPermissionBar =
+        !widget.shouldShowReviewChoices && interaction?.isPermission == true;
     return SafeArea(
       top: false,
       child: AnimatedPadding(
@@ -423,8 +428,7 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
             if (!widget.showReviewActions &&
                 !widget.shouldShowReviewChoices &&
                 widget.pendingPrompt != null &&
-                widget.pendingPrompt!.hasVisiblePrompt &&
-                !widget.pendingPrompt!.looksLikePermissionPrompt) ...[
+                widget.pendingPrompt!.hasVisiblePrompt) ...[
               const SizedBox(height: 8),
               _PromptRequestSection(
                 prompt: widget.pendingPrompt!,
@@ -577,13 +581,14 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
     if (value.isEmpty) {
       return;
     }
+    final normalized = value.toLowerCase();
+    final isClaudeBootstrap = normalized == 'claude' || normalized.startsWith('claude ');
     final prompt = widget.pendingPrompt;
     final interaction = widget.pendingInteraction;
     final shouldSubmitPrompt = !widget.shouldShowReviewChoices &&
+        !isClaudeBootstrap &&
         ((interaction != null && interaction.hasVisiblePrompt) ||
-            (prompt != null &&
-                prompt.hasVisiblePrompt &&
-                (prompt.options.isNotEmpty || prompt.looksLikePermissionPrompt)));
+            (prompt != null && prompt.hasVisiblePrompt && prompt.options.isNotEmpty));
     if (shouldSubmitPrompt) {
       widget.onSubmitPrompt(value);
     } else {
@@ -770,8 +775,8 @@ class _PermissionActionBar extends StatelessWidget {
       return options;
     }
     return const [
-      PromptOption(value: 'y', label: '允许'),
-      PromptOption(value: 'n', label: '拒绝'),
+      PromptOption(value: 'approve', label: '允许'),
+      PromptOption(value: 'deny', label: '拒绝'),
     ];
   }
 
@@ -792,24 +797,10 @@ class _PermissionActionBar extends StatelessWidget {
   }
 
   String _promptOptionLabel(String value, String fallback) {
-    final normalized = value.trim().toLowerCase();
-    if (_approveValues.contains(normalized)) {
-      return '允许';
-    }
-    if (_denyValues.contains(normalized)) {
-      return '拒绝';
-    }
     return fallback;
   }
 
   _PromptActionStyle _promptOptionStyle(String value) {
-    final normalized = value.trim().toLowerCase();
-    if (_approveValues.contains(normalized)) {
-      return _PromptActionStyle.primary;
-    }
-    if (_denyValues.contains(normalized)) {
-      return _PromptActionStyle.tonal;
-    }
     return _PromptActionStyle.outlined;
   }
 }
@@ -868,40 +859,16 @@ class _PromptRequestSection extends StatelessWidget {
   }
 
   List<PromptOption> _resolvedOptions() {
-    final options = prompt.options
+    return prompt.options
         .where((option) => option.displayText.isNotEmpty)
         .toList(growable: false);
-    if (options.isNotEmpty) {
-      return options;
-    }
-    if (prompt.looksLikePermissionPrompt) {
-      return const [
-        PromptOption(value: 'y', label: '允许'),
-        PromptOption(value: 'n', label: '拒绝'),
-      ];
-    }
-    return const [];
   }
 
   String _promptOptionLabel(String value, String fallback) {
-    final normalized = value.trim().toLowerCase();
-    if (_approveValues.contains(normalized)) {
-      return '允许';
-    }
-    if (_denyValues.contains(normalized)) {
-      return '拒绝';
-    }
     return fallback;
   }
 
   _PromptActionStyle _promptOptionStyle(String value) {
-    final normalized = value.trim().toLowerCase();
-    if (_approveValues.contains(normalized)) {
-      return _PromptActionStyle.primary;
-    }
-    if (_denyValues.contains(normalized)) {
-      return _PromptActionStyle.tonal;
-    }
     return _PromptActionStyle.outlined;
   }
 }
@@ -920,39 +887,11 @@ class _PromptOptionAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    switch (style) {
-      case _PromptActionStyle.primary:
-        return FilledButton(onPressed: onPressed, child: Text(label));
-      case _PromptActionStyle.tonal:
-        return FilledButton.tonal(onPressed: onPressed, child: Text(label));
-      case _PromptActionStyle.outlined:
-        return OutlinedButton(onPressed: onPressed, child: Text(label));
-    }
+    return OutlinedButton(onPressed: onPressed, child: Text(label));
   }
 }
 
-enum _PromptActionStyle { primary, tonal, outlined }
-
-const Set<String> _approveValues = {
-  'y',
-  'yes',
-  'ok',
-  'approve',
-  'approved',
-  'allow',
-  'accept',
-  'continue',
-};
-
-const Set<String> _denyValues = {
-  'n',
-  'no',
-  'deny',
-  'denied',
-  'reject',
-  'cancel',
-  'stop',
-};
+enum _PromptActionStyle { outlined }
 
 class _MetaChip extends StatelessWidget {
   const _MetaChip({

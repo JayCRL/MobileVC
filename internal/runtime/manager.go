@@ -68,14 +68,16 @@ func (m *manager) currentRunner() runner.Runner {
 	return m.activeRunner
 }
 
-func (m *manager) finish(run runner.Runner) {
+func (m *manager) finishIfCurrent(run runner.Runner) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.activeRunner == run {
-		m.activeRunner = nil
-		m.activeMeta = protocol.RuntimeMeta{}
-		m.activeSession = ""
+	if m.activeRunner != run {
+		return false
 	}
+	m.activeRunner = nil
+	m.activeMeta = protocol.RuntimeMeta{}
+	m.activeSession = ""
+	return true
 }
 
 func (m *manager) isRunning() bool {
@@ -192,9 +194,10 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 				message := fmt.Sprintf("runner panic recovered: %v", recovered)
 				logx.Error("runtime", "%s\nsessionID=%s\n%s", message, sessionID, stack)
 				emit(protocol.ApplyRuntimeMeta(protocol.NewErrorEvent(sessionID, "internal server error", stack), preparedReq.RuntimeMeta))
-				s.manager.finish(selected)
-				for _, event := range s.controller.OnCommandFinished(preparedReq.RuntimeMeta) {
-					emit(event)
+				if s.manager.finishIfCurrent(selected) {
+					for _, event := range s.controller.OnCommandFinished(preparedReq.RuntimeMeta) {
+						emit(event)
+					}
 				}
 			}
 		}()
@@ -225,9 +228,10 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 		if err != nil {
 			emit(protocol.ApplyRuntimeMeta(protocol.NewErrorEvent(sessionID, err.Error(), ""), preparedReq.RuntimeMeta))
 		}
-		s.manager.finish(selected)
-		for _, event := range s.controller.OnCommandFinished(preparedReq.RuntimeMeta) {
-			emit(event)
+		if s.manager.finishIfCurrent(selected) {
+			for _, event := range s.controller.OnCommandFinished(preparedReq.RuntimeMeta) {
+				emit(event)
+			}
 		}
 	}()
 	return nil
@@ -267,6 +271,42 @@ func (s *Service) SendInput(ctx context.Context, sessionID string, req InputRequ
 	}
 	for _, event := range s.controller.OnInputSent(effectiveMeta) {
 		emit(event)
+	}
+	return nil
+}
+
+func (s *Service) SendInputOrResume(ctx context.Context, sessionID string, execReq ExecuteRequest, inputReq InputRequest, emit func(any)) error {
+	if err := s.SendInput(ctx, sessionID, inputReq, emit); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrNoActiveRunner) {
+		return err
+	}
+
+	if execReq.Mode != runner.ModePTY {
+		return ErrNoActiveRunner
+	}
+	if !s.CanHotSwapClaudeSession(execReq) {
+		return ErrNoActiveRunner
+	}
+	if !s.HasResumeSession(execReq) {
+		return ErrNoActiveRunner
+	}
+
+	restartReq, _, err := s.buildDetachedHotSwapStreamRequest(execReq, execReq.PermissionMode)
+	if err != nil {
+		return err
+	}
+	if err := s.Execute(ctx, sessionID, restartReq, emit); err != nil {
+		return err
+	}
+	if err := s.waitForRunnerStart(ctx); err != nil {
+		return err
+	}
+	if err := s.sendInputWhenRunnerReady(ctx, sessionID, InputRequest{Data: inputReq.Data, RuntimeMeta: protocol.MergeRuntimeMeta(inputReq.RuntimeMeta, protocol.RuntimeMeta{
+		ResumeSessionID: restartReq.RuntimeMeta.ResumeSessionID,
+		PermissionMode:  restartReq.PermissionMode,
+	})}, emit); err != nil {
+		return err
 	}
 	return nil
 }
@@ -336,6 +376,28 @@ func (s *Service) HotSwapApproveWithTemporaryElevation(ctx context.Context, sess
 	return nil
 }
 
+func (s *Service) HotSwapApproveFromResume(ctx context.Context, sessionID string, req ExecuteRequest, continuation string, emit func(any)) error {
+	restartReq, safePermissionMode, err := s.buildDetachedHotSwapStreamRequest(req, "acceptEdits")
+	if err != nil {
+		return err
+	}
+	if err := s.Execute(ctx, sessionID, restartReq, emit); err != nil {
+		return err
+	}
+	s.manager.setTemporaryElevation(true, safePermissionMode)
+	if err := s.waitForRunnerStart(ctx); err != nil {
+		return err
+	}
+	if err := s.sendInputWhenRunnerReady(ctx, sessionID, InputRequest{Data: continuation, RuntimeMeta: protocol.RuntimeMeta{
+		Source:          req.RuntimeMeta.Source,
+		ResumeSessionID: restartReq.RuntimeMeta.ResumeSessionID,
+		PermissionMode:  restartReq.PermissionMode,
+	}}, emit); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Service) RestoreSafePermissionModeBeforeInput(ctx context.Context, sessionID string, req ExecuteRequest, userInput string, emit func(any)) error {
 	snapshot := s.RuntimeSnapshot()
 	if !snapshot.TemporaryElevated {
@@ -344,6 +406,27 @@ func (s *Service) RestoreSafePermissionModeBeforeInput(ctx context.Context, sess
 	safeMode := strings.TrimSpace(snapshot.SafePermissionMode)
 	if safeMode == "" {
 		safeMode = "default"
+	}
+	if snapshot.ActiveSession == "" && strings.TrimSpace(snapshot.ResumeSessionID) != "" {
+		restartReq, _, err := s.buildDetachedHotSwapStreamRequest(req, safeMode)
+		if err != nil {
+			return err
+		}
+		s.manager.closeActive()
+		if err := s.Execute(ctx, sessionID, restartReq, emit); err != nil {
+			return err
+		}
+		s.manager.setTemporaryElevation(false, safeMode)
+		if err := s.waitForRunnerStart(ctx); err != nil {
+			return err
+		}
+		if err := s.sendInputWhenRunnerReady(ctx, sessionID, InputRequest{Data: userInput, RuntimeMeta: protocol.RuntimeMeta{
+			ResumeSessionID: restartReq.RuntimeMeta.ResumeSessionID,
+			PermissionMode:  restartReq.PermissionMode,
+		}}, emit); err != nil {
+			return err
+		}
+		return nil
 	}
 	restartReq, _, err := s.buildHotSwapStreamRequest(sessionID, req, safeMode)
 	if err != nil {
@@ -381,6 +464,23 @@ func (s *Service) ReviewDecision(ctx context.Context, sessionID string, req Revi
 	return s.SendInput(ctx, sessionID, InputRequest{Data: payload, RuntimeMeta: meta}, emit)
 }
 
+func (s *Service) PlanDecision(ctx context.Context, sessionID string, req PlanDecisionRequest, emit func(any)) error {
+	decision := strings.TrimSpace(req.Decision)
+	if decision == "" {
+		return errors.New("plan decision is required")
+	}
+	if strings.TrimSpace(req.Command) == "" {
+		req.Command = "claude"
+	}
+	meta := req.RuntimeMeta
+	meta.Source = "plan-decision"
+	meta.TargetText = decision
+	if req.ResumeSessionID != "" {
+		meta.ResumeSessionID = firstNonEmptyRuntimeValue(req.ResumeSessionID, meta.ResumeSessionID)
+	}
+	return s.SendInput(ctx, sessionID, InputRequest{Data: decision + "\n", RuntimeMeta: meta}, emit)
+}
+
 func (s *Service) CanAcceptInteractiveInput() bool {
 	snapshot := s.manager.snapshot()
 	return snapshot.CanAcceptInteractiveInput
@@ -396,6 +496,23 @@ func (s *Service) RuntimeSnapshot() Snapshot {
 
 func (s *Service) CurrentRunner() runner.Runner {
 	return s.manager.currentRunner()
+}
+
+func (s *Service) CanHotSwapClaudeSession(req ExecuteRequest) bool {
+	currentRunner, activeMeta, currentSessionID := s.manager.current()
+	if req.Mode != runner.ModePTY {
+		return false
+	}
+	if currentRunner != nil && currentSessionID != "" {
+		return runnerIsClaudeSession(currentRunner, req.Command, activeMeta.Command)
+	}
+	return runnerIsClaudeSession(nil, req.Command, activeMeta.Command, s.manager.snapshot().ActiveMeta.Command)
+}
+
+func (s *Service) HasResumeSession(req ExecuteRequest) bool {
+	currentRunner, activeMeta, _ := s.manager.current()
+	resumeSessionID := resolveResumeSessionID(currentRunner, req.RuntimeMeta, activeMeta, s.manager.snapshot().ActiveMeta, protocol.RuntimeMeta{ResumeSessionID: s.manager.snapshot().ResumeSessionID})
+	return strings.TrimSpace(resumeSessionID) != ""
 }
 
 func (s *Service) ControllerSnapshot() session.ControllerSnapshot {
@@ -557,6 +674,56 @@ func (s *Service) buildHotSwapPromptRequest(sessionID string, req ExecuteRequest
 	restartReq.Command = baseCommand
 	restartReq.RuntimeMeta.Command = baseCommand
 	return restartReq, safePermissionMode, nil
+}
+
+func (s *Service) buildDetachedHotSwapStreamRequest(req ExecuteRequest, targetPermissionMode string) (ExecuteRequest, string, error) {
+	prepared := s.prepareExecuteRequest(req)
+	if prepared.Mode != runner.ModePTY {
+		return ExecuteRequest{}, "", ErrHotSwapUnsupportedRunner
+	}
+	if !runnerIsClaudeSession(nil, prepared.Command, prepared.RuntimeMeta.Command, s.manager.snapshot().ActiveMeta.Command) {
+		return ExecuteRequest{}, "", ErrHotSwapUnsupportedRunner
+	}
+	resumeSessionID := resolveResumeSessionID(nil, prepared.RuntimeMeta, s.manager.snapshot().ActiveMeta, protocol.RuntimeMeta{ResumeSessionID: s.manager.snapshot().ResumeSessionID})
+	if resumeSessionID == "" {
+		return ExecuteRequest{}, "", ErrResumeSessionUnavailable
+	}
+	safePermissionMode := strings.TrimSpace(prepared.RuntimeMeta.PermissionMode)
+	if safePermissionMode == "" {
+		safePermissionMode = strings.TrimSpace(s.manager.snapshot().SafePermissionMode)
+	}
+	if safePermissionMode == "" {
+		safePermissionMode = "default"
+	}
+	command := strings.TrimSpace(prepared.RuntimeMeta.Command)
+	if command == "" {
+		command = strings.TrimSpace(prepared.Command)
+	}
+	command = ensureResumeCommand(command, resumeSessionID)
+	prepared.Command = command
+	prepared.RuntimeMeta.Command = command
+	prepared.RuntimeMeta.ResumeSessionID = extractManagedClaudeSessionID(command, resumeSessionID)
+	prepared.PermissionMode = targetPermissionMode
+	prepared.RuntimeMeta.PermissionMode = targetPermissionMode
+	lower := strings.ToLower(command)
+	if !strings.Contains(lower, " --print") && !strings.Contains(lower, " -p") {
+		command += " --print"
+	}
+	if !strings.Contains(lower, " --verbose") {
+		command += " --verbose"
+	}
+	if !strings.Contains(lower, "--output-format") {
+		command += " --output-format stream-json"
+	}
+	if !strings.Contains(lower, "--input-format") {
+		command += " --input-format stream-json"
+	}
+	if !strings.Contains(lower, "--permission-prompt-tool") {
+		command += " --permission-prompt-tool stdio"
+	}
+	prepared.Command = command
+	prepared.RuntimeMeta.Command = command
+	return prepared, safePermissionMode, nil
 }
 
 func (s *Service) sendInputWhenRunnerReady(ctx context.Context, sessionID string, req InputRequest, emit func(any)) error {
