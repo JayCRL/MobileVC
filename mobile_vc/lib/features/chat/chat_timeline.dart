@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+
 import '../../data/models/events.dart';
+import '../../data/models/runtime_meta.dart';
 import '../../data/models/session_models.dart';
 import '../../widgets/event_card.dart';
 
@@ -16,6 +18,9 @@ class ChatTimeline extends StatefulWidget {
     this.pendingPrompt,
     this.pendingInteraction,
     this.shouldShowReviewChoices = false,
+    this.pendingPlanQuestion,
+    this.pendingPlanProgressLabel = '',
+    this.shouldShowPlanChoices = false,
     this.onOpenDiff,
     this.onOpenRuntimeInfo,
     this.onOpenFile,
@@ -34,6 +39,9 @@ class ChatTimeline extends StatefulWidget {
   final PromptRequestEvent? pendingPrompt;
   final InteractionRequestEvent? pendingInteraction;
   final bool shouldShowReviewChoices;
+  final PlanQuestion? pendingPlanQuestion;
+  final String pendingPlanProgressLabel;
+  final bool shouldShowPlanChoices;
   final VoidCallback? onOpenDiff;
   final VoidCallback? onOpenRuntimeInfo;
   final VoidCallback? onOpenFile;
@@ -94,6 +102,9 @@ class _ChatTimelineState extends State<ChatTimeline> {
             : (widget.pendingPrompt?.hasVisiblePrompt == true
                 ? widget.pendingPrompt
                 : null));
+    final visiblePlanQuestion = widget.shouldShowPlanChoices
+        ? widget.pendingPlanQuestion
+        : null;
     final visiblePromptMessage = visiblePrompt is InteractionRequestEvent
         ? visiblePrompt.message
         : visiblePrompt is PromptRequestEvent
@@ -138,6 +149,16 @@ class _ChatTimelineState extends State<ChatTimeline> {
           body: visiblePromptMessage,
           meta: visiblePrompt.runtimeMeta,
         ),
+      if (visiblePlanQuestion != null)
+        TimelineItem(
+          id:
+              'pending-plan-${visiblePlanQuestion.id}-${widget.pendingPlanProgressLabel}',
+          kind: 'plan_request',
+          timestamp: DateTime.now(),
+          title: visiblePlanQuestion.displayLabel,
+          body: visiblePlanQuestion.message,
+          meta: visiblePrompt?.runtimeMeta ?? const RuntimeMeta(),
+        ),
     ];
     if (items.isEmpty) {
       return const SizedBox.shrink();
@@ -176,6 +197,13 @@ class _ChatTimelineState extends State<ChatTimeline> {
                   prompt: visiblePrompt as PromptRequestEvent,
                   onSubmit: widget.onPromptSubmit,
                 );
+        }
+        if (item.kind == 'plan_request' && visiblePlanQuestion != null) {
+          return _PlanQuestionCard(
+            question: visiblePlanQuestion,
+            progressLabel: widget.pendingPlanProgressLabel,
+            onSubmit: widget.onPromptSubmit,
+          );
         }
         return EventCard(
           item: item,
@@ -383,19 +411,89 @@ class _PromptRequestCard extends StatelessWidget {
   }
 
   List<PromptOption> _resolvedOptions() {
-    final options = prompt.options
+    return prompt.options
         .where((option) => option.displayText.isNotEmpty)
         .toList(growable: false);
-    if (options.isNotEmpty) {
-      return options;
-    }
-    if (prompt.looksLikePermissionPrompt) {
-      return const [
-        PromptOption(value: 'y', label: '允许'),
-        PromptOption(value: 'n', label: '拒绝'),
-      ];
-    }
-    return const [];
+  }
+}
+
+class _PlanQuestionCard extends StatelessWidget {
+  const _PlanQuestionCard({
+    required this.question,
+    required this.progressLabel,
+    this.onSubmit,
+  });
+
+  final PlanQuestion question;
+  final String progressLabel;
+  final ValueChanged<String>? onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final options = question.options
+        .where((option) => option.displayText.isNotEmpty)
+        .toList(growable: false);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  question.displayLabel.isNotEmpty
+                      ? question.displayLabel
+                      : '计划选择',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+              ),
+              if (progressLabel.isNotEmpty)
+                Text(
+                  progressLabel,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+            ],
+          ),
+          if (question.message.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(question.message.trim()),
+          ],
+          if (options.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: options
+                  .map((option) => _PromptOptionButton(
+                        option: option,
+                        onPressed: onSubmit == null
+                            ? null
+                            : () => onSubmit!(option.value),
+                      ))
+                  .toList(growable: false),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 
@@ -410,71 +508,18 @@ class _PromptOptionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = _styleForValue(option.value);
-    switch (style) {
-      case _PromptButtonStyle.primary:
-        return FilledButton(
-          onPressed: onPressed,
-          child: Text(_labelForOption(option)),
-        );
-      case _PromptButtonStyle.tonal:
-        return FilledButton.tonal(
-          onPressed: onPressed,
-          child: Text(_labelForOption(option)),
-        );
-      case _PromptButtonStyle.outlined:
-        return OutlinedButton(
-          onPressed: onPressed,
-          child: Text(_labelForOption(option)),
-        );
-    }
-  }
-
-  _PromptButtonStyle _styleForValue(String raw) {
-    final value = raw.trim().toLowerCase();
-    if (_approveValues.contains(value)) {
-      return _PromptButtonStyle.primary;
-    }
-    if (_denyValues.contains(value)) {
-      return _PromptButtonStyle.tonal;
-    }
-    return _PromptButtonStyle.outlined;
+    return OutlinedButton(
+      onPressed: onPressed,
+      child: Text(_labelForOption(option)),
+    );
   }
 
   String _labelForOption(PromptOption option) {
-    final value = option.value.trim().toLowerCase();
-    if (_approveValues.contains(value)) {
-      return '允许';
-    }
-    if (_denyValues.contains(value)) {
-      return '拒绝';
-    }
     return option.displayText;
   }
 }
 
-enum _PromptButtonStyle { primary, tonal, outlined }
-
-const Set<String> _approveValues = {
-  'y',
-  'yes',
-  'ok',
-  'approve',
-  'approved',
-  'allow',
-  'accept',
-  'continue',
-};
-
-const Set<String> _denyValues = {
-  'n',
-  'no',
-  'deny',
-  'denied',
-  'reject',
-  'cancel',
-  'stop',
-};
+enum _PromptButtonStyle { outlined }
 
 class _ReviewSummaryCard extends StatelessWidget {
   const _ReviewSummaryCard({

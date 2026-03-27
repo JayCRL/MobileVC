@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class ActivityRunnerBar extends StatefulWidget {
   const ActivityRunnerBar({
@@ -65,7 +67,7 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
     final scheme = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(6, 10, 14, 10),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(18),
@@ -73,19 +75,20 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
       ),
       child: Row(
         children: [
-          AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) {
-              final dx = math.sin(_controller.value * math.pi) * 8;
-              final rotate = (_controller.value - 0.5) * 0.18;
-              return Transform.translate(
-                offset: Offset(dx, 0),
-                child: Transform.rotate(angle: rotate, child: child),
-              );
-            },
-            child: const Text('🦀', style: TextStyle(fontSize: 18)),
+          SizedBox(
+            width: 32,
+            height: 22,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return _RollingOrange(
+                  progress: _controller,
+                  width: constraints.maxWidth,
+                  iconSize: 22,
+                );
+              },
+            ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 6),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -159,5 +162,54 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
     setState(() {
       _displayElapsedSeconds = nextValue;
     });
+  }
+}
+
+class _RollingOrange extends StatelessWidget {
+  const _RollingOrange({
+    required this.progress,
+    required this.width,
+    required this.iconSize,
+  });
+
+  final Animation<double> progress;
+  final double width;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: progress,
+      builder: (context, child) {
+        final travel = math.max(0.0, width - iconSize);
+        final curvedT = Curves.easeInOut.transform(progress.value);
+        final dx = travel * curvedT;
+        const laneHeight = 22.0;
+        final contactY = laneHeight - iconSize;
+        final lift = math.sin(curvedT * math.pi) * iconSize * 0.12;
+        final squash = math.sin(curvedT * math.pi);
+        final angle = lerpDouble(-math.pi / 2, math.pi / 2, curvedT)!;
+        final scaleX = 1 + squash * 0.06;
+        final scaleY = 1 - squash * 0.06;
+        return Transform.translate(
+          offset: Offset(dx, contactY - lift),
+          child: Transform.rotate(
+            angle: angle,
+            alignment: Alignment.center,
+            child: Transform.scale(
+              scaleX: scaleX,
+              scaleY: scaleY,
+              alignment: Alignment.bottomCenter,
+              child: child,
+            ),
+          ),
+        );
+      },
+      child: SvgPicture.asset(
+        'assets/icons/orange_loader.svg',
+        width: iconSize,
+        height: iconSize,
+      ),
+    );
   }
 }

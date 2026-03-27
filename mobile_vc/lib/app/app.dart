@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../features/session/session_controller.dart';
@@ -36,8 +38,40 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
           FlutterLocalNotificationService(),
     );
     _controller.addListener(_notificationCoordinator.handleControllerChanged);
-    _controller.initialize();
-    _notificationCoordinator.initialize();
+    _startApp();
+  }
+
+  Future<void> _startApp() async {
+    debugPrint('[startup] app init start');
+    try {
+      debugPrint('[startup] controller init start');
+      await _controller.initialize();
+      debugPrint('[startup] controller init end');
+    } catch (error, stack) {
+      debugPrint('[startup] controller init failed: $error');
+      debugPrintStack(
+        stackTrace: stack,
+        label: '[startup] controller init stack',
+      );
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_initializeNotifications());
+    });
+
+    debugPrint('[startup] app init end');
+  }
+
+  Future<void> _initializeNotifications() async {
+    try {
+      await _notificationCoordinator.initialize();
+    } catch (error, stack) {
+      debugPrint('[startup] notification bootstrap failed: $error');
+      debugPrintStack(
+        stackTrace: stack,
+        label: '[startup] notification bootstrap stack',
+      );
+    }
   }
 
   @override

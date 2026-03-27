@@ -231,6 +231,55 @@ func TestPtyRunnerFlushesFileDiffBeforeInteractivePrompt(t *testing.T) {
 	}
 }
 
+func TestPtyRunnerSuppressesLazyStreamExitNoiseAfterClose(t *testing.T) {
+	runner := NewPtyRunner()
+	runner.mu.Lock()
+	runner.lazyStart = true
+	runner.pendingReq = ExecRequest{SessionID: "s-close", Command: "claude --print --output-format stream-json --input-format stream-json --permission-prompt-tool stdio"}
+	runner.pendingCWD = "."
+	runner.sink = func(any) {}
+	runner.processDone = make(chan struct{})
+	runner.closed = false
+	runner.mu.Unlock()
+
+	eventsCh := make(chan any, 16)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runner.startClaudeStreamOnFirstInput(ctx, runner.pendingReq, ".", func(event any) {
+			eventsCh <- event
+		}, []byte("hello\n"))
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	if err := runner.Close(); err != nil {
+		t.Fatalf("close runner: %v", err)
+	}
+	cancel()
+
+	if err := <-errCh; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("start claude stream: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			return
+		case event := <-eventsCh:
+			switch v := event.(type) {
+			case protocol.ErrorEvent:
+				t.Fatalf("expected suppressed close noise, got error event %#v", v)
+			case protocol.SessionStateEvent:
+				if v.Message == "command finished with error" {
+					t.Fatalf("expected suppressed close noise, got session state %#v", v)
+				}
+			}
+		}
+	}
+}
+
 func TestIsLiveTailPromptTextRecognizesInteractivePrompts(t *testing.T) {
 	tests := []string{
 		"decision>",
@@ -394,6 +443,124 @@ func TestPtyRunnerWritePermissionResponseWithoutPendingIDReturnsError(t *testing
 
 	if err := runner.WritePermissionResponse(context.Background(), "approve"); !errors.Is(err, ErrNoPendingControlRequest) {
 		t.Fatalf("expected ErrNoPendingControlRequest, got %v", err)
+	}
+}
+
+func TestPtyRunnerSuppressesDuplicateResultAfterAssistantText(t *testing.T) {
+	runner := NewPtyRunner()
+	var events []any
+	sink := func(event any) { events = append(events, event) }
+
+	assistantEnvelope, err := json.Marshal(map[string]any{
+		"type":       "assistant",
+		"session_id": "resume-dedup-1",
+		"message": map[string]any{
+			"content": []map[string]any{{
+				"type": "text",
+				"text": "Hello world",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal assistant envelope: %v", err)
+	}
+	resultEnvelope, err := json.Marshal(map[string]any{
+		"type":       "result",
+		"session_id": "resume-dedup-1",
+		"result":     " Hello   world ",
+		"duration_ms": 1200,
+		"num_turns":   1,
+	})
+	if err != nil {
+		t.Fatalf("marshal result envelope: %v", err)
+	}
+
+	runner.readClaudeStreamJSON(context.Background(), strings.NewReader(string(assistantEnvelope)+"\n"+string(resultEnvelope)+"\n"), "s-dedup", sink)
+
+	var logs []protocol.LogEvent
+	for _, event := range events {
+		if v, ok := event.(protocol.LogEvent); ok {
+			logs = append(logs, v)
+		}
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected exactly one visible log, got %#v", logs)
+	}
+	if logs[0].Message != "Hello world" {
+		t.Fatalf("unexpected log message: %#v", logs)
+	}
+}
+
+func TestPtyRunnerEmitsResultWhenAssistantTextMissing(t *testing.T) {
+	runner := NewPtyRunner()
+	var events []any
+	sink := func(event any) { events = append(events, event) }
+
+	resultEnvelope, err := json.Marshal(map[string]any{
+		"type":       "result",
+		"session_id": "resume-dedup-2",
+		"result":     "Fallback result text",
+	})
+	if err != nil {
+		t.Fatalf("marshal result envelope: %v", err)
+	}
+
+	runner.readClaudeStreamJSON(context.Background(), strings.NewReader(string(resultEnvelope)+"\n"), "s-result-only", sink)
+
+	var logs []protocol.LogEvent
+	for _, event := range events {
+		if v, ok := event.(protocol.LogEvent); ok {
+			logs = append(logs, v)
+		}
+	}
+	if len(logs) != 1 || logs[0].Message != "Fallback result text" {
+		t.Fatalf("expected fallback result log, got %#v", logs)
+	}
+}
+
+func TestPtyRunnerCloseSuppressesExitNoise(t *testing.T) {
+	runner := NewPtyRunner()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventsCh := make(chan any, 32)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runner.Run(ctx, ExecRequest{
+			SessionID: "s-close",
+			Command: shellTestCommand(
+				"sleep 10",
+				"Start-Sleep -Seconds 10",
+				"ping -n 11 127.0.0.1 >nul",
+			),
+			Mode: ModePTY,
+		}, func(event any) {
+			eventsCh <- event
+		})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	if err := runner.Close(); err != nil {
+		t.Fatalf("close runner: %v", err)
+	}
+	cancel()
+
+	select {
+	case <-errCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for runner shutdown")
+	}
+	close(eventsCh)
+
+	for event := range eventsCh {
+		errEvent, ok := event.(protocol.ErrorEvent)
+		if !ok {
+			continue
+		}
+		message := strings.ToLower(errEvent.Message)
+		if strings.Contains(message, "command exited") || strings.Contains(message, "finished with error") || strings.Contains(message, "signal") || strings.Contains(message, "killed") {
+			t.Fatalf("expected exit noise to be suppressed, got %#v", errEvent)
+		}
 	}
 }
 
@@ -598,7 +765,7 @@ func TestPtyRunnerCanAcceptInteractiveInputReflectsState(t *testing.T) {
 	}
 }
 
-func TestPtyRunnerClaudeAssistantPermissionTextBecomesPrompt(t *testing.T) {
+func TestPtyRunnerStructuredRuntimePhaseTextBecomesEvent(t *testing.T) {
 	runner := NewPtyRunner()
 	var events []any
 	sink := func(event any) { events = append(events, event) }
@@ -609,7 +776,7 @@ func TestPtyRunnerClaudeAssistantPermissionTextBecomesPrompt(t *testing.T) {
 		"message": map[string]any{
 			"content": []map[string]any{{
 				"type": "text",
-				"text": "我已定位到 README.md 第一行，准备改成：\n\n# MobileVC\n111 但当前写入权限还没授权，所以修改未执行。\n请授权后我就能直接完成。",
+				"text": `{"mobilevcRuntimePhase":true,"phase":"permission_blocked","kind":"permission","message":"awaiting approval"}`,
 			}},
 		},
 	})
@@ -618,27 +785,24 @@ func TestPtyRunnerClaudeAssistantPermissionTextBecomesPrompt(t *testing.T) {
 	}
 
 	reader := strings.NewReader(string(envelope) + "\n")
-	runner.readClaudeStreamJSON(context.Background(), reader, "s-permission", sink)
+	runner.readClaudeStreamJSON(context.Background(), reader, "s-runtime-phase", sink)
 
-	var promptEvent *protocol.PromptRequestEvent
+	var phaseEvent *protocol.RuntimePhaseEvent
 	for _, event := range events {
-		if v, ok := event.(protocol.PromptRequestEvent); ok {
-			promptEvent = &v
+		if v, ok := event.(protocol.RuntimePhaseEvent); ok {
+			phaseEvent = &v
 			break
 		}
 	}
-	if promptEvent == nil {
-		t.Fatalf("expected prompt request event, got %#v", events)
+	if phaseEvent == nil {
+		t.Fatalf("expected runtime phase event, got %#v", events)
 	}
-	if !strings.Contains(promptEvent.Message, "还没授权") {
-		t.Fatalf("unexpected prompt message: %q", promptEvent.Message)
-	}
-	if len(promptEvent.Options) != 2 || promptEvent.Options[0] != "y" || promptEvent.Options[1] != "n" {
-		t.Fatalf("unexpected prompt options: %#v", promptEvent.Options)
+	if phaseEvent.Phase != "permission_blocked" || phaseEvent.Kind != "permission" || phaseEvent.Message != "awaiting approval" {
+		t.Fatalf("unexpected runtime phase event: %#v", phaseEvent)
 	}
 }
 
-func TestPtyRunnerClaudeToolResultPermissionErrorBecomesPrompt(t *testing.T) {
+func TestPtyRunnerStructuredRuntimePhaseToolResultBecomesEvent(t *testing.T) {
 	runner := NewPtyRunner()
 	var events []any
 	sink := func(event any) { events = append(events, event) }
@@ -650,7 +814,7 @@ func TestPtyRunnerClaudeToolResultPermissionErrorBecomesPrompt(t *testing.T) {
 			"content": []map[string]any{{
 				"type":     "tool_result",
 				"is_error": true,
-				"content":  "Claude requested permissions to write to /Users/wust_lh/MobileVC/README.md, but you haven't granted it yet.",
+				"content":  `{"mobilevcRuntimePhase":true,"phase":"plan_active","kind":"plan","message":"planning"}`,
 			}},
 		},
 	})
@@ -659,23 +823,20 @@ func TestPtyRunnerClaudeToolResultPermissionErrorBecomesPrompt(t *testing.T) {
 	}
 
 	reader := strings.NewReader(string(envelope) + "\n")
-	runner.readClaudeStreamJSON(context.Background(), reader, "s-permission-tool", sink)
+	runner.readClaudeStreamJSON(context.Background(), reader, "s-runtime-phase-tool", sink)
 
-	var promptEvent *protocol.PromptRequestEvent
+	var phaseEvent *protocol.RuntimePhaseEvent
 	for _, event := range events {
-		if v, ok := event.(protocol.PromptRequestEvent); ok {
-			promptEvent = &v
+		if v, ok := event.(protocol.RuntimePhaseEvent); ok {
+			phaseEvent = &v
 			break
 		}
 	}
-	if promptEvent == nil {
-		t.Fatalf("expected prompt request event, got %#v", events)
+	if phaseEvent == nil {
+		t.Fatalf("expected runtime phase event, got %#v", events)
 	}
-	if !strings.Contains(strings.ToLower(promptEvent.Message), "requested permissions to write") {
-		t.Fatalf("unexpected prompt message: %q", promptEvent.Message)
-	}
-	if len(promptEvent.Options) != 2 || promptEvent.Options[0] != "y" || promptEvent.Options[1] != "n" {
-		t.Fatalf("unexpected prompt options: %#v", promptEvent.Options)
+	if phaseEvent.Phase != "plan_active" || phaseEvent.Kind != "plan" || phaseEvent.Message != "planning" {
+		t.Fatalf("unexpected runtime phase event: %#v", phaseEvent)
 	}
 }
 

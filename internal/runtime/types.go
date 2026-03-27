@@ -23,6 +23,11 @@ type ReviewDecisionRequest struct {
 	protocol.RuntimeMeta
 }
 
+type PlanDecisionRequest struct {
+	Decision string
+	protocol.RuntimeMeta
+}
+
 type Dependencies struct {
 	NewExecRunner func() runner.Runner
 	NewPtyRunner  func() runner.Runner

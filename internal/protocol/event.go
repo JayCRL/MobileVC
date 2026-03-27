@@ -13,6 +13,7 @@ const (
 	EventTypeInteractionRequest     = "interaction_request"
 	EventTypeSessionState           = "session_state"
 	EventTypeAgentState             = "agent_state"
+	EventTypeRuntimePhase           = "runtime_phase"
 	EventTypeFSListResult           = "fs_list_result"
 	EventTypeFSReadResult           = "fs_read_result"
 	EventTypeStepUpdate             = "step_update"
@@ -103,6 +104,27 @@ type PermissionDecisionRequestEvent struct {
 	FallbackEngine     string `json:"engine,omitempty"`
 	FallbackTarget     string `json:"target,omitempty"`
 	FallbackTargetType string `json:"targetType,omitempty"`
+}
+
+type PlanDecisionRequestEvent struct {
+	ClientEvent
+	Decision        string `json:"decision"`
+	SessionID       string `json:"sessionId,omitempty"`
+	ExecutionID     string `json:"executionId,omitempty"`
+	GroupID         string `json:"groupId,omitempty"`
+	GroupTitle      string `json:"groupTitle,omitempty"`
+	ContextID       string `json:"contextId,omitempty"`
+	ContextTitle    string `json:"contextTitle,omitempty"`
+	PromptMessage   string `json:"promptMessage,omitempty"`
+	PermissionMode  string `json:"permissionMode,omitempty"`
+	ResumeSessionID string `json:"resumeSessionId,omitempty"`
+	Command         string `json:"command,omitempty"`
+	CWD             string `json:"cwd,omitempty"`
+	Engine          string `json:"engine,omitempty"`
+	Target          string `json:"target,omitempty"`
+	TargetType      string `json:"targetType,omitempty"`
+	TargetPath      string `json:"targetPath,omitempty"`
+	TargetText      string `json:"targetText,omitempty"`
 }
 
 type PermissionModeUpdateRequestEvent struct {
@@ -482,6 +504,15 @@ type AgentStateEvent struct {
 	Tool       string `json:"tool,omitempty"`
 }
 
+type RuntimePhaseEvent struct {
+	Event
+	Phase   string `json:"phase"`
+	Kind    string `json:"kind,omitempty"`
+	Message string `json:"msg,omitempty"`
+}
+
+func (e RuntimePhaseEvent) GetRuntimeMeta() RuntimeMeta { return e.RuntimeMeta }
+
 type StepUpdateEvent struct {
 	Event
 	Message string `json:"msg,omitempty"`
@@ -607,6 +638,15 @@ func NewAgentStateEvent(sessionID, state, message string, awaitInput bool, comma
 		Command:    command,
 		Step:       step,
 		Tool:       tool,
+	}
+}
+
+func NewRuntimePhaseEvent(sessionID, phase, kind, message string) RuntimePhaseEvent {
+	return RuntimePhaseEvent{
+		Event:   NewBaseEvent(EventTypeRuntimePhase, sessionID),
+		Phase:   phase,
+		Kind:    kind,
+		Message: message,
 	}
 }
 
@@ -862,6 +902,9 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case AgentStateEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case RuntimePhaseEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case StepUpdateEvent:

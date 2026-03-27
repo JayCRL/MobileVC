@@ -1,4 +1,8 @@
+import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
+
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class ActivityBar extends StatefulWidget {
   const ActivityBar({
@@ -34,7 +38,7 @@ class _ActivityBarState extends State<ActivityBar> with SingleTickerProviderStat
     final scheme = theme.colorScheme;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(6, 10, 12, 10),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(18),
@@ -43,41 +47,19 @@ class _ActivityBarState extends State<ActivityBar> with SingleTickerProviderStat
       child: Row(
         children: [
           SizedBox(
-            width: 60,
+            width: 34,
             height: 18,
             child: LayoutBuilder(
               builder: (context, constraints) {
-                return Stack(
-                  alignment: Alignment.centerLeft,
-                  children: [
-                    Positioned.fill(
-                      child: Center(
-                        child: Container(
-                          height: 3,
-                          decoration: BoxDecoration(
-                            color: scheme.outlineVariant,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                      ),
-                    ),
-                    AnimatedBuilder(
-                      animation: _controller,
-                      builder: (context, child) {
-                        final travel = constraints.maxWidth - 18;
-                        return Transform.translate(
-                          offset: Offset(travel * _controller.value, 0),
-                          child: child,
-                        );
-                      },
-                      child: const Text('🦀', style: TextStyle(fontSize: 14)),
-                    ),
-                  ],
+                return _RollingOrange(
+                  progress: _controller,
+                  width: constraints.maxWidth,
+                  iconSize: 16,
                 );
               },
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 4),
           Expanded(
             child: Text(
               widget.toolLabel.isEmpty ? widget.phaseLabel : '${widget.phaseLabel} · ${widget.toolLabel}',
@@ -92,6 +74,55 @@ class _ActivityBarState extends State<ActivityBar> with SingleTickerProviderStat
             style: theme.textTheme.labelMedium?.copyWith(color: scheme.primary, fontWeight: FontWeight.w700),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _RollingOrange extends StatelessWidget {
+  const _RollingOrange({
+    required this.progress,
+    required this.width,
+    required this.iconSize,
+  });
+
+  final Animation<double> progress;
+  final double width;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: progress,
+      builder: (context, child) {
+        final travel = math.max(0.0, width - iconSize);
+        final curvedT = Curves.easeInOut.transform(progress.value);
+        final dx = travel * curvedT;
+        const laneHeight = 18.0;
+        final contactY = laneHeight - iconSize;
+        final lift = math.sin(curvedT * math.pi) * iconSize * 0.1;
+        final squash = math.sin(curvedT * math.pi);
+        final angle = lerpDouble(-math.pi / 2, math.pi / 2, curvedT)!;
+        final scaleX = 1 + squash * 0.05;
+        final scaleY = 1 - squash * 0.05;
+        return Transform.translate(
+          offset: Offset(dx, contactY - lift),
+          child: Transform.rotate(
+            angle: angle,
+            alignment: Alignment.center,
+            child: Transform.scale(
+              scaleX: scaleX,
+              scaleY: scaleY,
+              alignment: Alignment.bottomCenter,
+              child: child,
+            ),
+          ),
+        );
+      },
+      child: SvgPicture.asset(
+        'assets/icons/orange_loader.svg',
+        width: iconSize,
+        height: iconSize,
       ),
     );
   }

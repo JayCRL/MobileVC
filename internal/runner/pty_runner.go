@@ -52,6 +52,7 @@ type PtyRunner struct {
 	lastToolTarget          string
 	fileSnapshots           map[string]fileSnapshot
 	catalogAuthoringBuffer  strings.Builder
+	lastAssistantTextKey    string
 }
 
 type fileSnapshot struct {
@@ -152,7 +153,6 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		defer r.clear()
 
 		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
@@ -209,6 +209,10 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 	readWG.Wait()
 
 	if waitErr != nil {
+		if r.shouldSuppressExitError() {
+			sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
+			return nil
+		}
 		message := waitErr.Error()
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) {
@@ -404,6 +408,7 @@ func (r *PtyRunner) clear() {
 	r.lastToolTarget = ""
 	r.fileSnapshots = nil
 	r.catalogAuthoringBuffer.Reset()
+	r.lastAssistantTextKey = ""
 	r.lazyStart = false
 	r.interactive = false
 	r.awaitingReadyPrompt = false
@@ -457,7 +462,6 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	defer stdin.Close()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "AI 会话已就绪，可继续输入", nil))
 
 	var readWG sync.WaitGroup
 	readWG.Add(2)
@@ -655,6 +659,10 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 			waitErr := cmd.Wait()
 			readWG.Wait()
 			if waitErr != nil {
+				if r.shouldSuppressExitError() {
+					r.finishLazyProcess(nil, sink, req.SessionID)
+					return
+				}
 				message := waitErr.Error()
 				var exitErr *exec.ExitError
 				if errors.As(waitErr, &exitErr) {
@@ -1209,12 +1217,13 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 					continue
 				}
 				if text := strings.TrimSpace(block.Text); text != "" {
-					isPrompt, options, reason := ptyPromptDebugDecision(text)
-					ptyLogPromptClassification(sessionID, "readClaudeStreamJSON", "control_request_text", text, isPrompt, options, "control_request_"+reason)
 					var event any = protocol.NewLogEvent(sessionID, text, "stdout")
-					if isPrompt {
-						r.markInteractiveReady()
-						event = protocol.NewPromptRequestEvent(sessionID, text, options)
+					if isStructuredRuntimePhaseText(text) {
+						phase, kind, message := parseStructuredRuntimePhase(text)
+						event = protocol.NewRuntimePhaseEvent(sessionID, phase, kind, message)
+						if phase == "permission_blocked" || phase == "plan_requested" || phase == "plan_active" || phase == "execute_active" {
+							r.markInteractiveReady()
+						}
 					}
 					sendEvent(sink, protocol.ApplyRuntimeMeta(
 						event,
@@ -1233,13 +1242,13 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				case "text":
 					if text := strings.TrimSpace(block.Text); text != "" {
 						r.tryEmitCatalogAuthoringResult(sessionID, text, sink)
-						isPrompt, options, reason := ptyPromptDebugDecision(text)
-						ptyLogPromptClassification(sessionID, "readClaudeStreamJSON", "assistant_text", text, isPrompt, options, "assistant_text_"+reason)
-						var event any = protocol.NewLogEvent(sessionID, text, "stdout")
-						if isPrompt {
-							r.markInteractiveReady()
-							event = protocol.NewPromptRequestEvent(sessionID, text, options)
+						r.rememberAssistantText(text)
+						if isStructuredRuntimePhaseText(text) {
+							phase, kind, message := parseStructuredRuntimePhase(text)
+							sendEvent(sink, protocol.ApplyRuntimeMeta(protocol.NewRuntimePhaseEvent(sessionID, phase, kind, message), protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID}))
+							continue
 						}
+						var event any = protocol.NewLogEvent(sessionID, text, "stdout")
 						sendEvent(sink, protocol.ApplyRuntimeMeta(
 							event,
 							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
@@ -1252,14 +1261,15 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			for _, block := range envelope.Message.Content {
 				if block.Type == "tool_result" && block.IsError {
 					text := strings.TrimSpace(block.Content)
-					isPrompt, options, reason := ptyPromptDebugDecision(text)
-					ptyLogPromptClassification(sessionID, "readClaudeStreamJSON", "tool_result_error", text, isPrompt, options, "tool_result_"+reason)
-					if isPrompt {
-						r.markInteractiveReady()
+					if isStructuredRuntimePhaseText(text) {
+						phase, kind, message := parseStructuredRuntimePhase(text)
 						sendEvent(sink, protocol.ApplyRuntimeMeta(
-							protocol.NewPromptRequestEvent(sessionID, text, options),
+							protocol.NewRuntimePhaseEvent(sessionID, phase, kind, message),
 							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
 						))
+						if phase == "permission_blocked" || phase == "plan_requested" || phase == "plan_active" || phase == "execute_active" {
+							r.markInteractiveReady()
+						}
 						continue
 					}
 					// These are Claude's internal tool retry errors — don't expose to user
@@ -1280,10 +1290,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			if text := strings.TrimSpace(envelope.Result); text != "" {
 				logx.Info("pty", "claude result text: sessionID=%s preview=%q", sessionID, ptyDebugPreview(text))
 				r.tryEmitCatalogAuthoringResult(sessionID, text, sink)
-				sendEvent(sink, protocol.ApplyRuntimeMeta(
-					protocol.NewLogEvent(sessionID, text, "stdout"),
-					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
-				))
+				if r.shouldEmitResultText(text) {
+					sendEvent(sink, protocol.ApplyRuntimeMeta(
+						protocol.NewLogEvent(sessionID, text, "stdout"),
+						protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+					))
+				}
 			}
 			if envelope.DurationMs > 0 || envelope.TotalCost > 0 {
 				sendEvent(sink, protocol.ProgressEvent{
@@ -1300,6 +1312,30 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		}
 		sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read claude stream: %v", err), ""))
 	}
+}
+
+func (r *PtyRunner) rememberAssistantText(text string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastAssistantTextKey = normalizeClaudeResultText(text)
+}
+
+func (r *PtyRunner) shouldEmitResultText(text string) bool {
+	normalized := normalizeClaudeResultText(text)
+	if normalized == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if normalized == r.lastAssistantTextKey {
+		return false
+	}
+	r.lastAssistantTextKey = normalized
+	return true
+}
+
+func normalizeClaudeResultText(text string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 }
 
 func (r *PtyRunner) tryEmitCatalogAuthoringResult(sessionID, text string, sink EventSink) {
@@ -1395,6 +1431,40 @@ func parseClaudeToolUseResult(raw json.RawMessage) (targetPath string, message s
 	}
 
 	return "", "", false
+}
+
+type claudeRuntimePhasePayload struct {
+	MobileVCRuntimePhase bool   `json:"mobilevcRuntimePhase"`
+	Phase                string `json:"phase"`
+	Kind                 string `json:"kind"`
+	Message              string `json:"message,omitempty"`
+	Msg                  string `json:"msg,omitempty"`
+}
+
+func isStructuredRuntimePhaseText(text string) bool {
+	phase, _, _ := parseStructuredRuntimePhase(text)
+	return phase != ""
+}
+
+func parseStructuredRuntimePhase(text string) (phase, kind, message string) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", "", ""
+	}
+	var payload claudeRuntimePhasePayload
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return "", "", ""
+	}
+	if !payload.MobileVCRuntimePhase {
+		return "", "", ""
+	}
+	phase = strings.TrimSpace(payload.Phase)
+	kind = strings.TrimSpace(payload.Kind)
+	message = strings.TrimSpace(firstNonEmptyString(payload.Message, payload.Msg))
+	if phase == "" {
+		return "", "", ""
+	}
+	return phase, kind, message
 }
 
 func startInteractiveCommand(cmd *exec.Cmd) (*interactiveSession, error) {

@@ -138,7 +138,8 @@ class _SessionHomePageState extends State<SessionHomePage> {
                   ),
                   Expanded(
                     child: (controller.timeline.isEmpty &&
-                            controller.pendingPrompt?.hasVisiblePrompt != true)
+                            controller.pendingPrompt?.hasVisiblePrompt != true &&
+                            controller.pendingInteraction?.hasVisiblePrompt != true)
                         ? const Center(child: _LandingBrand())
                         : Column(
                             children: [
@@ -162,6 +163,12 @@ class _SessionHomePageState extends State<SessionHomePage> {
                                       controller.pendingInteraction,
                                   shouldShowReviewChoices:
                                       controller.shouldShowReviewChoices,
+                                  pendingPlanQuestion:
+                                      controller.pendingPlanQuestion,
+                                  pendingPlanProgressLabel:
+                                      controller.pendingPlanProgressLabel,
+                                  shouldShowPlanChoices:
+                                      controller.shouldShowPlanChoices,
                                   onOpenDiff: () => _openDiff(context),
                                   onOpenRuntimeInfo: () =>
                                       _openRuntimeInfo(context),
@@ -189,6 +196,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
         permissionMode: controller.displayPermissionMode,
         shouldShowPermissionChoices: controller.shouldShowPermissionChoices,
         shouldShowReviewChoices: controller.shouldShowReviewChoices,
+        shouldShowPlanChoices: controller.shouldShowPlanChoices,
         onSubmit: controller.sendInputText,
         onOpenSessions: () => _openSessions(context),
         onOpenRuntimeInfo: () => _openRuntimeInfo(context),
@@ -390,6 +398,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
                                         controller.currentReviewDiff!.id) ||
                                 controller.openedFilePendingDiff!.path ==
                                     controller.currentReviewDiff!.path),
+                    shouldShowPlanChoices: controller.shouldShowPlanChoices,
                     pendingPrompt: controller.pendingPrompt,
                     pendingInteraction: controller.pendingInteraction,
                     onSelectReviewGroup: controller.setActiveReviewGroup,
@@ -794,7 +803,12 @@ class _LandingBrand extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const BrandBadge(size: 64),
+        Image.asset(
+          'lib/logo-2.png',
+          width: 96,
+          height: 96,
+          fit: BoxFit.contain,
+        ),
         const SizedBox(height: 16),
         Text(
           'MobileVC',

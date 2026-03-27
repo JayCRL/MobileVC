@@ -1519,7 +1519,7 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	secondRunner.WaitStarted(t)
 	select {
 	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != hotSwapApproveContinuation(protocol.PermissionDecisionRequestEvent{Decision: "approve", TargetPath: "README.md", PromptMessage: "写 README 需要你的授权"}) {
+		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
 			t.Fatalf("unexpected continuation payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):
@@ -1539,6 +1539,58 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	}
 	if secondRunner.lastReq.PermissionMode != "default" {
 		t.Fatalf("expected default permission mode after restore, got %#v", secondRunner.lastReq)
+	}
+}
+
+func TestHandlerInputAutoResumesDetachedClaudeSession(t *testing.T) {
+	firstRunner := newStubRunner(protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent("ignored", "已暂停，可继续", nil),
+		protocol.RuntimeMeta{ResumeSessionID: "resume-chat-123"},
+	))
+	firstRunner.claudeSessionID = "resume-chat-123"
+	secondRunner := newHoldingStubRunner()
+	runnerIndex := 0
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner {
+		runnerIndex++
+		if runnerIndex == 1 {
+			return firstRunner
+		}
+		return secondRunner
+	}
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "input-auto-resume")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty", PermissionMode: "default"}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	time.Sleep(100 * time.Millisecond)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "second turn\n"}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+	secondRunner.WaitStarted(t)
+	if !strings.Contains(secondRunner.lastReq.Command, "--resume ") {
+		t.Fatalf("expected resumed command, got %q", secondRunner.lastReq.Command)
+	}
+	select {
+	case payload := <-secondRunner.writeCh:
+		if got := string(payload); got != "second turn\n" {
+			t.Fatalf("unexpected resumed input payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive resumed input payload")
 	}
 }
 
@@ -1584,7 +1636,7 @@ func TestHandlerInputWithoutRunner(t *testing.T) {
 			t.Fatalf("read event: %v", err)
 		}
 		if event["type"] == protocol.EventTypeError {
-			if event["msg"] != "no active runner" {
+			if event["msg"] != "当前没有活跃会话，且没有可恢复的 Claude 会话，请重新发起命令" {
 				t.Fatalf("unexpected error event: %#v", event)
 			}
 			return
@@ -1943,7 +1995,7 @@ func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
 	secondRunner.WaitStarted(t)
 	select {
 	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != hotSwapApproveContinuation(protocol.PermissionDecisionRequestEvent{Decision: "approve", TargetPath: "README.md", PromptMessage: "写 README 需要你的授权"}) {
+		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
 			t.Fatalf("unexpected continuation payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):
@@ -2164,6 +2216,7 @@ func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
 		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
 		protocol.RuntimeMeta{ResumeSessionID: "resume-123"},
 	))
+	firstRunner.claudeSessionID = "resume-123"
 	secondRunner := newHoldingStubRunner()
 	secondRunner.interactive = false
 	secondRunner.onStart = func() {
@@ -2211,25 +2264,26 @@ func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
 	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
 
 	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
-		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
-		Decision:       "approve",
-		PermissionMode: "default",
-		TargetPath:     "README.md",
-		PromptMessage:  "写 README 需要你的授权",
+		ClientEvent:     protocol.ClientEvent{Action: "permission_decision"},
+		Decision:        "approve",
+		PermissionMode:  "default",
+		ResumeSessionID: "resume-123",
+		FallbackCommand: "claude",
+		FallbackCWD:     "/tmp",
+		TargetPath:      "README.md",
+		PromptMessage:   "写 README 需要你的授权",
 	}); err != nil {
 		t.Fatalf("write permission decision request: %v", err)
 	}
 
-	event := readUntilType(t, conn, protocol.EventTypeError)
-	if event["msg"] != "当前没有可交互的 Claude 会话，无法继续处理该权限请求" {
-		t.Fatalf("unexpected error event: %#v", event)
-	}
+	secondRunner.WaitStarted(t)
 	select {
-	case decision := <-secondRunner.permissionResponseWriteCh:
-		t.Fatalf("unexpected structured decision on resumed runner: %q", decision)
 	case payload := <-secondRunner.writeCh:
-		t.Fatalf("unexpected normal input payload on resumed runner: %q", string(payload))
-	case <-time.After(200 * time.Millisecond):
+		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
+			t.Fatalf("unexpected continuation payload on resumed runner: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive continuation payload on resumed runner")
 	}
 }
 
@@ -2290,7 +2344,7 @@ func TestHandlerPermissionDecisionWithNonInteractiveRunnerStillHotSwaps(t *testi
 	secondRunner.WaitStarted(t)
 	select {
 	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != hotSwapApproveContinuation(protocol.PermissionDecisionRequestEvent{Decision: "approve", TargetPath: "README.md", PromptMessage: "写 README 需要你的授权"}) {
+		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
 			t.Fatalf("unexpected continuation payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):
