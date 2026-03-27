@@ -807,6 +807,74 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				logx.Warn("ws", "hot swap approve failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
 			}
+		case "review_decision":
+			var reviewEvent protocol.ReviewDecisionRequestEvent
+			if err := json.Unmarshal(payload, &reviewEvent); err != nil {
+				logx.Warn("ws", "invalid review decision request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid review decision request: %v", err), ""))
+				continue
+			}
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=review_decision decision=%q executionID=%q groupID=%q groupTitle=%q contextID=%q contextTitle=%q targetPath=%q permissionMode=%q", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision, reviewEvent.ExecutionID, reviewEvent.GroupID, reviewEvent.GroupTitle, reviewEvent.ContextID, reviewEvent.ContextTitle, reviewEvent.TargetPath, reviewEvent.PermissionMode)
+			decision := strings.TrimSpace(strings.ToLower(reviewEvent.Decision))
+			if decision != "accept" && decision != "revert" && decision != "revise" {
+				logx.Warn("ws", "reject invalid review decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%q", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision)
+				emit(protocol.NewErrorEvent(selectedSessionID, "review decision must be one of: accept, revert, revise", ""))
+				continue
+			}
+			sessionID := selectedSessionID
+			service := runtimeSvc
+			emitAndPersist := emitAndPersistFor(sessionID)
+			projection := buildProjectionSnapshotFor(sessionID)
+			controller := service.ControllerSnapshot()
+			effectivePermissionMode := strings.TrimSpace(reviewEvent.PermissionMode)
+			if effectivePermissionMode == "" {
+				effectivePermissionMode = strings.TrimSpace(controller.ActiveMeta.PermissionMode)
+			}
+			if effectivePermissionMode == "" {
+				effectivePermissionMode = strings.TrimSpace(projection.Runtime.PermissionMode)
+			}
+			if !service.CanAcceptInteractiveInput() {
+				emit(protocol.NewErrorEvent(selectedSessionID, "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交审核决策", ""))
+				continue
+			}
+			if effectivePermissionMode != "" {
+				service.UpdatePermissionMode(effectivePermissionMode)
+			}
+			var currentDiff session.DiffContext
+			if projection.CurrentDiff != nil {
+				currentDiff = *projection.CurrentDiff
+			}
+			if err := service.ReviewDecision(ctx, sessionID, runtimepkg.ReviewDecisionRequest{
+				Decision: decision,
+				RuntimeMeta: protocol.RuntimeMeta{
+					Source:         "review-decision",
+					ExecutionID:    firstNonEmptyString(reviewEvent.ExecutionID, currentDiff.ExecutionID),
+					GroupID:        firstNonEmptyString(reviewEvent.GroupID, reviewEvent.ExecutionID, currentDiff.GroupID, reviewEvent.ContextID),
+					GroupTitle:     firstNonEmptyString(reviewEvent.GroupTitle, currentDiff.GroupTitle, reviewEvent.ContextTitle),
+					ContextID:      firstNonEmptyString(reviewEvent.ContextID, currentDiff.ContextID),
+					ContextTitle:   firstNonEmptyString(reviewEvent.ContextTitle, currentDiff.Title),
+					TargetPath:     firstNonEmptyString(reviewEvent.TargetPath, currentDiff.Path),
+					TargetText:     decision,
+					Command:        firstNonEmptyString(controller.ActiveMeta.Command, projection.Runtime.Command),
+					CWD:            firstNonEmptyString(controller.ActiveMeta.CWD, projection.Runtime.CWD),
+					PermissionMode: effectivePermissionMode,
+				},
+			}, emitAndPersist); err != nil {
+				message := err.Error()
+				if errors.Is(err, runner.ErrInputNotSupported) {
+					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
+				} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+					message = "当前没有可交互会话，请先恢复会话后再审核 diff"
+				} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
+					message = "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交审核决策"
+				}
+				logx.Warn("ws", "send review decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
+				emit(protocol.NewErrorEvent(sessionID, message, ""))
+				continue
+			}
+			projection = applyReviewDecisionToProjection(projection, reviewEvent, decision, currentDiff)
+			persistProjectionFor(sessionID, projection)
+			emitReviewStateFromProjection(emit, sessionID, projection)
 		case "plan_decision":
 			var planEvent protocol.PlanDecisionRequestEvent
 			if err := json.Unmarshal(payload, &planEvent); err != nil {

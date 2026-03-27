@@ -2450,6 +2450,103 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	}
 }
 
+func TestHandlerReviewDecisionUpdatesProjectionAndReviewState(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(
+		protocol.NewPromptRequestEvent("ignored", "等待输入", nil),
+		protocol.NewFileDiffEvent("ignored", "hhh.txt", "新增 hhh.txt", "+++ b/hhh.txt\n@@\n+测试功能\n", "text"),
+	)
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "review-flow")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty"}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	ptyRunner.WaitStarted(t)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeFileDiff)
+
+	if err := conn.WriteJSON(protocol.ReviewDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "review_decision"},
+		Decision:       "accept",
+		ContextID:      "hhh.txt",
+		TargetPath:     "hhh.txt",
+		GroupID:        "hhh.txt",
+		GroupTitle:     "hhh.txt",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write review decision request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		if got := string(payload); got != "1\n" {
+			t.Fatalf("unexpected review decision payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive review decision payload")
+	}
+
+	var reviewState map[string]any
+	for i := 0; i < 8; i++ {
+		event := readUntilType(t, conn, protocol.EventTypeReviewState)
+		if event["type"] == protocol.EventTypeError {
+			t.Fatalf("unexpected error event while waiting for review state: %#v", event)
+		}
+		reviewState = event
+		break
+	}
+	if reviewState == nil {
+		t.Fatal("did not receive review_state event")
+	}
+	groups, ok := reviewState["groups"].([]any)
+	if !ok || len(groups) != 1 {
+		t.Fatalf("expected one review group, got %#v", reviewState)
+	}
+	activeGroup, ok := reviewState["activeGroup"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected activeGroup payload, got %#v", reviewState)
+	}
+	if activeGroup["reviewStatus"] != "accepted" {
+		t.Fatalf("expected accepted active group, got %#v", activeGroup)
+	}
+	files, ok := groups[0].(map[string]any)["files"].([]any)
+	if !ok || len(files) != 1 {
+		t.Fatalf("expected one review file, got %#v", groups[0])
+	}
+	file, ok := files[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected review file payload, got %#v", files[0])
+	}
+	if pending, _ := file["pendingReview"].(bool); pending {
+		t.Fatalf("expected review to be cleared, got %#v", file)
+	}
+	if status := file["reviewStatus"]; status != "accepted" {
+		t.Fatalf("expected accepted review status, got %#v", file)
+	}
+
+	record, err := h.SessionStore.GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if len(record.Projection.Diffs) != 1 {
+		t.Fatalf("expected one persisted diff, got %#v", record.Projection.Diffs)
+	}
+	if record.Projection.Diffs[0].PendingReview {
+		t.Fatalf("expected persisted diff review to be cleared, got %#v", record.Projection.Diffs[0])
+	}
+	if record.Projection.Diffs[0].ReviewStatus != "accepted" {
+		t.Fatalf("expected persisted diff to be accepted, got %#v", record.Projection.Diffs[0])
+	}
+}
+
 func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
 	h := newTestHandler()
@@ -2550,7 +2647,7 @@ func TestHandlerReviewDecisionWithoutRunner(t *testing.T) {
 	}
 
 	event := readUntilType(t, conn, protocol.EventTypeError)
-	if event["msg"] != "当前没有可交互会话，请先恢复会话后再审核 diff" {
+	if event["msg"] != "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交审核决策" {
 		t.Fatalf("unexpected error event: %#v", event)
 	}
 }
