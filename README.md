@@ -4,6 +4,10 @@
 
 ![Go](https://img.shields.io/badge/Go-1.21-blue) ![Flutter](https://img.shields.io/badge/Flutter-3.13-blue) ![License](https://img.shields.io/badge/License-MIT-green)
 
+<p align="center">
+  <img src="mobile_vc/lib/logo-2.png" alt="MobileVC logo" width="220" />
+</p>
+
 ---
 
 ## 中文版
