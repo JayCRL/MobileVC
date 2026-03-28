@@ -45,6 +45,7 @@ void main() {
 
     expect(find.text('npm test'), findsWidgets);
     expect(find.text('flutter test'), findsOneWidget);
+
     expect(find.text('pass 1'), findsOneWidget);
     expect(find.text('来源: 用户输入'), findsOneWidget);
     expect(find.text('上下文: 单元测试'), findsOneWidget);
@@ -55,5 +56,99 @@ void main() {
     await tester.pump();
 
     expect(selectedExecutionId, 'exec-2');
+  });
+
+  testWidgets('activeExecutionId 变更时详情随执行项切换', (tester) async {
+    Future<List<String?>> collectSelectableTexts() async {
+      return tester
+          .widgetList<SelectableText>(find.byType(SelectableText))
+          .map((widget) => widget.data)
+          .toList();
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TerminalLogSheet(
+            executions: const [
+              TerminalExecution(
+                executionId: 'exec-1',
+                command: 'npm test',
+                cwd: '/workspace/app',
+                sourceLabel: '用户输入',
+                stdout: 'pass 1',
+                stderr: 'warn 1',
+              ),
+              TerminalExecution(
+                executionId: 'exec-2',
+                command: 'flutter test',
+                cwd: '/workspace/mobile_vc',
+                sourceLabel: '审核后续',
+                stdout: 'pass 2',
+                stderr: 'warn 2',
+              ),
+            ],
+            activeExecutionId: 'exec-1',
+            stdout: 'global stdout',
+            stderr: 'global stderr',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final firstTexts = await collectSelectableTexts();
+    expect(firstTexts, contains('pass 1'));
+    expect(firstTexts, isNot(contains('pass 2')));
+
+    await tester.tap(find.text('stderr'));
+    await tester.pumpAndSettle();
+
+    final firstStderrTexts = await collectSelectableTexts();
+    expect(firstStderrTexts, contains('warn 1'));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TerminalLogSheet(
+            executions: const [
+              TerminalExecution(
+                executionId: 'exec-1',
+                command: 'npm test',
+                cwd: '/workspace/app',
+                sourceLabel: '用户输入',
+                stdout: 'pass 1',
+                stderr: 'warn 1',
+              ),
+              TerminalExecution(
+                executionId: 'exec-2',
+                command: 'flutter test',
+                cwd: '/workspace/mobile_vc',
+                sourceLabel: '审核后续',
+                stdout: 'pass 2',
+                stderr: 'warn 2',
+              ),
+            ],
+            activeExecutionId: 'exec-2',
+            stdout: 'global stdout',
+            stderr: 'global stderr',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('stdout'));
+    await tester.pumpAndSettle();
+
+    final secondStdoutTexts = await collectSelectableTexts();
+    expect(secondStdoutTexts, contains('pass 2'));
+    expect(secondStdoutTexts, isNot(contains('pass 1')));
+
+    await tester.tap(find.text('stderr'));
+    await tester.pumpAndSettle();
+
+    final secondStderrTexts = await collectSelectableTexts();
+    expect(secondStderrTexts, contains('warn 2'));
   });
 }

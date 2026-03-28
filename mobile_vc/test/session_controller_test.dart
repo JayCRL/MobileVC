@@ -845,7 +845,9 @@ void main() {
       expect(service.sentPayloads.single['action'], 'session_create');
     });
 
-    test('手动 loadSession 仍能恢复历史 timeline / diff / session meta', () async {
+    test(
+        '手动 loadSession 仍能恢复历史 timeline / diff / session meta / terminal logs',
+        () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -881,6 +883,32 @@ void main() {
             title: '恢复中',
             message: '历史步骤',
           ),
+          rawTerminalByStream: const {
+            'stdout': 'global stdout',
+            'stderr': 'global stderr',
+          },
+          terminalExecutions: const [
+            TerminalExecution(
+              executionId: 'exec-1',
+              command: 'npm test',
+              cwd: '/workspace/app',
+              source: 'user',
+              sourceLabel: '用户输入',
+              stdout: 'exec-1 stdout',
+              stderr: 'exec-1 stderr',
+              exitCode: 0,
+            ),
+            TerminalExecution(
+              executionId: 'exec-2',
+              command: 'flutter test',
+              cwd: '/workspace/mobile_vc',
+              source: 'review-follow-up',
+              sourceLabel: '审核后续',
+              stdout: 'exec-2 stdout',
+              stderr: 'exec-2 stderr',
+              running: true,
+            ),
+          ],
           resumeRuntimeMeta: const RuntimeMeta(
             command: 'claude --resume session-history',
             permissionMode: 'acceptEdits',
@@ -894,6 +922,17 @@ void main() {
       expect(controller.recentDiffs, hasLength(1));
       expect(controller.currentStepSummary, '历史步骤');
       expect(controller.displayPermissionMode, 'acceptEdits');
+      expect(controller.terminalExecutions, hasLength(2));
+      expect(controller.activeTerminalExecutionId, 'exec-2');
+      expect(controller.activeTerminalStdout, 'exec-2 stdout');
+      expect(controller.activeTerminalStderr, 'exec-2 stderr');
+      expect(controller.terminalStdout, 'global stdout');
+      expect(controller.terminalStderr, 'global stderr');
+
+      controller.setActiveTerminalExecution('exec-1');
+      expect(controller.activeTerminalExecutionId, 'exec-1');
+      expect(controller.activeTerminalStdout, 'exec-1 stdout');
+      expect(controller.activeTerminalStderr, 'exec-1 stderr');
     });
 
     test('[debug] 调试信息不会进入 timeline，但 system/error 仍保留', () async {

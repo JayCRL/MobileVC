@@ -64,10 +64,12 @@ void main() {
         ),
       );
 
-      expect(find.text('允许'), findsOneWidget);
-      expect(find.text('拒绝'), findsOneWidget);
+      expect(find.byKey(const ValueKey('fileViewer.permissionBar')),
+          findsOneWidget);
+      expect(find.text('y'), findsOneWidget);
+      expect(find.text('n'), findsOneWidget);
 
-      await tester.tap(find.text('允许'));
+      await tester.tap(find.text('y'));
       await tester.pump();
 
       expect(submitted, 'y');
@@ -84,7 +86,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.text('拒绝'));
+      await tester.tap(find.text('n'));
       await tester.pump();
 
       expect(submitted, 'n');
@@ -271,6 +273,7 @@ Widget _buildTestApp({
         isAutoAcceptMode: false,
         shouldShowPermissionChoices: shouldShowPermissionChoices,
         shouldShowReviewChoices: shouldShowReviewChoices,
+        shouldShowPlanChoices: false,
         pendingPrompt: pendingPrompt,
         pendingInteraction: pendingInteraction,
         onAccept: () {},

@@ -775,8 +775,8 @@ class _PermissionActionBar extends StatelessWidget {
       return options;
     }
     return const [
-      PromptOption(value: 'approve', label: '允许'),
-      PromptOption(value: 'deny', label: '拒绝'),
+      PromptOption(value: 'y', label: '允许'),
+      PromptOption(value: 'n', label: '拒绝'),
     ];
   }
 
@@ -859,9 +859,16 @@ class _PromptRequestSection extends StatelessWidget {
   }
 
   List<PromptOption> _resolvedOptions() {
-    return prompt.options
+    final options = prompt.options
         .where((option) => option.displayText.isNotEmpty)
         .toList(growable: false);
+    if (options.isNotEmpty) {
+      return options;
+    }
+    return const [
+      PromptOption(value: 'y', label: '允许'),
+      PromptOption(value: 'n', label: '拒绝'),
+    ];
   }
 
   String _promptOptionLabel(String value, String fallback) {

@@ -54,10 +54,6 @@ class TerminalLogSheet extends StatelessWidget {
                   ),
                 ],
               ),
-              if (activeExecution != null) ...[
-                const SizedBox(height: 12),
-                _ExecutionDetailCard(item: activeExecution),
-              ],
               if (hasExecutions) ...[
                 const SizedBox(height: 12),
                 SizedBox(
@@ -76,6 +72,10 @@ class TerminalLogSheet extends StatelessWidget {
                     },
                   ),
                 ),
+              ],
+              if (activeExecution != null) ...[
+                const SizedBox(height: 12),
+                _ExecutionDetailCard(item: activeExecution),
               ],
               const SizedBox(height: 12),
               const TabBar(
