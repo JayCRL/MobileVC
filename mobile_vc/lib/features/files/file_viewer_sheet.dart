@@ -118,7 +118,7 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
     final prompt = widget.pendingPrompt;
     final interaction = widget.pendingInteraction;
     final showPermissionBar =
-        !widget.shouldShowReviewChoices && interaction?.isPermission == true;
+        widget.shouldShowPermissionChoices && !widget.shouldShowReviewChoices;
     return SafeArea(
       top: false,
       child: AnimatedPadding(
@@ -414,7 +414,8 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                     ],
                     if (!widget.shouldShowReviewChoices &&
                         widget.pendingPrompt != null &&
-                        widget.pendingPrompt!.hasVisiblePrompt) ...[
+                        widget.pendingPrompt!.hasVisiblePrompt &&
+                        !widget.shouldShowPermissionChoices) ...[
                       const SizedBox(height: 10),
                       _PromptRequestSection(
                         prompt: widget.pendingPrompt!,
@@ -427,6 +428,7 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
             ],
             if (!widget.showReviewActions &&
                 !widget.shouldShowReviewChoices &&
+                !widget.shouldShowPermissionChoices &&
                 widget.pendingPrompt != null &&
                 widget.pendingPrompt!.hasVisiblePrompt) ...[
               const SizedBox(height: 8),
@@ -588,7 +590,9 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
     final shouldSubmitPrompt = !widget.shouldShowReviewChoices &&
         !isClaudeBootstrap &&
         ((interaction != null && interaction.hasVisiblePrompt) ||
-            (prompt != null && prompt.hasVisiblePrompt && prompt.options.isNotEmpty));
+            (prompt != null &&
+                prompt.hasVisiblePrompt &&
+                (prompt.looksLikePermissionPrompt || prompt.options.isNotEmpty)));
     if (shouldSubmitPrompt) {
       widget.onSubmitPrompt(value);
     } else {
@@ -767,12 +771,19 @@ class _PermissionActionBar extends StatelessWidget {
   }
 
   List<PromptOption> _resolvedOptions() {
-    final options =
-        (prompt?.options ?? interaction?.options ?? const <PromptOption>[])
+    final interactionOptions = interaction?.options
             .where((option) => option.displayText.isNotEmpty)
-            .toList(growable: false);
-    if (options.isNotEmpty) {
-      return options;
+            .toList(growable: false) ??
+        const <PromptOption>[];
+    if (interactionOptions.isNotEmpty) {
+      return interactionOptions;
+    }
+    final promptOptions = prompt?.options
+            .where((option) => option.displayText.isNotEmpty)
+            .toList(growable: false) ??
+        const <PromptOption>[];
+    if (promptOptions.isNotEmpty) {
+      return promptOptions;
     }
     return const [
       PromptOption(value: 'y', label: '允许'),
@@ -781,13 +792,13 @@ class _PermissionActionBar extends StatelessWidget {
   }
 
   String _resolvedMessage() {
-    final promptMessage = prompt?.message.trim() ?? '';
-    if (promptMessage.isNotEmpty) {
-      return promptMessage;
-    }
     final interactionMessage = interaction?.message.trim() ?? '';
     if (interactionMessage.isNotEmpty) {
       return interactionMessage;
+    }
+    final promptMessage = prompt?.message.trim() ?? '';
+    if (promptMessage.isNotEmpty) {
+      return promptMessage;
     }
     final interactionTitle = interaction?.title.trim() ?? '';
     if (interactionTitle.isNotEmpty) {

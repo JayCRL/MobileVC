@@ -132,6 +132,7 @@ Widget _buildTestApp({
         onOpenMemory: () {},
         onPermissionModeChanged: (_) {},
         showClaudeMode: showClaudeMode,
+        shouldShowPlanChoices: false,
         isSessionLoading: isSessionLoading,
       ),
     ),

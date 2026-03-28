@@ -1,8 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_vc/app/app.dart';
+import 'package:mobile_vc/app/app_notification_coordinator.dart';
 import 'package:mobile_vc/app/local_notification_service.dart';
 import 'package:mobile_vc/data/models/events.dart';
 import 'package:mobile_vc/data/models/runtime_meta.dart';
@@ -22,20 +22,18 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('前台时不发送系统通知', (tester) async {
+  test('前台时不发送系统通知', () async {
     final service = _FakeMobileVcWsService();
     final controller = SessionController(service: service);
     final notifications = _FakeLocalNotificationService();
-    await controller.initialize();
-    addTearDown(controller.disposeController);
-
-    await tester.pumpWidget(
-      MobileVcApp(
-        controller: controller,
-        notificationService: notifications,
-      ),
+    final coordinator = AppNotificationCoordinator(
+      controller: controller,
+      notificationService: notifications,
     );
+    await controller.initialize();
     await controller.connect();
+    await coordinator.initialize();
+
     service.emit(
       PromptRequestEvent(
         timestamp: _timestamp,
@@ -47,27 +45,24 @@ void main() {
       ),
     );
     await _flushEvents();
-    await tester.pump();
 
     expect(notifications.payloads, isEmpty);
+
+    await controller.disposeController();
   });
 
-  testWidgets('后台时发送系统通知', (tester) async {
+  test('后台时发送系统通知', () async {
     final service = _FakeMobileVcWsService();
     final controller = SessionController(service: service);
     final notifications = _FakeLocalNotificationService();
-    await controller.initialize();
-    addTearDown(controller.disposeController);
-
-    await tester.pumpWidget(
-      MobileVcApp(
-        controller: controller,
-        notificationService: notifications,
-      ),
+    final coordinator = AppNotificationCoordinator(
+      controller: controller,
+      notificationService: notifications,
     );
+    await controller.initialize();
     await controller.connect();
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await tester.pump();
+    await coordinator.initialize();
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.paused);
 
     service.emit(
       PromptRequestEvent(
@@ -80,15 +75,21 @@ void main() {
       ),
     );
     await _flushEvents();
-    await tester.pump();
+    coordinator.handleControllerChanged();
+    await _flushEvents();
 
     expect(notifications.payloads, hasLength(1));
     expect(notifications.payloads.single.body, 'Claude 正在等待你的回复');
+
+    await controller.disposeController();
   });
 }
 
 class _FakeLocalNotificationService implements LocalNotificationService {
   final List<NotificationPayload> payloads = [];
+
+  @override
+  bool get isAvailable => true;
 
   @override
   Future<void> initialize() async {}

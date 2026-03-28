@@ -368,6 +368,17 @@
       if (value == null || value === '') localStorage.removeItem(key);
       else localStorage.setItem(key, value);
     }
+    function consumeTokenFromUrl() {
+      const url = new URL(window.location.href);
+      const token = String(url.searchParams.get('token') || '').trim();
+      if (!token) return '';
+      storageSet(STORAGE_KEYS.token, token);
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url.toString());
+      return token;
+    }
+
+    const bootstrapToken = consumeTokenFromUrl();
 
     const authView = document.getElementById('authView');
     const chatView = document.getElementById('chatView');
@@ -465,7 +476,7 @@
     const closeTerminalDrawerBtn = document.getElementById('closeTerminalDrawerBtn');
 
     const appState = {
-      auth: { token: storageGet(STORAGE_KEYS.token, ''), validating: false, error: '' },
+      auth: { token: bootstrapToken || storageGet(STORAGE_KEYS.token, ''), validating: false, error: '' },
       ws: null,
       connection: { connected: false, running: false },
       session: { id: '', claudeInteractiveActive: false, activeAI: 'claude', fastMode: storageGet(STORAGE_KEYS.fastMode, '') === '1', summaries: [], activeSessionId: storageGet(STORAGE_KEYS.activeSessionId, ''), canResumeCurrent: false },
@@ -2206,7 +2217,14 @@
     closeTerminalDrawerBtn.addEventListener('click', () => setTerminalDrawerOpen(false));
     statusDetailBtn.addEventListener('click', () => setStatusDetailOpen(true));
     closeStatusDetailBtn.addEventListener('click', () => setStatusDetailOpen(false));
-    retokenBtn.addEventListener('click', () => { setView('auth'); setAuthStatus('请重新输入 token。'); tokenInput.focus(); });
+    retokenBtn.addEventListener('click', () => {
+      appState.auth.token = '';
+      storageSet(STORAGE_KEYS.token, null);
+      tokenInput.value = '';
+      setView('auth');
+      setAuthStatus('请重新输入 token。');
+      tokenInput.focus();
+    });
     reconnectBtn.addEventListener('click', () => connect(false));
     permissionModeSelect.value = storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits');
     permissionModeSelect.addEventListener('change', () => {
@@ -2255,10 +2273,10 @@
     tokenInput.value = appState.auth.token;
     bindTerminalGesture();
     ensureTerminalMetrics();
-    setView(appState.auth.token ? 'auth' : 'auth');
+    setView('auth');
     renderApp();
     if (appState.auth.token) {
-      setAuthStatus('检测到已保存 token，正在自动连接…');
+      setAuthStatus(bootstrapToken ? '已从扫码链接读取 token，正在自动连接…' : '检测到已保存 token，正在自动连接…');
       connect(false);
     } else {
       setAuthStatus('请输入 token 后继续。');

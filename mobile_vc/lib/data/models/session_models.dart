@@ -295,6 +295,11 @@ class TerminalExecution {
   }
 
   factory TerminalExecution.fromJson(Map<String, dynamic> json) {
+    final completedAt = _parseDate(
+      json['finishedAt']?.toString() ?? json['completedAt']?.toString(),
+    );
+    final exitCode = (json['exitCode'] as num?)?.toInt();
+    final explicitRunning = json['running'] == true;
     return TerminalExecution(
       executionId: (json['executionId'] ?? '').toString(),
       command: (json['command'] ?? '').toString(),
@@ -306,9 +311,9 @@ class TerminalExecution {
       groupId: (json['groupId'] ?? '').toString(),
       groupTitle: (json['groupTitle'] ?? '').toString(),
       startedAt: _parseDate(json['startedAt']?.toString()),
-      completedAt: _parseDate(json['completedAt']?.toString()),
-      running: json['running'] == true,
-      exitCode: (json['exitCode'] as num?)?.toInt(),
+      completedAt: completedAt,
+      running: explicitRunning || (completedAt == null && exitCode == null),
+      exitCode: exitCode,
       stdout: (json['stdout'] ?? '').toString(),
       stderr: (json['stderr'] ?? '').toString(),
     );

@@ -70,32 +70,34 @@ type ReviewGroup struct {
 }
 
 type ControllerSnapshot struct {
-	SessionID      string               `json:"sessionId"`
-	State          ControllerState      `json:"state"`
-	CurrentCommand string               `json:"currentCommand,omitempty"`
-	LastStep       string               `json:"lastStep,omitempty"`
-	LastTool       string               `json:"lastTool,omitempty"`
-	ResumeSession  string               `json:"resumeSession,omitempty"`
-	LastUserInput  string               `json:"lastUserInput,omitempty"`
-	ActiveMeta     protocol.RuntimeMeta `json:"activeMeta,omitempty"`
-	RecentDiffs    []DiffContext        `json:"recentDiffs,omitempty"`
-	RecentDiff     DiffContext          `json:"recentDiff,omitempty"`
-	ReviewGroups   []ReviewGroup        `json:"reviewGroups,omitempty"`
-	ActiveReviewID string               `json:"activeReviewId,omitempty"`
+	SessionID       string               `json:"sessionId"`
+	State           ControllerState      `json:"state"`
+	CurrentCommand  string               `json:"currentCommand,omitempty"`
+	LastStep        string               `json:"lastStep,omitempty"`
+	LastTool        string               `json:"lastTool,omitempty"`
+	ResumeSession   string               `json:"resumeSession,omitempty"`
+	ClaudeLifecycle string               `json:"claudeLifecycle,omitempty"`
+	LastUserInput   string               `json:"lastUserInput,omitempty"`
+	ActiveMeta      protocol.RuntimeMeta `json:"activeMeta,omitempty"`
+	RecentDiffs     []DiffContext        `json:"recentDiffs,omitempty"`
+	RecentDiff      DiffContext          `json:"recentDiff,omitempty"`
+	ReviewGroups    []ReviewGroup        `json:"reviewGroups,omitempty"`
+	ActiveReviewID  string               `json:"activeReviewId,omitempty"`
 }
 
 type Controller struct {
-	mu             sync.Mutex
-	sessionID      string
-	currentState   ControllerState
-	currentCommand string
-	lastStep       string
-	lastTool       string
-	resumeSession  string
-	lastUserInput  string
-	activeMeta     protocol.RuntimeMeta
-	recentDiffs    []DiffContext
-	recentDiff     DiffContext
+	mu              sync.Mutex
+	sessionID       string
+	currentState    ControllerState
+	currentCommand  string
+	claudeLifecycle string
+	lastStep        string
+	lastTool        string
+	resumeSession   string
+	lastUserInput   string
+	activeMeta      protocol.RuntimeMeta
+	recentDiffs     []DiffContext
+	recentDiff      DiffContext
 
 	// dedup fields
 	lastLogMsg     string
@@ -121,6 +123,52 @@ func (c *Controller) UpdatePermissionMode(mode string) {
 	c.activeMeta.PermissionMode = strings.TrimSpace(mode)
 }
 
+func normalizeClaudeLifecycle(value string) string {
+	switch strings.TrimSpace(value) {
+	case "inactive", "starting", "active", "waiting_input", "resumable", "unknown":
+		return strings.TrimSpace(value)
+	default:
+		return ""
+	}
+}
+
+func isClaudeCommand(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return false
+	}
+	head := strings.ToLower(fields[0])
+	return head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe"
+}
+
+func (c *Controller) deriveClaudeLifecycleLocked() string {
+	if lifecycle := normalizeClaudeLifecycle(c.activeMeta.ClaudeLifecycle); lifecycle != "" {
+		return lifecycle
+	}
+	if c.currentState == ControllerStateWaitInput && (isClaudeCommand(c.currentCommand) || strings.TrimSpace(c.resumeSession) != "") {
+		return "waiting_input"
+	}
+	if c.currentState == ControllerStateThinking || c.currentState == ControllerStateRunningTool {
+		if isClaudeCommand(c.currentCommand) {
+			return "active"
+		}
+	}
+	if strings.TrimSpace(c.resumeSession) != "" {
+		return "resumable"
+	}
+	if isClaudeCommand(c.currentCommand) {
+		return "unknown"
+	}
+	return "inactive"
+}
+
+func (c *Controller) refreshClaudeLifecycleLocked() {
+	c.claudeLifecycle = c.deriveClaudeLifecycleLocked()
+	if c.claudeLifecycle != "" {
+		c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
+	}
+}
+
 func NewController(sessionID string) *Controller {
 	return &Controller{
 		sessionID:    sessionID,
@@ -143,6 +191,16 @@ func (c *Controller) OnExecStart(command string, meta protocol.RuntimeMeta) []an
 	c.lastTool = ""
 	c.activeMeta = meta
 	c.resumeSession = extractResumeSessionID(command, meta.ResumeSessionID)
+	c.claudeLifecycle = firstNonEmpty(normalizeClaudeLifecycle(meta.ClaudeLifecycle), func() string {
+		if isClaudeCommand(command) {
+			return "starting"
+		}
+		if strings.TrimSpace(c.resumeSession) != "" {
+			return "resumable"
+		}
+		return "inactive"
+	}())
+	c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
 	c.lastUserInput = ""
 	message := "思考中"
 	if meta.SkillName != "" {
@@ -169,6 +227,8 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		if e.ResumeSessionID != "" {
 			c.resumeSession = e.ResumeSessionID
 		}
+		c.claudeLifecycle = firstNonEmpty(normalizeClaudeLifecycle(e.RuntimeMeta.ClaudeLifecycle), "waiting_input")
+		c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
 		return []any{c.newAgentStateEvent(message, true)}
 	case protocol.StepUpdateEvent:
 		if e.Message == c.lastStepMsg && (e.Status == c.lastStepStatus || e.Status == "") {
@@ -180,6 +240,13 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 			c.lastStep = e.Message
 		}
 		c.currentState = ControllerStateRunningTool
+		c.claudeLifecycle = firstNonEmpty(normalizeClaudeLifecycle(e.RuntimeMeta.ClaudeLifecycle), func() string {
+			if isClaudeCommand(c.currentCommand) {
+				return "active"
+			}
+			return c.claudeLifecycle
+		}())
+		c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
 		c.lastTool = e.Target
 		message := e.Message
 		if message == "" {
@@ -192,6 +259,13 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 			message = e.Title
 		}
 		c.currentState = ControllerStateRunningTool
+		c.claudeLifecycle = firstNonEmpty(normalizeClaudeLifecycle(e.RuntimeMeta.ClaudeLifecycle), func() string {
+			if isClaudeCommand(c.currentCommand) {
+				return "active"
+			}
+			return c.claudeLifecycle
+		}())
+		c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
 		if e.Path != "" {
 			c.lastTool = e.Path
 		}
@@ -210,7 +284,10 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		if e.ResumeSessionID != "" {
 			c.resumeSession = e.ResumeSessionID
 		}
-		// dedup: skip identical log within 300ms
+		if lifecycle := normalizeClaudeLifecycle(e.RuntimeMeta.ClaudeLifecycle); lifecycle != "" {
+			c.claudeLifecycle = lifecycle
+			c.activeMeta.ClaudeLifecycle = lifecycle
+		}
 		if e.Message == c.lastLogMsg && now.Sub(c.lastLogTime) < 300*time.Millisecond {
 			return nil
 		}
@@ -218,12 +295,20 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		c.lastLogTime = now
 		if isAICommand(c.currentCommand) && c.currentState == ControllerStateThinking && isAIPrompt(e.Message) {
 			c.currentState = ControllerStateWaitInput
+			if isClaudeCommand(c.currentCommand) {
+				c.claudeLifecycle = "waiting_input"
+				c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
+			}
 			return []any{c.newAgentStateEvent("AI 会话已就绪，可继续输入", true)}
 		}
 		return nil
 	case protocol.SessionStateEvent:
 		if e.ResumeSessionID != "" {
 			c.resumeSession = e.ResumeSessionID
+		}
+		if lifecycle := normalizeClaudeLifecycle(e.RuntimeMeta.ClaudeLifecycle); lifecycle != "" {
+			c.claudeLifecycle = lifecycle
+			c.activeMeta.ClaudeLifecycle = lifecycle
 		}
 		return nil
 	default:
@@ -251,6 +336,12 @@ func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {
 	if meta.PermissionMode != "" {
 		c.activeMeta.PermissionMode = meta.PermissionMode
 	}
+	if lifecycle := normalizeClaudeLifecycle(meta.ClaudeLifecycle); lifecycle != "" {
+		c.claudeLifecycle = lifecycle
+	} else if isClaudeCommand(c.currentCommand) {
+		c.claudeLifecycle = "active"
+	}
+	c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
 	c.currentState = ControllerStateThinking
 	message := "思考中"
 	if meta.Source == "permission-decision" {
@@ -270,6 +361,7 @@ func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
 		if strings.TrimSpace(message) == "" {
 			message = "等待输入"
 		}
+		c.refreshClaudeLifecycleLocked()
 		return []any{c.newAgentStateEvent(message, true)}
 	}
 	c.currentState = ControllerStateIdle
@@ -280,6 +372,14 @@ func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
 	c.lastStepMsg = ""
 	c.lastStepStatus = ""
 	c.lastPromptMsg = ""
+	if lifecycle := normalizeClaudeLifecycle(meta.ClaudeLifecycle); lifecycle != "" {
+		c.claudeLifecycle = lifecycle
+	} else if c.resumeSession != "" {
+		c.claudeLifecycle = "resumable"
+	} else {
+		c.claudeLifecycle = "inactive"
+	}
+	c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
 	message := "空闲"
 	if c.resumeSession != "" {
 		message = "会话已暂停，可继续对话"
@@ -303,16 +403,17 @@ func (c *Controller) Snapshot() ControllerSnapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return ControllerSnapshot{
-		SessionID:      c.sessionID,
-		State:          c.currentState,
-		CurrentCommand: c.currentCommand,
-		LastStep:       c.lastStep,
-		LastTool:       c.lastTool,
-		ResumeSession:  c.resumeSession,
-		LastUserInput:  c.lastUserInput,
-		ActiveMeta:     c.activeMeta,
-		RecentDiffs:    append([]DiffContext(nil), c.recentDiffs...),
-		RecentDiff:     c.recentDiff,
+		SessionID:       c.sessionID,
+		State:           c.currentState,
+		CurrentCommand:  c.currentCommand,
+		LastStep:        c.lastStep,
+		LastTool:        c.lastTool,
+		ResumeSession:   c.resumeSession,
+		ClaudeLifecycle: c.claudeLifecycle,
+		LastUserInput:   c.lastUserInput,
+		ActiveMeta:      c.activeMeta,
+		RecentDiffs:     append([]DiffContext(nil), c.recentDiffs...),
+		RecentDiff:      c.recentDiff,
 	}
 }
 
@@ -327,8 +428,12 @@ func (c *Controller) Restore(snapshot ControllerSnapshot) {
 	c.lastStep = snapshot.LastStep
 	c.lastTool = snapshot.LastTool
 	c.resumeSession = snapshot.ResumeSession
+	c.claudeLifecycle = firstNonEmpty(normalizeClaudeLifecycle(snapshot.ClaudeLifecycle), normalizeClaudeLifecycle(snapshot.ActiveMeta.ClaudeLifecycle))
 	c.lastUserInput = snapshot.LastUserInput
 	c.activeMeta = snapshot.ActiveMeta
+	if c.claudeLifecycle != "" {
+		c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
+	}
 	c.recentDiffs = append([]DiffContext(nil), snapshot.RecentDiffs...)
 	c.recentDiff = snapshot.RecentDiff
 	if len(c.recentDiffs) == 0 && strings.TrimSpace(c.recentDiff.ContextID+c.recentDiff.Path+c.recentDiff.Title) != "" {
@@ -339,7 +444,11 @@ func (c *Controller) Restore(snapshot ControllerSnapshot) {
 
 func (c *Controller) newAgentStateEvent(message string, awaitInput bool) protocol.AgentStateEvent {
 	event := protocol.NewAgentStateEvent(c.sessionID, string(c.currentState), message, awaitInput, c.currentCommand, c.lastStep, c.lastTool)
-	event.RuntimeMeta = protocol.MergeRuntimeMeta(c.activeMeta, protocol.RuntimeMeta{ResumeSessionID: c.resumeSession})
+	c.refreshClaudeLifecycleLocked()
+	event.RuntimeMeta = protocol.MergeRuntimeMeta(c.activeMeta, protocol.RuntimeMeta{
+		ResumeSessionID: c.resumeSession,
+		ClaudeLifecycle: c.claudeLifecycle,
+	})
 	return event
 }
 

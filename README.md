@@ -193,29 +193,74 @@ Go 后端通过结构化事件流向前端推送状态，例如：
 
 ## 快速开始
 
-### 1. 启动 Go 服务
+### 1. 安装 Node 启动器
+
+在仓库根目录执行：
 
 ```bash
-export AUTH_TOKEN=test
-AUTH_TOKEN=test go run ./cmd/server
+npm i
 ```
 
-### 2. 健康检查
+安装后可以直接使用 `mobilevc` 命令。
+
+### 2. 首次启动并配置
+
+第一次运行会提示你输入后端端口和 `AUTH_TOKEN`：
+
+```bash
+mobilevc
+```
+
+也可以随时重新配置：
+
+```bash
+mobilevc setup
+```
+
+### 3. 启动 Go 服务
+
+```bash
+mobilevc start
+```
+
+Smoke test：启动服务后可执行 `AUTH_TOKEN=test ./scripts/test_smoke_flow.sh` 快速自检主链路。
+建议在服务起来后先跑一次，确认后端、WebSocket 与会话链路都正常。
+
+### 4. 查看状态 / 日志 / 停止
+
+```bash
+mobilevc status
+mobilevc logs
+mobilevc logs --follow
+mobilevc stop
+```
+
+### 5. 健康检查
 
 ```bash
 curl http://127.0.0.1:8001/healthz
 ```
 
-### 3. 打开 Web 工作台
+Smoke test：`AUTH_TOKEN=test ./scripts/test_smoke_flow.sh`，可快速验证后端、WebSocket 与会话主链路是否正常。
+
+### 6. 打开 Web 工作台
 
 ```text
 http://127.0.0.1:8001/
 ```
 
-### 4. 启动 Claude 会话
+### 7. 启动 Claude 会话
 
 ```text
 claude
+```
+
+### 仍然支持直接启动 Go 后端
+
+如果你想绕过 Node 启动器，原来的方式仍然可用：
+
+```bash
+AUTH_TOKEN=test go run ./cmd/server
 ```
 
 ---
@@ -238,7 +283,9 @@ flutter run
 
 Smoke test：`AUTH_TOKEN=test ./scripts/test_smoke_flow.sh`，用于快速验证后端、WebSocket 和会话流是否可用。
 它会连接本地服务并跑一轮最小端到端流程，帮助你确认环境是否正常。
+如果该命令通过，通常说明鉴权、WebSocket 与会话主链路都已就绪。
 建议在启动 Go 服务后先跑一次，快速确认 WebSocket、会话流和鉴权都可用。
+也可在使用 `mobilevc start` 启动后立即执行同一命令做一次主链路自检。
 
 ```bash
 AUTH_TOKEN=test ./scripts/test_smoke_flow.sh

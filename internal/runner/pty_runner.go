@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 
@@ -22,11 +23,13 @@ import (
 )
 
 const (
-	ptyReadBufferSize    = 4096
-	ptyDebugPreviewLimit = 240
-	ptyDebugReasonLog    = "log"
-	ptyDebugReasonPrompt = "prompt_request"
-	ptyDebugReasonError  = "error"
+	ptyReadBufferSize       = 4096
+	ptyDebugPreviewLimit    = 240
+	ptyDebugReasonLog       = "log"
+	ptyDebugReasonPrompt    = "prompt_request"
+	ptyDebugReasonError     = "error"
+	ptyErrNoActiveRunner    = "no active runner"
+	ptyErrNotInteractive    = "runner is not ready for interactive input"
 )
 
 type PtyRunner struct {
@@ -141,6 +144,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.mu.Lock()
 		r.lazyStart = true
 		r.interactive = false
+		r.awaitingReadyPrompt = true
 		r.pendingReq = req
 		r.pendingCWD = cwd
 		r.currentDir = cwd
@@ -153,6 +157,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		defer r.clear()
 
 		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
@@ -189,6 +194,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 	defer r.clear()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 	var readWG sync.WaitGroup
 	readWG.Add(1)
@@ -232,59 +238,113 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
 		return errors.New("input data is required")
 	}
 
-	r.mu.Lock()
-	lazyStart := r.lazyStart
-	interactive := r.interactive
-	writer := r.writer
-	closed := r.closed
-	req := r.pendingReq
-	cwd := r.pendingCWD
-	sink := r.sink
-	permissionMode := r.permissionMode
-	resumeSessionID := r.claudeSessionID
-	r.mu.Unlock()
-	logx.Info("pty", "runner write requested: sessionID=%s lazyStart=%t interactive=%t closed=%t cwd=%q permissionMode=%q resumeSessionID=%q preview=%q", req.SessionID, lazyStart, interactive, closed, cwd, permissionMode, resumeSessionID, ptyDebugPreview(string(data)))
+	for {
+		r.mu.Lock()
+		lazyStart := r.lazyStart
+		interactive := r.interactive
+		awaitingReadyPrompt := r.awaitingReadyPrompt
+		writer := r.writer
+		closed := r.closed
+		req := r.pendingReq
+		cwd := r.pendingCWD
+		sink := r.sink
+		permissionMode := r.permissionMode
+		resumeSessionID := r.claudeSessionID
+		r.mu.Unlock()
+		logx.Info("pty", "runner write requested: sessionID=%s lazyStart=%t interactive=%t awaitingReadyPrompt=%t closed=%t cwd=%q permissionMode=%q resumeSessionID=%q preview=%q", req.SessionID, lazyStart, interactive, awaitingReadyPrompt, closed, cwd, permissionMode, resumeSessionID, ptyDebugPreview(string(data)))
 
-	if lazyStart && !interactive {
-		return r.startClaudeStreamOnFirstInput(ctx, req, cwd, sink, data)
-	}
+		if lazyStart && !interactive {
+			return r.startClaudeStreamOnFirstInput(ctx, req, cwd, sink, data)
+		}
 
-	if writer == nil || closed {
-		return errors.New("no active pty session")
-	}
+		if awaitingReadyPrompt && !interactive {
+			if err := r.waitForInteractiveReady(ctx); err != nil {
+				return err
+			}
+			continue
+		}
 
-	// 关键修复：对于交互式 AI 工具，确保发送 \r\n 触发执行
-	finalData := data
-	convertedNewline := false
-	if isAICommandName(req.Command) && len(data) > 0 && data[len(data)-1] == '\n' {
-		if len(data) == 1 || data[len(data)-2] != '\r' {
-			finalData = append(data[:len(data)-1], '\r', '\n')
-			convertedNewline = true
+		if writer == nil || closed {
+			return errors.New("no active pty session")
+		}
+
+		// 关键修复：对于交互式 AI 工具，确保发送 \r\n 触发执行
+		finalData := data
+		convertedNewline := false
+		if isAICommandName(req.Command) && len(data) > 0 && data[len(data)-1] == '\n' {
+			if len(data) == 1 || data[len(data)-2] != '\r' {
+				finalData = append(data[:len(data)-1], '\r', '\n')
+				convertedNewline = true
+			}
+		}
+		logx.Info("pty", "runner writing to active session: sessionID=%s convertedNewline=%t preview=%q finalPreview=%q", req.SessionID, convertedNewline, ptyDebugPreview(string(data)), ptyDebugPreview(string(finalData)))
+
+		writeDone := make(chan error, 1)
+		go func() {
+			_, err := writer.Write(finalData)
+			writeDone <- err
+		}()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-writeDone:
+			if err != nil {
+				return fmt.Errorf("write pty input: %w", err)
+			}
+			return nil
 		}
 	}
-	logx.Info("pty", "runner writing to active session: sessionID=%s convertedNewline=%t preview=%q finalPreview=%q", req.SessionID, convertedNewline, ptyDebugPreview(string(data)), ptyDebugPreview(string(finalData)))
 
-	writeDone := make(chan error, 1)
-	go func() {
-		_, err := writer.Write(finalData)
-		writeDone <- err
-	}()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-writeDone:
-		if err != nil {
-			return fmt.Errorf("write pty input: %w", err)
-		}
-		return nil
-	}
+	return errors.New("no active pty session")
 }
 
 func (r *PtyRunner) CanAcceptInteractiveInput() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.interactive && r.writer != nil && !r.closed
+}
+
+func (r *PtyRunner) waitForInteractiveReady(ctx context.Context) error {
+	deadlineCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		r.mu.Lock()
+		interactive := r.interactive && r.writer != nil && !r.closed
+		closed := r.closed
+		awaitingReadyPrompt := r.awaitingReadyPrompt
+		r.mu.Unlock()
+		if interactive {
+			return nil
+		}
+		if closed {
+			return errors.New(ptyErrNoActiveRunner)
+		}
+		if !awaitingReadyPrompt {
+			return errors.New(ptyErrNotInteractive)
+		}
+		select {
+		case <-deadlineCtx.Done():
+			r.mu.Lock()
+			interactive = r.interactive && r.writer != nil && !r.closed
+			closed = r.closed
+			awaitingReadyPrompt = r.awaitingReadyPrompt
+			r.mu.Unlock()
+			if interactive {
+				return nil
+			}
+			if closed {
+				return errors.New(ptyErrNoActiveRunner)
+			}
+			if !awaitingReadyPrompt {
+				return errors.New(ptyErrNotInteractive)
+			}
+			return errors.New(ptyErrNotInteractive)
+		case <-ticker.C:
+		}
+	}
 }
 
 func (r *PtyRunner) HasPendingPermissionRequest() bool {
@@ -462,6 +522,7 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	defer stdin.Close()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 	var readWG sync.WaitGroup
 	readWG.Add(2)
@@ -521,6 +582,7 @@ func (r *PtyRunner) runClaudeResumeInteractive(ctx context.Context, req ExecRequ
 	defer r.clear()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 	var readWG sync.WaitGroup
 	readWG.Add(1)
@@ -1144,7 +1206,12 @@ type claudeStreamEnvelope struct {
 	NumTurns      int             `json:"num_turns,omitempty"`
 	TotalCost     float64         `json:"total_cost_usd,omitempty"`
 	ToolUseResult json.RawMessage `json:"tool_use_result,omitempty"`
-	Message       struct {
+	Request       struct {
+		Subtype  string          `json:"subtype,omitempty"`
+		ToolName string          `json:"tool_name,omitempty"`
+		Input    json.RawMessage `json:"input,omitempty"`
+	} `json:"request,omitempty"`
+	Message struct {
 		Content []struct {
 			Type    string          `json:"type"`
 			Text    string          `json:"text,omitempty"`
@@ -1155,6 +1222,35 @@ type claudeStreamEnvelope struct {
 		} `json:"content"`
 	} `json:"message"`
 }
+
+func extractControlRequestPrompt(envelope claudeStreamEnvelope) string {
+	for _, block := range envelope.Message.Content {
+		if block.Type != "text" {
+			continue
+		}
+		if text := strings.TrimSpace(block.Text); text != "" {
+			if isStructuredRuntimePhaseText(text) {
+				_, _, message := parseStructuredRuntimePhase(text)
+				if strings.TrimSpace(message) != "" {
+					return strings.TrimSpace(message)
+				}
+			}
+			return text
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(envelope.Request.Subtype), "can_use_tool") {
+		toolName := strings.TrimSpace(envelope.Request.ToolName)
+		target := strings.TrimSpace(extractToolTarget(toolName, envelope.Request.Input))
+		switch {
+		case toolName != "" && target != "":
+			return fmt.Sprintf("Claude requested permissions to use %s on %s", toolName, target)
+		case toolName != "":
+			return fmt.Sprintf("Claude requested permissions to use %s", toolName)
+		}
+	}
+	return "Claude requested permissions to continue"
+}
+
 
 type claudeCatalogAuthoringPayload struct {
 	MobileVCCatalogAuthoring bool   `json:"mobilevcCatalogAuthoring"`
@@ -1212,24 +1308,35 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				r.mu.Unlock()
 				logx.Info("pty", "cached control request: sessionID=%s requestID=%q", sessionID, requestID)
 			}
+			promptMessage := extractControlRequestPrompt(envelope)
 			for _, block := range envelope.Message.Content {
 				if block.Type != "text" {
 					continue
 				}
 				if text := strings.TrimSpace(block.Text); text != "" {
-					var event any = protocol.NewLogEvent(sessionID, text, "stdout")
 					if isStructuredRuntimePhaseText(text) {
 						phase, kind, message := parseStructuredRuntimePhase(text)
-						event = protocol.NewRuntimePhaseEvent(sessionID, phase, kind, message)
+						sendEvent(sink, protocol.ApplyRuntimeMeta(
+							protocol.NewRuntimePhaseEvent(sessionID, phase, kind, message),
+							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+						))
 						if phase == "permission_blocked" || phase == "plan_requested" || phase == "plan_active" || phase == "execute_active" {
 							r.markInteractiveReady()
 						}
+					} else {
+						sendEvent(sink, protocol.ApplyRuntimeMeta(
+							protocol.NewLogEvent(sessionID, text, "stdout"),
+							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+						))
 					}
-					sendEvent(sink, protocol.ApplyRuntimeMeta(
-						event,
-						protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
-					))
 				}
+			}
+			if requestID != "" {
+				r.markInteractiveReady()
+				sendEvent(sink, protocol.ApplyRuntimeMeta(
+					protocol.NewPromptRequestEvent(sessionID, promptMessage, promptOptions(promptMessage)),
+					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+				))
 			}
 		case "assistant":
 			for _, block := range envelope.Message.Content {

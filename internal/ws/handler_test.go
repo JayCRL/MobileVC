@@ -1542,6 +1542,7 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	}
 }
 
+
 func TestHandlerInputAutoResumesDetachedClaudeSession(t *testing.T) {
 	firstRunner := newStubRunner(protocol.ApplyRuntimeMeta(
 		protocol.NewPromptRequestEvent("ignored", "已暂停，可继续", nil),

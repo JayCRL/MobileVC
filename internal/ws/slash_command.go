@@ -35,6 +35,7 @@ var slashCommandCatalog = []slashCommandSpec{
 	{key: "/doctor", category: "runtime-info", runtimeQuery: "doctor"},
 	{key: "/review", category: "skill", skillName: "review"},
 	{key: "/analyze", category: "skill", skillName: "analyze"},
+	{key: "/flutter-context", category: "skill", skillName: "flutter-context"},
 	{key: "/diff", category: "local", localOnly: true},
 	{key: "/init", category: "exec", execTemplate: "claude /init"},
 	{key: "/memory", category: "runtime-info", runtimeQuery: "memory-panel"},
@@ -226,14 +227,30 @@ func executeSkillRequest(ctx context.Context, sessionID string, skillEvent proto
 	if err != nil {
 		return err
 	}
-	if runtimeSvc.IsRunning() {
-		prompt := launcher.ExtractPrompt(execReq.Command)
-		if prompt == "" {
-			return fmt.Errorf("无法在当前会话中执行 skill：prompt 为空")
-		}
-		return runtimeSvc.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: prompt + "\n"}, emit)
+	prompt := launcher.ExtractPrompt(execReq.Command)
+	if prompt == "" {
+		return fmt.Errorf("无法执行 skill：prompt 为空")
 	}
-	return runtimeSvc.Execute(ctx, sessionID, execReq, emit)
+	inputReq := runtimepkg.InputRequest{
+		Data: prompt + "\n",
+		RuntimeMeta: protocol.MergeRuntimeMeta(execReq.RuntimeMeta, protocol.RuntimeMeta{
+			Source: "skill-center",
+		}),
+	}
+	resumeReq := execReq
+	resumeReq.Mode = runner.ModePTY
+	resumeReq.Command = "claude"
+	resumeReq.RuntimeMeta = protocol.MergeRuntimeMeta(execReq.RuntimeMeta, protocol.RuntimeMeta{
+		Command:        "claude",
+		PermissionMode: execReq.PermissionMode,
+	})
+	if err := runtimeSvc.SendInputOrResume(ctx, sessionID, resumeReq, inputReq, emit); err == nil {
+		return nil
+	} else if !runtimeSvc.IsRunning() {
+		return runtimeSvc.Execute(ctx, sessionID, execReq, emit)
+	} else {
+		return err
+	}
 }
 
 func guessLangFromPath(path string) string {

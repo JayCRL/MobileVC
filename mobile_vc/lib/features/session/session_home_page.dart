@@ -204,7 +204,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
         onOpenSkills: () => _openSkills(context),
         onOpenMemory: () => _openMemory(context),
         onPermissionModeChanged: controller.updatePermissionMode,
-        showClaudeMode: controller.inClaudeMode,
+        showClaudeMode: controller.shouldShowClaudeMode,
         isSessionLoading: controller.isLoadingSession,
       ),
     );

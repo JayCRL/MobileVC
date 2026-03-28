@@ -45,6 +45,15 @@ func Builtins() map[string]Definition {
 			Source:      store.SkillSourceBuiltin,
 			Editable:    false,
 		},
+		"flutter-context": {
+			Name:        "flutter-context",
+			Description: "理解 Flutter 端上下文时优先复用已启用记忆索引",
+			Prompt:      "请先阅读上方已注入的 MobileVC memory，优先复用其中与 Flutter 端相关的架构索引、函数逻辑索引和输入/权限生命周期记录来回答问题或理解上下文。默认不要重新全量扫描 Flutter 代码；如果这些记忆不足以支撑当前任务，再明确指出还需要补充读取的具体 Flutter 文件、函数或模块，并说明为什么。",
+			ResultView:  "review-card",
+			TargetType:  "context",
+			Source:      store.SkillSourceBuiltin,
+			Editable:    false,
+		},
 		"doctor": {
 			Name:        "doctor",
 			Description: "诊断当前上下文",

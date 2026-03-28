@@ -363,7 +363,7 @@ func TestPtyRunnerCachesControlRequestIDAndEmitsPrompt(t *testing.T) {
 		"message": map[string]any{
 			"content": []map[string]any{{
 				"type": "text",
-				"text": "Claude 请求写入 README.md，是否允许？",
+				"text": "Claude requested permissions to write to README.md",
 			}},
 		},
 	})
@@ -388,8 +388,48 @@ func TestPtyRunnerCachesControlRequestIDAndEmitsPrompt(t *testing.T) {
 	if promptEvent == nil {
 		t.Fatalf("expected prompt request event, got %#v", events)
 	}
-	if !strings.Contains(promptEvent.Message, "是否允许") {
+	if promptEvent.Message != "Claude requested permissions to write to README.md" {
 		t.Fatalf("unexpected prompt message: %q", promptEvent.Message)
+	}
+}
+
+func TestPtyRunnerEmitsPromptFromControlRequestPayloadWithoutMessageContent(t *testing.T) {
+	runner := NewPtyRunner()
+	var events []any
+	sink := func(event any) { events = append(events, event) }
+
+	envelope, err := json.Marshal(map[string]any{
+		"type":       "control_request",
+		"request_id": "req-456",
+		"request": map[string]any{
+			"subtype":   "can_use_tool",
+			"tool_name": "Edit",
+			"input": map[string]any{
+				"file_path": "/Users/wust_lh/MobileVC/README.md",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal control_request envelope: %v", err)
+	}
+
+	runner.readClaudeStreamJSON(context.Background(), strings.NewReader(string(envelope)+"\n"), "s-control-payload", sink)
+
+	var promptEvent *protocol.PromptRequestEvent
+	for _, event := range events {
+		if v, ok := event.(protocol.PromptRequestEvent); ok {
+			promptEvent = &v
+			break
+		}
+	}
+	if promptEvent == nil {
+		t.Fatalf("expected prompt request event, got %#v", events)
+	}
+	if promptEvent.Message != "Claude requested permissions to use Edit on /Users/wust_lh/MobileVC/README.md" {
+		t.Fatalf("unexpected prompt message: %q", promptEvent.Message)
+	}
+	if len(promptEvent.Options) != 2 || promptEvent.Options[0] != "y" || promptEvent.Options[1] != "n" {
+		t.Fatalf("unexpected prompt options: %#v", promptEvent.Options)
 	}
 }
 

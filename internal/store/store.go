@@ -98,6 +98,7 @@ type SessionRuntime struct {
 	Engine          string `json:"engine,omitempty"`
 	PermissionMode  string `json:"permissionMode,omitempty"`
 	CWD             string `json:"cwd,omitempty"`
+	ClaudeLifecycle string `json:"claudeLifecycle,omitempty"`
 }
 
 type SessionSummary struct {

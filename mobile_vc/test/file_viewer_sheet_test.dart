@@ -60,6 +60,7 @@ void main() {
       await tester.pumpWidget(
         _buildTestApp(
           pendingInteraction: _permissionInteraction(),
+          shouldShowPermissionChoices: true,
           onSubmitPrompt: (value) => submitted = value,
         ),
       );
@@ -81,6 +82,7 @@ void main() {
       await tester.pumpWidget(
         _buildTestApp(
           pendingInteraction: _permissionInteraction(),
+          shouldShowPermissionChoices: true,
           onSubmitPrompt: (value) => submitted = value,
           onSendFilePrompt: (value) => filePrompt = value,
         ),
@@ -91,6 +93,20 @@ void main() {
 
       expect(submitted, 'n');
       expect(filePrompt, isNull);
+    });
+
+    testWidgets('runtime_phase permission_blocked + prompt-only 权限场景会显示权限栏', (tester) async {
+      await tester.pumpWidget(
+        _buildTestApp(
+          pendingPrompt: _permissionPrompt(),
+          shouldShowPermissionChoices: true,
+        ),
+      );
+
+      expect(find.byKey(const ValueKey('fileViewer.permissionBar')),
+          findsOneWidget);
+      expect(find.text('Claude requested permissions to write to README.md'),
+          findsOneWidget);
     });
 
     testWidgets('review 场景优先显示 review 操作，不被权限栏覆盖', (tester) async {
@@ -122,6 +138,7 @@ void main() {
       await tester.pumpWidget(
         _buildTestApp(
           pendingPrompt: _permissionPrompt(options: const []),
+          shouldShowPermissionChoices: true,
           onSubmitPrompt: (value) => submitted = value,
         ),
       );
@@ -135,22 +152,28 @@ void main() {
       expect(submitted, 'y');
     });
 
-    testWidgets('pendingInteraction permission 下输入走授权提交', (tester) async {
+    testWidgets('pendingInteraction permission 下输入框锁定且发送按钮禁用', (tester) async {
       String? filePrompt;
       String? submittedPrompt;
       await tester.pumpWidget(
         _buildTestApp(
           pendingInteraction: _permissionInteraction(),
+          shouldShowPermissionChoices: true,
           onSendFilePrompt: (value) => filePrompt = value,
           onSubmitPrompt: (value) => submittedPrompt = value,
         ),
       );
 
-      await tester.enterText(find.byType(TextField), 'y');
-      await tester.tap(find.byIcon(Icons.send));
-      await tester.pump();
+      final field = tester.widget<TextField>(find.byType(TextField));
+      final sendButton = tester.widget<IconButton>(
+        find.byKey(const ValueKey('fileViewer.sendButton')),
+      );
 
-      expect(submittedPrompt, 'y');
+      expect(field.enabled, isFalse);
+      expect(field.readOnly, isTrue);
+      expect(field.canRequestFocus, isFalse);
+      expect(sendButton.onPressed, isNull);
+      expect(submittedPrompt, isNull);
       expect(filePrompt, isNull);
     });
 
@@ -173,22 +196,52 @@ void main() {
       expect(submittedPrompt, isNull);
     });
 
-    testWidgets('权限 prompt 下输入走授权提交', (tester) async {
+    testWidgets('普通 file-context prompt 不显示权限栏', (tester) async {
+      await tester.pumpWidget(
+        _buildTestApp(
+          pendingPrompt: PromptRequestEvent(
+            timestamp: DateTime(2026),
+            sessionId: 'session-1',
+            runtimeMeta: const RuntimeMeta(),
+            raw: const {
+              'type': 'prompt_request',
+              'msg': '请选择输出格式',
+            },
+            message: '请选择输出格式',
+            options: const [
+              PromptOption(value: 'markdown'),
+              PromptOption(value: 'json'),
+            ],
+          ),
+        ),
+      );
+
+      expect(find.byKey(const ValueKey('fileViewer.permissionBar')), findsNothing);
+      expect(find.text('请选择输出格式'), findsOneWidget);
+    });
+
+    testWidgets('权限 prompt 下输入框锁定且发送按钮禁用', (tester) async {
       String? filePrompt;
       String? submittedPrompt;
       await tester.pumpWidget(
         _buildTestApp(
           pendingPrompt: _permissionPrompt(),
+          shouldShowPermissionChoices: true,
           onSendFilePrompt: (value) => filePrompt = value,
           onSubmitPrompt: (value) => submittedPrompt = value,
         ),
       );
 
-      await tester.enterText(find.byType(TextField), 'y');
-      await tester.tap(find.byIcon(Icons.send));
-      await tester.pump();
+      final field = tester.widget<TextField>(find.byType(TextField));
+      final sendButton = tester.widget<IconButton>(
+        find.byKey(const ValueKey('fileViewer.sendButton')),
+      );
 
-      expect(submittedPrompt, 'y');
+      expect(field.enabled, isFalse);
+      expect(field.readOnly, isTrue);
+      expect(field.canRequestFocus, isFalse);
+      expect(sendButton.onPressed, isNull);
+      expect(submittedPrompt, isNull);
       expect(filePrompt, isNull);
     });
 

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"embed"
 	"fmt"
+	"io/fs"
 	"mime"
 	"net"
 	"net/http"
@@ -18,7 +20,15 @@ import (
 
 const (
 	appName = "MobileVC"
-	version = "dev"
+)
+
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+
+	//go:embed web/*
+	webAssets embed.FS
 )
 
 func main() {
@@ -27,6 +37,7 @@ func main() {
 
 	logx.Info("bootstrap", "========================================")
 	logx.Info("bootstrap", "%s backend %s", appName, version)
+	logx.Info("bootstrap", "build metadata: commit=%s buildDate=%s", commit, buildDate)
 	logx.Info("bootstrap", "========================================")
 	logx.Info("bootstrap", "Starting %s", appName)
 
@@ -82,12 +93,22 @@ func main() {
 		logx.Info("bootstrap", "TTS handler disabled")
 	}
 
+	staticFS, err := fs.Sub(webAssets, "web")
+	if err != nil {
+		logx.Error("bootstrap", "prepare embedded web assets failed: %v", err)
+		panic(err)
+	}
+
 	logx.Info("bootstrap", "Registering routes")
 	mux := http.NewServeMux()
 	mux.Handle("/ws", wsHandler)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, "{\"version\":%q,\"commit\":%q,\"buildDate\":%q}", version, commit, buildDate)
 	})
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("token") != cfg.AuthToken {
@@ -124,11 +145,11 @@ func main() {
 	if ttsHandler != nil {
 		mux.HandleFunc("/api/tts/synthesize", ttsHandler.HandleSynthesize)
 		mux.HandleFunc("/api/tts/healthz", ttsHandler.HandleHealthz)
-		logx.Info("bootstrap", "Registered routes: /ws, /healthz, /download, /api/tts/synthesize, /api/tts/healthz, /")
+		logx.Info("bootstrap", "Registered routes: /ws, /healthz, /version, /download, /api/tts/synthesize, /api/tts/healthz, /")
 	} else {
-		logx.Info("bootstrap", "Registered routes: /ws, /healthz, /download, /")
+		logx.Info("bootstrap", "Registered routes: /ws, /healthz, /version, /download, /")
 	}
-	mux.Handle("/", http.FileServer(http.Dir("./web")))
+	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	server := &http.Server{
 		Addr:    addr,
@@ -141,7 +162,8 @@ func main() {
 		logx.Error("bootstrap", "HTTP listen failed: %v", err)
 		panic(fmt.Errorf("listen tcp %s: %w", addr, err))
 	}
-	logx.Info("bootstrap", "Ready: addr=%s health=http://localhost%s/healthz ws=ws://localhost%s/ws?token=<redacted> startup=%s",
+	logx.Info("bootstrap", "Ready: addr=%s health=http://localhost%s/healthz version=http://localhost%s/version ws=ws://localhost%s/ws?token=<redacted> startup=%s",
+		addr,
 		addr,
 		addr,
 		addr,

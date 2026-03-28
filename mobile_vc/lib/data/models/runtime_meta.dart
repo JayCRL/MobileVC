@@ -17,6 +17,7 @@ class RuntimeMeta {
     this.engine = '',
     this.cwd = '',
     this.permissionMode = '',
+    this.claudeLifecycle = '',
     this.targetDiff = '',
     this.targetTitle = '',
     this.targetStack = '',
@@ -39,6 +40,7 @@ class RuntimeMeta {
   final String engine;
   final String cwd;
   final String permissionMode;
+  final String claudeLifecycle;
   final String targetDiff;
   final String targetTitle;
   final String targetStack;
@@ -70,6 +72,9 @@ class RuntimeMeta {
       cwd: other.cwd.isNotEmpty ? other.cwd : cwd,
       permissionMode:
           other.permissionMode.isNotEmpty ? other.permissionMode : permissionMode,
+      claudeLifecycle: other.claudeLifecycle.isNotEmpty
+          ? other.claudeLifecycle
+          : claudeLifecycle,
       targetDiff: other.targetDiff.isNotEmpty ? other.targetDiff : targetDiff,
       targetTitle: other.targetTitle.isNotEmpty ? other.targetTitle : targetTitle,
       targetStack: other.targetStack.isNotEmpty ? other.targetStack : targetStack,
@@ -94,6 +99,7 @@ class RuntimeMeta {
         if (engine.isNotEmpty) 'engine': engine,
         if (cwd.isNotEmpty) 'cwd': cwd,
         if (permissionMode.isNotEmpty) 'permissionMode': permissionMode,
+        if (claudeLifecycle.isNotEmpty) 'claudeLifecycle': claudeLifecycle,
         if (targetDiff.isNotEmpty) 'targetDiff': targetDiff,
         if (targetTitle.isNotEmpty) 'targetTitle': targetTitle,
         if (targetStack.isNotEmpty) 'targetStack': targetStack,
@@ -119,6 +125,7 @@ class RuntimeMeta {
       engine: read('engine'),
       cwd: read('cwd'),
       permissionMode: read('permissionMode'),
+      claudeLifecycle: read('claudeLifecycle'),
       targetDiff: read('targetDiff'),
       targetTitle: read('targetTitle'),
       targetStack: read('targetStack'),

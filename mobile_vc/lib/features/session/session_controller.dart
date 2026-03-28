@@ -239,6 +239,7 @@ class SessionController extends ChangeNotifier {
 
   bool get hasPendingPermissionPrompt =>
       pendingInteraction?.isPermission == true ||
+      pendingPrompt?.looksLikePermissionPrompt == true ||
       _runtimePhase?.isPermissionBlocked == true;
   bool get hasPendingPlanPrompt => pendingInteraction?.isPlan == true;
   bool get hasPendingPlanQuestions => _pendingPlanQuestions.isNotEmpty;
@@ -320,6 +321,11 @@ class SessionController extends ChangeNotifier {
   bool get isBypassPermissionsMode =>
       displayPermissionMode == 'bypassPermissions';
   bool get isManualReviewMode => !isAutoAcceptMode;
+
+  bool _reviewShouldAutoAccept(RuntimeMeta meta) {
+    final source = meta.source.trim().toLowerCase();
+    return source == 'review-auto-accepted';
+  }
   bool get shouldShowReviewChoices {
     if (!isManualReviewMode) {
       return false;
@@ -329,7 +335,7 @@ class SessionController extends ChangeNotifier {
     final prompt = pendingPrompt;
     return currentReviewDiff != null &&
         state == 'WAIT_INPUT' &&
-        (interaction?.isReview == true || _looksLikeReviewPrompt(prompt));
+        (interaction?.isReview == true || prompt?.looksLikeReviewPrompt == true);
   }
 
   String _debugReviewStateSummary() {
@@ -489,9 +495,16 @@ class SessionController extends ChangeNotifier {
     if (_isLoadingSession) {
       return false;
     }
-    final command = currentMeta.command.trim().toLowerCase();
-    return command == 'claude' || command.startsWith('claude ');
+    const claudeStates = <String>{
+      'starting',
+      'active',
+      'waiting_input',
+      'resumable',
+    };
+    return claudeStates.contains(currentMeta.claudeLifecycle.trim());
   }
+
+  bool get shouldShowClaudeMode => inClaudeMode;
 
   RuntimeMeta get currentMeta {
     final merged = (_agentState?.runtimeMeta ?? const RuntimeMeta())
@@ -499,10 +512,12 @@ class SessionController extends ChangeNotifier {
         .merge(_currentDiff?.runtimeMeta ?? const RuntimeMeta())
         .merge(_runtimeInfo?.runtimeMeta ?? const RuntimeMeta())
         .merge(_resumeRuntimeMeta);
+    final runtimeCwd = merged.cwd.trim();
+    final targetCwd = runtimeCwd.isNotEmpty ? runtimeCwd : effectiveCwd;
     return merged.merge(
       RuntimeMeta(
         engine: _config.engine,
-        cwd: effectiveCwd,
+        cwd: targetCwd,
         permissionMode: displayPermissionMode,
         targetDiff: _currentDiff?.diff ?? merged.targetDiff,
         targetPath:
@@ -1140,6 +1155,10 @@ class SessionController extends ChangeNotifier {
         skillName: skillName,
       ),
     );
+    if (shouldShowClaudeMode) {
+      _submitClaudeContinuation(value, meta: meta, label: label);
+      return;
+    }
     _startClaudeTurn(value, meta: meta, label: label);
   }
 
@@ -1167,6 +1186,25 @@ class SessionController extends ChangeNotifier {
     if (value.isEmpty) {
       return;
     }
+    _submitClaudeContinuation(value, meta: mergedMeta, label: label);
+  }
+
+  void _submitClaudeContinuation(
+    String prompt, {
+    RuntimeMeta? meta,
+    String label = '回复',
+  }) {
+    final value = prompt.trim();
+    if (value.isEmpty) {
+      return;
+    }
+    final mergedMeta = (meta ?? currentMeta).merge(
+      RuntimeMeta(
+        command: 'claude',
+        cwd: effectiveCwd,
+        permissionMode: _config.permissionMode,
+      ),
+    );
     _pushUser(value, label);
     _service.send({
       'action': 'input',
@@ -1230,6 +1268,10 @@ class SessionController extends ChangeNotifier {
             : currentMeta.targetText,
       ),
     );
+    if (shouldShowClaudeMode) {
+      _submitClaudeContinuation(prompt, meta: meta, label: '文件命令');
+      return;
+    }
     _startClaudeTurn(prompt, meta: meta, label: '文件命令');
   }
 
@@ -1279,13 +1321,13 @@ class SessionController extends ChangeNotifier {
       _handleSlashCommand(value);
       return;
     }
-    if (inClaudeMode) {
+    if (shouldShowClaudeMode) {
       if (isSessionBusy) {
         _pushSystem('session', '当前 Claude 会话仍在处理中，请稍后再试。');
         return;
       }
       _resetActionNeededTracking();
-      _submitAwaitingInput(value, promptLabel: '回复');
+      _submitClaudeContinuation(value, label: '回复');
       return;
     }
     final lower = value.toLowerCase();
@@ -1334,7 +1376,17 @@ class SessionController extends ChangeNotifier {
       _submitInteractionActionValue(interaction, normalized);
       return;
     }
-    if (hasPendingPermissionPrompt) {
+    final prompt = pendingPrompt;
+    if (prompt?.looksLikeReviewPrompt == true) {
+      sendReviewDecision(normalized);
+      return;
+    }
+    if (prompt?.looksLikePermissionPrompt == true || hasPendingPermissionPrompt) {
+      final decision = _normalizePermissionDecision(normalized);
+      if (decision == null) {
+        return;
+      }
+      _sendPermissionDecision(prompt, decision);
       return;
     }
     if (hasPendingPlanQuestions) {
@@ -1418,7 +1470,8 @@ class SessionController extends ChangeNotifier {
       final currentId = currentQuestion.id.trim().isNotEmpty
           ? currentQuestion.id.trim()
           : 'question-${_pendingPlanQuestionIndex + 1}';
-      _pendingPlanAnswers[currentId] = normalized;
+      _pendingPlanAnswers[currentId] =
+          _resolvePlanAnswerLabel(currentQuestion, normalized);
       final nextIndex = _pendingPlanQuestionIndex + 1;
       if (nextIndex < planQuestions.length) {
         _pendingPlanQuestionIndex = nextIndex;
@@ -1475,7 +1528,8 @@ class SessionController extends ChangeNotifier {
       final key = question.id.trim().isNotEmpty
           ? question.id.trim()
           : 'question-${index + 1}';
-      final answer = _pendingPlanAnswers[key] ?? lastDecision;
+      final answer = _pendingPlanAnswers[key] ??
+          _resolvePlanAnswerLabel(question, lastDecision);
       answers[key] = answer;
     }
     final payload = <String, Object?>{
@@ -1491,6 +1545,19 @@ class SessionController extends ChangeNotifier {
       'answers': answers,
     };
     return jsonEncode(payload);
+  }
+
+  String _resolvePlanAnswerLabel(PlanQuestion question, String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return normalized;
+    }
+    for (final option in question.options) {
+      if (option.value.trim() == normalized || option.displayText == normalized) {
+        return option.displayText;
+      }
+    }
+    return normalized;
   }
 
   void _clearPlanInteractionState() {
@@ -1509,10 +1576,14 @@ class SessionController extends ChangeNotifier {
       return;
     }
     if (interaction.isPermission) {
+      final normalizedDecision = _normalizePermissionDecision(decision);
+      if (normalizedDecision == null) {
+        return;
+      }
       _pendingInteraction = null;
       _service.send({
         'action': 'permission_decision',
-        'decision': decision,
+        'decision': normalizedDecision,
         'permissionMode': _currentDecisionPermissionMode,
         'resumeSessionId': interaction.resumeSessionId,
         'targetPath': interaction.targetPath,
@@ -1525,7 +1596,7 @@ class SessionController extends ChangeNotifier {
         'target': currentMeta.target,
         'targetType': currentMeta.targetType,
       });
-      _pushUser('Permission: $decision', promptLabel);
+      _pushUser('Permission: $normalizedDecision', promptLabel);
       return;
     }
     if (interaction.isPlan) {
@@ -1552,6 +1623,10 @@ class SessionController extends ChangeNotifier {
     String decision, {
     String promptLabel = '回复',
   }) {
+    final normalizedDecision = _normalizePermissionDecision(decision);
+    if (normalizedDecision == null) {
+      return;
+    }
     final meta = currentMeta;
     final targetPath = _openedFile?.path.isNotEmpty == true
         ? _openedFile!.path
@@ -1569,7 +1644,7 @@ class SessionController extends ChangeNotifier {
     _runtimePhase = null;
     _service.send({
       'action': 'permission_decision',
-      'decision': decision,
+      'decision': normalizedDecision,
       'permissionMode': _currentDecisionPermissionMode,
       'resumeSessionId': meta.resumeSessionId,
       'targetPath': targetPath,
@@ -1582,9 +1657,47 @@ class SessionController extends ChangeNotifier {
       'target': meta.target,
       'targetType': meta.targetType,
     });
-    _pushUser('Permission: $decision', promptLabel);
+    _pushUser('Permission: $normalizedDecision', promptLabel);
     _syncDerivedState();
     notifyListeners();
+  }
+
+  String? _normalizePermissionDecision(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    const approveValues = <String>{
+      'y',
+      'yes',
+      'allow',
+      'approve',
+      'allowed',
+      'approved',
+      'ok',
+      '允许',
+      '同意',
+    };
+    const denyValues = <String>{
+      'n',
+      'no',
+      'deny',
+      'denied',
+      'reject',
+      'rejected',
+      '拒绝',
+      '取消',
+    };
+    if (approveValues.contains(normalized)) {
+      return 'approve';
+    }
+    if (denyValues.contains(normalized)) {
+      return 'deny';
+    }
+    if (normalized == 'approve' || normalized == 'deny') {
+      return normalized;
+    }
+    return null;
   }
 
   void requestRuntimeInfo(String query) {
@@ -1746,7 +1859,9 @@ class SessionController extends ChangeNotifier {
         if (_matchesPendingSessionTarget(history.summary.id)) {
           _finishSessionLoading(sessionId: history.summary.id);
         }
-        await switchWorkingDirectory(_config.cwd);
+        final restoredCwd = history.resumeRuntimeMeta.cwd.trim();
+        final targetCwd = restoredCwd.isNotEmpty ? restoredCwd : _config.cwd;
+        await switchWorkingDirectory(targetCwd);
         _pushSystem('session',
             '已加载历史会话${history.summary.title.isNotEmpty ? ' · ${history.summary.title}' : ''}');
         break;
@@ -1757,17 +1872,12 @@ class SessionController extends ChangeNotifier {
             _matchesPendingSessionTarget(state.sessionId)) {
           _finishSessionLoading(sessionId: state.sessionId);
         }
-        if (_isIdleLikeState(state.state)) {
-          if (!_shouldPreserveBlockingPrompt()) {
-            _pendingInteraction = null;
-            _pendingPrompt = null;
-            _runtimePhase = null;
-          }
-          if (_agentState != null &&
-              _isIdleLikeState(_agentState!.state) &&
-              !_shouldPreserveBlockingPrompt()) {
-            _agentState = null;
-          }
+        if (_isIdleLikeState(state.state) &&
+            !_shouldPreserveBlockingPrompt()) {
+          _pendingInteraction = null;
+          _pendingPrompt = null;
+          _runtimePhase = null;
+          _agentState = null;
         }
         _connectionMessage =
             state.message.isNotEmpty ? state.message : state.state;
@@ -1797,6 +1907,14 @@ class SessionController extends ChangeNotifier {
         _appendTerminalLog(log.stream, log.message,
             executionId: log.runtimeMeta.executionId);
         _handleLogTimeline(log);
+        if (!_shouldPreserveBlockingPrompt() &&
+            _looksLikeAssistantReply(log.message) &&
+            (_agentState?.state.trim().toUpperCase() == 'THINKING' ||
+                _agentState?.state.trim().toUpperCase() == 'RUNNING_TOOL' ||
+                (_sessionState?.state.trim().toUpperCase() == 'RUNNING' &&
+                    _activityVisible))) {
+          _agentState = null;
+        }
         break;
       case ProgressEvent progress:
         if (progress.message.isNotEmpty && _currentStepSummary.isEmpty) {
@@ -1833,10 +1951,8 @@ class SessionController extends ChangeNotifier {
       case PromptRequestEvent prompt:
         final currentInteraction = _pendingInteraction;
         final currentPrompt = _pendingPrompt;
-        final keepBlockingPrompt = (currentInteraction?.isPermission == true ||
-                currentInteraction?.isReview == true ||
-                _runtimePhase?.isPermissionBlocked == true) &&
-            prompt.message.trim().isEmpty;
+        final keepBlockingPrompt =
+            _shouldKeepExistingBlockingPrompt(prompt, currentInteraction, currentPrompt);
         if (keepBlockingPrompt) {
           _pushDebug('忽略通用继续输入 prompt',
               'incoming=${prompt.message}\n${_debugReviewStateSummary()}');
@@ -1930,6 +2046,7 @@ class SessionController extends ChangeNotifier {
         break;
       case FileDiffEvent diff:
         _currentDiff = diff;
+        final autoAccepted = _reviewShouldAutoAccept(diff.runtimeMeta);
         final historyDiff = HistoryContext(
           id: diff.runtimeMeta.contextId,
           type: 'diff',
@@ -1937,13 +2054,13 @@ class SessionController extends ChangeNotifier {
           title: diff.title,
           diff: diff.diff,
           lang: diff.lang,
-          pendingReview: !isAutoAcceptMode,
+          pendingReview: !autoAccepted,
           source: diff.runtimeMeta.source,
           skillName: diff.runtimeMeta.skillName,
           executionId: diff.runtimeMeta.executionId,
           groupId: diff.runtimeMeta.groupId,
           groupTitle: diff.runtimeMeta.groupTitle,
-          reviewStatus: !isAutoAcceptMode ? 'pending' : 'accepted',
+          reviewStatus: autoAccepted ? 'accepted' : 'pending',
         );
         _mergeRecentDiff(historyDiff);
         _syncReviewGroupsFromRecentDiffs();
@@ -2539,7 +2656,7 @@ class SessionController extends ChangeNotifier {
       path: item.path,
       diff: item.diff,
       lang: item.lang,
-      pendingReview: isAutoAcceptMode ? false : item.pendingReview,
+      pendingReview: item.pendingReview,
       source: item.source,
       skillName: item.skillName,
       executionId: item.executionId,
@@ -2556,7 +2673,7 @@ class SessionController extends ChangeNotifier {
       title: file.title,
       diff: file.diff,
       lang: file.lang,
-      pendingReview: isAutoAcceptMode ? false : file.pendingReview,
+      pendingReview: file.pendingReview,
       reviewStatus: file.reviewStatus,
       executionId: file.executionId,
     );
@@ -2567,11 +2684,11 @@ class SessionController extends ChangeNotifier {
       id: group.id,
       title: group.title,
       executionId: group.executionId,
-      pendingReview: isAutoAcceptMode ? false : group.pendingReview,
+      pendingReview: group.pendingReview,
       reviewStatus: group.reviewStatus,
       currentFileId: group.currentFileId,
       currentPath: group.currentPath,
-      pendingCount: isAutoAcceptMode ? 0 : group.pendingCount,
+      pendingCount: group.pendingCount,
       acceptedCount: group.acceptedCount,
       revertedCount: group.revertedCount,
       revisedCount: group.revisedCount,
@@ -2894,7 +3011,7 @@ class SessionController extends ChangeNotifier {
   HistoryContext? _resolvedCurrentDiff() {
     final diff = _currentDiff;
     if (diff != null && diff.diff.isNotEmpty) {
-      final pending = !isAutoAcceptMode &&
+      final pending =
           (_pendingDiffForContextId(diff.runtimeMeta.contextId) != null ||
               _pendingDiffForPath(diff.path) != null);
       return HistoryContext(
@@ -3072,20 +3189,51 @@ class SessionController extends ChangeNotifier {
         _pendingInteraction?.isReview == true ||
         shouldShowReviewChoices ||
         _pendingInteraction?.isPlan == true ||
+        hasPendingPlanQuestions ||
+        pendingPrompt != null;
+  }
+
+  bool _shouldKeepExistingBlockingPrompt(
+    PromptRequestEvent incoming,
+    InteractionRequestEvent? currentInteraction,
+    PromptRequestEvent? currentPrompt,
+  ) {
+    if (incoming.message.trim().isEmpty) {
+      return currentInteraction?.isPermission == true ||
+          currentInteraction?.isReview == true ||
+          currentInteraction?.isPlan == true ||
+          currentPrompt != null ||
+          _runtimePhase?.isPermissionBlocked == true;
+    }
+    if (!_looksLikeGenericReadyPrompt(incoming)) {
+      return false;
+    }
+    return currentInteraction?.isPermission == true ||
+        currentInteraction?.isReview == true ||
+        currentInteraction?.isPlan == true ||
+        currentPrompt?.looksLikePermissionPrompt == true ||
+        currentPrompt?.looksLikeReviewPrompt == true ||
+        _runtimePhase?.isPermissionBlocked == true ||
         hasPendingPlanQuestions;
   }
 
-  bool _looksLikeReviewPrompt(PromptRequestEvent? prompt) {
+  bool _looksLikeGenericReadyPrompt(PromptRequestEvent? prompt) {
     if (prompt == null) {
       return false;
     }
-    final optionValues = prompt.options
-        .map((option) => option.value.trim().toLowerCase())
-        .where((value) => value.isNotEmpty)
-        .toSet();
-    return optionValues.contains('accept') &&
-        optionValues.contains('revert') &&
-        optionValues.contains('revise');
+    if (prompt.options.isNotEmpty) {
+      return false;
+    }
+    final message = prompt.message.trim().toLowerCase();
+    if (message.isEmpty) {
+      return false;
+    }
+    return message.contains('会话已就绪') ||
+        message.contains('可继续输入') ||
+        message.contains('waiting for input') ||
+        message.contains('continue input') ||
+        message.contains('ready for input') ||
+        message == 'ready';
   }
 
   void _syncRuntimePermissionMode() {

@@ -83,6 +83,8 @@ func (l *Launcher) buildPrompt(def Definition, targetType, targetPath, contextTi
 		return buildStepPrompt(def, targetPath, contextTitle, targetText)
 	case "error":
 		return buildErrorPrompt(def, targetPath, contextTitle, targetText, targetStack)
+	case "context":
+		return buildContextPrompt(def, targetPath, contextTitle, targetText)
 	default:
 		return "", fmt.Errorf("unsupported skill context: %s", targetType)
 	}
@@ -96,6 +98,8 @@ func normalizeContextType(targetType string) string {
 		return "step"
 	case "current-error", "error":
 		return "error"
+	case "current-context", "context":
+		return "context"
 	default:
 		return strings.TrimSpace(targetType)
 	}
@@ -151,6 +155,21 @@ func buildErrorPrompt(def Definition, targetPath, contextTitle, targetText, targ
 	}
 	if stack != "" {
 		prompt += "\n\n错误堆栈：\n```text\n" + stack + "\n```"
+	}
+	return prompt, nil
+}
+
+func buildContextPrompt(def Definition, targetPath, contextTitle, targetText string) (string, error) {
+	prompt := strings.TrimSpace(def.Prompt)
+	if contextTitle != "" {
+		prompt += "\n\n上下文标题：" + contextTitle
+	}
+	if targetPath != "" {
+		prompt += "\n目标路径：" + targetPath
+	}
+	body := strings.TrimSpace(targetText)
+	if body != "" {
+		prompt += "\n\n当前补充上下文：\n" + body
 	}
 	return prompt, nil
 }

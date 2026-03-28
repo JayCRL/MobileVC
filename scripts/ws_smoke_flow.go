@@ -18,10 +18,18 @@ import (
 
 const defaultSmokeTimeout = 8 * time.Minute
 
+type smokeScenario string
+
+const (
+	scenarioFull                 smokeScenario = "full"
+	scenarioPermissionDiffReview smokeScenario = "permission-diff-review"
+)
+
 func main() {
 	var (
-		baseURL = flag.String("url", "", "websocket url")
-		timeout = flag.Duration("timeout", defaultSmokeTimeout, "overall smoke timeout")
+		baseURL  = flag.String("url", "", "websocket url")
+		timeout  = flag.Duration("timeout", defaultSmokeTimeout, "overall smoke timeout")
+		scenario = flag.String("scenario", string(scenarioFull), "smoke scenario: full or permission-diff-review")
 	)
 	flag.Parse()
 
@@ -33,7 +41,7 @@ func main() {
 		wsURL = buildWSURL()
 	}
 
-	if err := runSmoke(ctx, wsURL, os.Stdout); err != nil {
+	if err := runSmoke(ctx, wsURL, smokeScenario(strings.TrimSpace(*scenario)), os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "smoke failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -61,7 +69,7 @@ type smokeRunner struct {
 	ctx        context.Context
 }
 
-func runSmoke(ctx context.Context, wsURL string, out *os.File) error {
+func runSmoke(ctx context.Context, wsURL string, scenario smokeScenario, out *os.File) error {
 	tr := newTranscript(out)
 	tr.section("connect")
 
@@ -91,15 +99,28 @@ func runSmoke(ctx context.Context, wsURL string, out *os.File) error {
 	if err := runner.reviewFlow(fileDiff); err != nil {
 		return err
 	}
-	if err := runner.catalogFlow(); err != nil {
-		return err
-	}
-	if err := runner.finalize(); err != nil {
+	if err := runner.assertHistoryReviewState(); err != nil {
 		return err
 	}
 
+	switch scenario {
+	case "", scenarioFull:
+		if err := runner.catalogFlow(); err != nil {
+			return err
+		}
+		if err := runner.finalize(); err != nil {
+			return err
+		}
+	case scenarioPermissionDiffReview:
+		tr.section("done")
+		tr.line("done scenario=%s", scenarioPermissionDiffReview)
+		return nil
+	default:
+		return fmt.Errorf("unknown smoke scenario %q", scenario)
+	}
+
 	tr.section("done")
-	tr.line("done")
+	tr.line("done scenario=%s", scenarioFull)
 	return nil
 }
 
@@ -200,6 +221,9 @@ func (r *smokeRunner) chatFlow() (eventMap, error) {
 		switch evt.stringField("type") {
 		case protocol.EventTypePromptRequest:
 			msg := strings.ToLower(strings.TrimSpace(evt.stringField("msg")))
+			if strings.Contains(msg, "已就绪") || strings.Contains(msg, "继续输入") {
+				continue
+			}
 			if !strings.Contains(msg, "授权") && !strings.Contains(msg, "权限") && len(evt.stringSlice("options")) == 0 {
 				continue
 			}
@@ -258,6 +282,10 @@ func (r *smokeRunner) chatFlow() (eventMap, error) {
 
 func (r *smokeRunner) reviewFlow(fileDiff eventMap) error {
 	r.transcript.section("review")
+	if err := r.waitForReviewReady(firstNonEmpty(fileDiff.stringField("groupId"), fileDiff.stringField("executionId"), fileDiff.stringField("path"))); err != nil {
+		return err
+	}
+	r.transcript.line("review_ready")
 	if err := r.send(protocol.ReviewDecisionRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "review_decision"},
 		Decision:       "accept",
@@ -272,11 +300,35 @@ func (r *smokeRunner) reviewFlow(fileDiff eventMap) error {
 		return err
 	}
 
-	reviewState, err := r.waitForType(protocol.EventTypeReviewState, 60*time.Second, nil)
+	reviewState, err := r.waitForType(protocol.EventTypeReviewState, 60*time.Second, func(evt eventMap) bool {
+		return evt.arrayLen("groups") > 0
+	})
 	if err != nil {
 		return err
 	}
-	r.transcript.line("review_state groups=%d", reviewState.arrayLen("groups"))
+	if !reviewStateHasAcceptedGroup(reviewState, firstNonEmpty(fileDiff.stringField("groupId"), fileDiff.stringField("executionId"), fileDiff.stringField("path"))) {
+		return fmt.Errorf("review_state did not mark target group accepted: %s", reviewState.compactString())
+	}
+	r.transcript.line("review_state groups=%d accepted", reviewState.arrayLen("groups"))
+	return nil
+}
+
+func (r *smokeRunner) assertHistoryReviewState() error {
+	r.transcript.section("history")
+	if strings.TrimSpace(r.transcript.sessionID) == "" {
+		return errors.New("session id unavailable before history verification")
+	}
+	if err := r.send(protocol.SessionLoadRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_load"}, SessionID: r.transcript.sessionID}); err != nil {
+		return err
+	}
+	history, err := r.waitForType(protocol.EventTypeSessionHistory, 30*time.Second, nil)
+	if err != nil {
+		return err
+	}
+	if history.arrayLen("reviewGroups") == 0 {
+		return fmt.Errorf("expected history review groups after review decision: %s", history.compactString())
+	}
+	r.transcript.line("history review_groups=%d canResume=%v", history.arrayLen("reviewGroups"), history.boolField("canResume"))
 	return nil
 }
 
@@ -431,6 +483,21 @@ func (r *smokeRunner) finalize() error {
 	return nil
 }
 
+func reviewStateHasAcceptedGroup(evt eventMap, targetGroupID string) bool {
+	for _, group := range evt.objectSlice("groups") {
+		groupID := strings.TrimSpace(group.stringField("id"))
+		if strings.TrimSpace(targetGroupID) != "" && groupID != strings.TrimSpace(targetGroupID) {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(group.stringField("reviewStatus")))
+		pending := group.boolField("pendingReview")
+		if status == "accepted" && !pending {
+			return true
+		}
+	}
+	return false
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -440,6 +507,41 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+
+func (r *smokeRunner) waitForReviewReady(targetGroupID string) error {
+	_, err := r.waitForAnyType(90*time.Second, []string{protocol.EventTypeReviewState, protocol.EventTypeAgentState, protocol.EventTypeFileDiff, protocol.EventTypePromptRequest, protocol.EventTypeLog, protocol.EventTypeProgress}, func(evt eventMap) bool {
+		switch evt.stringField("type") {
+		case protocol.EventTypeReviewState:
+			groups := evt.objectSlice("groups")
+			if len(groups) == 0 {
+				return false
+			}
+			for _, group := range groups {
+				groupID := strings.TrimSpace(group.stringField("id"))
+				if strings.TrimSpace(targetGroupID) != "" && groupID != strings.TrimSpace(targetGroupID) {
+					continue
+				}
+				status := strings.ToLower(strings.TrimSpace(group.stringField("reviewStatus")))
+				if group.boolField("pendingReview") || status == "pending" || status == "" {
+					return true
+				}
+			}
+			return false
+		case protocol.EventTypeAgentState:
+			return evt.boolField("awaitInput")
+		case protocol.EventTypePromptRequest:
+			msg := strings.ToLower(strings.TrimSpace(evt.stringField("msg")))
+			return strings.Contains(msg, "accept") || strings.Contains(msg, "revert") || strings.Contains(msg, "审核") || strings.Contains(msg, "review")
+		case protocol.EventTypeLog, protocol.EventTypeProgress:
+			return true
+		case protocol.EventTypeFileDiff:
+			return false
+		default:
+			return false
+		}
+	})
+	return err
+}
 
 func (r *smokeRunner) send(v any) error {
 	payload, err := json.Marshal(v)
@@ -577,6 +679,29 @@ func (e eventMap) stringSlice(key string) []string {
 	result := make([]string, 0, len(items))
 	for _, item := range items {
 		result = append(result, fmt.Sprint(item))
+	}
+	return result
+}
+
+func (e eventMap) objectSlice(key string) []eventMap {
+	if e == nil {
+		return nil
+	}
+	raw, ok := e[key]
+	if !ok {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]eventMap, 0, len(items))
+	for _, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		result = append(result, eventMap(obj))
 	}
 	return result
 }

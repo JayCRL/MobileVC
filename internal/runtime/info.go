@@ -18,6 +18,7 @@ type Snapshot struct {
 	ResumeSessionID           string
 	TemporaryElevated         bool
 	SafePermissionMode        string
+	ClaudeLifecycle           string
 }
 
 var runtimeInfoQueries = map[string]string{

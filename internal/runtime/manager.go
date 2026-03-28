@@ -24,6 +24,46 @@ var ErrResumeConversationNotFound = errors.New("resume conversation not found")
 
 const claudeSessionIDFlag = "--session-id"
 
+func normalizeClaudeLifecycle(value string) string {
+	switch strings.TrimSpace(value) {
+	case "inactive", "starting", "active", "waiting_input", "resumable", "unknown":
+		return strings.TrimSpace(value)
+	default:
+		return ""
+	}
+}
+
+func deriveClaudeLifecycleLocked(activeRunner runner.Runner, meta protocol.RuntimeMeta, activeSession string, resumeSessionID string) string {
+	if lifecycle := normalizeClaudeLifecycle(meta.ClaudeLifecycle); lifecycle != "" {
+		return lifecycle
+	}
+	command := strings.TrimSpace(meta.Command)
+	isClaude := runnerIsClaudeSession(activeRunner, command, command)
+	trimmedResume := strings.TrimSpace(firstNonEmptyRuntimeValue(meta.ResumeSessionID, resumeSessionID))
+	if activeRunner == nil || strings.TrimSpace(activeSession) == "" {
+		if trimmedResume != "" {
+			return "resumable"
+		}
+		if isClaude {
+			return "unknown"
+		}
+		return "inactive"
+	}
+	if !isClaude {
+		if trimmedResume != "" {
+			return "resumable"
+		}
+		return "inactive"
+	}
+	if provider, ok := activeRunner.(runner.InteractiveStateProvider); ok && provider.CanAcceptInteractiveInput() {
+		return "waiting_input"
+	}
+	if trimmedResume != "" {
+		return "active"
+	}
+	return "starting"
+}
+
 type manager struct {
 	mu                 sync.Mutex
 	activeRunner       runner.Runner
@@ -32,10 +72,11 @@ type manager struct {
 	resumeSessionID    string
 	temporaryElevated  bool
 	safePermissionMode string
+	claudeLifecycle    string
 }
 
 func newManager() *manager {
-	return &manager{}
+	return &manager{claudeLifecycle: "inactive"}
 }
 
 func (m *manager) start(sessionID string, run runner.Runner, meta protocol.RuntimeMeta) error {
@@ -53,6 +94,8 @@ func (m *manager) start(sessionID string, run runner.Runner, meta protocol.Runti
 	if mode := strings.TrimSpace(meta.PermissionMode); mode != "" && strings.TrimSpace(m.safePermissionMode) == "" {
 		m.safePermissionMode = mode
 	}
+	m.claudeLifecycle = deriveClaudeLifecycleLocked(run, meta, sessionID, m.resumeSessionID)
+	m.activeMeta.ClaudeLifecycle = m.claudeLifecycle
 	return nil
 }
 
@@ -77,6 +120,11 @@ func (m *manager) finishIfCurrent(run runner.Runner) bool {
 	m.activeRunner = nil
 	m.activeMeta = protocol.RuntimeMeta{}
 	m.activeSession = ""
+	if strings.TrimSpace(m.resumeSessionID) != "" {
+		m.claudeLifecycle = "resumable"
+	} else {
+		m.claudeLifecycle = "inactive"
+	}
 	return true
 }
 
@@ -93,6 +141,8 @@ func (m *manager) updateMeta(fn func(*protocol.RuntimeMeta)) {
 	if resumeSessionID := strings.TrimSpace(m.activeMeta.ResumeSessionID); resumeSessionID != "" {
 		m.resumeSessionID = resumeSessionID
 	}
+	m.claudeLifecycle = deriveClaudeLifecycleLocked(m.activeRunner, m.activeMeta, m.activeSession, m.resumeSessionID)
+	m.activeMeta.ClaudeLifecycle = m.claudeLifecycle
 }
 
 func (m *manager) updateResumeSessionID(sessionID string) {
@@ -101,6 +151,8 @@ func (m *manager) updateResumeSessionID(sessionID string) {
 	if sessionID = strings.TrimSpace(sessionID); sessionID != "" {
 		m.resumeSessionID = sessionID
 		m.activeMeta.ResumeSessionID = sessionID
+		m.claudeLifecycle = deriveClaudeLifecycleLocked(m.activeRunner, m.activeMeta, m.activeSession, m.resumeSessionID)
+		m.activeMeta.ClaudeLifecycle = m.claudeLifecycle
 	}
 }
 
@@ -122,6 +174,11 @@ func (m *manager) closeActive() {
 	m.activeRunner = nil
 	m.activeMeta = protocol.RuntimeMeta{}
 	m.activeSession = ""
+	if strings.TrimSpace(m.resumeSessionID) != "" {
+		m.claudeLifecycle = "resumable"
+	} else {
+		m.claudeLifecycle = "inactive"
+	}
 	m.mu.Unlock()
 	if current != nil {
 		_ = current.Close()
@@ -139,6 +196,9 @@ func (m *manager) snapshot() Snapshot {
 	if strings.TrimSpace(meta.ResumeSessionID) == "" {
 		meta.ResumeSessionID = m.resumeSessionID
 	}
+	lifecycle := deriveClaudeLifecycleLocked(m.activeRunner, meta, m.activeSession, m.resumeSessionID)
+	meta.ClaudeLifecycle = lifecycle
+	m.claudeLifecycle = lifecycle
 	return Snapshot{
 		Running:                   m.activeRunner != nil,
 		CanAcceptInteractiveInput: canAcceptInteractiveInput,
@@ -147,6 +207,7 @@ func (m *manager) snapshot() Snapshot {
 		ResumeSessionID:           m.resumeSessionID,
 		TemporaryElevated:         m.temporaryElevated,
 		SafePermissionMode:        m.safePermissionMode,
+		ClaudeLifecycle:           lifecycle,
 	}
 }
 
@@ -490,6 +551,7 @@ func (s *Service) IsRunning() bool {
 	return s.manager.isRunning()
 }
 
+
 func (s *Service) RuntimeSnapshot() Snapshot {
 	return s.manager.snapshot()
 }
@@ -557,9 +619,15 @@ func (s *Service) prepareExecuteRequest(req ExecuteRequest) ExecuteRequest {
 		prepared.Command = "claude"
 	}
 	prepared.RuntimeMeta = protocol.MergeRuntimeMeta(prepared.RuntimeMeta, protocol.RuntimeMeta{
-		Command:        prepared.Command,
-		CWD:            prepared.CWD,
-		PermissionMode: prepared.PermissionMode,
+		Command:         prepared.Command,
+		CWD:             prepared.CWD,
+		PermissionMode:  prepared.PermissionMode,
+		ClaudeLifecycle: firstNonEmptyRuntimeValue(prepared.RuntimeMeta.ClaudeLifecycle, func() string {
+			if prepared.Mode == runner.ModePTY && runnerIsClaudeSession(nil, prepared.Command, prepared.RuntimeMeta.Command) {
+				return "starting"
+			}
+			return "inactive"
+		}()),
 	})
 	if prepared.Mode != runner.ModePTY || !runnerIsClaudeSession(nil, prepared.Command, prepared.RuntimeMeta.Command) {
 		return prepared

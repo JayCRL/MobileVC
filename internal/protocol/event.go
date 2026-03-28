@@ -50,6 +50,7 @@ type RuntimeMeta struct {
 	Engine          string `json:"engine,omitempty"`
 	CWD             string `json:"cwd,omitempty"`
 	PermissionMode  string `json:"permissionMode,omitempty"`
+	ClaudeLifecycle string `json:"claudeLifecycle,omitempty"`
 }
 
 type Event struct {
@@ -825,6 +826,9 @@ func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
 	}
 	if overlay.PermissionMode != "" {
 		merged.PermissionMode = overlay.PermissionMode
+	}
+	if overlay.ClaudeLifecycle != "" {
+		merged.ClaudeLifecycle = overlay.ClaudeLifecycle
 	}
 	return merged
 }

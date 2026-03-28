@@ -1170,6 +1170,7 @@ func withRuntimeSnapshot(snapshot store.ProjectionSnapshot, svc *runtimepkg.Serv
 		Engine:          firstNonEmptyString(runtimeMeta.Engine, runtimeMeta.SkillName),
 		PermissionMode:  runtimeMeta.PermissionMode,
 		CWD:             runtimeMeta.CWD,
+		ClaudeLifecycle: firstNonEmptyString(controller.ClaudeLifecycle, runtimeMeta.ClaudeLifecycle, svc.RuntimeSnapshot().ClaudeLifecycle),
 	}
 	return snapshot
 }
@@ -1188,6 +1189,7 @@ func toProtocolSummary(item store.SessionSummary) protocol.SessionSummary {
 			Engine:          item.Runtime.Engine,
 			CWD:             item.Runtime.CWD,
 			PermissionMode:  item.Runtime.PermissionMode,
+			ClaudeLifecycle: item.Runtime.ClaudeLifecycle,
 		},
 	}
 }
@@ -1827,6 +1829,7 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 		Engine:          record.Projection.Runtime.Engine,
 		CWD:             record.Projection.Runtime.CWD,
 		PermissionMode:  record.Projection.Runtime.PermissionMode,
+		ClaudeLifecycle: record.Projection.Runtime.ClaudeLifecycle,
 	}
 	canResume := strings.TrimSpace(resumeMeta.ResumeSessionID) != ""
 	return protocol.NewSessionHistoryEvent(
