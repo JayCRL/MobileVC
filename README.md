@@ -234,6 +234,16 @@ flutter run
 
 ## 测试
 
+### Smoke test
+
+Smoke test：`AUTH_TOKEN=test ./scripts/test_smoke_flow.sh`，用于快速验证后端、WebSocket 和会话流是否可用。
+它会连接本地服务并跑一轮最小端到端流程，帮助你确认环境是否正常。
+建议在启动 Go 服务后先跑一次，快速确认 WebSocket、会话流和鉴权都可用。
+
+```bash
+AUTH_TOKEN=test ./scripts/test_smoke_flow.sh
+```
+
 ### Go
 
 ```bash
