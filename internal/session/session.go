@@ -227,7 +227,7 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		if e.ResumeSessionID != "" {
 			c.resumeSession = e.ResumeSessionID
 		}
-		c.claudeLifecycle = firstNonEmpty(normalizeClaudeLifecycle(e.RuntimeMeta.ClaudeLifecycle), "waiting_input")
+		c.claudeLifecycle = "waiting_input"
 		c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
 		return []any{c.newAgentStateEvent(message, true)}
 	case protocol.StepUpdateEvent:
@@ -299,7 +299,11 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 				c.claudeLifecycle = "waiting_input"
 				c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
 			}
-			return []any{c.newAgentStateEvent("AI 会话已就绪，可继续输入", true)}
+			message := e.Message
+			if strings.TrimSpace(message) == "" {
+				message = "等待输入"
+			}
+			return []any{c.newAgentStateEvent(message, true)}
 		}
 		return nil
 	case protocol.SessionStateEvent:

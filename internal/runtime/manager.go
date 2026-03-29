@@ -141,8 +141,7 @@ func (m *manager) updateMeta(fn func(*protocol.RuntimeMeta)) {
 	if resumeSessionID := strings.TrimSpace(m.activeMeta.ResumeSessionID); resumeSessionID != "" {
 		m.resumeSessionID = resumeSessionID
 	}
-	m.claudeLifecycle = deriveClaudeLifecycleLocked(m.activeRunner, m.activeMeta, m.activeSession, m.resumeSessionID)
-	m.activeMeta.ClaudeLifecycle = m.claudeLifecycle
+	m.refreshClaudeLifecycleLocked()
 }
 
 func (m *manager) updateResumeSessionID(sessionID string) {
@@ -151,9 +150,13 @@ func (m *manager) updateResumeSessionID(sessionID string) {
 	if sessionID = strings.TrimSpace(sessionID); sessionID != "" {
 		m.resumeSessionID = sessionID
 		m.activeMeta.ResumeSessionID = sessionID
-		m.claudeLifecycle = deriveClaudeLifecycleLocked(m.activeRunner, m.activeMeta, m.activeSession, m.resumeSessionID)
-		m.activeMeta.ClaudeLifecycle = m.claudeLifecycle
+		m.refreshClaudeLifecycleLocked()
 	}
+}
+
+func (m *manager) refreshClaudeLifecycleLocked() {
+	m.claudeLifecycle = deriveClaudeLifecycleLocked(m.activeRunner, m.activeMeta, m.activeSession, m.resumeSessionID)
+	m.activeMeta.ClaudeLifecycle = m.claudeLifecycle
 }
 
 func (m *manager) setTemporaryElevation(enabled bool, safePermissionMode string) {
@@ -275,12 +278,29 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 					s.manager.updateResumeSessionID(resumeSessionID)
 				}
 			}
-			if meta := extractRuntimeMetaFromEvent(event); strings.TrimSpace(meta.ResumeSessionID) != "" {
-				if resumeSessionID := resolveResumeSessionID(selected, meta, preparedReq.RuntimeMeta); resumeSessionID != "" {
+			incomingMeta := extractRuntimeMetaFromEvent(event)
+			if strings.TrimSpace(incomingMeta.ResumeSessionID) != "" {
+				if resumeSessionID := resolveResumeSessionID(selected, incomingMeta, preparedReq.RuntimeMeta); resumeSessionID != "" {
 					s.manager.updateResumeSessionID(resumeSessionID)
 				}
 			}
-			mappedEvent := protocol.ApplyRuntimeMeta(event, preparedReq.RuntimeMeta)
+			mappedMeta := s.manager.snapshot().ActiveMeta
+			switch event.(type) {
+			case protocol.PromptRequestEvent:
+				mappedMeta.ClaudeLifecycle = "waiting_input"
+			case protocol.StepUpdateEvent, protocol.FileDiffEvent:
+				if runnerIsClaudeSession(selected, preparedReq.Command, mappedMeta.Command, preparedReq.RuntimeMeta.Command) {
+					mappedMeta.ClaudeLifecycle = "active"
+				}
+			case protocol.SessionStateEvent, protocol.LogEvent:
+				if lifecycle := normalizeClaudeLifecycle(incomingMeta.ClaudeLifecycle); lifecycle != "" && lifecycle != "starting" {
+					mappedMeta.ClaudeLifecycle = lifecycle
+				}
+			}
+			s.manager.updateMeta(func(m *protocol.RuntimeMeta) {
+				*m = mappedMeta
+			})
+			mappedEvent := protocol.ApplyRuntimeMeta(event, mappedMeta)
 			emit(mappedEvent)
 			for _, mapped := range s.controller.OnRunnerEvent(mappedEvent) {
 				emit(mapped)
@@ -551,7 +571,6 @@ func (s *Service) IsRunning() bool {
 	return s.manager.isRunning()
 }
 
-
 func (s *Service) RuntimeSnapshot() Snapshot {
 	return s.manager.snapshot()
 }
@@ -619,9 +638,9 @@ func (s *Service) prepareExecuteRequest(req ExecuteRequest) ExecuteRequest {
 		prepared.Command = "claude"
 	}
 	prepared.RuntimeMeta = protocol.MergeRuntimeMeta(prepared.RuntimeMeta, protocol.RuntimeMeta{
-		Command:         prepared.Command,
-		CWD:             prepared.CWD,
-		PermissionMode:  prepared.PermissionMode,
+		Command:        prepared.Command,
+		CWD:            prepared.CWD,
+		PermissionMode: prepared.PermissionMode,
 		ClaudeLifecycle: firstNonEmptyRuntimeValue(prepared.RuntimeMeta.ClaudeLifecycle, func() string {
 			if prepared.Mode == runner.ModePTY && runnerIsClaudeSession(nil, prepared.Command, prepared.RuntimeMeta.Command) {
 				return "starting"

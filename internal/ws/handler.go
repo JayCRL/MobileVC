@@ -1163,6 +1163,11 @@ func withRuntimeSnapshot(snapshot store.ProjectionSnapshot, svc *runtimepkg.Serv
 	}
 	controller := svc.ControllerSnapshot()
 	runtimeMeta := controller.ActiveMeta
+	runtimeSnapshot := svc.RuntimeSnapshot()
+	currentLifecycle := normalizeProjectionLifecycle(
+		firstNonEmptyString(controller.ClaudeLifecycle, runtimeMeta.ClaudeLifecycle, runtimeSnapshot.ClaudeLifecycle),
+		firstNonEmptyString(controller.ResumeSession, runtimeMeta.ResumeSessionID, runtimeSnapshot.ResumeSessionID),
+	)
 	snapshot.Controller = controller
 	snapshot.Runtime = store.SessionRuntime{
 		ResumeSessionID: firstNonEmptyString(controller.ResumeSession, runtimeMeta.ResumeSessionID),
@@ -1170,7 +1175,7 @@ func withRuntimeSnapshot(snapshot store.ProjectionSnapshot, svc *runtimepkg.Serv
 		Engine:          firstNonEmptyString(runtimeMeta.Engine, runtimeMeta.SkillName),
 		PermissionMode:  runtimeMeta.PermissionMode,
 		CWD:             runtimeMeta.CWD,
-		ClaudeLifecycle: firstNonEmptyString(controller.ClaudeLifecycle, runtimeMeta.ClaudeLifecycle, svc.RuntimeSnapshot().ClaudeLifecycle),
+		ClaudeLifecycle: currentLifecycle,
 	}
 	return snapshot
 }
@@ -1795,8 +1800,9 @@ func pickActiveReviewGroup(groups []session.ReviewGroup) *session.ReviewGroup {
 }
 
 func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.SessionHistoryEvent {
-	entries := make([]protocol.HistoryLogEntry, 0, len(record.Projection.LogEntries))
-	for _, entry := range record.Projection.LogEntries {
+	projection := normalizeProjectionSnapshot(record.Projection)
+	entries := make([]protocol.HistoryLogEntry, 0, len(projection.LogEntries))
+	for _, entry := range projection.LogEntries {
 		entries = append(entries, protocol.HistoryLogEntry{
 			Kind:        entry.Kind,
 			Message:     entry.Message,
@@ -1810,8 +1816,8 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 			Context:     toHistoryContext(entry.Context),
 		})
 	}
-	executions := make([]protocol.TerminalExecution, 0, len(record.Projection.TerminalExecutions))
-	for _, item := range record.Projection.TerminalExecutions {
+	executions := make([]protocol.TerminalExecution, 0, len(projection.TerminalExecutions))
+	for _, item := range projection.TerminalExecutions {
 		executions = append(executions, protocol.TerminalExecution{
 			ExecutionID: item.ExecutionID,
 			Command:     item.Command,
@@ -1824,29 +1830,29 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 		})
 	}
 	resumeMeta := protocol.RuntimeMeta{
-		ResumeSessionID: record.Projection.Runtime.ResumeSessionID,
-		Command:         record.Projection.Runtime.Command,
-		Engine:          record.Projection.Runtime.Engine,
-		CWD:             record.Projection.Runtime.CWD,
-		PermissionMode:  record.Projection.Runtime.PermissionMode,
-		ClaudeLifecycle: record.Projection.Runtime.ClaudeLifecycle,
+		ResumeSessionID: projection.Runtime.ResumeSessionID,
+		Command:         projection.Runtime.Command,
+		Engine:          projection.Runtime.Engine,
+		CWD:             projection.Runtime.CWD,
+		PermissionMode:  projection.Runtime.PermissionMode,
+		ClaudeLifecycle: normalizeProjectionLifecycle(projection.Runtime.ClaudeLifecycle, projection.Runtime.ResumeSessionID),
 	}
 	canResume := strings.TrimSpace(resumeMeta.ResumeSessionID) != ""
 	return protocol.NewSessionHistoryEvent(
 		record.Summary.ID,
 		toProtocolSummary(record.Summary),
 		entries,
-		fromDiffContexts(record.Projection.Diffs),
-		fromDiffContext(record.Projection.CurrentDiff),
-		fromReviewGroups(record.Projection.ReviewGroups),
-		fromReviewGroup(record.Projection.ActiveReviewGroup),
-		toHistoryContext(record.Projection.CurrentStep),
-		toHistoryContext(record.Projection.LatestError),
-		record.Projection.RawTerminalByStream,
+		fromDiffContexts(projection.Diffs),
+		fromDiffContext(projection.CurrentDiff),
+		fromReviewGroups(projection.ReviewGroups),
+		fromReviewGroup(projection.ActiveReviewGroup),
+		toHistoryContext(projection.CurrentStep),
+		toHistoryContext(projection.LatestError),
+		projection.RawTerminalByStream,
 		executions,
-		toProtocolSessionContext(record.Projection.SessionContext),
-		toProtocolCatalogMetadata(record.Projection.SkillCatalogMeta),
-		toProtocolCatalogMetadata(record.Projection.MemoryCatalogMeta),
+		toProtocolSessionContext(projection.SessionContext),
+		toProtocolCatalogMetadata(projection.SkillCatalogMeta),
+		toProtocolCatalogMetadata(projection.MemoryCatalogMeta),
 		canResume,
 		resumeMeta,
 	)
@@ -1990,6 +1996,14 @@ func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.Projec
 	if snapshot.Runtime.PermissionMode == "" {
 		snapshot.Runtime.PermissionMode = snapshot.Controller.ActiveMeta.PermissionMode
 	}
+	snapshot.Runtime.ClaudeLifecycle = normalizeProjectionLifecycle(
+		firstNonEmptyString(snapshot.Controller.ClaudeLifecycle, snapshot.Controller.ActiveMeta.ClaudeLifecycle, snapshot.Runtime.ClaudeLifecycle),
+		snapshot.Runtime.ResumeSessionID,
+	)
+	if snapshot.Runtime.ClaudeLifecycle != "" {
+		snapshot.Controller.ClaudeLifecycle = snapshot.Runtime.ClaudeLifecycle
+		snapshot.Controller.ActiveMeta.ClaudeLifecycle = snapshot.Runtime.ClaudeLifecycle
+	}
 	if len(snapshot.SessionContext.EnabledSkillNames) == 0 && len(snapshot.SessionContext.EnabledMemoryIDs) == 0 {
 		snapshot.SessionContext = store.SessionContext{}
 	}
@@ -2008,6 +2022,14 @@ func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.Projec
 		snapshot.CurrentDiff = &activeDiff
 	}
 	return snapshot
+}
+
+func normalizeProjectionLifecycle(lifecycle string, resumeSessionID string) string {
+	normalized := strings.TrimSpace(lifecycle)
+	if normalized == "starting" && strings.TrimSpace(resumeSessionID) != "" {
+		return "resumable"
+	}
+	return normalized
 }
 
 func upsertTerminalExecution(items []store.TerminalExecution, next store.TerminalExecution) []store.TerminalExecution {

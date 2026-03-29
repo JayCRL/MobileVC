@@ -6,6 +6,25 @@ import (
 	"mobilevc/internal/protocol"
 )
 
+func TestControllerPromptEventForcesWaitingInputLifecycle(t *testing.T) {
+	controller := NewController("s1")
+	controller.OnExecStart("claude", protocol.RuntimeMeta{Command: "claude", ClaudeLifecycle: "starting"})
+	events := controller.OnRunnerEvent(protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent("s1", "继续输入", nil),
+		protocol.RuntimeMeta{ClaudeLifecycle: "starting", ResumeSessionID: "resume-1"},
+	))
+	if len(events) != 1 {
+		t.Fatalf("expected one agent state event, got %#v", events)
+	}
+	agent, ok := events[0].(protocol.AgentStateEvent)
+	if !ok {
+		t.Fatalf("expected agent state event, got %#v", events[0])
+	}
+	if agent.RuntimeMeta.ClaudeLifecycle != "waiting_input" {
+		t.Fatalf("expected waiting_input lifecycle, got %#v", agent.RuntimeMeta)
+	}
+}
+
 func TestControllerKeepsRecentDiffContext(t *testing.T) {
 	controller := NewController("s1")
 	controller.OnRunnerEvent(protocol.FileDiffEvent{

@@ -249,6 +249,75 @@ func TestExecuteInjectsManagedSessionIDForFreshClaudeExec(t *testing.T) {
 	}
 }
 
+func TestExecuteClaudeLifecycleTransitionsFromStarting(t *testing.T) {
+	pty := newHotSwapStubRunner("resume-xyz", false)
+	pty.runFn = func(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
+		sink(protocol.NewSessionStateEvent("s1", "active", "command started"))
+		sink(protocol.NewStepUpdateEvent("s1", "Running TodoWrite", "running", "TodoWrite", "TodoWrite", "Running TodoWrite"))
+		pty.interactive = true
+		sink(protocol.NewPromptRequestEvent("s1", "继续输入", nil))
+		return nil
+	}
+	svc := NewService("s1", Dependencies{
+		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewPtyRunner:  func() runner.Runner { return pty },
+	})
+	var events []any
+	if err := svc.Execute(context.Background(), "s1", ExecuteRequest{
+		Command:        "claude",
+		CWD:            "/tmp",
+		Mode:           runner.ModePTY,
+		PermissionMode: "default",
+		RuntimeMeta:    protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default"},
+	}, func(event any) {
+		events = append(events, event)
+	}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	waitSignal(t, pty.started, "runner start")
+	time.Sleep(50 * time.Millisecond)
+
+	seenStarting := false
+	seenActive := false
+	seenWaiting := false
+	for _, event := range events {
+		switch e := event.(type) {
+		case protocol.AgentStateEvent:
+			switch e.State {
+			case "THINKING":
+				if e.RuntimeMeta.ClaudeLifecycle == "starting" {
+					seenStarting = true
+				}
+			case "RUNNING_TOOL":
+				if e.RuntimeMeta.ClaudeLifecycle == "active" {
+					seenActive = true
+				}
+			case "WAIT_INPUT":
+				if e.RuntimeMeta.ClaudeLifecycle == "waiting_input" {
+					seenWaiting = true
+				}
+			}
+		case protocol.StepUpdateEvent:
+			if e.RuntimeMeta.ClaudeLifecycle != "active" {
+				t.Fatalf("expected step update lifecycle active, got %#v", e.RuntimeMeta)
+			}
+		case protocol.PromptRequestEvent:
+			if e.RuntimeMeta.ClaudeLifecycle != "waiting_input" {
+				t.Fatalf("expected prompt lifecycle waiting_input, got %#v", e.RuntimeMeta)
+			}
+		}
+	}
+	if !seenStarting {
+		t.Fatal("expected initial thinking state to remain starting")
+	}
+	if !seenActive {
+		t.Fatal("expected running tool state to become active")
+	}
+	if !seenWaiting {
+		t.Fatal("expected wait input state to become waiting_input")
+	}
+}
+
 func TestHotSwapApproveWithTemporaryElevationRestartsWithResumeAndContinuation(t *testing.T) {
 	first := newHotSwapStubRunner("resume-123", true)
 	second := newHotSwapStubRunner("resume-123", true)

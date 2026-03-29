@@ -745,7 +745,7 @@ func TestPtyRunnerClaudeResumeUsesInteractiveWriter(t *testing.T) {
 	}
 }
 
-func TestPtyRunnerClaudeLazyStartExposesPromptBeforeInput(t *testing.T) {
+func TestPtyRunnerClaudeLazyStartExposesSessionStateBeforeInput(t *testing.T) {
 	runner := NewPtyRunner()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -758,16 +758,27 @@ func TestPtyRunnerClaudeLazyStartExposesPromptBeforeInput(t *testing.T) {
 		})
 	}()
 
-	var sawPrompt bool
 	deadline := time.After(3 * time.Second)
-	for !sawPrompt {
-		select {
-		case event := <-eventsCh:
-			if prompt, ok := event.(protocol.PromptRequestEvent); ok && strings.Contains(prompt.Message, "Claude 会话已就绪") {
-				sawPrompt = true
+	for {
+		runner.mu.Lock()
+		sawWriter := runner.writer != nil && runner.lazyStart && !runner.closed
+		interactive := runner.interactive
+		runner.mu.Unlock()
+		if sawWriter {
+			if interactive {
+				t.Fatal("expected runner to remain non-interactive before first input")
 			}
+			break
+		}
+		select {
+		case <-eventsCh:
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Fatalf("lazy-start runner failed: %v", err)
+			}
+		case <-time.After(20 * time.Millisecond):
 		case <-deadline:
-			t.Fatal("did not receive lazy-start prompt")
+			t.Fatal("did not expose lazy-start input handle")
 		}
 	}
 
@@ -784,7 +795,10 @@ func TestPtyRunnerClaudeLazyStartExposesPromptBeforeInput(t *testing.T) {
 
 	cancel()
 	select {
-	case <-errCh:
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("runner did not exit cleanly: %v", err)
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("runner did not exit after cancel")
 	}

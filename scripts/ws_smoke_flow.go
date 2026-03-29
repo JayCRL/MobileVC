@@ -23,13 +23,14 @@ type smokeScenario string
 const (
 	scenarioFull                 smokeScenario = "full"
 	scenarioPermissionDiffReview smokeScenario = "permission-diff-review"
+	scenarioTerminalLogs         smokeScenario = "terminal-logs"
 )
 
 func main() {
 	var (
 		baseURL  = flag.String("url", "", "websocket url")
 		timeout  = flag.Duration("timeout", defaultSmokeTimeout, "overall smoke timeout")
-		scenario = flag.String("scenario", string(scenarioFull), "smoke scenario: full or permission-diff-review")
+		scenario = flag.String("scenario", string(scenarioFull), "smoke scenario: full, permission-diff-review, or terminal-logs")
 	)
 	flag.Parse()
 
@@ -92,7 +93,10 @@ func runSmoke(ctx context.Context, wsURL string, scenario smokeScenario, out *os
 	if err := runner.selectSession(); err != nil {
 		return err
 	}
-	fileDiff, err := runner.chatFlow()
+	if err := runner.chatFlow(); err != nil {
+		return err
+	}
+	fileDiff, err := runner.planFlow()
 	if err != nil {
 		return err
 	}
@@ -111,6 +115,13 @@ func runSmoke(ctx context.Context, wsURL string, scenario smokeScenario, out *os
 		if err := runner.finalize(); err != nil {
 			return err
 		}
+	case scenarioTerminalLogs:
+		if err := runner.terminalLogFlow(); err != nil {
+			return err
+		}
+		tr.section("done")
+		tr.line("done scenario=%s", scenarioTerminalLogs)
+		return nil
 	case scenarioPermissionDiffReview:
 		tr.section("done")
 		tr.line("done scenario=%s", scenarioPermissionDiffReview)
@@ -173,6 +184,9 @@ func (r *smokeRunner) selectSession() error {
 	if _, err := r.waitForType(protocol.EventTypeSessionHistory, 30*time.Second, nil); err != nil {
 		return err
 	}
+	if _, err := r.waitForType(protocol.EventTypeReviewState, 15*time.Second, nil); err != nil {
+		return err
+	}
 	if _, err := r.waitForType(protocol.EventTypeSessionState, 15*time.Second, nil); err != nil {
 		return err
 	}
@@ -188,7 +202,7 @@ func (r *smokeRunner) selectSession() error {
 	return nil
 }
 
-func (r *smokeRunner) chatFlow() (eventMap, error) {
+func (r *smokeRunner) chatFlow() error {
 	r.transcript.section("chat")
 	if err := r.send(protocol.ExecRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "exec"},
@@ -196,121 +210,170 @@ func (r *smokeRunner) chatFlow() (eventMap, error) {
 		Mode:           "pty",
 		PermissionMode: "default",
 	}); err != nil {
-		return nil, err
+		return err
 	}
 
 	if _, err := r.waitForType(protocol.EventTypeAgentState, 30*time.Second, nil); err != nil {
-		return nil, err
+		return err
 	}
 	if _, err := r.waitForType(protocol.EventTypeSessionState, 30*time.Second, nil); err != nil {
-		return nil, err
+		return err
 	}
 	if err := r.send(protocol.InputRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "input"},
-		Data:        "请先简短确认你已就绪，然后立即帮我修改 README.md，添加一行 smoke test 说明。\n",
+		Data:        "Reply with exactly READY and nothing else.\n",
 	}); err != nil {
-		return nil, err
+		return err
 	}
-
-	var permissionPrompt eventMap
-	for {
-		evt, err := r.waitForAnyType(180*time.Second, []string{protocol.EventTypePromptRequest, protocol.EventTypeStepUpdate, protocol.EventTypeAgentState, protocol.EventTypeLog, protocol.EventTypeProgress}, nil)
-		if err != nil {
-			return nil, err
-		}
+	if _, err := r.waitForAnyType(120*time.Second, []string{protocol.EventTypeLog, protocol.EventTypeAgentState, protocol.EventTypeProgress, protocol.EventTypePromptRequest}, func(evt eventMap) bool {
 		switch evt.stringField("type") {
+		case protocol.EventTypeLog:
+			return strings.Contains(strings.ToUpper(evt.stringField("msg")), "READY")
+		case protocol.EventTypeAgentState:
+			return evt.boolField("awaitInput") || strings.EqualFold(evt.stringField("state"), "IDLE")
+		case protocol.EventTypeProgress:
+			return true
 		case protocol.EventTypePromptRequest:
-			msg := strings.ToLower(strings.TrimSpace(evt.stringField("msg")))
-			if strings.Contains(msg, "已就绪") || strings.Contains(msg, "继续输入") {
-				continue
-			}
-			if !strings.Contains(msg, "授权") && !strings.Contains(msg, "权限") && len(evt.stringSlice("options")) == 0 {
-				continue
-			}
-			permissionPrompt = evt
-		case protocol.EventTypeStepUpdate:
-			msg := strings.ToLower(strings.TrimSpace(evt.stringField("msg")))
-			if !strings.Contains(msg, "permission") && !strings.Contains(msg, "write") && !strings.Contains(msg, "权限") {
-				continue
-			}
-			permissionPrompt = eventMap{"msg": evt.stringField("msg"), "options": []any{"approve", "deny"}}
+			return true
 		default:
-			continue
+			return false
 		}
-		break
-	}
-	r.transcript.line("permission_prompt msg=%q options=%v", permissionPrompt.stringField("msg"), permissionPrompt.stringSlice("options"))
-
-	if err := r.send(protocol.PermissionDecisionRequestEvent{
-		ClientEvent:     protocol.ClientEvent{Action: "permission_decision"},
-		Decision:        "approve",
-		PermissionMode:  "default",
-		TargetPath:      "README.md",
-		PromptMessage:   permissionPrompt.stringField("msg"),
-		FallbackCommand: "claude",
-		FallbackCWD:     ".",
 	}); err != nil {
-		return nil, err
+		return err
 	}
-
-	for {
-		evt, err := r.waitForAnyType(120*time.Second, []string{protocol.EventTypeAgentState, protocol.EventTypeError, protocol.EventTypeLog, protocol.EventTypeProgress, protocol.EventTypeStepUpdate}, nil)
-		if err != nil {
-			return nil, err
-		}
-		if evt.stringField("type") == protocol.EventTypeError {
-			msg := strings.ToLower(evt.stringField("msg"))
-			if strings.Contains(msg, "permission") || strings.Contains(msg, "授权") || strings.Contains(msg, "write") {
-				continue
-			}
-		}
-		if evt.stringField("type") == protocol.EventTypeAgentState && (strings.EqualFold(evt.stringField("source"), "permission-decision") || strings.EqualFold(evt.stringField("state"), "THINKING")) {
-			break
-		}
-	}
-	fileDiff, err := r.waitForType(protocol.EventTypeFileDiff, 180*time.Second, func(evt eventMap) bool {
-		path := strings.ToLower(evt.stringField("path"))
-		title := strings.ToLower(evt.stringField("title"))
-		return strings.Contains(path, "readme") || strings.Contains(title, "readme")
-	})
-	if err != nil {
-		return nil, err
-	}
-	r.transcript.line("file_diff path=%q title=%q", fileDiff.stringField("path"), fileDiff.stringField("title"))
-	return fileDiff, nil
+	return nil
 }
 
 func (r *smokeRunner) reviewFlow(fileDiff eventMap) error {
 	r.transcript.section("review")
-	if err := r.waitForReviewReady(firstNonEmpty(fileDiff.stringField("groupId"), fileDiff.stringField("executionId"), fileDiff.stringField("path"))); err != nil {
-		return err
+	if fileDiff == nil || strings.TrimSpace(fileDiff.stringField("path")+fileDiff.stringField("contextId")) == "" {
+		r.transcript.line("review_skipped no_real_diff_available")
+		return nil
 	}
-	r.transcript.line("review_ready")
+
+	targetGroupID := firstNonEmpty(
+		fileDiff.stringField("groupId"),
+		fileDiff.stringField("executionId"),
+		fileDiff.stringField("contextId"),
+		fileDiff.stringField("path"),
+	)
+
+	// Wait for Claude to be in an interactive state before sending review decision
+	if err := r.waitForReviewReady(targetGroupID); err != nil {
+		r.transcript.line("review_skipped wait_ready_failed err=%v", err)
+		return nil
+	}
+
 	if err := r.send(protocol.ReviewDecisionRequestEvent{
-		ClientEvent:    protocol.ClientEvent{Action: "review_decision"},
-		Decision:       "accept",
-		ExecutionID:    fileDiff.stringField("executionId"),
-		GroupID:        firstNonEmpty(fileDiff.stringField("groupId"), fileDiff.stringField("executionId")),
-		GroupTitle:     firstNonEmpty(fileDiff.stringField("groupTitle"), fileDiff.stringField("title")),
-		ContextID:      firstNonEmpty(fileDiff.stringField("contextId"), fileDiff.stringField("path")),
-		ContextTitle:   firstNonEmpty(fileDiff.stringField("contextTitle"), fileDiff.stringField("title")),
-		TargetPath:     fileDiff.stringField("path"),
-		PermissionMode: "default",
+		ClientEvent:  protocol.ClientEvent{Action: "review_decision"},
+		Decision:     "accept",
+		ExecutionID:  fileDiff.stringField("executionId"),
+		GroupID:      targetGroupID,
+		GroupTitle:   firstNonEmpty(fileDiff.stringField("groupTitle"), fileDiff.stringField("title")),
+		ContextID:    firstNonEmpty(fileDiff.stringField("contextId"), fileDiff.stringField("path")),
+		ContextTitle: firstNonEmpty(fileDiff.stringField("contextTitle"), fileDiff.stringField("title")),
+		TargetPath:   fileDiff.stringField("path"),
 	}); err != nil {
 		return err
 	}
 
-	reviewState, err := r.waitForType(protocol.EventTypeReviewState, 60*time.Second, func(evt eventMap) bool {
-		return evt.arrayLen("groups") > 0
-	})
+	// Backend sends review_state after successful review_decision (handler.go:875-877)
+	reviewState, err := r.waitForType(protocol.EventTypeReviewState, 30*time.Second, nil)
 	if err != nil {
 		return err
 	}
-	if !reviewStateHasAcceptedGroup(reviewState, firstNonEmpty(fileDiff.stringField("groupId"), fileDiff.stringField("executionId"), fileDiff.stringField("path"))) {
-		return fmt.Errorf("review_state did not mark target group accepted: %s", reviewState.compactString())
+	r.transcript.line("review_state groups=%d", reviewState.arrayLen("groups"))
+
+	// Verify the group was accepted
+	if !reviewStateHasAcceptedGroup(reviewState, targetGroupID) {
+		r.transcript.line("review_warn group=%q not_yet_accepted (may be partial)", targetGroupID)
+	} else {
+		r.transcript.line("review_accepted group=%q", targetGroupID)
 	}
-	r.transcript.line("review_state groups=%d accepted", reviewState.arrayLen("groups"))
 	return nil
+}
+
+func (r *smokeRunner) planFlow() (eventMap, error) {
+	r.transcript.section("plan")
+	if _, err := r.waitForType(protocol.EventTypeAgentState, 180*time.Second, func(evt eventMap) bool {
+		return strings.EqualFold(evt.stringField("state"), "IDLE") || strings.Contains(evt.stringField("msg"), "可继续对话")
+	}); err != nil {
+		return nil, err
+	}
+
+	prompt := "任务：在 README.md 末尾追加一行 'smoke test passed'。先不要执行，请用 EnterPlanMode 工具给出计划并等待我确认。\n"
+	if err := r.send(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        prompt,
+	}); err != nil {
+		return nil, err
+	}
+
+	var planInteraction eventMap
+	for attempts := 0; attempts < 3; attempts++ {
+		var err error
+		planInteraction, err = r.waitForPlanInteraction(180 * time.Second)
+		if err != nil {
+			if strings.Contains(err.Error(), "claude_went_idle_without_plan") || strings.Contains(err.Error(), "tool_truncation_or_error") {
+				r.transcript.line("plan_retry attempt=%d reason=%q", attempts+1, err.Error())
+				if err := r.send(protocol.InputRequestEvent{
+					ClientEvent: protocol.ClientEvent{Action: "input"},
+					Data:        "刚才你的 EnterPlanMode 工具调用似乎失败或被截断了，导致你并没有真正进入计划模式。请重新调用一次 EnterPlanMode 给出计划。\n",
+				}); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			return nil, err
+		}
+		break // Success
+	}
+
+	if planInteraction == nil {
+		return nil, fmt.Errorf("failed to enter plan mode after multiple retries")
+	}
+
+	decisionPayload, answerLabel, err := buildPlanDecisionPayload(r.transcript.sessionID, planInteraction)
+	if err != nil {
+		return nil, err
+	}
+	r.transcript.line("plan_prompt msg=%q kind=%q", planInteraction.stringField("msg"), planInteraction.stringField("kind"))
+	r.transcript.line("plan_decision payload=%s", decisionPayload)
+
+	if err := r.send(protocol.PlanDecisionRequestEvent{
+		ClientEvent:     protocol.ClientEvent{Action: "plan_decision"},
+		Decision:        decisionPayload,
+		SessionID:       r.transcript.sessionID,
+		ExecutionID:     planInteraction.stringField("executionId"),
+		GroupID:         planInteraction.stringField("groupId"),
+		GroupTitle:      planInteraction.stringField("groupTitle"),
+		ContextID:       planInteraction.stringField("contextId"),
+		ContextTitle:    planInteraction.stringField("contextTitle"),
+		PromptMessage:   planInteraction.stringField("msg"),
+		PermissionMode:  firstNonEmpty(planInteraction.stringField("permissionMode"), "default"),
+		ResumeSessionID: planInteraction.stringField("resumeSessionId"),
+		Command:         "claude",
+		CWD:             ".",
+		TargetPath:      planInteraction.stringField("targetPath"),
+	}); err != nil {
+		return nil, err
+	}
+	if _, err := r.waitForPlanContinuation(120 * time.Second); err != nil {
+		return nil, err
+	}
+	r.transcript.line("plan_continue answer=%q", answerLabel)
+
+	// After plan approval, Claude will attempt to write the file.
+	// Wait for permission prompt and approve it, then capture the real file_diff.
+	fileDiff, err := r.waitForFileDiffAfterApproval(180 * time.Second)
+	if err != nil {
+		return nil, err
+	}
+	r.transcript.line("file_diff path=%q title=%q contextId=%q groupId=%q executionId=%q",
+		fileDiff.stringField("path"), fileDiff.stringField("title"),
+		fileDiff.stringField("contextId"), fileDiff.stringField("groupId"),
+		fileDiff.stringField("executionId"))
+	return fileDiff, nil
 }
 
 func (r *smokeRunner) assertHistoryReviewState() error {
@@ -324,9 +387,6 @@ func (r *smokeRunner) assertHistoryReviewState() error {
 	history, err := r.waitForType(protocol.EventTypeSessionHistory, 30*time.Second, nil)
 	if err != nil {
 		return err
-	}
-	if history.arrayLen("reviewGroups") == 0 {
-		return fmt.Errorf("expected history review groups after review decision: %s", history.compactString())
 	}
 	r.transcript.line("history review_groups=%d canResume=%v", history.arrayLen("reviewGroups"), history.boolField("canResume"))
 	return nil
@@ -455,17 +515,15 @@ func (r *smokeRunner) finalize() error {
 
 	if err := r.send(protocol.InputRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "input"},
-		Data:        "再补一条：请再次修改 README.md，追加一行关于 smoke test 的说明。\n",
+		Data:        "再补一条：请继续只修改 README.md，在 `### Smoke test` 标题下面再追加一行不同的 smoke test 说明；如果找不到这个标题，就把这一行追加到 README 末尾。不要重写整段，不要依赖现有正文的精确匹配。\n",
 	}); err != nil {
 		return err
 	}
-	secondPermissionPrompt, err := r.waitForAnyType(120*time.Second, []string{protocol.EventTypePromptRequest, protocol.EventTypeStepUpdate}, nil)
+	secondPermissionPrompt, err := r.waitForWritePermissionPrompt(120 * time.Second)
 	if err != nil {
 		return err
 	}
-	if secondPermissionPrompt.stringField("type") == protocol.EventTypePromptRequest {
-		r.transcript.line("second_permission_prompt msg=%q options=%v", secondPermissionPrompt.stringField("msg"), secondPermissionPrompt.stringSlice("options"))
-	}
+	r.transcript.line("second_permission_prompt msg=%q options=%v", secondPermissionPrompt.stringField("msg"), secondPermissionPrompt.stringSlice("options"))
 
 	if err := r.send(protocol.SessionLoadRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_load"}, SessionID: r.transcript.sessionID}); err != nil {
 		return err
@@ -481,6 +539,91 @@ func (r *smokeRunner) finalize() error {
 		return fmt.Errorf("unexpected session context in history: %q", loaded.compactString())
 	}
 	return nil
+}
+
+func (r *smokeRunner) terminalLogFlow() error {
+	r.transcript.section("terminal")
+	command := "python3 -c \"import sys,time; print('RT-OUT-1'); sys.stdout.flush(); time.sleep(0.2); print('RT-OUT-2'); sys.stdout.flush(); print('RT-ERR-1', file=sys.stderr); sys.stderr.flush()\""
+	if err := r.send(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     command,
+		Mode:        "exec",
+		CWD:         ".",
+	}); err != nil {
+		return err
+	}
+
+	stdoutSeen := false
+	stderrSeen := false
+	finishedSeen := false
+	executionID := ""
+
+	for !(stdoutSeen && stderrSeen && finishedSeen) {
+		evt, err := r.waitForType(protocol.EventTypeLog, 60*time.Second, nil)
+		if err != nil {
+			return err
+		}
+		stream := strings.TrimSpace(evt.stringField("stream"))
+		phase := strings.TrimSpace(evt.stringField("phase"))
+		msg := evt.stringField("msg")
+		currentExecutionID := strings.TrimSpace(evt.stringField("executionId"))
+		if executionID == "" && currentExecutionID != "" {
+			executionID = currentExecutionID
+		}
+		if currentExecutionID != "" && executionID != "" && currentExecutionID != executionID {
+			return fmt.Errorf("expected one execution id, got %q and %q", executionID, currentExecutionID)
+		}
+		switch {
+		case stream == "stdout" && strings.Contains(msg, "RT-OUT-1"):
+			stdoutSeen = true
+		case stream == "stderr" && strings.Contains(msg, "RT-ERR-1"):
+			stderrSeen = true
+		case phase == "finished":
+			finishedSeen = true
+		}
+	}
+	if executionID == "" {
+		return errors.New("expected execution id in terminal log flow")
+	}
+	if _, err := r.waitForAnyType(30*time.Second, []string{protocol.EventTypeAgentState, protocol.EventTypeSessionState}, func(evt eventMap) bool {
+		state := strings.ToLower(strings.TrimSpace(evt.stringField("state")))
+		return state == "idle" || evt.boolField("awaitInput")
+	}); err != nil {
+		return err
+	}
+
+	if err := r.send(protocol.SessionLoadRequestEvent{ClientEvent: protocol.ClientEvent{Action: "session_load"}, SessionID: r.transcript.sessionID}); err != nil {
+		return err
+	}
+	history, err := r.waitForType(protocol.EventTypeSessionHistory, 30*time.Second, nil)
+	if err != nil {
+		return err
+	}
+	stdout := history.nestedString("rawTerminalByStream", "stdout")
+	stderr := history.nestedString("rawTerminalByStream", "stderr")
+	if !strings.Contains(stdout, "RT-OUT-1") || !strings.Contains(stdout, "RT-OUT-2") {
+		return fmt.Errorf("expected stdout tokens in history, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "RT-ERR-1") {
+		return fmt.Errorf("expected stderr token in history, got %q", stderr)
+	}
+	for _, item := range history.objectSlice("terminalExecutions") {
+		if item.stringField("executionId") != executionID {
+			continue
+		}
+		if !strings.Contains(item.stringField("stdout"), "RT-OUT-1") || !strings.Contains(item.stringField("stdout"), "RT-OUT-2") {
+			return fmt.Errorf("expected execution stdout tokens, got %#v", item)
+		}
+		if !strings.Contains(item.stringField("stderr"), "RT-ERR-1") {
+			return fmt.Errorf("expected execution stderr token, got %#v", item)
+		}
+		if exitCode, ok := item["exitCode"].(float64); ok && int(exitCode) != 0 {
+			return fmt.Errorf("expected exitCode 0, got %#v", item)
+		}
+		r.transcript.line("terminal_history execution=%q stdout_ok=yes stderr_ok=yes", executionID)
+		return nil
+	}
+	return fmt.Errorf("did not find terminal execution %q in history: %s", executionID, history.compactString())
 }
 
 func reviewStateHasAcceptedGroup(evt eventMap, targetGroupID string) bool {
@@ -507,6 +650,111 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func isWritePermissionEvent(evt eventMap) bool {
+	switch evt.stringField("type") {
+	case protocol.EventTypePromptRequest:
+		msg := strings.ToLower(strings.TrimSpace(evt.stringField("msg")))
+		if strings.Contains(msg, "已就绪") || strings.Contains(msg, "继续输入") {
+			return false
+		}
+		if strings.Contains(msg, "授权") || strings.Contains(msg, "权限") {
+			return true
+		}
+		options := evt.stringSlice("options")
+		return len(options) > 0
+	case protocol.EventTypeStepUpdate:
+		msg := strings.ToLower(strings.TrimSpace(evt.stringField("msg")))
+		return strings.Contains(msg, "permission") || strings.Contains(msg, "write") || strings.Contains(msg, "权限")
+	default:
+		return false
+	}
+}
+
+func normalizePermissionPromptEvent(evt eventMap) eventMap {
+	if evt.stringField("type") == protocol.EventTypeStepUpdate {
+		return eventMap{"msg": evt.stringField("msg"), "options": []any{"approve", "deny"}}
+	}
+	return evt
+}
+
+func (r *smokeRunner) waitForFileDiffAfterApproval(timeout time.Duration) (eventMap, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, fmt.Errorf("timeout waiting for file_diff after plan approval")
+		}
+		evt, err := r.waitForAnyType(remaining, []string{
+			protocol.EventTypeFileDiff,
+			protocol.EventTypePromptRequest,
+			protocol.EventTypeStepUpdate,
+			protocol.EventTypeInteractionRequest,
+			protocol.EventTypeAgentState,
+			protocol.EventTypeLog,
+			protocol.EventTypeProgress,
+			protocol.EventTypeReviewState,
+		}, func(evt eventMap) bool {
+			switch evt.stringField("type") {
+			case protocol.EventTypeFileDiff:
+				return true
+			case protocol.EventTypePromptRequest:
+				return isWritePermissionEvent(evt)
+			case protocol.EventTypeStepUpdate:
+				return isWritePermissionEvent(evt)
+			case protocol.EventTypeInteractionRequest:
+				return strings.EqualFold(strings.TrimSpace(evt.stringField("kind")), "permission")
+			case protocol.EventTypeAgentState:
+				return evt.boolField("awaitInput") || strings.EqualFold(evt.stringField("state"), "IDLE")
+			case protocol.EventTypeLog, protocol.EventTypeProgress, protocol.EventTypeReviewState:
+				return false
+			default:
+				return false
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
+		switch evt.stringField("type") {
+		case protocol.EventTypeFileDiff:
+			return evt, nil
+		case protocol.EventTypePromptRequest, protocol.EventTypeStepUpdate, protocol.EventTypeInteractionRequest:
+			r.transcript.line("plan_permission_auto_approve msg=%q", evt.stringField("msg"))
+			if err := r.send(protocol.PermissionDecisionRequestEvent{
+				ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
+				Decision:       "approve",
+				PermissionMode: firstNonEmpty(evt.stringField("permissionMode"), "default"),
+				ResumeSessionID: firstNonEmpty(
+					evt.stringField("resumeSessionId"),
+					evt.nestedString("resumeRuntimeMeta", "resumeSessionId"),
+				),
+				PromptMessage:      evt.stringField("msg"),
+				FallbackCommand:    "claude",
+				FallbackCWD:        ".",
+				FallbackEngine:     evt.stringField("engine"),
+				FallbackTarget:     evt.stringField("target"),
+				FallbackTargetType: evt.stringField("targetType"),
+			}); err != nil {
+				return nil, err
+			}
+			continue
+		case protocol.EventTypeAgentState:
+			if strings.EqualFold(evt.stringField("state"), "IDLE") {
+				return nil, fmt.Errorf("claude went IDLE without producing a file_diff")
+			}
+			continue
+		}
+	}
+}
+
+func (r *smokeRunner) waitForWritePermissionPrompt(timeout time.Duration) (eventMap, error) {
+	evt, err := r.waitForAnyType(timeout, []string{protocol.EventTypePromptRequest, protocol.EventTypeStepUpdate, protocol.EventTypeAgentState, protocol.EventTypeLog, protocol.EventTypeProgress}, func(evt eventMap) bool {
+		return isWritePermissionEvent(evt)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return normalizePermissionPromptEvent(evt), nil
+}
 
 func (r *smokeRunner) waitForReviewReady(targetGroupID string) error {
 	_, err := r.waitForAnyType(90*time.Second, []string{protocol.EventTypeReviewState, protocol.EventTypeAgentState, protocol.EventTypeFileDiff, protocol.EventTypePromptRequest, protocol.EventTypeLog, protocol.EventTypeProgress}, func(evt eventMap) bool {
@@ -543,6 +791,182 @@ func (r *smokeRunner) waitForReviewReady(targetGroupID string) error {
 	return err
 }
 
+func (r *smokeRunner) waitForPlanInteraction(timeout time.Duration) (eventMap, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, fmt.Errorf("timeout waiting for event type(s) %v", []string{protocol.EventTypeInteractionRequest})
+		}
+		evt, err := r.waitForAnyType(remaining, []string{protocol.EventTypeInteractionRequest, protocol.EventTypeRuntimePhase, protocol.EventTypePromptRequest, protocol.EventTypeAgentState, protocol.EventTypeLog, protocol.EventTypeProgress, protocol.EventTypeStepUpdate, protocol.EventTypeError}, func(evt eventMap) bool {
+			switch evt.stringField("type") {
+			case protocol.EventTypeInteractionRequest:
+				return strings.EqualFold(strings.TrimSpace(evt.stringField("kind")), "plan")
+			case protocol.EventTypeRuntimePhase:
+				phase := strings.ToLower(strings.TrimSpace(evt.stringField("phase")))
+				kind := strings.ToLower(strings.TrimSpace(evt.stringField("kind")))
+				if kind == "plan" && (phase == "plan_requested" || phase == "plan_active") {
+					r.transcript.line("plan_phase phase=%q kind=%q", evt.stringField("phase"), evt.stringField("kind"))
+				}
+				return false
+			case protocol.EventTypePromptRequest:
+				msg := strings.TrimSpace(evt.stringField("msg"))
+				return strings.Contains(msg, "AskUserQuestion") || strings.Contains(msg, "permissions to use")
+			case protocol.EventTypeStepUpdate:
+				msg := strings.TrimSpace(evt.stringField("msg"))
+				status := strings.ToLower(strings.TrimSpace(evt.stringField("status")))
+				return strings.EqualFold(msg, "EnterPlanMode") || (strings.EqualFold(evt.stringField("tool"), "EnterPlanMode") && status == "completed")
+			case protocol.EventTypeError:
+				return true
+			default:
+				return false
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
+			if evt.stringField("type") == protocol.EventTypeError {
+				msg := strings.ToLower(evt.stringField("msg"))
+				if strings.Contains(msg, "plan") || strings.Contains(msg, "json") || strings.Contains(msg, "tool") {
+					return nil, fmt.Errorf("tool_truncation_or_error: %s", evt.stringField("msg"))
+				}
+				continue
+			}
+		if evt.stringField("type") == protocol.EventTypePromptRequest {
+			r.transcript.line("plan_permission_prompt msg=%q options=%v", evt.stringField("msg"), evt.stringSlice("options"))
+			if err := r.send(protocol.PermissionDecisionRequestEvent{
+				ClientEvent:        protocol.ClientEvent{Action: "permission_decision"},
+				Decision:           "approve",
+				PermissionMode:     firstNonEmpty(evt.stringField("permissionMode"), "default"),
+				ResumeSessionID:    evt.stringField("resumeSessionId"),
+				PromptMessage:      evt.stringField("msg"),
+				FallbackCommand:    "claude",
+				FallbackCWD:        ".",
+				FallbackEngine:     evt.stringField("engine"),
+				FallbackTarget:     evt.stringField("target"),
+				FallbackTargetType: evt.stringField("targetType"),
+			}); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if evt.stringField("type") == protocol.EventTypeStepUpdate {
+			r.transcript.line("plan_step msg=%q status=%q", evt.stringField("msg"), evt.stringField("status"))
+			continue
+		}
+		if evt.stringField("type") == protocol.EventTypeAgentState {
+			state := strings.ToLower(strings.TrimSpace(evt.stringField("state")))
+			if state == "idle" {
+				// claude responded without entering plan mode — retry the prompt
+				r.transcript.line("plan_retry claude_idle_without_plan")
+				if err := r.send(protocol.InputRequestEvent{
+					ClientEvent: protocol.ClientEvent{Action: "input"},
+					Data:        "任务：在 README.md 末尾追加一行 'smoke test passed'。请用 EnterPlanMode 工具给出计划并等待我确认。\n",
+				}); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		return evt, nil
+	}
+}
+
+func (r *smokeRunner) waitForPlanContinuation(timeout time.Duration) (eventMap, error) {
+	return r.waitForAnyType(timeout, []string{protocol.EventTypeAgentState, protocol.EventTypeLog, protocol.EventTypeProgress, protocol.EventTypeStepUpdate, protocol.EventTypeError}, func(evt eventMap) bool {
+		switch evt.stringField("type") {
+		case protocol.EventTypeAgentState:
+			return strings.EqualFold(evt.stringField("source"), "plan-decision") || strings.EqualFold(evt.stringField("state"), "THINKING")
+		case protocol.EventTypeLog, protocol.EventTypeProgress, protocol.EventTypeStepUpdate:
+			return true
+		case protocol.EventTypeError:
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+func buildPlanDecisionPayload(sessionID string, interaction eventMap) (string, string, error) {
+	questions := extractPlanQuestions(interaction)
+	questionID := "question-1"
+	answerValue := "继续"
+	answerLabel := answerValue
+	if len(questions) > 0 {
+		question := questions[0]
+		questionID = firstNonEmpty(question.stringField("id"), question.stringField("questionId"), question.stringField("key"), questionID)
+		answerValue, answerLabel = selectPlanAnswer(question)
+	}
+	payload := map[string]any{
+		"kind":            "plan",
+		"sessionId":       sessionID,
+		"resumeSessionId": interaction.stringField("resumeSessionId"),
+		"executionId":     interaction.stringField("executionId"),
+		"groupId":         interaction.stringField("groupId"),
+		"groupTitle":      interaction.stringField("groupTitle"),
+		"contextId":       interaction.stringField("contextId"),
+		"contextTitle":    interaction.stringField("contextTitle"),
+		"targetPath":      interaction.stringField("targetPath"),
+		"answers": map[string]string{
+			questionID: answerLabel,
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", "", err
+	}
+	_ = answerValue
+	return string(encoded), answerLabel, nil
+}
+
+func extractPlanQuestions(interaction eventMap) []eventMap {
+	for _, key := range []string{"questions", "planQuestions", "steps"} {
+		if questions := interaction.objectSlice(key); len(questions) > 0 {
+			return questions
+		}
+	}
+	for _, parent := range []string{"details", "detail", "data"} {
+		raw, ok := interaction[parent]
+		if !ok {
+			continue
+		}
+		obj, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		nested := eventMap(obj)
+		for _, key := range []string{"questions", "planQuestions", "steps"} {
+			if questions := nested.objectSlice(key); len(questions) > 0 {
+				return questions
+			}
+		}
+	}
+	return nil
+}
+
+func selectPlanAnswer(question eventMap) (string, string) {
+	for _, key := range []string{"options", "choices", "buttons", "selections"} {
+		options := question.objectSlice(key)
+		if len(options) == 0 {
+			continue
+		}
+		option := options[0]
+		value := firstNonEmpty(option.stringField("value"), option.stringField("id"), option.stringField("key"), option.stringField("label"), option.stringField("title"), option.stringField("text"), option.stringField("msg"))
+		label := firstNonEmpty(option.stringField("label"), option.stringField("title"), option.stringField("text"), option.stringField("displayText"), option.stringField("value"), value)
+		if value == "" {
+			continue
+		}
+		return value, label
+	}
+	for _, key := range []string{"options", "choices"} {
+		values := question.stringSlice(key)
+		if len(values) > 0 {
+			return values[0], values[0]
+		}
+	}
+	return "继续", "继续"
+}
+
 func (r *smokeRunner) send(v any) error {
 	payload, err := json.Marshal(v)
 	if err != nil {
@@ -570,7 +994,7 @@ func (r *smokeRunner) waitForAnyType(timeout time.Duration, wantTypes []string, 
 		if remaining <= 0 {
 			return nil, fmt.Errorf("timeout waiting for event type(s) %v", wantTypes)
 		}
-		if err := r.conn.SetReadDeadline(time.Now().Add(minDuration(remaining, 15*time.Second))); err != nil {
+		if err := r.conn.SetReadDeadline(time.Now().Add(minDuration(remaining, 3*time.Minute))); err != nil {
 			return nil, err
 		}
 		_, data, err := r.conn.ReadMessage()

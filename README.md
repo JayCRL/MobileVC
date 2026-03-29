@@ -195,6 +195,8 @@ Go 后端通过结构化事件流向前端推送状态，例如：
 
 ### 1. 安装 Node 启动器
 
+> Smoke test：运行 `AUTH_TOKEN=test ./scripts/test_smoke_flow.sh` 可快速验证后端、WebSocket 与会话主链路。
+
 在仓库根目录执行：
 
 ```bash
@@ -223,9 +225,6 @@ mobilevc setup
 mobilevc start
 ```
 
-Smoke test：启动服务后可执行 `AUTH_TOKEN=test ./scripts/test_smoke_flow.sh` 快速自检主链路。
-建议在服务起来后先跑一次，确认后端、WebSocket 与会话链路都正常。
-
 ### 4. 查看状态 / 日志 / 停止
 
 ```bash
@@ -240,8 +239,6 @@ mobilevc stop
 ```bash
 curl http://127.0.0.1:8001/healthz
 ```
-
-Smoke test：`AUTH_TOKEN=test ./scripts/test_smoke_flow.sh`，可快速验证后端、WebSocket 与会话主链路是否正常。
 
 ### 6. 打开 Web 工作台
 
@@ -280,6 +277,14 @@ flutter run
 ## 测试
 
 ### Smoke test
+
+建议优先运行一次 smoke test，先确认本地后端、鉴权和 WebSocket 主链路正常。
+
+运行前请先确认本地 Go 服务已启动且 `AUTH_TOKEN` 与测试命令一致。
+
+可直接运行 `AUTH_TOKEN=test ./scripts/test_smoke_flow.sh` 做一次最小主链路自检。
+
+建议先启动 Go 服务，再运行一次最小主链路自检命令。
 
 Smoke test：`AUTH_TOKEN=test ./scripts/test_smoke_flow.sh`，用于快速验证后端、WebSocket 和会话流是否可用。
 它会连接本地服务并跑一轮最小端到端流程，帮助你确认环境是否正常。
@@ -345,3 +350,4 @@ Not a desktop clone.
 **A phone-first workflow that lets you operate Claude Code on your computer almost entirely from mobile.**
 
 ---
+smoke test passed

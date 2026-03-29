@@ -1260,6 +1260,42 @@ func TestApplyReviewDecisionToProjectionUpdatesReviewState(t *testing.T) {
 	}
 }
 
+func TestWithRuntimeSnapshotPrefersLiveLifecycleOverStaleStarting(t *testing.T) {
+	snapshot := withRuntimeSnapshot(store.ProjectionSnapshot{
+		Controller: session.ControllerSnapshot{
+			SessionID:       "s1",
+			CurrentCommand:  "claude",
+			ResumeSession:   "resume-1",
+			ClaudeLifecycle: "starting",
+			ActiveMeta:      protocol.RuntimeMeta{Command: "claude", ResumeSessionID: "resume-1", ClaudeLifecycle: "starting"},
+		},
+		Runtime: store.SessionRuntime{ResumeSessionID: "resume-1", Command: "claude", ClaudeLifecycle: "starting"},
+	}, nil)
+	if snapshot.Runtime.ClaudeLifecycle != "resumable" {
+		t.Fatalf("expected resumable lifecycle, got %#v", snapshot.Runtime)
+	}
+}
+
+func TestSessionHistoryNormalizesStaleStartingToResumable(t *testing.T) {
+	history := newSessionHistoryEventFromRecord(store.SessionRecord{
+		Summary: store.SessionSummary{ID: "session-1", Title: "history"},
+		Projection: store.ProjectionSnapshot{
+			Controller: session.ControllerSnapshot{
+				SessionID:       "session-1",
+				CurrentCommand:  "claude",
+				ResumeSession:   "resume-1",
+				ClaudeLifecycle: "starting",
+				ActiveMeta:      protocol.RuntimeMeta{Command: "claude", ResumeSessionID: "resume-1", ClaudeLifecycle: "starting"},
+			},
+			Runtime:             store.SessionRuntime{ResumeSessionID: "resume-1", Command: "claude", ClaudeLifecycle: "starting"},
+			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+		},
+	})
+	if history.ResumeRuntimeMeta.ClaudeLifecycle != "resumable" {
+		t.Fatalf("expected resumable lifecycle in history, got %#v", history.ResumeRuntimeMeta)
+	}
+}
+
 func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
 	executionID := "exec-test-1"
 	snapshot := store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
@@ -1273,11 +1309,25 @@ func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
 	if !changed {
 		t.Fatal("expected stdout event to change projection")
 	}
+	snapshot, changed = applyEventToProjection(snapshot, protocol.ApplyRuntimeMeta(protocol.NewExecutionLogEvent("session-1", executionID, "second stdout", "stdout", "stdout", nil), protocol.RuntimeMeta{Command: "echo hello", CWD: "/tmp"}))
+	if !changed {
+		t.Fatal("expected second stdout event to change projection")
+	}
+	snapshot, changed = applyEventToProjection(snapshot, protocol.ApplyRuntimeMeta(protocol.NewExecutionLogEvent("session-1", executionID, "stderr from runner", "stderr", "stderr", nil), protocol.RuntimeMeta{Command: "echo hello", CWD: "/tmp"}))
+	if !changed {
+		t.Fatal("expected stderr event to change projection")
+	}
 	snapshot, changed = applyEventToProjection(snapshot, protocol.ApplyRuntimeMeta(protocol.NewExecutionLogEvent("session-1", executionID, "", "", "finished", intPtr(0)), protocol.RuntimeMeta{Command: "echo hello", CWD: "/tmp"}))
 	if !changed {
 		t.Fatal("expected finished event to change projection")
 	}
 
+	if got := snapshot.RawTerminalByStream["stdout"]; got != "hello from runner\nsecond stdout" {
+		t.Fatalf("expected aggregated stdout stream, got %q", got)
+	}
+	if got := snapshot.RawTerminalByStream["stderr"]; got != "stderr from runner" {
+		t.Fatalf("expected aggregated stderr stream, got %q", got)
+	}
 	if len(snapshot.TerminalExecutions) != 1 {
 		t.Fatalf("expected one terminal execution in snapshot, got %#v", snapshot.TerminalExecutions)
 	}
@@ -1291,8 +1341,11 @@ func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
 	if item.CWD != "/tmp" {
 		t.Fatalf("expected cwd /tmp, got %#v", item)
 	}
-	if item.Stdout != "hello from runner" {
+	if item.Stdout != "hello from runner\nsecond stdout" {
 		t.Fatalf("expected stdout aggregation, got %#v", item)
+	}
+	if item.Stderr != "stderr from runner" {
+		t.Fatalf("expected stderr aggregation, got %#v", item)
 	}
 	if item.ExitCode == nil || *item.ExitCode != 0 {
 		t.Fatalf("expected exitCode 0, got %#v", item)
@@ -1333,6 +1386,12 @@ func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
 	if history.ActiveReviewGroup == nil || history.ActiveReviewGroup.ID != "group-1" {
 		t.Fatalf("expected active review group in history, got %#v", history.ActiveReviewGroup)
 	}
+	if history.RawTerminalByStream["stdout"] != "hello from runner\nsecond stdout" {
+		t.Fatalf("expected history stdout stream, got %#v", history.RawTerminalByStream)
+	}
+	if history.RawTerminalByStream["stderr"] != "stderr from runner" {
+		t.Fatalf("expected history stderr stream, got %#v", history.RawTerminalByStream)
+	}
 	if len(history.TerminalExecutions) != 1 {
 		t.Fatalf("expected one terminal execution in history, got %#v", history.TerminalExecutions)
 	}
@@ -1340,7 +1399,7 @@ func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
 	if historyItem.ExecutionID != executionID {
 		t.Fatalf("expected history execution id %q, got %#v", executionID, historyItem)
 	}
-	if historyItem.Command != "echo hello" || historyItem.CWD != "/tmp" || historyItem.Stdout != "hello from runner" {
+	if historyItem.Command != "echo hello" || historyItem.CWD != "/tmp" || historyItem.Stdout != "hello from runner\nsecond stdout" || historyItem.Stderr != "stderr from runner" {
 		t.Fatalf("unexpected history execution payload: %#v", historyItem)
 	}
 	if historyItem.ExitCode == nil || *historyItem.ExitCode != 0 {
@@ -1541,7 +1600,6 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 		t.Fatalf("expected default permission mode after restore, got %#v", secondRunner.lastReq)
 	}
 }
-
 
 func TestHandlerInputAutoResumesDetachedClaudeSession(t *testing.T) {
 	firstRunner := newStubRunner(protocol.ApplyRuntimeMeta(
@@ -2087,6 +2145,63 @@ func TestHandlerPermissionDecisionDenySendsPromptAsNormalInput(t *testing.T) {
 	case decision := <-ptyRunner.permissionResponseWriteCh:
 		t.Fatalf("unexpected structured deny decision: %q", decision)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestHandlerPlanDecisionWritesDecisionPayloadToRunner(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "Claude 会话已就绪，可继续输入", nil))
+	ptyRunner.claudeSessionID = "resume-plan-123"
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "plan-decision")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	decision := `{"kind":"plan","sessionId":"session-test","answers":{"question-1":"继续"}}`
+	if err := conn.WriteJSON(protocol.PlanDecisionRequestEvent{
+		ClientEvent:     protocol.ClientEvent{Action: "plan_decision"},
+		Decision:        decision,
+		SessionID:       "session-test",
+		ResumeSessionID: "resume-plan-123",
+		ExecutionID:     "exec-plan-1",
+		GroupID:         "group-plan-1",
+		GroupTitle:      "Plan group",
+		ContextID:       "ctx-plan-1",
+		ContextTitle:    "Plan context",
+		PromptMessage:   "请选择下一步",
+		PermissionMode:  "default",
+		Command:         "claude",
+		CWD:             ".",
+		TargetPath:      "README.md",
+	}); err != nil {
+		t.Fatalf("write plan decision request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		if string(payload) != decision+"\n" {
+			t.Fatalf("unexpected plan payload: %q", string(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive plan payload")
 	}
 }
 

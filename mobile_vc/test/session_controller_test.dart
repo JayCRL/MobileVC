@@ -224,7 +224,7 @@ void main() {
       expect(signal.message, 'Claude 正在等待你的回复');
     });
 
-    test('permission prompt 遇到通用 ready prompt 时保持原授权提示', () async {
+    test('permission prompt 遇到普通 WAIT_INPUT 更新时保持原授权提示', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -279,7 +279,7 @@ void main() {
       expect(signal.message, 'Claude 需要你确认权限');
     });
 
-    test('review prompt 不会被通用可继续输入 prompt 覆盖', () async {
+    test('review prompt 不会被普通 WAIT_INPUT 更新覆盖', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -331,24 +331,23 @@ void main() {
       expect(controller.shouldShowReviewChoices, isTrue);
 
       service.emit(
-        PromptRequestEvent(
+        AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
           runtimeMeta: const RuntimeMeta(command: 'claude'),
-          raw: const {'type': 'prompt_request', 'msg': 'AI 会话已就绪，可继续输入'},
-          message: 'AI 会话已就绪，可继续输入',
-          options: const [],
+          raw: const {'type': 'agent_state'},
+          state: 'WAIT_INPUT',
+          message: '等待输入',
+          awaitInput: true,
+          command: 'claude',
         ),
       );
-      await _flushEvents();
-
-      expect(controller.shouldShowReviewChoices, isTrue);
       expect(controller.currentReviewDiff?.path, '/workspace/a.dart');
       final signal = _expectSignal(controller, ActionNeededType.review);
       expect(signal.message, 'Claude 需要你处理代码审核');
     });
 
-    test('普通 prompt 到来时会被后续通用 prompt 覆盖', () async {
+    test('普通 WAIT_INPUT 更新不会覆盖已有普通 prompt', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -370,18 +369,20 @@ void main() {
       expect(controller.pendingPrompt?.message, '请补充上下文');
 
       service.emit(
-        PromptRequestEvent(
+        AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
           runtimeMeta: const RuntimeMeta(command: 'claude'),
-          raw: const {'type': 'prompt_request', 'msg': 'AI 会话已就绪，可继续输入'},
-          message: 'AI 会话已就绪，可继续输入',
-          options: const [],
+          raw: const {'type': 'agent_state'},
+          state: 'WAIT_INPUT',
+          message: '等待输入',
+          awaitInput: true,
+          command: 'claude',
         ),
       );
       await _flushEvents();
 
-      expect(controller.pendingPrompt?.message, 'AI 会话已就绪，可继续输入');
+      expect(controller.pendingPrompt?.message, '请补充上下文');
       final signal = _expectSignal(controller, ActionNeededType.reply);
       expect(signal.message, 'Claude 正在等待你的回复');
     });
@@ -790,13 +791,15 @@ void main() {
       expect(controller.activityVisible, isTrue);
 
       service.emit(
-        PromptRequestEvent(
+        AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
           runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
-          raw: const {'type': 'prompt_request', 'msg': 'Claude 会话已就绪，可继续输入'},
-          message: 'Claude 会话已就绪，可继续输入',
-          options: const [],
+          raw: const {'type': 'agent_state'},
+          state: 'WAIT_INPUT',
+          message: '等待输入',
+          awaitInput: true,
+          command: 'claude',
         ),
       );
       await _flushEvents();
@@ -833,13 +836,15 @@ void main() {
       expect(controller.activityVisible, isTrue);
 
       service.emit(
-        PromptRequestEvent(
+        AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 3)),
           sessionId: 'session-1',
           runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-2'),
-          raw: const {'type': 'prompt_request', 'msg': 'AI 会话已就绪，可继续输入'},
-          message: 'AI 会话已就绪，可继续输入',
-          options: const [],
+          raw: const {'type': 'agent_state'},
+          state: 'WAIT_INPUT',
+          message: '等待输入',
+          awaitInput: true,
+          command: 'claude',
         ),
       );
       await _flushEvents();
@@ -877,13 +882,15 @@ void main() {
       expect(controller.isSessionBusy, isTrue);
 
       service.emit(
-        PromptRequestEvent(
+        AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 5)),
           sessionId: 'session-1',
           runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-3'),
-          raw: const {'type': 'prompt_request', 'msg': 'AI 会话已就绪，可继续输入'},
-          message: 'AI 会话已就绪，可继续输入',
-          options: const [],
+          raw: const {'type': 'agent_state'},
+          state: 'WAIT_INPUT',
+          message: '等待输入',
+          awaitInput: true,
+          command: 'claude',
         ),
       );
       service.emit(
@@ -899,7 +906,7 @@ void main() {
       await _flushEvents();
 
       expect(controller.awaitInput, isTrue);
-      expect(controller.pendingPrompt?.message, 'AI 会话已就绪，可继续输入');
+      expect(controller.pendingPrompt, isNull);
       expect(controller.activityVisible, isFalse);
       expect(controller.isSessionBusy, isFalse);
     });

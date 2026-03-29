@@ -157,7 +157,6 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		defer r.clear()
 
 		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-		sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
@@ -194,7 +193,6 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 	defer r.clear()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 	var readWG sync.WaitGroup
 	readWG.Add(1)
@@ -522,7 +520,6 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	defer stdin.Close()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 	var readWG sync.WaitGroup
 	readWG.Add(2)
@@ -582,7 +579,6 @@ func (r *PtyRunner) runClaudeResumeInteractive(ctx context.Context, req ExecRequ
 	defer r.clear()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-	sendEvent(sink, protocol.NewPromptRequestEvent(req.SessionID, "Claude 会话已就绪，可继续输入", nil))
 
 	var readWG sync.WaitGroup
 	readWG.Add(1)
