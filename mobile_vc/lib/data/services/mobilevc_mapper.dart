@@ -53,6 +53,12 @@ class MobileVcMapper {
         return CatalogSyncStatusEvent.fromJson(json);
       case 'catalog_sync_result':
         return CatalogSyncResultEvent.fromJson(json);
+      case 'adb_devices_result':
+        return AdbDevicesResultEvent.fromJson(json);
+      case 'adb_stream_state':
+        return AdbStreamStateEvent.fromJson(json);
+      case 'adb_frame':
+        return AdbFrameEvent.fromJson(json);
       default:
         return UnknownEvent(
           type: type,

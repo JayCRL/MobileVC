@@ -41,6 +41,46 @@ class SessionSummary {
   }
 }
 
+class AdbDevice {
+  const AdbDevice({
+    this.serial = '',
+    this.state = '',
+    this.model = '',
+    this.product = '',
+    this.deviceName = '',
+    this.transportId = '',
+  });
+
+  final String serial;
+  final String state;
+  final String model;
+  final String product;
+  final String deviceName;
+  final String transportId;
+
+  String get displayLabel {
+    final parts = <String>[
+      if (model.trim().isNotEmpty) model.trim(),
+      if (serial.trim().isNotEmpty) serial.trim(),
+    ];
+    if (parts.isEmpty) {
+      return '未命名设备';
+    }
+    return parts.join(' · ');
+  }
+
+  factory AdbDevice.fromJson(Map<String, dynamic> json) {
+    return AdbDevice(
+      serial: (json['serial'] ?? '').toString(),
+      state: (json['state'] ?? '').toString(),
+      model: (json['model'] ?? '').toString(),
+      product: (json['product'] ?? '').toString(),
+      deviceName: (json['deviceName'] ?? '').toString(),
+      transportId: (json['transportId'] ?? '').toString(),
+    );
+  }
+}
+
 class HistoryContext {
   const HistoryContext({
     this.id = '',

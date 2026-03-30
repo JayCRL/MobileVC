@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/config/app_config.dart';
+import '../../features/adb/adb_debug_sheet.dart';
 import '../../features/chat/chat_timeline.dart';
 import '../../features/chat/command_input_bar.dart';
 import '../../features/diff/diff_viewer_sheet.dart';
@@ -17,7 +18,6 @@ import '../../features/runtime_info/runtime_info_sheet.dart';
 import '../../features/skills/skill_management_sheet.dart';
 import '../../features/status/status_detail_sheet.dart';
 import '../../features/status/terminal_log_sheet.dart';
-import '../../widgets/brand_badge.dart';
 import 'activity_runner_bar.dart';
 import 'session_controller.dart';
 import 'session_list_sheet.dart';
@@ -110,6 +110,14 @@ class _SessionHomePageState extends State<SessionHomePage> {
             ),
           ),
           IconButton(
+            onPressed: () => _openAdbDebug(context),
+            tooltip: 'ADB 调试',
+            icon: Badge(
+              isLabelVisible: controller.adbStreaming,
+              child: const Icon(Icons.phone_android_outlined),
+            ),
+          ),
+          IconButton(
             onPressed: () => _openStatusDetails(context),
             icon: const Icon(Icons.dashboard_outlined),
           ),
@@ -138,8 +146,10 @@ class _SessionHomePageState extends State<SessionHomePage> {
                   ),
                   Expanded(
                     child: (controller.timeline.isEmpty &&
-                            controller.pendingPrompt?.hasVisiblePrompt != true &&
-                            controller.pendingInteraction?.hasVisiblePrompt != true)
+                            controller.pendingPrompt?.hasVisiblePrompt !=
+                                true &&
+                            controller.pendingInteraction?.hasVisiblePrompt !=
+                                true)
                         ? const Center(child: _LandingBrand())
                         : Column(
                             children: [
@@ -564,6 +574,58 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     onSave: controller.saveMemory,
                     onSync: controller.syncMemories,
                     onReviseMemory: controller.reviseMemoryWithClaude,
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openAdbDebug(BuildContext context) async {
+    controller.requestAdbDevices();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return FractionallySizedBox(
+          heightFactor: 0.94,
+          child: ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            child: Material(
+              color: Theme.of(context).colorScheme.surface,
+              child: ListenableBuilder(
+                listenable: controller,
+                builder: (context, _) {
+                  return AdbDebugSheet(
+                    devices: controller.adbDevices,
+                    availableAvds: controller.adbAvailableAvds,
+                    selectedSerial: controller.adbSelectedSerial,
+                    selectedAvd: controller.adbSelectedAvd,
+                    status: controller.adbStatus,
+                    adbAvailable: controller.adbAvailable,
+                    emulatorAvailable: controller.adbEmulatorAvailable,
+                    suggestedAction: controller.adbSuggestedAction,
+                    streaming: controller.adbStreaming,
+                    frameBytes: controller.adbFrameBytes,
+                    frameWidth: controller.adbFrameWidth,
+                    frameHeight: controller.adbFrameHeight,
+                    intervalMs: controller.adbFrameIntervalMs,
+                    onRefreshDevices: controller.requestAdbDevices,
+                    onSelectAvd: controller.selectAdbAvd,
+                    onLaunchEmulator: (avd) =>
+                        controller.launchAdbEmulator(avd: avd),
+                    onStart: (serial) =>
+                        controller.startAdbStream(serial: serial),
+                    onStop: controller.stopAdbStream,
+                    onTapPreview: (x, y, serial) =>
+                        controller.sendAdbTap(x, y, serial: serial),
+                    onIntervalChanged: controller.setAdbFrameIntervalMs,
                   );
                 },
               ),
