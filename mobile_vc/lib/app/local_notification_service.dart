@@ -27,7 +27,7 @@ class FlutterLocalNotificationService implements LocalNotificationService {
   static const AndroidNotificationChannel _channel = AndroidNotificationChannel(
     'mobilevc_action_needed',
     'MobileVC 后台提醒',
-    description: 'Claude 进入等待用户下一步操作时发送提醒',
+    description: 'AI 助手进入等待用户下一步操作时发送提醒',
     importance: Importance.high,
   );
 
