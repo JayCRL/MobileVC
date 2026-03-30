@@ -33,6 +33,8 @@ const (
 	EventTypeADBDevicesResult       = "adb_devices_result"
 	EventTypeADBStreamState         = "adb_stream_state"
 	EventTypeADBFrame               = "adb_frame"
+	EventTypeADBWebRTCAnswer        = "adb_webrtc_answer"
+	EventTypeADBWebRTCState         = "adb_webrtc_state"
 )
 
 type RuntimeMeta struct {
@@ -257,6 +259,17 @@ type ADBTapRequestEvent struct {
 	Y      int    `json:"y"`
 }
 
+type ADBWebRTCOfferRequestEvent struct {
+	ClientEvent
+	Serial string `json:"serial,omitempty"`
+	Type   string `json:"sdpType,omitempty"`
+	SDP    string `json:"sdp,omitempty"`
+}
+
+type ADBWebRTCStopRequestEvent struct {
+	ClientEvent
+}
+
 type RuntimeInfoRequestEvent struct {
 	ClientEvent
 	Query string `json:"query,omitempty"`
@@ -282,11 +295,18 @@ type SlashCommandRequestEvent struct {
 type SessionCreateRequestEvent struct {
 	ClientEvent
 	Title string `json:"title,omitempty"`
+	CWD   string `json:"cwd,omitempty"`
+}
+
+type SessionListRequestEvent struct {
+	ClientEvent
+	CWD string `json:"cwd,omitempty"`
 }
 
 type SessionLoadRequestEvent struct {
 	ClientEvent
 	SessionID string `json:"sessionId"`
+	CWD       string `json:"cwd,omitempty"`
 }
 
 type SessionDeleteRequestEvent struct {
@@ -301,6 +321,8 @@ type SessionSummary struct {
 	UpdatedAt   string      `json:"updatedAt,omitempty"`
 	LastPreview string      `json:"lastPreview,omitempty"`
 	EntryCount  int         `json:"entryCount,omitempty"`
+	Source      string      `json:"source,omitempty"`
+	External    bool        `json:"external,omitempty"`
 	Runtime     RuntimeMeta `json:"runtime,omitempty"`
 }
 
@@ -632,6 +654,23 @@ type ADBFrameEvent struct {
 	Image  string `json:"image,omitempty"`
 }
 
+type ADBWebRTCAnswerEvent struct {
+	Event
+	Serial string `json:"serial,omitempty"`
+	Type   string `json:"sdpType,omitempty"`
+	SDP    string `json:"sdp,omitempty"`
+}
+
+type ADBWebRTCStateEvent struct {
+	Event
+	Running   bool   `json:"running"`
+	Connected bool   `json:"connected"`
+	Serial    string `json:"serial,omitempty"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+	Message   string `json:"msg,omitempty"`
+}
+
 func NewBaseEvent(eventType, sessionID string) Event {
 	return Event{
 		Type:      eventType,
@@ -879,6 +918,27 @@ func NewADBFrameEvent(sessionID, serial, format, image string, width, height, se
 		Height: height,
 		Seq:    seq,
 		Image:  image,
+	}
+}
+
+func NewADBWebRTCAnswerEvent(sessionID, serial, sdpType, sdp string) ADBWebRTCAnswerEvent {
+	return ADBWebRTCAnswerEvent{
+		Event:  NewBaseEvent(EventTypeADBWebRTCAnswer, sessionID),
+		Serial: serial,
+		Type:   sdpType,
+		SDP:    sdp,
+	}
+}
+
+func NewADBWebRTCStateEvent(sessionID string, running, connected bool, serial string, width, height int, message string) ADBWebRTCStateEvent {
+	return ADBWebRTCStateEvent{
+		Event:     NewBaseEvent(EventTypeADBWebRTCState, sessionID),
+		Running:   running,
+		Connected: connected,
+		Serial:    serial,
+		Width:     width,
+		Height:    height,
+		Message:   message,
 	}
 }
 
