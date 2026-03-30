@@ -140,7 +140,7 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
                           ? '还没有可用 skill'
                           : '当前筛选下没有 skill',
                       description: widget.skills.isEmpty
-                          ? '你可以先同步，也可以直接一句话让 Claude 帮你生成新的 skill。'
+                          ? '你可以先同步，也可以直接一句话让 AI 助手帮你生成新的 skill。'
                           : '切换筛选条件，或直接新建一个适合当前任务的 skill。',
                       actionLabel: '一句话生成 skill',
                       onAction: () => _openGenerateSheet(context),
@@ -200,7 +200,7 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
               ),
               const SizedBox(height: 8),
               Text(
-                '描述你想让 Claude 以后反复复用的能力，例如“生成适合移动端 diff 审阅的总结 skill”。',
+                '描述你想让 AI 助手以后反复复用的能力，例如“生成适合移动端 diff 审阅的总结 skill”。',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 12),
@@ -226,7 +226,7 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
                     Navigator.of(context).pop();
                   },
                   icon: const Icon(Icons.auto_awesome),
-                  label: const Text('交给 Claude 生成'),
+                  label: const Text('交给 AI 助手生成'),
                 ),
               ),
             ],
@@ -296,7 +296,7 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
                 enabled: item.editable,
                 decoration: InputDecoration(
                   hintText: item.editable
-                      ? '一句话告诉 Claude 你想怎么修改这个 skill'
+                      ? '一句话告诉 AI 助手你想怎么修改这个 skill'
                       : '该 skill 为只读，不能直接修改',
                 ),
               ),
@@ -327,7 +327,7 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
                               Navigator.of(context).pop();
                             },
                       icon: const Icon(Icons.edit_outlined),
-                      label: const Text('让 Claude 修改'),
+                      label: const Text('让 AI 助手修改'),
                     ),
                   ),
                 ],

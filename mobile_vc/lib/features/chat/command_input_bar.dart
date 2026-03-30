@@ -124,15 +124,15 @@ class _CommandInputBarState extends State<CommandInputBar> {
     final hintText = _inputLocked
         ? _lockedHintText
         : widget.awaitInput
-            ? (widget.showClaudeMode ? '继续回复 Claude' : '继续输入')
+            ? (widget.showClaudeMode ? '继续回复 AI 助手' : '继续输入')
             : widget.hasPendingReview
                 ? '先处理待审核 diff，再继续'
                 : widget.isBusy
                     ? (widget.showClaudeMode
-                        ? 'Claude 正在处理中'
+                        ? 'AI 助手正在处理中'
                         : '当前 shell 会话仍在运行')
-                    : (widget.showClaudeMode ? '给 Claude 发送消息' : '输入命令');
-    final modeLabel = widget.showClaudeMode ? 'Claude' : 'Shell';
+                    : (widget.showClaudeMode ? '给 AI 助手发送消息' : '输入命令');
+    final modeLabel = widget.showClaudeMode ? 'AI' : 'Shell';
     final modeColor = widget.showClaudeMode
         ? scheme.primary
         : scheme.onSurfaceVariant.withValues(alpha: 0.75);
