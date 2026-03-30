@@ -1,0 +1,16 @@
+{
+  "name": "@justprove/mobilevc-server-linux-x64",
+  "version": "0.1.5",
+  "description": "Precompiled MobileVC server binary for linux-x64",
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/",
+    "README.md"
+  ]
+}

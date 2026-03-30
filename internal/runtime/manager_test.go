@@ -587,6 +587,84 @@ func TestHotSwapApproveWithTemporaryElevationDoesNotRequireInteractiveRunner(t *
 	}
 }
 
+func TestExecuteDefaultsToCodexWhenEngineIsCodex(t *testing.T) {
+	pty := newHotSwapStubRunner("", true)
+	svc := NewService("s1", Dependencies{
+		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewPtyRunner:  func() runner.Runner { return pty },
+	})
+	if err := svc.Execute(context.Background(), "s1", ExecuteRequest{
+		Command:        "",
+		CWD:            "/tmp",
+		Mode:           runner.ModePTY,
+		PermissionMode: "default",
+		RuntimeMeta: protocol.RuntimeMeta{
+			Engine:         "codex",
+			CWD:            "/tmp",
+			PermissionMode: "default",
+		},
+	}, func(any) {}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	waitSignal(t, pty.started, "codex runner start")
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(pty.lastReq.Command)), "codex") {
+		t.Fatalf("expected codex command, got %q", pty.lastReq.Command)
+	}
+	if strings.Contains(pty.lastReq.Command, "--session-id") {
+		t.Fatalf("did not expect claude managed session id on codex command, got %q", pty.lastReq.Command)
+	}
+}
+
+func TestRunnerIsClaudeSessionSupportsCodexCommand(t *testing.T) {
+	if !runnerIsClaudeSession(nil, "codex --help") {
+		t.Fatal("expected codex command to be treated as AI session command")
+	}
+}
+
+func TestEnsureResumeCommandUsesCodexResumeSubcommand(t *testing.T) {
+	got := ensureResumeCommand("codex -m gpt-5", "session-xyz")
+	if got != "codex resume session-xyz -m gpt-5" {
+		t.Fatalf("unexpected codex resume command: %q", got)
+	}
+	if strings.Contains(strings.ToLower(got), "--resume") {
+		t.Fatalf("did not expect claude-style --resume flag in codex command: %q", got)
+	}
+}
+
+func TestBuildDetachedHotSwapStreamRequestForCodexDoesNotAppendClaudeFlags(t *testing.T) {
+	svc := NewService("s1", Dependencies{
+		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewPtyRunner:  func() runner.Runner { return newHotSwapStubRunner("", true) },
+	})
+	svc.manager.updateResumeSessionID("resume-codex-123")
+	req, safeMode, err := svc.buildDetachedHotSwapStreamRequest(ExecuteRequest{
+		Command:        "codex -m gpt-5",
+		CWD:            "/tmp",
+		Mode:           runner.ModePTY,
+		PermissionMode: "default",
+		RuntimeMeta: protocol.RuntimeMeta{
+			Command:         "codex -m gpt-5",
+			Engine:          "codex",
+			CWD:             "/tmp",
+			ResumeSessionID: "resume-codex-123",
+			PermissionMode:  "default",
+		},
+	}, "acceptEdits")
+	if err != nil {
+		t.Fatalf("buildDetachedHotSwapStreamRequest: %v", err)
+	}
+	if safeMode != "default" {
+		t.Fatalf("expected default safe permission mode, got %q", safeMode)
+	}
+	lower := strings.ToLower(req.Command)
+	if !strings.HasPrefix(lower, "codex resume resume-codex-123") {
+		t.Fatalf("expected codex resume command, got %q", req.Command)
+	}
+	if strings.Contains(lower, "--print") || strings.Contains(lower, "--input-format") || strings.Contains(lower, "--output-format") || strings.Contains(lower, "--permission-prompt-tool") {
+		t.Fatalf("did not expect claude stream flags on codex command, got %q", req.Command)
+	}
+}
+
 func TestRestoreSafePermissionModeBeforeInputPropagatesWriteFailure(t *testing.T) {
 	first := newHotSwapStubRunner("resume-456", true)
 	second := newHotSwapStubRunner("resume-456", true)

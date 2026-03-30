@@ -2097,6 +2097,59 @@ func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
 	}
 }
 
+func TestHandlerPermissionDecisionApproveForCodexUsesDirectPermissionResponse(t *testing.T) {
+	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "需要权限确认", []string{"approve", "deny"}))
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	runnerIndex := 0
+	h.NewPtyRunner = func() runner.Runner {
+		runnerIndex++
+		return firstRunner
+	}
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-approve-codex")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "codex",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:     protocol.ClientEvent{Action: "permission_decision"},
+		Decision:        "approve",
+		PermissionMode:  "default",
+		PromptMessage:   "需要权限确认",
+		FallbackCommand: "codex",
+		FallbackEngine:  "codex",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	select {
+	case decision := <-firstRunner.permissionResponseWriteCh:
+		if decision != "approve" {
+			t.Fatalf("unexpected permission response: %q", decision)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive direct codex permission response")
+	}
+	if runnerIndex != 1 {
+		t.Fatalf("expected no hot swap runner restart for codex, got runner count=%d", runnerIndex)
+	}
+}
+
 func TestHandlerPermissionDecisionDenySendsPromptAsNormalInput(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
 	ptyRunner.claudeSessionID = "resume-deny-123"

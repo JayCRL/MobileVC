@@ -109,7 +109,12 @@ class _CommandInputBarState extends State<CommandInputBar> {
 
   bool _shouldKeepKeyboard(String value) {
     final lower = value.trim().toLowerCase();
-    return lower == 'claude' || lower.startsWith('claude ');
+    return lower == 'claude' ||
+        lower.startsWith('claude ') ||
+        lower == 'codex' ||
+        lower.startsWith('codex ') ||
+        lower == 'gemini' ||
+        lower.startsWith('gemini ');
   }
 
   @override
@@ -123,7 +128,9 @@ class _CommandInputBarState extends State<CommandInputBar> {
             : widget.hasPendingReview
                 ? '先处理待审核 diff，再继续'
                 : widget.isBusy
-                    ? (widget.showClaudeMode ? 'Claude 正在处理中' : '当前 shell 会话仍在运行')
+                    ? (widget.showClaudeMode
+                        ? 'Claude 正在处理中'
+                        : '当前 shell 会话仍在运行')
                     : (widget.showClaudeMode ? '给 Claude 发送消息' : '输入命令');
     final modeLabel = widget.showClaudeMode ? 'Claude' : 'Shell';
     final modeColor = widget.showClaudeMode
@@ -190,7 +197,8 @@ class _CommandInputBarState extends State<CommandInputBar> {
                             color: const Color(0xFFF7F8FC),
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
-                              color: scheme.outlineVariant.withValues(alpha: 0.4),
+                              color:
+                                  scheme.outlineVariant.withValues(alpha: 0.4),
                             ),
                           ),
                           child: Padding(
@@ -281,12 +289,14 @@ class _CommandInputBarState extends State<CommandInputBar> {
                           minLines: 1,
                           maxLines: 6,
                           textInputAction: TextInputAction.send,
-                          onTap: _inputLocked ? () => _focusNode.unfocus() : null,
+                          onTap:
+                              _inputLocked ? () => _focusNode.unfocus() : null,
                           onSubmitted: _inputLocked ? null : (_) => _submit(),
                           textAlignVertical: TextAlignVertical.center,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                height: 1.45,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    height: 1.45,
+                                  ),
                           decoration: InputDecoration(
                             hintText: hintText,
                             hintStyle: Theme.of(context)

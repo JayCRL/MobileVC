@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+export AUTH_TOKEN="${AUTH_TOKEN:-test}"
+export PORT="${PORT:-8001}"
+
+echo "[test] backend core flow"
+go test ./internal/ws -run 'TestHandler(SkillCatalogLifecycle|MemorySyncPullEmitsCatalogLifecycle|PermissionDecisionApproveTriggersHotSwap|PermissionDecisionDenySendsPromptAsNormalInput|PermissionDecisionWithoutRunnerReturnsError|PermissionDecisionWithManagedFreshClaudeSessionCanHotSwap|PermissionDecisionWithoutHotSwapSupportReturnsError|PermissionDecisionApproveResumesAfterRunnerEnded|PermissionDecisionWithNonInteractiveRunnerStillHotSwaps|ReviewDecisionSendsPromptToRunner|ReviewDecisionUpdatesProjectionAndReviewState|ReviewDecisionWithoutRunner|ReviewDecisionAcceptAllowedInDefaultMode|CatalogAuthoringSkillAutoUpsertsAndEmitsCatalog|CatalogAuthoringMemoryAutoUpsertsAndEmitsCatalog|ExecuteSkillRequestUsesSendInputWhenRunnerActive|ExecuteSkillRequestWithoutRunnerExecutesNormally|HandleSlashCommandSkillLauncherNil|MemoryListAndUpsert)'
+

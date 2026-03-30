@@ -96,10 +96,12 @@ func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protoco
 			resolvedCWD = "."
 		}
 		claudePath, claudeErr := exec.LookPath("claude")
+		codexPath, codexErr := exec.LookPath("codex")
 		ghPath, ghErr := exec.LookPath("gh")
 		items := []protocol.RuntimeInfoItem{
 			{Label: "cwd_exists", Value: resolvedCWD, Available: pathExists(resolvedCWD), Status: availabilityStatus(pathExists(resolvedCWD)), Detail: cwdDetail(resolvedCWD)},
 			{Label: "claude_cli", Value: fallbackValue(claudePath, "not found"), Available: claudeErr == nil, Status: availabilityStatus(claudeErr == nil), Detail: doctorDetail(claudeErr)},
+			{Label: "codex_cli", Value: fallbackValue(codexPath, "not found"), Available: codexErr == nil, Status: availabilityStatus(codexErr == nil), Detail: doctorDetail(codexErr)},
 			{Label: "gh_cli", Value: fallbackValue(ghPath, "not found"), Available: ghErr == nil, Status: availabilityStatus(ghErr == nil), Detail: doctorDetail(ghErr)},
 			{Label: "ws_session", Value: fallbackValue(sessionID, "(none)"), Available: sessionID != "", Status: availabilityStatus(sessionID != "")},
 			{Label: "active_runner", Value: ternary(snapshot.Running, "running", "idle"), Available: true, Status: ternary(snapshot.Running, "active", "ready")},
@@ -111,6 +113,16 @@ func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protoco
 }
 
 func detectModelValue(meta protocol.RuntimeMeta) string {
+	commandHead := ""
+	if fields := strings.Fields(strings.TrimSpace(meta.Command)); len(fields) > 0 {
+		commandHead = strings.ToLower(fields[0])
+	}
+	if commandHead == "codex" || strings.HasSuffix(commandHead, "/codex") || strings.HasSuffix(commandHead, `\\codex`) || commandHead == "codex.exe" {
+		return "codex"
+	}
+	if strings.TrimSpace(meta.Engine) == "codex" {
+		return "codex"
+	}
 	if strings.TrimSpace(meta.Source) == "skill-center" {
 		return "claude (via skill-center)"
 	}

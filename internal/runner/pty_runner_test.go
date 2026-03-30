@@ -91,6 +91,80 @@ func TestPtyRunnerPromptAndInput(t *testing.T) {
 	}
 }
 
+func TestPtyRunnerTextPermissionPromptSupportsPermissionDecision(t *testing.T) {
+	runner := NewPtyRunner()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	eventsCh := make(chan any, 32)
+	runErrCh := make(chan error, 1)
+
+	go func() {
+		runErrCh <- runner.Run(ctx, ExecRequest{
+			SessionID: "s-text-permission",
+			Command: shellTestCommand(
+				"printf 'Need permission to write README.md [y/N]'; read ans; printf 'ans:%s\\n' \"$ans\"",
+				"Write-Host -NoNewline 'Need permission to write README.md [y/N]'; $ans = Read-Host; Write-Output ('ans:' + $ans)",
+				"set /p ans=Need permission to write README.md [y/N] & echo ans:%ans%",
+			),
+			Mode: ModePTY,
+		}, func(event any) {
+			eventsCh <- event
+		})
+	}()
+
+	var sawPrompt bool
+	deadline := time.After(5 * time.Second)
+	for !sawPrompt {
+		select {
+		case event := <-eventsCh:
+			prompt, ok := event.(protocol.PromptRequestEvent)
+			if ok && strings.Contains(strings.ToLower(prompt.Message), "permission") {
+				sawPrompt = true
+			}
+		case err := <-runErrCh:
+			if err != nil {
+				t.Fatalf("pty run failed before prompt: %v", err)
+			}
+		case <-deadline:
+			t.Fatal("did not receive permission prompt event")
+		}
+	}
+
+	if !runner.HasPendingPermissionRequest() {
+		t.Fatal("expected pending permission request for text prompt")
+	}
+
+	if err := runner.WritePermissionResponse(context.Background(), "approve"); err != nil {
+		t.Fatalf("write permission response: %v", err)
+	}
+
+	var sawAnswer bool
+	var sawClosed bool
+	deadline = time.After(5 * time.Second)
+	for !(sawAnswer && sawClosed) {
+		select {
+		case event := <-eventsCh:
+			switch v := event.(type) {
+			case protocol.LogEvent:
+				if strings.Contains(v.Message, "ans:y") {
+					sawAnswer = true
+				}
+			case protocol.SessionStateEvent:
+				if v.State == "closed" {
+					sawClosed = true
+				}
+			}
+		case err := <-runErrCh:
+			if err != nil {
+				t.Fatalf("pty run failed: %v", err)
+			}
+		case <-deadline:
+			t.Fatalf("missing answer=%v closed=%v", sawAnswer, sawClosed)
+		}
+	}
+}
+
 func TestPtyRunnerEmitsCarriageReturnUpdates(t *testing.T) {
 	runner := NewPtyRunner()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -486,6 +560,21 @@ func TestPtyRunnerWritePermissionResponseWithoutPendingIDReturnsError(t *testing
 	}
 }
 
+func TestResolveTextPermissionDecisionTokenUsesOptionOrder(t *testing.T) {
+	if got := resolveTextPermissionDecisionToken("approve", []string{"yes", "no"}); got != "yes" {
+		t.Fatalf("expected approve to map first option, got %q", got)
+	}
+	if got := resolveTextPermissionDecisionToken("deny", []string{"yes", "no"}); got != "no" {
+		t.Fatalf("expected deny to map last option, got %q", got)
+	}
+	if got := resolveTextPermissionDecisionToken("approve", nil); got != "y" {
+		t.Fatalf("expected fallback approve token y, got %q", got)
+	}
+	if got := resolveTextPermissionDecisionToken("deny", nil); got != "n" {
+		t.Fatalf("expected fallback deny token n, got %q", got)
+	}
+}
+
 func TestPtyRunnerSuppressesDuplicateResultAfterAssistantText(t *testing.T) {
 	runner := NewPtyRunner()
 	var events []any
@@ -505,9 +594,9 @@ func TestPtyRunnerSuppressesDuplicateResultAfterAssistantText(t *testing.T) {
 		t.Fatalf("marshal assistant envelope: %v", err)
 	}
 	resultEnvelope, err := json.Marshal(map[string]any{
-		"type":       "result",
-		"session_id": "resume-dedup-1",
-		"result":     " Hello   world ",
+		"type":        "result",
+		"session_id":  "resume-dedup-1",
+		"result":      " Hello   world ",
 		"duration_ms": 1200,
 		"num_turns":   1,
 	})

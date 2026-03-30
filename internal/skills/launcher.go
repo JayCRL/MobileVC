@@ -56,8 +56,11 @@ func (l *Launcher) BuildRequest(name, engine, cwd, targetType, targetPath, targe
 	}
 
 	aiCmd := "claude"
-	if strings.TrimSpace(engine) == "gemini" {
+	switch strings.TrimSpace(strings.ToLower(engine)) {
+	case "gemini":
 		aiCmd = "gemini"
+	case "codex":
+		aiCmd = "codex"
 	}
 
 	return runtime.ExecuteRequest{

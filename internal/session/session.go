@@ -138,7 +138,14 @@ func isClaudeCommand(command string) bool {
 		return false
 	}
 	head := strings.ToLower(fields[0])
-	return head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe"
+	return head == "claude" ||
+		strings.HasSuffix(head, "/claude") ||
+		strings.HasSuffix(head, `\\claude`) ||
+		head == "claude.exe" ||
+		head == "codex" ||
+		strings.HasSuffix(head, "/codex") ||
+		strings.HasSuffix(head, `\\codex`) ||
+		head == "codex.exe"
 }
 
 func (c *Controller) deriveClaudeLifecycleLocked() string {
@@ -486,7 +493,8 @@ func isAICommand(command string) bool {
 	head := strings.ToLower(fields[0])
 	isClaude := head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe"
 	isGemini := head == "gemini" || strings.HasSuffix(head, "/gemini") || strings.HasSuffix(head, `\\gemini`) || head == "gemini.exe"
-	return isClaude || isGemini
+	isCodex := head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\\codex`) || head == "codex.exe"
+	return isClaude || isGemini || isCodex
 }
 
 func firstNonEmpty(values ...string) string {

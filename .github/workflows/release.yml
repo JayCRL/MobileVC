@@ -1,0 +1,57 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Derive release metadata
+        run: |
+          echo "MOBILEVC_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "MOBILEVC_COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "MOBILEVC_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Sync embedded web assets
+        run: node ./scripts/sync-embedded-web.js
+
+      - name: Build platform binaries
+        run: node ./scripts/build-npm-binaries.js
+
+      - name: Publish platform packages
+        run: |
+          npm publish ./packages/server-darwin-arm64 --access public
+          npm publish ./packages/server-darwin-x64 --access public
+          npm publish ./packages/server-linux-arm64 --access public
+          npm publish ./packages/server-linux-x64 --access public
+          npm publish ./packages/server-win32-x64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish main package
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -193,9 +193,21 @@ Go 后端通过结构化事件流向前端推送状态，例如：
 
 ## 快速开始
 
+### Codex 适配（新增）
+
+MobileVC 现在支持把 `codex` 作为 AI 引擎使用（例如在移动端连接配置里把 `Engine` 设置为 `codex`）。
+
+- Skill 执行会按 `Engine=codex` 路由为 `codex "<prompt>"`。
+- 运行态模型识别会显示为 `codex`。
+- `runtime_info: doctor` 会额外检查 `codex` CLI 是否可用。
+
+> 说明：当前“会话热恢复/权限热切换”仍以 Claude 的 `--resume` 机制为核心，Codex 以通用 PTY 交互能力为主。
+
 ### 1. 安装 Node 启动器
 
 > Smoke test：运行 `AUTH_TOKEN=test ./scripts/test_smoke_flow.sh` 可快速验证后端、WebSocket 与会话主链路。
+>
+> Codex smoke：运行 `AUTH_TOKEN=test ./scripts/smoke_codex_backend.sh` 可验证 Codex 适配后的后端启动、WS 会话与基础交互链路。
 
 在仓库根目录执行：
 

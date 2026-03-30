@@ -635,7 +635,14 @@ func (s *Service) prepareExecuteRequest(req ExecuteRequest) ExecuteRequest {
 	prepared := req
 	prepared.Command = strings.TrimSpace(prepared.Command)
 	if prepared.Command == "" {
-		prepared.Command = "claude"
+		switch strings.TrimSpace(strings.ToLower(prepared.RuntimeMeta.Engine)) {
+		case "codex":
+			prepared.Command = "codex"
+		case "gemini":
+			prepared.Command = "gemini"
+		default:
+			prepared.Command = "claude"
+		}
 	}
 	prepared.RuntimeMeta = protocol.MergeRuntimeMeta(prepared.RuntimeMeta, protocol.RuntimeMeta{
 		Command:        prepared.Command,
@@ -662,10 +669,12 @@ func (s *Service) prepareExecuteRequest(req ExecuteRequest) ExecuteRequest {
 		prepared.RuntimeMeta.ResumeSessionID = existingSessionID
 		return prepared
 	}
-	managedSessionID := newManagedClaudeSessionID()
-	prepared.Command = strings.TrimSpace(prepared.Command) + " " + claudeSessionIDFlag + " " + managedSessionID
-	prepared.RuntimeMeta.Command = prepared.Command
-	prepared.RuntimeMeta.ResumeSessionID = managedSessionID
+	if isClaudeCommandHead(prepared.Command) {
+		managedSessionID := newManagedClaudeSessionID()
+		prepared.Command = strings.TrimSpace(prepared.Command) + " " + claudeSessionIDFlag + " " + managedSessionID
+		prepared.RuntimeMeta.Command = prepared.Command
+		prepared.RuntimeMeta.ResumeSessionID = managedSessionID
+	}
 	return prepared
 }
 
@@ -728,21 +737,24 @@ func (s *Service) buildHotSwapStreamRequest(sessionID string, req ExecuteRequest
 	if command == "" {
 		command = "claude"
 	}
-	lower := strings.ToLower(command)
-	if !strings.Contains(lower, " --print") && !strings.Contains(lower, " -p") {
-		command += " --print"
-	}
-	if !strings.Contains(lower, " --verbose") {
-		command += " --verbose"
-	}
-	if !strings.Contains(lower, "--output-format") {
-		command += " --output-format stream-json"
-	}
-	if !strings.Contains(lower, "--input-format") {
-		command += " --input-format stream-json"
-	}
-	if !strings.Contains(lower, "--permission-prompt-tool") {
-		command += " --permission-prompt-tool stdio"
+	if isClaudeCommandHead(command) {
+		lower := strings.ToLower(command)
+		if !strings.Contains(lower, " --print") && !strings.Contains(lower, " -p") {
+			command += " --print"
+			lower = strings.ToLower(command)
+		}
+		if !strings.Contains(lower, " --verbose") {
+			command += " --verbose"
+		}
+		if !strings.Contains(lower, "--output-format") {
+			command += " --output-format stream-json"
+		}
+		if !strings.Contains(lower, "--input-format") {
+			command += " --input-format stream-json"
+		}
+		if !strings.Contains(lower, "--permission-prompt-tool") {
+			command += " --permission-prompt-tool stdio"
+		}
 	}
 	restartReq.Command = command
 	restartReq.RuntimeMeta.Command = command
@@ -756,7 +768,7 @@ func (s *Service) buildHotSwapPromptRequest(sessionID string, req ExecuteRequest
 	}
 	baseCommand := stripResumeArg(stripClaudeSessionIDArg(restartReq.Command))
 	if strings.TrimSpace(baseCommand) == "" {
-		baseCommand = "claude"
+		baseCommand = defaultAICommandFromCommandOrEngine(restartReq.Command, restartReq.RuntimeMeta.Engine)
 	}
 	restartReq.Command = baseCommand
 	restartReq.RuntimeMeta.Command = baseCommand
@@ -792,21 +804,24 @@ func (s *Service) buildDetachedHotSwapStreamRequest(req ExecuteRequest, targetPe
 	prepared.RuntimeMeta.ResumeSessionID = extractManagedClaudeSessionID(command, resumeSessionID)
 	prepared.PermissionMode = targetPermissionMode
 	prepared.RuntimeMeta.PermissionMode = targetPermissionMode
-	lower := strings.ToLower(command)
-	if !strings.Contains(lower, " --print") && !strings.Contains(lower, " -p") {
-		command += " --print"
-	}
-	if !strings.Contains(lower, " --verbose") {
-		command += " --verbose"
-	}
-	if !strings.Contains(lower, "--output-format") {
-		command += " --output-format stream-json"
-	}
-	if !strings.Contains(lower, "--input-format") {
-		command += " --input-format stream-json"
-	}
-	if !strings.Contains(lower, "--permission-prompt-tool") {
-		command += " --permission-prompt-tool stdio"
+	if isClaudeCommandHead(command) {
+		lower := strings.ToLower(command)
+		if !strings.Contains(lower, " --print") && !strings.Contains(lower, " -p") {
+			command += " --print"
+			lower = strings.ToLower(command)
+		}
+		if !strings.Contains(lower, " --verbose") {
+			command += " --verbose"
+		}
+		if !strings.Contains(lower, "--output-format") {
+			command += " --output-format stream-json"
+		}
+		if !strings.Contains(lower, "--input-format") {
+			command += " --input-format stream-json"
+		}
+		if !strings.Contains(lower, "--permission-prompt-tool") {
+			command += " --permission-prompt-tool stdio"
+		}
 	}
 	prepared.Command = command
 	prepared.RuntimeMeta.Command = command
@@ -888,11 +903,41 @@ func runnerIsClaudeSession(current runner.Runner, commands ...string) bool {
 		return true
 	}
 	for _, command := range commands {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(command)), "claude") {
+		if isSupportedAISessionCommand(command) {
 			return true
 		}
 	}
 	return false
+}
+
+func isSupportedAISessionCommand(command string) bool {
+	head := commandHead(command)
+	switch {
+	case head == "claude",
+		strings.HasSuffix(head, "/claude"),
+		strings.HasSuffix(head, `\\claude`),
+		head == "claude.exe",
+		head == "codex",
+		strings.HasSuffix(head, "/codex"),
+		strings.HasSuffix(head, `\\codex`),
+		head == "codex.exe":
+		return true
+	default:
+		return false
+	}
+}
+
+func isClaudeCommandHead(command string) bool {
+	head := commandHead(command)
+	return head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe"
+}
+
+func commandHead(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(fields[0]))
 }
 
 func resolveResumeSessionID(current runner.Runner, metas ...protocol.RuntimeMeta) string {
@@ -917,7 +962,7 @@ func resolveResumeSessionID(current runner.Runner, metas ...protocol.RuntimeMeta
 func extractManagedClaudeSessionID(command, fallback string) string {
 	fields := strings.Fields(strings.TrimSpace(command))
 	for i := 0; i < len(fields); i++ {
-		if fields[i] == claudeSessionIDFlag && i+1 < len(fields) {
+		if (fields[i] == claudeSessionIDFlag || fields[i] == "--session") && i+1 < len(fields) {
 			return fields[i+1]
 		}
 	}
@@ -926,6 +971,15 @@ func extractManagedClaudeSessionID(command, fallback string) string {
 
 func extractResumeArg(command string) string {
 	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) >= 3 {
+		head := strings.ToLower(strings.TrimSpace(fields[0]))
+		subcommand := strings.ToLower(strings.TrimSpace(fields[1]))
+		if (head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\\codex`) || head == "codex.exe") &&
+			subcommand == "resume" &&
+			!strings.HasPrefix(fields[2], "-") {
+			return fields[2]
+		}
+	}
 	for i := 0; i < len(fields); i++ {
 		if fields[i] == "--resume" && i+1 < len(fields) {
 			return fields[i+1]
@@ -937,7 +991,10 @@ func extractResumeArg(command string) string {
 func ensureResumeCommand(command, resumeSessionID string) string {
 	trimmed := stripClaudeSessionIDArg(strings.TrimSpace(command))
 	if trimmed == "" {
-		trimmed = "claude"
+		trimmed = defaultAICommandFromCommandOrEngine(command, "")
+	}
+	if isCodexCommandHead(trimmed) {
+		return ensureCodexResumeCommand(trimmed, resumeSessionID)
 	}
 	if resumeSessionID != "" && !strings.Contains(strings.ToLower(trimmed), " --resume") {
 		trimmed += " --resume " + resumeSessionID
@@ -952,7 +1009,7 @@ func stripClaudeSessionIDArg(command string) string {
 	}
 	filtered := make([]string, 0, len(fields))
 	for i := 0; i < len(fields); i++ {
-		if fields[i] == claudeSessionIDFlag {
+		if fields[i] == claudeSessionIDFlag || fields[i] == "--session" {
 			i++
 			continue
 		}
@@ -961,10 +1018,38 @@ func stripClaudeSessionIDArg(command string) string {
 	return strings.Join(filtered, " ")
 }
 
+func defaultAICommandFromCommandOrEngine(command, engine string) string {
+	head := commandHead(command)
+	if head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\\codex`) || head == "codex.exe" {
+		return "codex"
+	}
+	if head == "gemini" || strings.HasSuffix(head, "/gemini") || strings.HasSuffix(head, `\\gemini`) || head == "gemini.exe" {
+		return "gemini"
+	}
+	switch strings.TrimSpace(strings.ToLower(engine)) {
+	case "codex":
+		return "codex"
+	case "gemini":
+		return "gemini"
+	default:
+		return "claude"
+	}
+}
+
 func stripResumeArg(command string) string {
 	fields := strings.Fields(strings.TrimSpace(command))
 	if len(fields) == 0 {
 		return ""
+	}
+	if len(fields) >= 2 && isCodexCommandHead(fields[0]) && strings.EqualFold(strings.TrimSpace(fields[1]), "resume") {
+		filtered := make([]string, 0, len(fields))
+		filtered = append(filtered, fields[0])
+		i := 2
+		if i < len(fields) && !strings.HasPrefix(fields[i], "-") {
+			i++
+		}
+		filtered = append(filtered, fields[i:]...)
+		return strings.Join(filtered, " ")
 	}
 	filtered := make([]string, 0, len(fields))
 	for i := 0; i < len(fields); i++ {
@@ -975,6 +1060,39 @@ func stripResumeArg(command string) string {
 		filtered = append(filtered, fields[i])
 	}
 	return strings.Join(filtered, " ")
+}
+
+func isCodexCommandHead(command string) bool {
+	head := commandHead(command)
+	return head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\\codex`) || head == "codex.exe"
+}
+
+func ensureCodexResumeCommand(command, resumeSessionID string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		if strings.TrimSpace(resumeSessionID) == "" {
+			return "codex resume --last"
+		}
+		return "codex resume " + strings.TrimSpace(resumeSessionID)
+	}
+	head := fields[0]
+	extra := make([]string, 0, len(fields))
+	start := 1
+	if len(fields) > 1 && strings.EqualFold(strings.TrimSpace(fields[1]), "resume") {
+		start = 2
+		if start < len(fields) && !strings.HasPrefix(fields[start], "-") {
+			start++
+		}
+	}
+	extra = append(extra, fields[start:]...)
+	rebuilt := []string{head, "resume"}
+	if strings.TrimSpace(resumeSessionID) != "" {
+		rebuilt = append(rebuilt, strings.TrimSpace(resumeSessionID))
+	} else {
+		rebuilt = append(rebuilt, "--last")
+	}
+	rebuilt = append(rebuilt, extra...)
+	return strings.Join(rebuilt, " ")
 }
 
 func newManagedClaudeSessionID() string {
