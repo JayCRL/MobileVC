@@ -64,7 +64,7 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
           children: [
             _HeroCard(
               title: 'Memory 管理',
-              description: 'Memory 是会话级长期上下文。打开详情可查看完整内容，并像编辑单文件一样一句话让 Claude 帮你修改。',
+              description: 'Memory 是会话级长期上下文。打开详情可查看完整内容，并像编辑单文件一样一句话让 AI 助手帮你修改。',
               action: FilledButton.tonalIcon(
                 onPressed: widget.onSync,
                 icon: meta.isSyncing
@@ -192,7 +192,7 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
                 maxLines: 6,
                 enabled: item.editable,
                 decoration: InputDecoration(
-                  hintText: item.editable ? '一句话告诉 Claude 你想怎么修改这条 memory' : '该 memory 为只读，不能直接修改',
+                  hintText: item.editable ? '一句话告诉 AI 助手你想怎么修改这条 memory' : '该 memory 为只读，不能直接修改',
                 ),
               ),
               const SizedBox(height: 12),
@@ -210,7 +210,7 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
                           Navigator.of(context).pop();
                         },
                   icon: const Icon(Icons.auto_fix_high),
-                  label: const Text('让 Claude 修改这个 memory'),
+                  label: const Text('让 AI 助手修改这个 memory'),
                 ),
               ),
             ],

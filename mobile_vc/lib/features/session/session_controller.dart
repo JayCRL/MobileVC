@@ -962,8 +962,8 @@ class SessionController extends ChangeNotifier {
     }
     final lines = <String>[
       base == null
-          ? '请根据下面需求生成一个新的 Claude skill。'
-          : '请根据下面需求修改这个 Claude skill。',
+          ? '请根据下面需求生成一个新的 AI 助手 skill。'
+          : '请根据下面需求修改这个 AI 助手 skill。',
       '你必须只返回严格 JSON，不要输出 markdown、解释、代码块标记或额外文字。',
       '返回 JSON 顶层字段必须是：mobilevcCatalogAuthoring、kind、skill。',
       '其中 mobilevcCatalogAuthoring 必须为 true，kind 必须为 "skill"。',
@@ -1040,7 +1040,7 @@ class SessionController extends ChangeNotifier {
     final title =
         item.title.trim().isNotEmpty ? item.title.trim() : item.id.trim();
     final lines = <String>[
-      '请根据下面需求修改这个 Claude memory。',
+      '请根据下面需求修改这个 AI 助手 memory。',
       '你必须只返回严格 JSON，不要输出 markdown、解释、代码块标记或额外文字。',
       '返回 JSON 顶层字段必须是：mobilevcCatalogAuthoring、kind、memory。',
       '其中 mobilevcCatalogAuthoring 必须为 true，kind 必须为 "memory"。',
@@ -1349,7 +1349,7 @@ class SessionController extends ChangeNotifier {
     }
     if (shouldShowClaudeMode) {
       if (isSessionBusy) {
-        _pushSystem('session', '当前 Claude 会话仍在处理中，请稍后再试。');
+        _pushSystem('session', '当前 AI 助手会话仍在处理中，请稍后再试。');
         return;
       }
       _resetActionNeededTracking();
@@ -3368,7 +3368,7 @@ class SessionController extends ChangeNotifier {
       return _ActionNeededSnapshot(
         type: ActionNeededType.review,
         key: 'review::$identity',
-        message: 'Claude 需要你处理代码审核',
+        message: 'AI 助手需要你处理代码审核',
       );
     }
     if (hasPendingPermissionPrompt) {
@@ -3384,7 +3384,7 @@ class SessionController extends ChangeNotifier {
       return _ActionNeededSnapshot(
         type: ActionNeededType.permission,
         key: 'permission::$identity',
-        message: 'Claude 需要你确认权限',
+        message: 'AI 助手需要你确认权限',
       );
     }
     if (hasPendingPlanPrompt || hasPendingPlanQuestions) {
@@ -3396,7 +3396,7 @@ class SessionController extends ChangeNotifier {
       return _ActionNeededSnapshot(
         type: ActionNeededType.plan,
         key: 'plan::$interactionIdentity::$pendingPlanQuestionIndex',
-        message: 'Claude 需要你完成计划选择',
+        message: 'AI 助手需要你完成计划选择',
       );
     }
     final hasGenericPrompt =
@@ -3411,7 +3411,7 @@ class SessionController extends ChangeNotifier {
         type: ActionNeededType.reply,
         key:
             'reply::$identity::${interaction?.message ?? prompt?.message ?? ''}',
-        message: 'Claude 正在等待你的回复',
+        message: 'AI 助手正在等待你的回复',
       );
     }
     final state = (_agentState?.state ?? '').trim().toUpperCase();
@@ -3425,7 +3425,7 @@ class SessionController extends ChangeNotifier {
       return _ActionNeededSnapshot(
         type: ActionNeededType.continueInput,
         key: 'continue::$executionKey',
-        message: 'Claude 需要你继续输入',
+        message: 'AI 助手需要你继续输入',
       );
     }
     return null;

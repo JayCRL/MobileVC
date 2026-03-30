@@ -819,7 +819,7 @@ class _LandingBrand extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          '连接 Claude 会话、文件树与 diff 审核的统一工作台',
+          '连接 AI 助手会话、文件树与 diff 审核的统一工作台',
           style: Theme.of(context)
               .textTheme
               .bodyMedium

@@ -94,7 +94,7 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Claude 正在运行中',
+                  'AI 助手正在运行中',
                   style: Theme.of(context)
                       .textTheme
                       .labelLarge

@@ -201,7 +201,7 @@ MobileVC 支持把 `Claude` 或 `codex` 作为 AI 引擎使用（例如在移动
 - 运行态模型识别会显示为 `codex`。
 - `runtime_info: doctor` 会额外检查 `codex` CLI 是否可用。
 
-> 说明：当前“会话热恢复/权限热切换”在 Claude 下可结合 `--resume` 机制，Codex 以通用 PTY 交互能力为主。
+> 说明：当前“会话热恢复/权限热切换”在支持 `resume` 的引擎下体验更完整；Codex 以通用 PTY 交互能力为主。
 
 ### 1. 安装 Node 启动器
 
