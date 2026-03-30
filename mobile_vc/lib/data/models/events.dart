@@ -1233,6 +1233,69 @@ class AdbFrameEvent extends AppEvent {
       );
 }
 
+class AdbWebRtcAnswerEvent extends AppEvent {
+  const AdbWebRtcAnswerEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.serial = '',
+    this.sdpType = '',
+    this.sdp = '',
+  }) : super(type: 'adb_webrtc_answer');
+
+  final String serial;
+  final String sdpType;
+  final String sdp;
+
+  factory AdbWebRtcAnswerEvent.fromJson(Map<String, dynamic> json) =>
+      AdbWebRtcAnswerEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        serial: (json['serial'] ?? '').toString(),
+        sdpType: (json['sdpType'] ?? '').toString(),
+        sdp: (json['sdp'] ?? '').toString(),
+      );
+}
+
+class AdbWebRtcStateEvent extends AppEvent {
+  const AdbWebRtcStateEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.running = false,
+    this.connected = false,
+    this.serial = '',
+    this.width = 0,
+    this.height = 0,
+    this.message = '',
+  }) : super(type: 'adb_webrtc_state');
+
+  final bool running;
+  final bool connected;
+  final String serial;
+  final int width;
+  final int height;
+  final String message;
+
+  factory AdbWebRtcStateEvent.fromJson(Map<String, dynamic> json) =>
+      AdbWebRtcStateEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        running: json['running'] == true,
+        connected: json['connected'] == true,
+        serial: (json['serial'] ?? '').toString(),
+        width: (json['width'] as num?)?.toInt() ?? 0,
+        height: (json['height'] as num?)?.toInt() ?? 0,
+        message: (json['msg'] ?? '').toString(),
+      );
+}
+
 @immutable
 class TimelineItem {
   const TimelineItem({

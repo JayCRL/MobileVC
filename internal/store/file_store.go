@@ -63,6 +63,7 @@ func (s *FileStore) CreateSession(ctx context.Context, title string) (SessionSum
 		Title:     fallbackTitle(title, now),
 		CreatedAt: now,
 		UpdatedAt: now,
+		Runtime:   SessionRuntime{Source: "mobilevc"},
 	}
 	record := SessionRecord{Summary: summary, Projection: normalizeProjection(ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}})}
 	index, err := s.readIndexLocked()
@@ -77,6 +78,62 @@ func (s *FileStore) CreateSession(ctx context.Context, title string) (SessionSum
 		return SessionSummary{}, err
 	}
 	return summary, nil
+}
+
+func (s *FileStore) UpsertSession(ctx context.Context, record SessionRecord) (SessionSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return SessionSummary{}, ctx.Err()
+	default:
+	}
+	record = normalizeSessionRecord(record)
+	if strings.TrimSpace(record.Summary.ID) == "" {
+		return SessionSummary{}, fmt.Errorf("session id is required")
+	}
+	if record.Summary.CreatedAt.IsZero() {
+		record.Summary.CreatedAt = time.Now().UTC()
+	}
+	if record.Summary.UpdatedAt.IsZero() {
+		record.Summary.UpdatedAt = record.Summary.CreatedAt
+	}
+	record.Summary.EntryCount = len(record.Projection.LogEntries)
+	record.Summary.LastPreview = buildPreview(record.Projection)
+
+	index, err := s.readIndexLocked()
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if existing, err := s.readSessionLocked(record.Summary.ID); err == nil {
+		if record.Summary.Title == "" {
+			record.Summary.Title = existing.Summary.Title
+		}
+		if record.Summary.CreatedAt.IsZero() {
+			record.Summary.CreatedAt = existing.Summary.CreatedAt
+		}
+	}
+	if err := s.writeSessionLocked(record); err != nil {
+		return SessionSummary{}, err
+	}
+	updated := false
+	for i := range index.Sessions {
+		if index.Sessions[i].ID == record.Summary.ID {
+			index.Sessions[i] = record.Summary
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		index.Sessions = append(index.Sessions, record.Summary)
+	}
+	sort.Slice(index.Sessions, func(i, j int) bool {
+		return index.Sessions[i].UpdatedAt.After(index.Sessions[j].UpdatedAt)
+	})
+	if err := s.writeIndexLocked(index); err != nil {
+		return SessionSummary{}, err
+	}
+	return record.Summary, nil
 }
 
 func (s *FileStore) SaveProjection(ctx context.Context, sessionID string, projection ProjectionSnapshot) (SessionSummary, error) {
@@ -94,6 +151,9 @@ func (s *FileStore) SaveProjection(ctx context.Context, sessionID string, projec
 	now := time.Now().UTC()
 	record.Projection = normalizeProjection(projection)
 	record.Summary.Runtime = record.Projection.Runtime
+	if record.Summary.Runtime.Source == "" {
+		record.Summary.Runtime.Source = "mobilevc"
+	}
 	record.Summary.UpdatedAt = now
 	record.Summary.EntryCount = len(record.Projection.LogEntries)
 	record.Summary.LastPreview = buildPreview(record.Projection)
@@ -424,6 +484,18 @@ func normalizeProjection(projection ProjectionSnapshot) ProjectionSnapshot {
 	projection.SkillCatalogMeta = normalizeCatalogMetadata(projection.SkillCatalogMeta, CatalogDomainSkill)
 	projection.MemoryCatalogMeta = normalizeCatalogMetadata(projection.MemoryCatalogMeta, CatalogDomainMemory)
 	return projection
+}
+
+func normalizeSessionRecord(record SessionRecord) SessionRecord {
+	record.Projection = normalizeProjection(record.Projection)
+	if record.Projection.Runtime.Source == "" {
+		record.Projection.Runtime.Source = record.Summary.Runtime.Source
+	}
+	record.Summary.Runtime = record.Projection.Runtime
+	if record.Summary.Runtime.Source == "" {
+		record.Summary.Runtime.Source = "mobilevc"
+	}
+	return record
 }
 
 func normalizeSessionContext(ctx SessionContext) SessionContext {

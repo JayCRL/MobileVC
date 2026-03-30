@@ -15,6 +15,8 @@ class SessionSummary {
     this.updatedAt,
     this.lastPreview = '',
     this.entryCount = 0,
+    this.source = '',
+    this.external = false,
     this.runtime = const RuntimeMeta(),
   });
 
@@ -24,6 +26,8 @@ class SessionSummary {
   final DateTime? updatedAt;
   final String lastPreview;
   final int entryCount;
+  final String source;
+  final bool external;
   final RuntimeMeta runtime;
 
   factory SessionSummary.fromJson(Map<String, dynamic> json) {
@@ -34,6 +38,8 @@ class SessionSummary {
       updatedAt: _parseDate(json['updatedAt']?.toString()),
       lastPreview: (json['lastPreview'] ?? '').toString(),
       entryCount: (json['entryCount'] as num?)?.toInt() ?? 0,
+      source: (json['source'] ?? '').toString(),
+      external: json['external'] == true,
       runtime: json['runtime'] is Map<String, dynamic>
           ? RuntimeMeta.fromJson(json['runtime'] as Map<String, dynamic>)
           : const RuntimeMeta(),

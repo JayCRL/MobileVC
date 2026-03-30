@@ -113,7 +113,8 @@ class _SessionHomePageState extends State<SessionHomePage> {
             onPressed: () => _openAdbDebug(context),
             tooltip: 'ADB 调试',
             icon: Badge(
-              isLabelVisible: controller.adbStreaming,
+              isLabelVisible:
+                  controller.adbStreaming || controller.adbWebRtcStarting,
               child: const Icon(Icons.phone_android_outlined),
             ),
           ),
@@ -355,9 +356,11 @@ class _SessionHomePageState extends State<SessionHomePage> {
       context: context,
       isScrollControlled: true,
       builder: (context) {
+        controller.requestSessionList();
         return SessionListSheet(
           sessions: controller.sessions,
           selectedSessionId: controller.selectedSessionId,
+          cwd: controller.effectiveCwd,
           onCreate: controller.createSession,
           onLoad: (id) {
             controller.loadSession(id);
@@ -585,7 +588,10 @@ class _SessionHomePageState extends State<SessionHomePage> {
   }
 
   Future<void> _openAdbDebug(BuildContext context) async {
-    controller.requestAdbDevices();
+    await controller.prepareAdbDebug();
+    if (!context.mounted) {
+      return;
+    }
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -612,10 +618,11 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     emulatorAvailable: controller.adbEmulatorAvailable,
                     suggestedAction: controller.adbSuggestedAction,
                     streaming: controller.adbStreaming,
-                    frameBytes: controller.adbFrameBytes,
+                    webRtcConnected: controller.adbWebRtcConnected,
+                    webRtcStarting: controller.adbWebRtcStarting,
+                    renderer: controller.adbRenderer,
                     frameWidth: controller.adbFrameWidth,
                     frameHeight: controller.adbFrameHeight,
-                    intervalMs: controller.adbFrameIntervalMs,
                     onRefreshDevices: controller.requestAdbDevices,
                     onSelectAvd: controller.selectAdbAvd,
                     onLaunchEmulator: (avd) =>
@@ -625,7 +632,6 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     onStop: controller.stopAdbStream,
                     onTapPreview: (x, y, serial) =>
                         controller.sendAdbTap(x, y, serial: serial),
-                    onIntervalChanged: controller.setAdbFrameIntervalMs,
                   );
                 },
               ),

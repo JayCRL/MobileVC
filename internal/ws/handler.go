@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"mobilevc/internal/adb"
+	"mobilevc/internal/codexsync"
 	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
@@ -64,6 +65,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	remoteAddr := r.RemoteAddr
 	connected := false
 	var conn *websocket.Conn
+	sessionListFilterCWD := ""
 
 	emitIfPossible := func(event any) {
 		if conn == nil {
@@ -175,6 +177,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		runtimepkg.Enqueue(ctx, writeCh, event)
 	}
 
+	adbRTC := newADBWebRTCBridge(func() string {
+		return selectedSessionID
+	}, emit)
+	defer adbRTC.Stop("")
+
 	var adbMu sync.Mutex
 	var adbCancel context.CancelFunc
 	adbActiveSerial := ""
@@ -283,19 +290,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		runtimeSvc = runtimepkg.NewService(selectedSessionID, runtimepkg.Dependencies{NewExecRunner: h.NewExecRunner, NewPtyRunner: h.NewPtyRunner})
 	}
 
-	emitSessionList := func() []store.SessionSummary {
+	emitSessionList := func(filterCWD string) []store.SessionSummary {
 		if h.SessionStore == nil {
 			logx.Warn("ws", "session list requested but session store unavailable: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 			return nil
 		}
+		sessionListFilterCWD = normalizeSessionCWD(filterCWD)
 		items, err := h.SessionStore.ListSessions(ctx)
 		if err != nil {
 			logx.Error("ws", "list sessions failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 			emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 			return nil
 		}
-		emit(protocol.NewSessionListResultEvent(selectedSessionID, toProtocolSummaries(items)))
-		return items
+		merged, mergeErr := mergeSessionSummaries(ctx, h.SessionStore, items, sessionListFilterCWD)
+		if mergeErr != nil {
+			logx.Warn("ws", "merge session summaries failed: connectionID=%s sessionID=%s remoteAddr=%s cwd=%q err=%v", connectionID, selectedSessionID, remoteAddr, sessionListFilterCWD, mergeErr)
+			merged = filterStoreSessionsByCWD(items, sessionListFilterCWD)
+		}
+		emit(protocol.NewSessionListResultEvent(selectedSessionID, toProtocolSummaries(merged)))
+		return merged
 	}
 
 	emitEmptySessionState := func() {
@@ -360,7 +373,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			logx.Warn("ws", "initial session list restore failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 		} else {
-			emit(protocol.NewSessionListResultEvent(selectedSessionID, toProtocolSummaries(items)))
+			merged, mergeErr := mergeSessionSummaries(ctx, h.SessionStore, items, sessionListFilterCWD)
+			if mergeErr != nil {
+				logx.Warn("ws", "initial session list merge failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, mergeErr)
+				merged = items
+			}
+			emit(protocol.NewSessionListResultEvent(selectedSessionID, toProtocolSummaries(merged)))
 			if strings.TrimSpace(selectedSessionID) != "" {
 				record, err := h.SessionStore.GetSession(ctx, selectedSessionID)
 				if err != nil {
@@ -425,17 +443,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
+			if cwd := normalizeSessionCWD(req.CWD); cwd != "" {
+				record, err := h.SessionStore.GetSession(ctx, created.ID)
+				if err == nil {
+					record.Projection.Runtime.CWD = cwd
+					record.Projection.Runtime.Source = "mobilevc"
+					record.Summary.Runtime = record.Projection.Runtime
+					if _, err := h.SessionStore.UpsertSession(ctx, record); err == nil {
+						created = record.Summary
+					}
+				}
+			}
 			switchRuntimeSession(created.ID)
 			emit(protocol.NewSessionCreatedEvent(selectedSessionID, toProtocolSummary(created)))
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "session selected"))
-			emitSessionList()
+			emitSessionList(req.CWD)
 		case "session_list":
+			var req protocol.SessionListRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid session_list request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_list request: %v", err), ""))
+				continue
+			}
 			if h.SessionStore == nil {
 				logx.Error("ws", "session store unavailable for session_list: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
 			}
-			emitSessionList()
+			emitSessionList(req.CWD)
 		case "session_load":
 			var req protocol.SessionLoadRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {
@@ -448,13 +483,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
 			}
-			record, err := h.SessionStore.GetSession(ctx, req.SessionID)
+			record, err := loadSessionRecord(ctx, h.SessionStore, req.SessionID)
 			if err != nil {
 				logx.Warn("ws", "load session failed: connectionID=%s sessionID=%s requestedSessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, req.SessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
-			switchRuntimeSession(req.SessionID)
+			switchRuntimeSession(record.Summary.ID)
 			emit(newSessionHistoryEventFromRecord(record))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
@@ -470,13 +505,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
 			}
+			record, err := h.SessionStore.GetSession(ctx, req.SessionID)
+			if err != nil {
+				logx.Warn("ws", "delete session lookup failed: connectionID=%s sessionID=%s requestedSessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, req.SessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			if record.Summary.External || strings.EqualFold(strings.TrimSpace(record.Summary.Source), "codex-native") {
+				emit(protocol.NewErrorEvent(selectedSessionID, "Codex 原生会话仅支持恢复，不支持在 MobileVC 内删除", ""))
+				continue
+			}
 			if err := h.SessionStore.DeleteSession(ctx, req.SessionID); err != nil {
 				logx.Warn("ws", "delete session failed: connectionID=%s sessionID=%s requestedSessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, req.SessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
 			deletingCurrent := req.SessionID == selectedSessionID
-			items := emitSessionList()
+			items := emitSessionList(sessionListFilterCWD)
 			if !deletingCurrent {
 				continue
 			}
@@ -492,7 +537,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emitEmptySessionState()
 				continue
 			}
-			record, err := h.SessionStore.GetSession(ctx, fallbackSessionID)
+			record, err = h.SessionStore.GetSession(ctx, fallbackSessionID)
 			if err != nil {
 				logx.Warn("ws", "load fallback session after delete failed: connectionID=%s sessionID=%s fallbackSessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, fallbackSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
@@ -887,12 +932,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !isClaudeCommandLike(inputMeta.Command) {
 				if err := service.SendPermissionDecision(ctx, sessionID, decision, inputMeta, emitAndPersist); err == nil {
 					continue
-				} else if !errors.Is(err, runner.ErrNoPendingControlRequest) {
+				} else if !errors.Is(err, runner.ErrNoPendingControlRequest) && !errors.Is(err, runner.ErrInputNotSupported) {
 					message := err.Error()
-					if errors.Is(err, runner.ErrInputNotSupported) {
-						message = "当前会话不支持交互输入，无法继续处理该权限请求"
-					} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-						message = "当前没有可交互会话，无法继续处理该权限请求"
+					if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+						message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
 					} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
 						message = "当前会话尚未进入可直接确认的交互阶段，请先等待会话就绪后再提交权限决策"
 					}
@@ -1117,6 +1160,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if interval < 250*time.Millisecond {
 				interval = 250 * time.Millisecond
 			}
+			adbRTC.Stop("")
 			startADBStream(adbReq.Serial, interval)
 		case "adb_stream_stop":
 			var adbReq protocol.ADBStreamStopRequestEvent
@@ -1126,6 +1170,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			stopADBStream("ADB 画面预览已停止")
+			adbRTC.Stop("")
 		case "adb_emulator_start":
 			var adbReq protocol.ADBEmulatorStartRequestEvent
 			if err := json.Unmarshal(payload, &adbReq); err != nil {
@@ -1160,6 +1205,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
+		case "adb_webrtc_offer":
+			var adbReq protocol.ADBWebRTCOfferRequestEvent
+			if err := json.Unmarshal(payload, &adbReq); err != nil {
+				logx.Warn("ws", "invalid adb_webrtc_offer request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_webrtc_offer request: %v", err), ""))
+				continue
+			}
+			stopADBStream("")
+			if err := adbRTC.HandleOffer(ctx, adbReq.Serial, adbReq.Type, adbReq.SDP); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+		case "adb_webrtc_stop":
+			var adbReq protocol.ADBWebRTCStopRequestEvent
+			if err := json.Unmarshal(payload, &adbReq); err != nil {
+				logx.Warn("ws", "invalid adb_webrtc_stop request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_webrtc_stop request: %v", err), ""))
+				continue
+			}
+			adbRTC.Stop("ADB WebRTC 调试已停止")
 		case "slash_command":
 			var slashReq protocol.SlashCommandRequestEvent
 			if err := json.Unmarshal(payload, &slashReq); err != nil {
@@ -1382,6 +1447,8 @@ func toProtocolSummary(item store.SessionSummary) protocol.SessionSummary {
 		UpdatedAt:   item.UpdatedAt.Format(time.RFC3339),
 		LastPreview: item.LastPreview,
 		EntryCount:  item.EntryCount,
+		Source:      item.Source,
+		External:    item.External,
 		Runtime: protocol.RuntimeMeta{
 			ResumeSessionID: item.Runtime.ResumeSessionID,
 			Command:         item.Runtime.Command,
@@ -1389,6 +1456,7 @@ func toProtocolSummary(item store.SessionSummary) protocol.SessionSummary {
 			CWD:             item.Runtime.CWD,
 			PermissionMode:  item.Runtime.PermissionMode,
 			ClaudeLifecycle: item.Runtime.ClaudeLifecycle,
+			Source:          item.Runtime.Source,
 		},
 	}
 }
@@ -2525,4 +2593,95 @@ func hasBinaryContent(content []byte) bool {
 		}
 	}
 	return false
+}
+
+func normalizeSessionCWD(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	absPath, err := filepath.Abs(trimmed)
+	if err == nil {
+		trimmed = absPath
+	}
+	return filepath.Clean(trimmed)
+}
+
+func filterStoreSessionsByCWD(items []store.SessionSummary, filterCWD string) []store.SessionSummary {
+	normalized := normalizeSessionCWD(filterCWD)
+	if normalized == "" {
+		return items
+	}
+	filtered := make([]store.SessionSummary, 0, len(items))
+	for _, item := range items {
+		cwd := normalizeSessionCWD(item.Runtime.CWD)
+		if cwd == "" || cwd == normalized {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func mergeSessionSummaries(ctx context.Context, sessionStore store.Store, items []store.SessionSummary, filterCWD string) ([]store.SessionSummary, error) {
+	filteredStoreItems := filterStoreSessionsByCWD(items, filterCWD)
+	if normalizeSessionCWD(filterCWD) == "" {
+		return filteredStoreItems, nil
+	}
+	nativeThreads, err := codexsync.ListNativeThreads(ctx, filterCWD)
+	if err != nil {
+		return nil, err
+	}
+	merged := make([]store.SessionSummary, 0, len(filteredStoreItems)+len(nativeThreads))
+	seen := make(map[string]struct{}, len(filteredStoreItems)+len(nativeThreads))
+	for _, item := range filteredStoreItems {
+		if strings.TrimSpace(item.Source) == "" {
+			item.Source = item.Runtime.Source
+		}
+		if strings.TrimSpace(item.Source) == "" {
+			item.Source = "mobilevc"
+		}
+		merged = append(merged, item)
+		seen[item.ID] = struct{}{}
+	}
+	for _, thread := range nativeThreads {
+		record := codexsync.MirrorRecord(thread)
+		if _, ok := seen[record.Summary.ID]; ok {
+			continue
+		}
+		if sessionStore != nil {
+			if _, err := sessionStore.UpsertSession(ctx, record); err == nil {
+				if stored, getErr := sessionStore.GetSession(ctx, record.Summary.ID); getErr == nil {
+					record = stored
+				}
+			}
+		}
+		merged = append(merged, record.Summary)
+		seen[record.Summary.ID] = struct{}{}
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].UpdatedAt.After(merged[j].UpdatedAt)
+	})
+	return merged, nil
+}
+
+func loadSessionRecord(ctx context.Context, sessionStore store.Store, sessionID string) (store.SessionRecord, error) {
+	if sessionStore == nil {
+		return store.SessionRecord{}, fmt.Errorf("session store unavailable")
+	}
+	record, err := sessionStore.GetSession(ctx, sessionID)
+	if err == nil {
+		return record, nil
+	}
+	if !codexsync.IsMirrorSessionID(sessionID) {
+		return store.SessionRecord{}, err
+	}
+	thread, nativeErr := codexsync.FindNativeThread(ctx, sessionID)
+	if nativeErr != nil {
+		return store.SessionRecord{}, err
+	}
+	record = codexsync.MirrorRecord(thread)
+	if _, upsertErr := sessionStore.UpsertSession(ctx, record); upsertErr != nil {
+		return store.SessionRecord{}, upsertErr
+	}
+	return sessionStore.GetSession(ctx, record.Summary.ID)
 }
