@@ -71,4 +71,26 @@ class AppConfig {
       fastMode: json['fastMode'] == true,
     );
   }
+
+  static AppConfig? fromLaunchUri(
+    String raw, {
+    AppConfig fallback = const AppConfig(),
+  }) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || uri.host.trim().isEmpty) {
+      return null;
+    }
+    final port =
+        uri.hasPort && uri.port > 0 ? uri.port.toString() : fallback.port;
+    final token = (uri.queryParameters['token'] ?? fallback.token).trim();
+    return fallback.copyWith(
+      host: uri.host.trim(),
+      port: port,
+      token: token,
+    );
+  }
 }
