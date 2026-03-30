@@ -19,6 +19,7 @@ import '../../features/skills/skill_management_sheet.dart';
 import '../../features/status/status_detail_sheet.dart';
 import '../../features/status/terminal_log_sheet.dart';
 import 'activity_runner_bar.dart';
+import 'connection_scan_sheet.dart';
 import 'session_controller.dart';
 import 'session_list_sheet.dart';
 
@@ -236,116 +237,162 @@ class _SessionHomePageState extends State<SessionHomePage> {
         TextEditingController(text: controller.config.engine);
     final permissionController =
         TextEditingController(text: controller.config.permissionMode);
+    String scanHint = '';
 
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (context) {
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-              16, 16, 16, 16 + MediaQuery.of(context).viewInsets.bottom),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('连接配置', style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 6),
-                Text(
-                  'IP 地址、端口和 token 都可以手动输入，适合你自己连本地或局域网后端。',
-                  style: Theme.of(context).textTheme.bodySmall,
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            Future<void> handleScan() async {
+              final scannedRaw = await showModalBottomSheet<String>(
+                context: context,
+                isScrollControlled: true,
+                builder: (context) => const ConnectionScanSheet(),
+              );
+              if (!context.mounted || scannedRaw == null) {
+                return;
+              }
+              final scanned = AppConfig.fromLaunchUri(
+                scannedRaw,
+                fallback: AppConfig(
+                  host: hostController.text.trim(),
+                  port: portController.text.trim(),
+                  token: tokenController.text.trim(),
+                  cwd: cwdController.text.trim(),
+                  engine: engineController.text.trim(),
+                  permissionMode: permissionController.text.trim(),
+                  fastMode: controller.fastMode,
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                    controller: hostController,
-                    decoration: const InputDecoration(labelText: 'Host')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: portController,
-                    decoration: const InputDecoration(labelText: 'Port')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: tokenController,
-                    decoration: const InputDecoration(labelText: 'Token')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: cwdController,
-                    decoration: const InputDecoration(labelText: 'CWD')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: engineController,
-                    decoration: const InputDecoration(labelText: 'Engine')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: permissionController,
-                    decoration:
-                        const InputDecoration(labelText: 'Permission Mode')),
-                const SizedBox(height: 16),
-                Row(
+              );
+              if (scanned == null) {
+                setSheetState(() {
+                  scanHint = '扫码内容无法识别，请确认二维码来自 MobileVC 启动器。';
+                });
+                return;
+              }
+              hostController.text = scanned.host;
+              portController.text = scanned.port;
+              tokenController.text = scanned.token;
+              setSheetState(() {
+                scanHint =
+                    '已回填 ${scanned.host}:${scanned.port}${scanned.token.isNotEmpty ? ' 与 token' : ''}';
+              });
+            }
+
+            Future<void> persistConfig({bool connect = false}) async {
+              await controller.saveConfig(
+                AppConfig(
+                  host: hostController.text.trim(),
+                  port: portController.text.trim(),
+                  token: tokenController.text.trim(),
+                  cwd: cwdController.text.trim(),
+                  engine: engineController.text.trim(),
+                  permissionMode: permissionController.text.trim(),
+                  fastMode: controller.fastMode,
+                ),
+              );
+              if (connect) {
+                await controller.connect();
+              }
+              if (context.mounted) {
+                Navigator.pop(context);
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                  16, 16, 16, 16 + MediaQuery.of(context).viewInsets.bottom),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: FilledButton.tonal(
-                        onPressed: () async {
-                          await controller.saveConfig(
-                            AppConfig(
-                              host: hostController.text.trim(),
-                              port: portController.text.trim(),
-                              token: tokenController.text.trim(),
-                              cwd: cwdController.text.trim(),
-                              engine: engineController.text.trim(),
-                              permissionMode: permissionController.text.trim(),
-                              fastMode: controller.fastMode,
-                            ),
-                          );
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                          }
-                        },
-                        child: const Text('保存'),
+                    Text('连接配置', style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 6),
+                    Text(
+                      '支持扫描 MobileVC 后端二维码自动回填，也保留手动输入方式。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: handleScan,
+                        icon: const Icon(Icons.qr_code_scanner),
+                        label: const Text('扫码连接'),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () async {
-                          await controller.saveConfig(
-                            AppConfig(
-                              host: hostController.text.trim(),
-                              port: portController.text.trim(),
-                              token: tokenController.text.trim(),
-                              cwd: cwdController.text.trim(),
-                              engine: engineController.text.trim(),
-                              permissionMode: permissionController.text.trim(),
-                              fastMode: controller.fastMode,
-                            ),
-                          );
-                          await controller.connect();
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                          }
-                        },
-                        child: const Text('连接'),
+                    if (scanHint.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        scanHint,
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
+                    ],
+                    const SizedBox(height: 12),
+                    TextField(
+                        controller: hostController,
+                        decoration: const InputDecoration(labelText: 'Host')),
+                    const SizedBox(height: 10),
+                    TextField(
+                        controller: portController,
+                        decoration: const InputDecoration(labelText: 'Port')),
+                    const SizedBox(height: 10),
+                    TextField(
+                        controller: tokenController,
+                        decoration: const InputDecoration(labelText: 'Token')),
+                    const SizedBox(height: 10),
+                    TextField(
+                        controller: cwdController,
+                        decoration: const InputDecoration(labelText: 'CWD')),
+                    const SizedBox(height: 10),
+                    TextField(
+                        controller: engineController,
+                        decoration: const InputDecoration(labelText: 'Engine')),
+                    const SizedBox(height: 10),
+                    TextField(
+                        controller: permissionController,
+                        decoration: const InputDecoration(
+                            labelText: 'Permission Mode')),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.tonal(
+                            onPressed: () => persistConfig(),
+                            child: const Text('保存'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () => persistConfig(connect: true),
+                            child: const Text('连接'),
+                          ),
+                        ),
+                      ],
                     ),
+                    const SizedBox(height: 10),
+                    if (controller.connected)
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            await controller.disconnect();
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                            }
+                          },
+                          child: const Text('断开连接'),
+                        ),
+                      ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                if (controller.connected)
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: () async {
-                        await controller.disconnect();
-                        if (context.mounted) {
-                          Navigator.pop(context);
-                        }
-                      },
-                      child: const Text('断开连接'),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );

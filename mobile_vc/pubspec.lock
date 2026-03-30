@@ -73,6 +73,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "1.0.8"
+  dart_webrtc:
+    dependency: transitive
+    description:
+      name: dart_webrtc
+      sha256: f6d615bddea5e458ce180a914f3055c234ffb52fb7397a51b3491e76d6d7edb2
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "1.8.1"
   dbus:
     dependency: transitive
     description:
@@ -221,6 +229,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_webrtc:
+    dependency: "direct main"
+    description:
+      name: flutter_webrtc
+      sha256: c7b0a67ca2c878575fc5c146d801cd874f58f5f1ef5fa6e8eb0c93d413beb948
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "1.4.1"
   fuchsia_remote_debug_protocol:
     dependency: transitive
     description: flutter
@@ -247,6 +263,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  js:
+    dependency: transitive
+    description:
+      name: js
+      sha256: c1b2e9b5ea78c45e1a0788d29606ba27dc5f71f019f32ca5140f61ef071838cf
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "0.7.1"
   json_annotation:
     dependency: transitive
     description:
@@ -287,6 +311,22 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "5.1.1"
+  logger:
+    dependency: transitive
+    description:
+      name: logger
+      sha256: "25aee487596a6257655a1e091ec2ae66bc30e7af663592cc3a27e6591e05035c"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "2.7.0"
+  logging:
+    dependency: transitive
+    description:
+      name: logging
+      sha256: c8245ada5f1717ed44271ed1c26b8ce85ca3228fd2ffdb75468ab01979309d61
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "1.3.0"
   markdown:
     dependency: transitive
     description:
@@ -327,6 +367,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "2.0.0"
+  mobile_scanner:
+    dependency: "direct main"
+    description:
+      name: mobile_scanner
+      sha256: "0b466a0a8a211b366c2e87f3345715faef9b6011c7147556ad22f37de6ba3173"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "6.0.11"
   path:
     dependency: transitive
     description:
@@ -572,6 +620,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "0.3.1"
+  synchronized:
+    dependency: transitive
+    description:
+      name: synchronized
+      sha256: "69fe30f3a8b04a0be0c15ae6490fc859a78ef4c43ae2dd5e8a623d45bfcf9225"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "3.3.0+3"
   term_glyph:
     dependency: transitive
     description:
@@ -748,6 +804,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "3.0.4"
+  webrtc_interface:
+    dependency: transitive
+    description:
+      name: webrtc_interface
+      sha256: c6f100eac5057d9a817a60473126f9828c796d42884d498af4f339c97b21014f
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "1.5.1"
   win32:
     dependency: transitive
     description:
