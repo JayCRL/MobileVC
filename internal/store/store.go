@@ -26,12 +26,12 @@ const (
 )
 
 const (
-	CatalogSyncStateIdle     CatalogSyncState = "idle"
-	CatalogSyncStateSyncing  CatalogSyncState = "syncing"
-	CatalogSyncStateSynced   CatalogSyncState = "synced"
-	CatalogSyncStateDrifted  CatalogSyncState = "drifted"
-	CatalogSyncStateDraft    CatalogSyncState = "draft"
-	CatalogSyncStateFailed   CatalogSyncState = "failed"
+	CatalogSyncStateIdle    CatalogSyncState = "idle"
+	CatalogSyncStateSyncing CatalogSyncState = "syncing"
+	CatalogSyncStateSynced  CatalogSyncState = "synced"
+	CatalogSyncStateDrifted CatalogSyncState = "drifted"
+	CatalogSyncStateDraft   CatalogSyncState = "draft"
+	CatalogSyncStateFailed  CatalogSyncState = "failed"
 )
 
 const (
@@ -99,6 +99,7 @@ type SessionRuntime struct {
 	PermissionMode  string `json:"permissionMode,omitempty"`
 	CWD             string `json:"cwd,omitempty"`
 	ClaudeLifecycle string `json:"claudeLifecycle,omitempty"`
+	Source          string `json:"source,omitempty"`
 }
 
 type SessionSummary struct {
@@ -109,6 +110,8 @@ type SessionSummary struct {
 	LastPreview string         `json:"lastPreview,omitempty"`
 	EntryCount  int            `json:"entryCount,omitempty"`
 	Runtime     SessionRuntime `json:"runtime,omitempty"`
+	Source      string         `json:"source,omitempty"`
+	External    bool           `json:"external,omitempty"`
 }
 
 type SnapshotContext struct {
@@ -185,6 +188,7 @@ type SessionRecord struct {
 
 type Store interface {
 	CreateSession(ctx context.Context, title string) (SessionSummary, error)
+	UpsertSession(ctx context.Context, record SessionRecord) (SessionSummary, error)
 	SaveProjection(ctx context.Context, sessionID string, projection ProjectionSnapshot) (SessionSummary, error)
 	GetSession(ctx context.Context, sessionID string) (SessionRecord, error)
 	ListSessions(ctx context.Context) ([]SessionSummary, error)

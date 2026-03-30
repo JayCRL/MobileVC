@@ -3,9 +3,14 @@ package ws
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -411,6 +416,54 @@ func createHistorySessionForHandlerTest(t *testing.T, h *Handler, conn *websocke
 	}
 	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
 	return sessionID
+}
+
+func seedNativeCodexSessionFixture(t *testing.T, homeDir, cwd string) string {
+	t.Helper()
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not available")
+	}
+
+	codexDir := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatalf("mkdir codex dir: %v", err)
+	}
+
+	threadID := "019d3c6b-c538-7420-8028-345f7dd70d63"
+	createdAt := time.Date(2026, 3, 29, 10, 0, 0, 0, time.UTC).Unix()
+	updatedAt := time.Date(2026, 3, 30, 11, 30, 0, 0, time.UTC).Unix()
+	dbPath := filepath.Join(codexDir, "state_5.sqlite")
+	sql := strings.Join([]string{
+		"create table if not exists threads (id text primary key, cwd text, title text, model text, source text, model_provider text, created_at integer, updated_at integer, first_user_message text, archived integer default 0);",
+		"delete from threads;",
+		"insert into threads (id, cwd, title, model, source, model_provider, created_at, updated_at, first_user_message, archived) values ('019d3c6b-c538-7420-8028-345f7dd70d63', '" + strings.ReplaceAll(cwd, "'", "''") + "', 'Desktop Codex Session', 'gpt-5-codex', 'codex', 'openai', " + int64String(createdAt) + ", " + int64String(updatedAt) + ", 'Fix the README wording', 0);",
+	}, " ")
+	cmd := exec.Command("sqlite3", dbPath, sql)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("seed sqlite fixture: %v (%s)", err, output)
+	}
+
+	historyPath := filepath.Join(codexDir, "history.jsonl")
+	historyLines := []map[string]any{
+		{"session_id": threadID, "ts": createdAt, "text": "Fix the README wording"},
+		{"session_id": threadID, "ts": updatedAt, "text": "Also align the mobile labels"},
+	}
+	file, err := os.Create(historyPath)
+	if err != nil {
+		t.Fatalf("create history fixture: %v", err)
+	}
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	for _, line := range historyLines {
+		if err := encoder.Encode(line); err != nil {
+			t.Fatalf("write history fixture: %v", err)
+		}
+	}
+	return threadID
+}
+
+func int64String(value int64) string {
+	return strconv.FormatInt(value, 10)
 }
 
 func TestHandlerSkillCatalogLifecycle(t *testing.T) {
@@ -3109,6 +3162,207 @@ func TestHandlerSessionDeleteRemovesHistorySessionFromList(t *testing.T) {
 	}
 	if _, err := h.SessionStore.GetSession(context.Background(), sessionB); err != nil {
 		t.Fatalf("expected current session to remain, got %v", err)
+	}
+}
+
+func TestHandlerSessionListMergesNativeCodexSessionsByCWD(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := filepath.Join(homeDir, "workspace", "MobileVC")
+	otherDir := filepath.Join(homeDir, "workspace", "Other")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+	if err := os.MkdirAll(otherDir, 0o755); err != nil {
+		t.Fatalf("mkdir other dir: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_create"},
+		Title:       "mobile-project",
+		CWD:         projectDir,
+	}); err != nil {
+		t.Fatalf("write project session create request: %v", err)
+	}
+	projectCreated := readUntilSessionCreated(t, conn)
+	projectSummary, ok := projectCreated["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", projectCreated)
+	}
+	projectSessionID, _ := projectSummary["id"].(string)
+	if projectSessionID == "" {
+		t.Fatalf("expected project session id, got %#v", projectCreated)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_create"},
+		Title:       "mobile-other",
+		CWD:         otherDir,
+	}); err != nil {
+		t.Fatalf("write other session create request: %v", err)
+	}
+	otherCreated := readUntilSessionCreated(t, conn)
+	otherSummary, ok := otherCreated["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload, got %#v", otherCreated)
+	}
+	otherSessionID, _ := otherSummary["id"].(string)
+	if otherSessionID == "" || otherSessionID == projectSessionID {
+		t.Fatalf("expected distinct other session id, got %q", otherSessionID)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+
+	if err := conn.WriteJSON(protocol.SessionListRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_list"},
+		CWD:         projectDir,
+	}); err != nil {
+		t.Fatalf("write session list request: %v", err)
+	}
+
+	listEvent := readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	items, ok := listEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected session list items, got %#v", listEvent)
+	}
+
+	var foundProject, foundNative, foundOther bool
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		switch item["id"] {
+		case projectSessionID:
+			foundProject = true
+		case otherSessionID:
+			foundOther = true
+		case "codex-thread:" + threadID:
+			foundNative = true
+			if item["source"] != "codex-native" {
+				t.Fatalf("expected codex-native source, got %#v", item)
+			}
+			if item["external"] != true {
+				t.Fatalf("expected external native session, got %#v", item)
+			}
+			runtime, _ := item["runtime"].(map[string]any)
+			if runtime["resumeSessionId"] != threadID {
+				t.Fatalf("expected native resume session id %q, got %#v", threadID, runtime)
+			}
+		}
+	}
+	if !foundProject {
+		t.Fatalf("expected project-scoped session in list, got %#v", items)
+	}
+	if foundOther {
+		t.Fatalf("did not expect other cwd session in filtered list, got %#v", items)
+	}
+	if !foundNative {
+		t.Fatalf("expected native Codex session in filtered list, got %#v", items)
+	}
+}
+
+func TestHandlerSessionLoadMirrorsNativeCodexSession(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := filepath.Join(homeDir, "workspace", "MobileVC")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	mirrorID := "codex-thread:" + threadID
+	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_load"},
+		SessionID:   mirrorID,
+		CWD:         projectDir,
+	}); err != nil {
+		t.Fatalf("write session load request: %v", err)
+	}
+
+	history := readUntilSessionHistory(t, conn)
+	if history["sessionId"] != mirrorID {
+		t.Fatalf("expected mirror session history, got %#v", history)
+	}
+	if history["canResume"] != true {
+		t.Fatalf("expected resumable native history, got %#v", history)
+	}
+	summary, _ := history["summary"].(map[string]any)
+	if summary["source"] != "codex-native" || summary["external"] != true {
+		t.Fatalf("expected codex-native external summary, got %#v", summary)
+	}
+	resumeMeta, _ := history["resumeRuntimeMeta"].(map[string]any)
+	if resumeMeta["engine"] != "codex" || resumeMeta["resumeSessionId"] != threadID {
+		t.Fatalf("expected codex resume runtime meta, got %#v", resumeMeta)
+	}
+
+	record, err := h.SessionStore.GetSession(context.Background(), mirrorID)
+	if err != nil {
+		t.Fatalf("expected mirrored native session persisted: %v", err)
+	}
+	if record.Summary.Source != "codex-native" || !record.Summary.External {
+		t.Fatalf("expected mirrored native summary flags, got %#v", record.Summary)
+	}
+}
+
+func TestHandlerSessionDeleteRejectsNativeCodexMirror(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := filepath.Join(homeDir, "workspace", "MobileVC")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	mirrorID := "codex-thread:" + threadID
+	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_load"},
+		SessionID:   mirrorID,
+		CWD:         projectDir,
+	}); err != nil {
+		t.Fatalf("write session load request: %v", err)
+	}
+	_ = readUntilSessionHistory(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeReviewState)
+
+	if err := conn.WriteJSON(protocol.SessionDeleteRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_delete"},
+		SessionID:   mirrorID,
+	}); err != nil {
+		t.Fatalf("write session delete request: %v", err)
+	}
+
+	errorEvent := readUntilType(t, conn, protocol.EventTypeError)
+	if errorEvent["msg"] != "Codex 原生会话仅支持恢复，不支持在 MobileVC 内删除" {
+		t.Fatalf("unexpected error event: %#v", errorEvent)
+	}
+	if _, err := h.SessionStore.GetSession(context.Background(), mirrorID); err != nil {
+		t.Fatalf("expected mirrored native session to remain after delete rejection: %v", err)
 	}
 }
 

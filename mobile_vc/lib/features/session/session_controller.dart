@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/config/app_config.dart';
 import '../../data/models/events.dart';
 import '../../data/models/runtime_meta.dart';
 import '../../data/models/session_models.dart';
+import '../../data/services/adb_webrtc_service.dart';
 import '../../data/services/mobilevc_ws_service.dart';
 
 enum ActionNeededType {
@@ -50,6 +52,7 @@ class SessionController extends ChangeNotifier {
 
   static const _prefsKey = 'mobilevc.app_config';
   final MobileVcWsService _service;
+  final AdbWebRtcService _adbWebRtc = AdbWebRtcService();
 
   StreamSubscription<AppEvent>? _subscription;
   AppConfig _config = const AppConfig();
@@ -137,6 +140,8 @@ class SessionController extends ChangeNotifier {
   int _adbFrameSeq = 0;
   int _adbFrameIntervalMs = 700;
   Timer? _adbRefreshTimer;
+  bool _adbWebRtcConnected = false;
+  bool _adbWebRtcStarting = false;
 
   AppConfig get config => _config;
   bool get connecting => _connecting;
@@ -238,6 +243,9 @@ class SessionController extends ChangeNotifier {
   int get adbFrameHeight => _adbFrameHeight;
   int get adbFrameSeq => _adbFrameSeq;
   int get adbFrameIntervalMs => _adbFrameIntervalMs;
+  RTCVideoRenderer get adbRenderer => _adbWebRtc.renderer;
+  bool get adbWebRtcConnected => _adbWebRtcConnected;
+  bool get adbWebRtcStarting => _adbWebRtcStarting;
   bool get hasAdbConnectedDevice =>
       _adbDevices.any((item) => item.state.trim().toLowerCase() == 'device');
   bool get canLaunchAdbEmulator =>
@@ -552,9 +560,12 @@ class SessionController extends ChangeNotifier {
         .merge(_resumeRuntimeMeta);
     final runtimeCwd = merged.cwd.trim();
     final targetCwd = runtimeCwd.isNotEmpty ? runtimeCwd : effectiveCwd;
+    final runtimeEngine = merged.engine.trim();
+    final targetEngine =
+        runtimeEngine.isNotEmpty ? runtimeEngine : _config.engine;
     return merged.merge(
       RuntimeMeta(
-        engine: _config.engine,
+        engine: targetEngine,
         cwd: targetCwd,
         permissionMode: displayPermissionMode,
         targetDiff: _currentDiff?.diff ?? merged.targetDiff,
@@ -570,7 +581,10 @@ class SessionController extends ChangeNotifier {
   }
 
   String get _preferredAiCommand {
-    final engine = _config.engine.trim().toLowerCase();
+    final runtimeEngine = _resumeRuntimeMeta.engine.trim();
+    final engine = (runtimeEngine.isNotEmpty ? runtimeEngine : _config.engine)
+        .trim()
+        .toLowerCase();
     if (engine == 'codex') {
       return 'codex';
     }
@@ -653,6 +667,7 @@ class SessionController extends ChangeNotifier {
   Future<void> disposeController() async {
     _stopAdbRefreshPolling();
     await _subscription?.cancel();
+    await _adbWebRtc.dispose();
     await _service.dispose();
   }
 
@@ -740,6 +755,7 @@ class SessionController extends ChangeNotifier {
 
   Future<void> disconnect() async {
     _stopAdbRefreshPolling();
+    await _adbWebRtc.stop();
     await _service.disconnect();
     _connected = false;
     _selectedSessionId = '';
@@ -778,6 +794,8 @@ class SessionController extends ChangeNotifier {
     _adbFrameWidth = 0;
     _adbFrameHeight = 0;
     _adbFrameSeq = 0;
+    _adbWebRtcConnected = false;
+    _adbWebRtcStarting = false;
     _agentState = null;
     _runtimePhase = null;
     _sessionState = null;
@@ -795,7 +813,7 @@ class SessionController extends ChangeNotifier {
   }
 
   void requestSessionList() {
-    _service.send({'action': 'session_list'});
+    _service.send({'action': 'session_list', 'cwd': effectiveCwd});
   }
 
   void _handleAutoSessionBinding(List<SessionSummary> items) {
@@ -818,8 +836,11 @@ class SessionController extends ChangeNotifier {
 
   void createSession([String title = '']) {
     _beginSessionLoading();
-    _service.send(
-        {'action': 'session_create', if (title.isNotEmpty) 'title': title});
+    _service.send({
+      'action': 'session_create',
+      'cwd': effectiveCwd,
+      if (title.isNotEmpty) 'title': title,
+    });
   }
 
   void loadSession(String sessionId) {
@@ -828,7 +849,11 @@ class SessionController extends ChangeNotifier {
       return;
     }
     _beginSessionLoading(targetId: targetId);
-    _service.send({'action': 'session_load', 'sessionId': targetId});
+    _service.send({
+      'action': 'session_load',
+      'sessionId': targetId,
+      'cwd': effectiveCwd,
+    });
   }
 
   void deleteSession(String sessionId) {
@@ -1114,6 +1139,11 @@ class SessionController extends ChangeNotifier {
     _service.send({'action': 'review_state_get'});
   }
 
+  Future<void> prepareAdbDebug() async {
+    await _adbWebRtc.ensureInitialized();
+    requestAdbDevices();
+  }
+
   void requestAdbDevices() {
     _service.send({'action': 'adb_devices'});
   }
@@ -1132,17 +1162,50 @@ class SessionController extends ChangeNotifier {
   }
 
   void startAdbStream({String serial = ''}) {
-    _adbStatus = '正在连接 ADB 画面…';
+    unawaited(_startAdbStream(serial: serial));
+  }
+
+  Future<void> _startAdbStream({String serial = ''}) async {
+    final target =
+        serial.trim().isNotEmpty ? serial.trim() : _adbSelectedSerial.trim();
+    _adbStatus = '正在建立 WebRTC + H264 调试链路…';
+    _adbWebRtcStarting = true;
     notifyListeners();
-    _service.send({
-      'action': 'adb_stream_start',
-      if (serial.trim().isNotEmpty) 'serial': serial.trim(),
-      'intervalMs': _adbFrameIntervalMs,
-    });
+    try {
+      await _adbWebRtc.start(
+        onOfferReady: (sdpType, sdp) async {
+          _service.send({
+            'action': 'adb_webrtc_offer',
+            if (target.isNotEmpty) 'serial': target,
+            'sdpType': sdpType,
+            'sdp': sdp,
+          });
+        },
+        onConnectionState: _handleAdbWebRtcConnectionState,
+      );
+    } catch (error) {
+      _adbStatus = 'WebRTC 启动失败：$error';
+      _adbStreaming = false;
+      _adbWebRtcConnected = false;
+    } finally {
+      _adbWebRtcStarting = false;
+      notifyListeners();
+    }
   }
 
   void stopAdbStream() {
-    _service.send({'action': 'adb_stream_stop'});
+    unawaited(_stopAdbStream());
+  }
+
+  Future<void> _stopAdbStream() async {
+    _service.send({'action': 'adb_webrtc_stop'});
+    await _adbWebRtc.stop();
+    _adbStreaming = false;
+    _adbWebRtcConnected = false;
+    if (_adbStatus.trim().isEmpty) {
+      _adbStatus = 'ADB WebRTC 调试已停止';
+    }
+    notifyListeners();
   }
 
   void launchAdbEmulator({String avd = ''}) {
@@ -1162,6 +1225,10 @@ class SessionController extends ChangeNotifier {
 
   void sendAdbTap(int x, int y, {String serial = ''}) {
     if (x < 0 || y < 0) {
+      return;
+    }
+    if (_adbWebRtc.canSendControl) {
+      _adbWebRtc.sendTap(x, y);
       return;
     }
     _service.send({
@@ -1194,6 +1261,43 @@ class SessionController extends ChangeNotifier {
   void _stopAdbRefreshPolling() {
     _adbRefreshTimer?.cancel();
     _adbRefreshTimer = null;
+  }
+
+  void _handleAdbWebRtcConnectionState(RTCPeerConnectionState state) {
+    switch (state) {
+      case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+        _adbWebRtcConnected = true;
+        _adbStreaming = true;
+        _adbStatus = 'WebRTC 已连接，正在接收 H264 画面';
+        break;
+      case RTCPeerConnectionState.RTCPeerConnectionStateConnecting:
+        _adbWebRtcConnected = false;
+        _adbStreaming = true;
+        _adbStatus = 'WebRTC 连接中…';
+        break;
+      case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+        _adbWebRtcConnected = false;
+        _adbStreaming = false;
+        if (_adbStatus.trim().isEmpty) {
+          _adbStatus = 'WebRTC 已断开';
+        }
+        break;
+      case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+        _adbWebRtcConnected = false;
+        _adbStreaming = false;
+        _adbStatus = 'WebRTC 连接失败';
+        break;
+      case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
+        _adbWebRtcConnected = false;
+        _adbStreaming = false;
+        if (_adbStatus.trim().isEmpty) {
+          _adbStatus = 'WebRTC 已关闭';
+        }
+        break;
+      default:
+        break;
+    }
+    notifyListeners();
   }
 
   void updateSessionContext({
@@ -2360,6 +2464,32 @@ class SessionController extends ChangeNotifier {
           _adbStatus = 'ADB 画面预览中';
         } catch (_) {
           _adbStatus = 'ADB 帧解码失败';
+        }
+        break;
+      case AdbWebRtcAnswerEvent answer:
+        if (answer.serial.trim().isNotEmpty) {
+          _adbSelectedSerial = answer.serial.trim();
+        }
+        unawaited(_adbWebRtc.applyAnswer(answer.sdpType, answer.sdp));
+        _adbStatus = 'WebRTC answer 已收到，等待连接…';
+        break;
+      case AdbWebRtcStateEvent state:
+        _adbStreaming = state.running;
+        _adbWebRtcConnected = state.connected;
+        if (state.serial.trim().isNotEmpty) {
+          _adbSelectedSerial = state.serial.trim();
+        }
+        if (state.width > 0) {
+          _adbFrameWidth = state.width;
+        }
+        if (state.height > 0) {
+          _adbFrameHeight = state.height;
+        }
+        if (state.message.trim().isNotEmpty) {
+          _adbStatus = state.message.trim();
+        }
+        if (!state.running && !state.connected) {
+          _adbWebRtcStarting = false;
         }
         break;
       case UnknownEvent unknown:
