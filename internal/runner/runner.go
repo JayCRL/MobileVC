@@ -233,7 +233,8 @@ func isAICommandName(command string) bool {
 	head := strings.ToLower(fields[0])
 	isClaude := head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe" || head == "claude.cmd" || head == "claude.ps1"
 	isGemini := head == "gemini" || strings.HasSuffix(head, "/gemini") || strings.HasSuffix(head, `\\gemini`) || head == "gemini.exe" || head == "gemini.cmd" || head == "gemini.ps1"
-	return isClaude || isGemini
+	isCodex := head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\\codex`) || head == "codex.exe" || head == "codex.cmd" || head == "codex.ps1"
+	return isClaude || isGemini || isCodex
 }
 
 func claudeCommandArgs(command string) []string {

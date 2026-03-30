@@ -123,6 +123,39 @@ func TestBuildExecRequestFromSlash(t *testing.T) {
 	}
 }
 
+func TestBuildExecRequestFromSlashUsesCodexEngine(t *testing.T) {
+	tests := []struct {
+		name        string
+		command     string
+		wantCommand string
+	}{
+		{name: "init", command: "/init", wantCommand: "codex /init"},
+		{name: "compact", command: "/compact", wantCommand: "codex /compact"},
+		{name: "plan", command: "/plan", wantCommand: "codex /plan"},
+		{name: "execute", command: "/execute", wantCommand: "codex /execute"},
+		{name: "add-dir", command: "/add-dir /tmp/demo", wantCommand: "codex /add-dir /tmp/demo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := parseSlashCommand(tt.command)
+			if err != nil {
+				t.Fatalf("parse slash command: %v", err)
+			}
+			req, err := buildExecRequestFromSlash(parsed, protocol.SlashCommandRequestEvent{
+				CWD:            "/tmp/demo",
+				Engine:         "codex",
+				PermissionMode: "default",
+			})
+			if err != nil {
+				t.Fatalf("build exec request: %v", err)
+			}
+			if req.Command != tt.wantCommand {
+				t.Fatalf("expected %q, got %q", tt.wantCommand, req.Command)
+			}
+		})
+	}
+}
+
 func TestBuildSkillRequestFromSlash(t *testing.T) {
 	parsed, err := parseSlashCommand("/review")
 	if err != nil {

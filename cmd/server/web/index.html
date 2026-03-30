@@ -1,0 +1,2286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>MobileVC</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    body { background: #09090b; color: #f4f4f5; }
+    .scrollbar-none::-webkit-scrollbar { display: none; }
+    .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+    .markdown-body { color: #f4f4f5; font-size: 0.95rem; line-height: 1.7; }
+    .markdown-body > *:first-child { margin-top: 0; }
+    .markdown-body > *:last-child { margin-bottom: 0; }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3 { margin: 1rem 0 0.5rem; font-weight: 700; line-height: 1.3; }
+    .markdown-body h1 { font-size: 1.25rem; }
+    .markdown-body h2 { font-size: 1.1rem; }
+    .markdown-body h3 { font-size: 1rem; }
+    .markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body pre, .markdown-body blockquote { margin: 0.75rem 0; }
+    .markdown-body ul, .markdown-body ol { padding-left: 1.25rem; }
+    .markdown-body code:not(pre code) { background: rgba(255,255,255,0.08); border-radius: 0.4rem; padding: 0.12rem 0.35rem; font-size: 0.9em; }
+    .markdown-body pre { position: relative; overflow-x: auto; border-radius: 0.9rem; border: 1px solid rgba(255,255,255,0.08); background: #0f172a; padding: 1rem; }
+    .markdown-body pre code { background: transparent; padding: 0; font-size: 0.88rem; }
+    .markdown-body blockquote { border-left: 3px solid rgba(96,165,250,0.7); padding-left: 0.9rem; color: #d4d4d8; }
+    .code-copy-btn {
+      position: absolute; top: 0.75rem; right: 0.75rem; border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(24,24,27,0.9); color: #fafafa; border-radius: 0.6rem; padding: 0.35rem 0.5rem; font-size: 0.75rem; line-height: 1;
+    }
+    .code-copy-btn:hover { background: rgba(39,39,42,0.95); }
+    .diff-added { background: rgba(34,197,94,0.13); color: #dcfce7; }
+    .diff-removed { background: rgba(248,113,113,0.13); color: #fee2e2; }
+    .diff-meta { color: #93c5fd; }
+    .line-row:hover { background: rgba(255,255,255,0.03); }
+    .bubble-shadow { box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
+    .glass { background: rgba(24,24,27,0.88); backdrop-filter: blur(20px); }
+    .crab-track {
+      overflow: hidden;
+      position: relative;
+      border-radius: 999px;
+    }
+    .crab-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      min-width: 0;
+    }
+    .crab-left {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 0;
+      flex: 1;
+    }
+    .crab-lane {
+      position: relative;
+      width: 1.2rem;
+      height: 1rem;
+      flex: none;
+      overflow: hidden;
+    }
+    .crab-runner {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: crab-walk 2.4s ease-in-out infinite;
+      will-change: transform;
+      pointer-events: none;
+    }
+    .crab-status-copy {
+      min-width: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 0.35rem;
+      overflow: hidden;
+    }
+    .crab-status-label {
+      color: #e4e4e7;
+      white-space: nowrap;
+      flex: none;
+    }
+    .crab-tool-label {
+      font-size: 10px;
+      line-height: 1;
+      color: #a1a1aa;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+      flex: 1;
+    }
+    @keyframes crab-walk {
+      0% { transform: translateX(0); }
+      50% { transform: translateX(0.28rem); }
+      100% { transform: translateX(0); }
+    }
+    .spinner {
+      width: 1rem; height: 1rem; border-radius: 999px; border: 2px solid rgba(255,255,255,0.16); border-top-color: #60a5fa;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div id="sidebarOverlay" class="pointer-events-none fixed inset-0 z-40 bg-black/60 opacity-0 transition-opacity duration-300"></div>
+  <aside id="sidebar" class="scrollbar-none fixed inset-y-0 left-0 z-50 w-[84vw] max-w-sm -translate-x-full overflow-y-auto border-r border-zinc-800 bg-zinc-950/98 p-4 shadow-2xl transition-transform duration-300">
+    <div class="mb-4 flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <div class="text-sm font-semibold text-zinc-100">文件抽屉</div>
+        <div id="sidebarPath" class="mt-1 break-all text-xs text-zinc-400">.</div>
+      </div>
+      <button id="closeSidebarBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+    </div>
+    <div class="mb-3 flex gap-2">
+      <button id="sidebarUpBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">上一级</button>
+      <button id="sidebarRefreshBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">刷新</button>
+    </div>
+    <div id="fileList" class="space-y-2"></div>
+  </aside>
+
+  <div id="appShell" class="mx-auto min-h-screen w-full max-w-4xl">
+    <section id="authView" class="hidden min-h-screen px-4 py-6">
+      <div class="mx-auto flex min-h-[calc(100vh-3rem)] max-w-md items-center justify-center">
+        <div class="w-full rounded-[2rem] border border-zinc-800 bg-zinc-900/92 p-6 shadow-2xl">
+          <div class="mb-6">
+            <div class="text-2xl font-semibold text-zinc-100">MobileVC</div>
+            <div class="mt-2 text-sm text-zinc-400">输入 token 后进入移动优先工作台。已保存 token 时会自动尝试连接。</div>
+          </div>
+          <form id="authForm" class="space-y-3">
+            <input id="tokenInput" type="password" autocomplete="off" placeholder="输入 AUTH_TOKEN" class="w-full rounded-3xl border border-zinc-800 bg-zinc-950 px-4 py-4 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-blue-700" />
+            <button id="authSubmitBtn" type="submit" class="flex w-full items-center justify-center gap-2 rounded-3xl bg-blue-600 px-4 py-4 text-sm font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-700">
+              <span id="authSpinner" class="spinner hidden"></span>
+              <span id="authSubmitText">进入工作台</span>
+            </button>
+          </form>
+          <div id="authStatus" class="mt-4 hidden rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 text-sm text-zinc-300"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="chatView" class="hidden min-h-screen px-3 pb-[calc(8.5rem+var(--safe-bottom))] pt-3 sm:px-4">
+      <header class="glass sticky top-0 z-20 mb-3 rounded-[1.6rem] border border-zinc-800 px-3 py-3 shadow-xl sm:px-4">
+        <div class="flex items-start justify-between gap-1.5 sm:gap-2">
+          <div class="flex min-w-0 items-center gap-2">
+            <button id="openSidebarBtn" class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-zinc-700 text-base text-zinc-100 hover:bg-zinc-800">📁</button>
+            <div class="min-w-0">
+              <div id="projectTitleText" class="truncate text-sm font-semibold text-zinc-100">MobileVC</div>
+              <div id="workspacePath" class="truncate text-[11px] text-zinc-400">.</div>
+            </div>
+          </div>
+          <div class="flex shrink-0 items-center gap-1.5">
+            <button id="diffBadgeBtn" class="relative rounded-xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">
+              Diff
+              <span id="diffBadgeDot" class="absolute -right-1 -top-1 hidden min-w-4 rounded-full bg-red-500 px-1 text-[10px] leading-4 text-white">1</span>
+            </button>
+            <button id="terminalBtn" class="rounded-xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">日志</button>
+          </div>
+        </div>
+        <div class="mt-3 flex flex-col gap-2 text-sm text-zinc-300">
+          <button id="statusDetailBtn" class="flex w-full min-w-0 items-center gap-2 rounded-full border border-zinc-800 px-3 py-1.5 text-left hover:bg-zinc-800/70 sm:w-fit sm:max-w-full">
+            <span id="statusDot" class="h-2.5 w-2.5 shrink-0 rounded-full bg-red-500"></span>
+            <span id="statusText" class="truncate">未连接</span>
+          </button>
+          <div class="flex flex-wrap items-center gap-2 [&>*]:min-w-0 [&>*]:max-w-full">
+            <div id="runtimeMetaBadge" class="hidden min-w-0 truncate rounded-full border border-violet-800 bg-violet-950/40 px-2.5 py-1 text-[10px] text-violet-200 sm:px-3 sm:py-1.5 sm:text-[11px] xl:max-w-[14rem]"></div>
+            <select id="permissionModeSelect" class="min-w-0 max-w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-2.5 py-2 text-[11px] text-zinc-100 outline-none hover:bg-zinc-800 sm:px-3 sm:text-xs xl:w-[9.5rem]">
+              <option value="acceptEdits">自动同意修改</option>
+              <option value="default">逐项确认</option>
+              <option value="plan">仅规划</option>
+            </select>
+            <button id="sessionPanelBtn" class="rounded-2xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">会话</button>
+            <button id="skillPanelBtn" class="rounded-2xl border border-violet-700 bg-violet-950/30 px-2.5 py-2 text-[11px] text-violet-100 hover:bg-violet-900/50 sm:px-3 sm:text-xs">Skill</button>
+            <button id="memoryPanelBtn" class="rounded-2xl border border-amber-700 bg-amber-950/30 px-2.5 py-2 text-[11px] text-amber-100 hover:bg-amber-900/50 sm:px-3 sm:text-xs">Memory</button>
+            <button id="newSessionBtn" class="rounded-2xl border border-sky-700 bg-sky-950/40 px-2.5 py-2 text-[11px] text-sky-100 hover:bg-sky-900/60 sm:px-3 sm:text-xs">新会话</button>
+            <button id="resumeSessionBtn" class="hidden rounded-2xl border border-emerald-700 bg-emerald-950/40 px-2.5 py-2 text-[11px] text-emerald-100 hover:bg-emerald-900/60 sm:px-3 sm:text-xs">继续上次</button>
+            <button id="retokenBtn" class="rounded-2xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">Token</button>
+            <button id="reconnectBtn" class="rounded-2xl border border-zinc-700 px-2.5 py-2 text-[11px] text-zinc-200 hover:bg-zinc-800 sm:px-3 sm:text-xs">重连</button>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <div id="chatContainer" class="space-y-3"></div>
+      </main>
+
+      <div id="chatComposerDock" class="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-4xl px-3 pb-[calc(0.75rem+var(--safe-bottom))] sm:px-4">
+        <div class="glass rounded-[1.8rem] border border-zinc-800 p-3 shadow-2xl">
+          <div id="statusActivity" class="crab-track hidden mb-2 rounded-full border border-zinc-800/70 bg-zinc-900/55 px-2 py-1 text-[11px] text-zinc-200">
+            <div class="crab-row">
+              <div class="crab-left min-w-0">
+                <div class="crab-lane" aria-hidden="true">
+                  <div class="crab-runner">
+                    <span>🦀</span>
+                  </div>
+                </div>
+                <div class="crab-status-copy">
+                  <span class="crab-status-label">执行中</span>
+                  <span id="statusToolLabel" class="crab-tool-label"></span>
+                </div>
+              </div>
+              <span id="statusTimer" class="shrink-0 text-zinc-400">0s</span>
+            </div>
+          </div>
+          <div id="chatInputHint" class="mb-2 hidden rounded-2xl border border-blue-900/70 bg-blue-950/20 px-3 py-2 text-xs text-blue-100"></div>
+          <form id="chatComposer" class="flex items-end gap-2">
+            <input id="chatInput" type="text" autocomplete="off" placeholder="输入命令，如 claude、/build、pwd" class="min-w-0 flex-1 rounded-3xl border border-zinc-800 bg-zinc-950 px-4 py-4 text-base text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-blue-700 sm:text-sm" />
+            <button id="chatSendBtn" type="submit" class="rounded-3xl bg-blue-600 px-5 py-4 text-sm font-medium text-white hover:bg-blue-500">发送</button>
+          </form>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="singleFileView" class="pointer-events-none fixed inset-0 z-[55] flex flex-col bg-zinc-950 opacity-0 transition duration-200">
+    <div class="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+      <div class="flex min-w-0 items-center gap-2">
+        <button id="closeFileViewBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800">返回</button>
+        <div class="min-w-0">
+          <div id="fileViewTitle" class="truncate text-sm font-semibold text-zinc-100">文件</div>
+          <div id="fileViewPath" class="truncate text-xs text-zinc-400"></div>
+        </div>
+      </div>
+      <button id="fileViewRevertBtn" class="rounded-2xl border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-100 hover:bg-red-900/60">撤销</button>
+    </div>
+
+    <div id="fileLoadingBar" class="hidden border-b border-zinc-800 px-4 py-2 text-xs text-blue-200">
+      <div class="flex items-center gap-2"><span class="spinner"></span><span>正在加载文件内容…</span></div>
+    </div>
+
+    <div id="fileCodeContainer" class="scrollbar-none flex-1 overflow-auto px-3 py-3 sm:px-4"></div>
+
+    <div id="fileReviewBar" class="hidden border-t border-zinc-800 bg-zinc-950/96 px-4 py-3">
+      <div class="mb-2 text-xs text-zinc-400">当前文件存在待确认 diff</div>
+      <div class="flex gap-2">
+        <button id="fileAcceptBtn" class="flex-1 rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-3 text-sm text-emerald-100 hover:bg-emerald-900/60">同意</button>
+        <button id="fileRevertBtn" class="flex-1 rounded-2xl border border-red-800 bg-red-950/40 px-3 py-3 text-sm text-red-100 hover:bg-red-900/60">撤销</button>
+        <button id="fileReviseBtn" class="flex-1 rounded-2xl border border-amber-700 bg-amber-950/40 px-3 py-3 text-sm text-amber-100 hover:bg-amber-900/60">继续调整</button>
+      </div>
+    </div>
+
+    <form id="fileComposer" class="border-t border-zinc-800 bg-zinc-950/98 px-4 pb-[calc(1rem+var(--safe-bottom))] pt-3">
+      <div class="mb-2 text-xs text-zinc-500">当前文件定向指令</div>
+      <div class="flex items-end gap-2">
+        <input id="fileInput" type="text" autocomplete="off" placeholder="例如：解释这个文件的改动，或继续修改当前文件" class="min-w-0 flex-1 rounded-3xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-base text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-blue-700 sm:text-sm" />
+        <button id="fileVoiceBtn" type="button" class="rounded-full border border-zinc-700 px-4 py-4 text-lg text-zinc-200 hover:bg-zinc-800">🎙</button>
+        <button id="fileSendBtn" type="submit" class="rounded-3xl bg-blue-600 px-5 py-4 text-sm font-medium text-white hover:bg-blue-500">发送</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="sessionPanel" class="pointer-events-none fixed inset-0 z-[45] flex items-end bg-black/50 opacity-0 transition">
+    <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+      <div class="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div class="text-sm font-semibold text-zinc-100">会话列表</div>
+          <div id="sessionPanelHint" class="text-xs text-zinc-500">查看并切换已保存会话</div>
+        </div>
+        <button id="closeSessionPanelBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+      </div>
+      <div id="sessionList" class="max-h-[62vh] space-y-2 overflow-y-auto"></div>
+    </div>
+  </div>
+
+  <div id="skillPanel" class="pointer-events-none fixed inset-0 z-[45] flex items-end bg-black/50 opacity-0 transition">
+    <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+      <div class="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div class="text-sm font-semibold text-zinc-100">Skill 管理</div>
+          <div class="text-xs text-zinc-500">会话级启用 + 全局 catalog</div>
+        </div>
+        <div class="flex gap-2">
+          <button id="skillSyncBtn" class="rounded-2xl border border-violet-700 bg-violet-950/30 px-3 py-2 text-xs text-violet-100 hover:bg-violet-900/50">同步 skill</button>
+          <button id="closeSkillPanelBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+        </div>
+      </div>
+      <div class="mb-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3">
+        <div class="mb-2 text-xs text-zinc-500">新增 / 编辑 local skill</div>
+        <div class="grid gap-2">
+          <input id="skillNameInput" type="text" placeholder="skill name" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          <input id="skillDescriptionInput" type="text" placeholder="description" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          <div class="grid grid-cols-2 gap-2">
+            <input id="skillTargetTypeInput" type="text" placeholder="targetType" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+            <input id="skillResultViewInput" type="text" placeholder="resultView" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          </div>
+          <textarea id="skillPromptInput" placeholder="prompt" class="min-h-[96px] rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none"></textarea>
+          <button id="saveSkillBtn" class="rounded-2xl border border-sky-700 bg-sky-950/40 px-3 py-3 text-sm text-sky-100 hover:bg-sky-900/60">保存 local skill</button>
+        </div>
+      </div>
+      <div id="skillList" class="max-h-[48vh] space-y-2 overflow-y-auto"></div>
+    </div>
+  </div>
+
+  <div id="memoryPanel" class="pointer-events-none fixed inset-0 z-[45] flex items-end bg-black/50 opacity-0 transition">
+    <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+      <div class="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div class="text-sm font-semibold text-zinc-100">Memory 管理</div>
+          <div class="text-xs text-zinc-500">这是 MobileVC 内部记忆层，不是 Claude 隐式 /memory</div>
+        </div>
+        <button id="closeMemoryPanelBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+      </div>
+      <div class="mb-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3">
+        <div class="mb-2 text-xs text-zinc-500">新增 / 编辑 memory</div>
+        <div class="grid gap-2">
+          <input id="memoryIdInput" type="text" placeholder="memory id（可留空自动生成）" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          <input id="memoryTitleInput" type="text" placeholder="title" class="rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none" />
+          <textarea id="memoryContentInput" placeholder="content" class="min-h-[110px] rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none"></textarea>
+          <button id="saveMemoryBtn" class="rounded-2xl border border-amber-700 bg-amber-950/40 px-3 py-3 text-sm text-amber-100 hover:bg-amber-900/60">保存 memory</button>
+        </div>
+      </div>
+      <div id="memoryList" class="max-h-[48vh] space-y-2 overflow-y-auto"></div>
+    </div>
+  </div>
+
+  <div id="statusDetailPanel" class="pointer-events-none fixed inset-0 z-40 flex items-end bg-black/50 opacity-0 transition">
+    <div class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <div>
+          <div class="text-sm font-semibold text-zinc-100">连接状态详情</div>
+          <div class="text-xs text-zinc-500">当前会话、上下文与路径</div>
+        </div>
+        <button id="closeStatusDetailBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+      </div>
+      <div id="statusDetailContent" class="space-y-2"></div>
+    </div>
+  </div>
+
+  <div id="terminalDrawer" class="pointer-events-none fixed inset-0 z-40 flex items-end bg-black/50 opacity-0 transition">
+    <div id="terminalDrawerSheet" class="w-full rounded-t-3xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl" style="height: 320px;">
+      <div id="terminalDrawerHandle" class="mx-auto mb-3 h-1.5 w-14 rounded-full bg-zinc-700"></div>
+      <div id="terminalDrawerScroll" class="scrollbar-none max-h-full overflow-y-auto overscroll-contain">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <div>
+            <div class="text-sm font-semibold text-zinc-100">运行日志</div>
+            <div class="text-xs text-zinc-500">stdout / stderr 原始投影</div>
+          </div>
+          <button id="closeTerminalDrawerBtn" class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+        </div>
+        <div id="terminalDrawerContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    marked.setOptions({ breaks: true, gfm: true });
+
+    const STORAGE_KEYS = {
+      token: 'vibe_token',
+      permissionMode: 'vibe_permissionMode',
+      resumeSessionId: 'vibe_resume_session_id',
+      fastMode: 'vibe_fast_mode',
+      activeSessionId: 'vibe_active_session_id'
+    };
+
+    function storageGet(key, fallback = '') {
+      const value = localStorage.getItem(key);
+      return value == null ? fallback : value;
+    }
+    function storageSet(key, value) {
+      if (value == null || value === '') localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    }
+    function consumeTokenFromUrl() {
+      const url = new URL(window.location.href);
+      const token = String(url.searchParams.get('token') || '').trim();
+      if (!token) return '';
+      storageSet(STORAGE_KEYS.token, token);
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url.toString());
+      return token;
+    }
+
+    const bootstrapToken = consumeTokenFromUrl();
+
+    const authView = document.getElementById('authView');
+    const chatView = document.getElementById('chatView');
+    const tokenInput = document.getElementById('tokenInput');
+    const authForm = document.getElementById('authForm');
+    const authSubmitBtn = document.getElementById('authSubmitBtn');
+    const authSubmitText = document.getElementById('authSubmitText');
+    const authSpinner = document.getElementById('authSpinner');
+    const authStatus = document.getElementById('authStatus');
+
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+    const openSidebarBtn = document.getElementById('openSidebarBtn');
+    const closeSidebarBtn = document.getElementById('closeSidebarBtn');
+    const sidebarPath = document.getElementById('sidebarPath');
+    const sidebarUpBtn = document.getElementById('sidebarUpBtn');
+    const sidebarRefreshBtn = document.getElementById('sidebarRefreshBtn');
+    const fileList = document.getElementById('fileList');
+
+    const chatContainer = document.getElementById('chatContainer');
+    const chatComposer = document.getElementById('chatComposer');
+    const chatInput = document.getElementById('chatInput');
+    const chatSendBtn = document.getElementById('chatSendBtn');
+    const chatInputHint = document.getElementById('chatInputHint');
+    const projectTitleText = document.getElementById('projectTitleText');
+    const workspacePath = document.getElementById('workspacePath');
+    const runtimeMetaBadge = document.getElementById('runtimeMetaBadge');
+    const statusActivity = document.getElementById('statusActivity');
+    const statusTimer = document.getElementById('statusTimer');
+    const statusToolLabel = document.getElementById('statusToolLabel');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const statusDetailBtn = document.getElementById('statusDetailBtn');
+    const retokenBtn = document.getElementById('retokenBtn');
+    const reconnectBtn = document.getElementById('reconnectBtn');
+    const permissionModeSelect = document.getElementById('permissionModeSelect');
+    const resumeSessionBtn = document.getElementById('resumeSessionBtn');
+    const sessionPanelBtn = document.getElementById('sessionPanelBtn');
+    const skillPanelBtn = document.getElementById('skillPanelBtn');
+    const memoryPanelBtn = document.getElementById('memoryPanelBtn');
+    const newSessionBtn = document.getElementById('newSessionBtn');
+    const diffBadgeBtn = document.getElementById('diffBadgeBtn');
+    const diffBadgeDot = document.getElementById('diffBadgeDot');
+    const terminalBtn = document.getElementById('terminalBtn');
+
+    const sessionPanel = document.getElementById('sessionPanel');
+    const sessionPanelHint = document.getElementById('sessionPanelHint');
+    const sessionList = document.getElementById('sessionList');
+    const closeSessionPanelBtn = document.getElementById('closeSessionPanelBtn');
+
+    const skillPanel = document.getElementById('skillPanel');
+    const closeSkillPanelBtn = document.getElementById('closeSkillPanelBtn');
+    const skillSyncBtn = document.getElementById('skillSyncBtn');
+    const saveSkillBtn = document.getElementById('saveSkillBtn');
+    const skillList = document.getElementById('skillList');
+    const skillNameInput = document.getElementById('skillNameInput');
+    const skillDescriptionInput = document.getElementById('skillDescriptionInput');
+    const skillTargetTypeInput = document.getElementById('skillTargetTypeInput');
+    const skillResultViewInput = document.getElementById('skillResultViewInput');
+    const skillPromptInput = document.getElementById('skillPromptInput');
+
+    const memoryPanel = document.getElementById('memoryPanel');
+    const closeMemoryPanelBtn = document.getElementById('closeMemoryPanelBtn');
+    const saveMemoryBtn = document.getElementById('saveMemoryBtn');
+    const memoryList = document.getElementById('memoryList');
+    const memoryIdInput = document.getElementById('memoryIdInput');
+    const memoryTitleInput = document.getElementById('memoryTitleInput');
+    const memoryContentInput = document.getElementById('memoryContentInput');
+
+    const singleFileView = document.getElementById('singleFileView');
+    const closeFileViewBtn = document.getElementById('closeFileViewBtn');
+    const fileViewTitle = document.getElementById('fileViewTitle');
+    const fileViewPath = document.getElementById('fileViewPath');
+    const fileCodeContainer = document.getElementById('fileCodeContainer');
+    const fileComposer = document.getElementById('fileComposer');
+    const fileInput = document.getElementById('fileInput');
+    const fileVoiceBtn = document.getElementById('fileVoiceBtn');
+    const fileSendBtn = document.getElementById('fileSendBtn');
+    const fileLoadingBar = document.getElementById('fileLoadingBar');
+    const fileReviewBar = document.getElementById('fileReviewBar');
+    const fileAcceptBtn = document.getElementById('fileAcceptBtn');
+    const fileRevertBtn = document.getElementById('fileRevertBtn');
+    const fileReviseBtn = document.getElementById('fileReviseBtn');
+    const fileViewRevertBtn = document.getElementById('fileViewRevertBtn');
+
+    const statusDetailPanel = document.getElementById('statusDetailPanel');
+    const statusDetailContent = document.getElementById('statusDetailContent');
+    const closeStatusDetailBtn = document.getElementById('closeStatusDetailBtn');
+
+    const terminalDrawer = document.getElementById('terminalDrawer');
+    const terminalDrawerSheet = document.getElementById('terminalDrawerSheet');
+    const terminalDrawerHandle = document.getElementById('terminalDrawerHandle');
+    const terminalDrawerScroll = document.getElementById('terminalDrawerScroll');
+    const terminalDrawerContent = document.getElementById('terminalDrawerContent');
+    const closeTerminalDrawerBtn = document.getElementById('closeTerminalDrawerBtn');
+
+    const appState = {
+      auth: { token: bootstrapToken || storageGet(STORAGE_KEYS.token, ''), validating: false, error: '' },
+      ws: null,
+      connection: { connected: false, running: false },
+      session: { id: '', claudeInteractiveActive: false, activeAI: 'claude', fastMode: storageGet(STORAGE_KEYS.fastMode, '') === '1', summaries: [], activeSessionId: storageGet(STORAGE_KEYS.activeSessionId, ''), canResumeCurrent: false },
+      view: { current: 'auth', drawerOpen: false },
+      workspace: { cwd: '.', items: [], highlightedFilePath: '' },
+      prompt: { awaitingInput: false, options: [], message: '' },
+      file: { activePath: '', requestedPath: '', content: '', loading: false, pendingReview: false, lang: '', encoding: 'utf-8', isText: true, error: '', viewMode: 'content' },
+      ui: {
+        terminalDrawerOpen: false,
+        statusDetailOpen: false,
+        sessionPanelOpen: false,
+        skillPanelOpen: false,
+        memoryPanelOpen: false,
+        sessionAutoLoadAttempted: false,
+        drawers: { terminal: { height: 320, minHeight: 240, maxHeight: 0, openHeight: 320, pointerId: null, dragging: false, startY: 0, startHeight: 0 } }
+      }
+    };
+
+    const runtimeState = {
+      meta: { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') },
+      agentState: 'IDLE',
+      agentStateMessage: ''
+    };
+
+    const activityState = {
+      startedAt: 0,
+      timerId: null
+    };
+
+    const fileDownloadState = {
+      timerId: null,
+      pointerId: null,
+      path: '',
+      suppressClickPath: ''
+    };
+
+    const projectionState = {
+      diffs: [],
+      currentDiff: null,
+      currentStep: null,
+      latestError: null,
+      latestRuntimeInfo: null,
+      contexts: { diff: null, step: null, error: null },
+      logEntries: [],
+      rawTerminalByStream: { stdout: '', stderr: '' },
+      terminalExecutions: [],
+      selectedExecutionId: '',
+      review: { activeId: '', autoHandledId: '', pendingAutoAcceptId: '' }
+    };
+
+    const catalogState = {
+      skills: [],
+      memory: [],
+      syncStatus: ''
+    };
+
+    const sessionContextState = {
+      enabledSkillNames: [],
+      enabledMemoryIds: []
+    };
+
+    const dedupState = { lastLogMsg: '', lastLogStream: '', lastLogPhase: '', lastLogExecutionId: '', lastLogTime: 0, lastStepMsg: '', lastStepStatus: '' };
+
+    function buildDiffKey(diff = {}) {
+      return diff.id || diff.path || diff.title || '';
+    }
+    function mergeDiffListItem(diff) {
+      if (!diff) return;
+      const key = buildDiffKey(diff);
+      if (!key) return;
+      const index = projectionState.diffs.findIndex((item) => buildDiffKey(item) === key);
+      if (index >= 0) projectionState.diffs.splice(index, 1, { ...projectionState.diffs[index], ...diff });
+      else projectionState.diffs.push({ ...diff });
+      projectionState.currentDiff = projectionState.diffs.find((item) => buildDiffKey(item) === key) || { ...diff };
+      projectionState.contexts.diff = projectionState.currentDiff;
+    }
+    function pickNextPendingDiff() {
+      return projectionState.diffs.find((item) => item?.pendingReview) || null;
+    }
+    function pendingDiffCount() {
+      return projectionState.diffs.filter((item) => item?.pendingReview).length;
+    }
+    function joinPath(base, name) {
+      if (!base || base === '.' || base === '/') return `${base === '/' ? '/' : ''}${name}`;
+      return `${String(base).replace(/[\\/]+$/, '')}/${name}`;
+    }
+    function parentPath(path) {
+      if (!path || path === '.' || path === '/' || /^[A-Za-z]:[\\/]?$/.test(path)) return path || '.';
+      const normalized = String(path).replace(/[\\/]+$/, '');
+      const index = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+      if (index <= 0) return '/';
+      return normalized.slice(0, index);
+    }
+    function formatTime(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return '';
+      return date.toLocaleTimeString();
+    }
+    function formatSize(size) {
+      if (!size) return '';
+      if (size < 1024) return `${size} B`;
+      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+      if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+      return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
+    }
+    function escapeHtml(text) {
+      return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function highlightDiffLine(line) {
+      const escaped = escapeHtml(line || '');
+      if (escaped.startsWith('+') && !escaped.startsWith('+++')) return `<div class="diff-added px-3 py-0.5">${escaped}</div>`;
+      if (escaped.startsWith('-') && !escaped.startsWith('---')) return `<div class="diff-removed px-3 py-0.5">${escaped}</div>`;
+      if (escaped.startsWith('@@') || escaped.startsWith('diff --git') || escaped.startsWith('*** ') || escaped.startsWith('---') || escaped.startsWith('+++')) return `<div class="diff-meta px-3 py-0.5">${escaped}</div>`;
+      return `<div class="px-3 py-0.5 text-zinc-200">${escaped || '&nbsp;'}</div>`;
+    }
+
+    function getWsUrl() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${location.host}/ws?token=${encodeURIComponent(appState.auth.token)}`;
+    }
+    function setView(name) {
+      appState.view.current = name;
+      authView.classList.toggle('hidden', name !== 'auth');
+      chatView.classList.toggle('hidden', name !== 'chat');
+      renderSingleFileView();
+    }
+    function setSidebarOpen(open) {
+      appState.view.drawerOpen = open;
+      sidebar.classList.toggle('-translate-x-full', !open);
+      sidebarOverlay.classList.toggle('opacity-0', !open);
+      sidebarOverlay.classList.toggle('pointer-events-none', !open);
+    }
+    function setSingleFileOpen(open) {
+      singleFileView.classList.toggle('pointer-events-none', !open);
+      singleFileView.classList.toggle('opacity-0', !open);
+    }
+    function setAuthStatus(message, isError = false) {
+      authStatus.textContent = message || '';
+      authStatus.classList.toggle('hidden', !message);
+      authStatus.className = `mt-4 rounded-2xl border px-4 py-3 text-sm ${isError ? 'border-red-900 bg-red-950/30 text-red-100' : 'border-zinc-800 bg-zinc-950/70 text-zinc-300'}`;
+    }
+    function setAuthLoading(loading, message = '') {
+      appState.auth.validating = loading;
+      authSubmitBtn.disabled = loading;
+      authSpinner.classList.toggle('hidden', !loading);
+      authSubmitText.textContent = loading ? (message || '连接中…') : '进入工作台';
+    }
+    function sendJson(data) {
+      if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
+        appendErrorMessage('WebSocket 未连接。');
+        return false;
+      }
+      appState.ws.send(JSON.stringify(data));
+      return true;
+    }
+    function updateRuntimeMeta(payload = {}) {
+      runtimeState.meta = {
+        source: payload.source || runtimeState.meta.source || '',
+        skillName: payload.skillName || runtimeState.meta.skillName || '',
+        target: payload.target || runtimeState.meta.target || '',
+        targetType: payload.targetType || runtimeState.meta.targetType || '',
+        targetPath: payload.targetPath || runtimeState.meta.targetPath || '',
+        resultView: payload.resultView || runtimeState.meta.resultView || '',
+        resumeSessionId: payload.resumeSessionId || runtimeState.meta.resumeSessionId || '',
+        contextId: payload.contextId || runtimeState.meta.contextId || '',
+        contextTitle: payload.contextTitle || runtimeState.meta.contextTitle || '',
+        targetText: payload.targetText || runtimeState.meta.targetText || '',
+        command: payload.command || runtimeState.meta.command || '',
+        engine: payload.engine || runtimeState.meta.engine || '',
+        cwd: payload.cwd || runtimeState.meta.cwd || '',
+        permissionMode: payload.permissionMode || runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits')
+      };
+    }
+    function requestFSList(path) { return sendJson({ action: 'fs_list', path }); }
+    function requestFSRead(path) { return sendJson({ action: 'fs_read', path }); }
+    function requestSessionList() { return sendJson({ action: 'session_list' }); }
+    function requestSessionLoad(sessionId) { return sendJson({ action: 'session_load', sessionId }); }
+    function requestSessionDelete(sessionId) { return sendJson({ action: 'session_delete', sessionId }); }
+    function requestSkillCatalog() { return sendJson({ action: 'skill_catalog_get' }); }
+    function requestMemoryList() { return sendJson({ action: 'memory_list' }); }
+    function requestSessionContext() { return sendJson({ action: 'session_context_get' }); }
+    function updateSessionContext(payload) { return sendJson({ action: 'session_context_update', ...payload }); }
+    function saveSkill(def) { return sendJson({ action: 'skill_catalog_upsert', skill: def }); }
+    function syncSkills() { return sendJson({ action: 'skill_sync_pull' }); }
+    function saveMemory(item) { return sendJson({ action: 'memory_upsert', item }); }
+    function requestResumeSession(meta = {}) {
+      const resumeSessionId = meta.resumeSessionId || runtimeState.meta.resumeSessionId || '';
+      if (!resumeSessionId) return false;
+      const engine = meta.engine || runtimeState.meta.engine || 'claude';
+      const cwd = meta.cwd || appState.workspace.cwd || '.';
+      const permissionMode = meta.permissionMode || effectivePermissionMode();
+      const cmd = engine === 'gemini' ? `gemini --resume ${resumeSessionId}` : `claude --resume ${resumeSessionId}`;
+      updateRuntimeMeta({ source: 'command', resumeSessionId, command: cmd, engine, cwd, permissionMode });
+      runtimeState.agentState = 'WAIT_INPUT';
+      appState.prompt.awaitingInput = true;
+      appState.prompt.message = 'AI 会话恢复中…';
+      appState.prompt.options = [];
+      return sendJson({ action: 'exec', mode: 'pty', cmd, cwd, source: 'command', engine, permissionMode, resumeSessionId });
+    }
+    function requestSessionCreate(title = '') { return sendJson({ action: 'session_create', title }); }
+    function resetProjectionState() {
+      projectionState.diffs = [];
+      projectionState.currentDiff = null;
+      projectionState.currentStep = null;
+      projectionState.latestError = null;
+      projectionState.latestRuntimeInfo = null;
+      projectionState.contexts = { diff: null, step: null, error: null };
+      projectionState.logEntries = [];
+      projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
+      projectionState.terminalExecutions = [];
+      projectionState.selectedExecutionId = '';
+      projectionState.review = { activeId: '', autoHandledId: '', pendingAutoAcceptId: '' };
+      sessionContextState.enabledSkillNames = [];
+      sessionContextState.enabledMemoryIds = [];
+      dedupState.lastLogMsg = '';
+      dedupState.lastLogStream = '';
+      dedupState.lastLogPhase = '';
+      dedupState.lastLogExecutionId = '';
+      dedupState.lastLogTime = 0;
+      dedupState.lastStepMsg = '';
+      dedupState.lastStepStatus = '';
+    }
+    function pickSessionSummary(sessionId) {
+      return appState.session.summaries.find((item) => item.id === sessionId) || null;
+    }
+    function mergeSessionSummary(summary) {
+      if (!summary?.id) return;
+      const rest = appState.session.summaries.filter((item) => item.id !== summary.id);
+      rest.unshift(summary);
+      appState.session.summaries = rest;
+    }
+    function switchToSession(sessionId) {
+      if (!sessionId) return;
+      appState.session.activeSessionId = sessionId;
+      storageSet(STORAGE_KEYS.activeSessionId, sessionId);
+      resetProjectionState();
+      requestSessionLoad(sessionId);
+    }
+    function deleteSession(sessionId) {
+      if (!sessionId) return;
+      const isCurrent = sessionId === (appState.session.activeSessionId || appState.session.id || '');
+      if (isCurrent) {
+        resetProjectionState();
+        appState.session.id = '';
+        appState.session.activeSessionId = '';
+        appState.session.canResumeCurrent = false;
+        appState.session.claudeInteractiveActive = false;
+        appState.prompt = { awaitingInput: false, options: [], message: '' };
+        runtimeState.agentState = 'IDLE';
+        runtimeState.agentStateMessage = '';
+        updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') });
+        storageSet(STORAGE_KEYS.activeSessionId, null);
+        storageSet(STORAGE_KEYS.resumeSessionId, null);
+      }
+      appState.session.summaries = appState.session.summaries.filter((item) => item.id !== sessionId);
+      requestSessionDelete(sessionId);
+    }
+    function openSessionHistory(sessionId) {
+      toggleSessionPanel(false);
+      switchToSession(sessionId);
+    }
+    function renderSessionList() {
+      sessionList.innerHTML = '';
+      const items = Array.isArray(appState.session.summaries) ? appState.session.summaries : [];
+      const activeSessionId = appState.session.activeSessionId || appState.session.id || '';
+      sessionPanelHint.textContent = activeSessionId ? '可打开历史，或直接恢复该会话的 AI 上下文' : '当前尚未打开任何历史会话';
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-4 text-sm text-zinc-400';
+        empty.innerHTML = '<div class="font-medium text-zinc-100">暂无已保存会话</div><div class="mt-1">点击右上角“新会话”开始。</div>';
+        sessionList.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const active = item.id === activeSessionId;
+        const runtime = item.runtime || {};
+        const canResume = !!runtime.resumeSessionId;
+        const row = document.createElement('div');
+        row.className = `w-full rounded-3xl border px-4 py-3 text-left ${active ? 'border-blue-700 bg-blue-950/20' : 'border-zinc-800 bg-zinc-900/70'}`;
+        row.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-sm font-semibold ${active ? 'text-blue-100' : 'text-zinc-100'}">${escapeHtml(item.title || item.id || '未命名会话')}</div>
+              <div class="mt-1 text-xs text-zinc-500">${escapeHtml(formatSessionMeta(item))}</div>
+              <div class="mt-2 line-clamp-2 break-words text-xs text-zinc-400">${escapeHtml(item.lastPreview || '暂无预览')}</div>
+              ${canResume ? `<div class="mt-2 text-[11px] text-emerald-300">可恢复 · ${escapeHtml(runtime.engine || 'claude')} · ${escapeHtml(runtime.resumeSessionId)}</div>` : ''}
+            </div>
+            <div class="shrink-0 text-[11px] ${active ? 'text-blue-300' : 'text-zinc-500'}">${active ? '当前' : '历史'}</div>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button data-open-history class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">打开历史</button>
+            ${canResume ? '<button data-resume-history class="rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100 hover:bg-emerald-900/60">恢复会话</button>' : ''}
+            <button data-delete-session class="rounded-2xl border border-red-800 bg-red-950/30 px-3 py-2 text-xs text-red-100 hover:bg-red-900/50">删除</button>
+          </div>`;
+        row.querySelector('[data-open-history]').addEventListener('click', () => openSessionHistory(item.id));
+        const resumeBtn = row.querySelector('[data-resume-history]');
+        if (resumeBtn) {
+          resumeBtn.addEventListener('click', () => {
+            openSessionHistory(item.id);
+            requestResumeSession(runtime);
+          });
+        }
+        row.querySelector('[data-delete-session]').addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          deleteSession(item.id);
+        });
+        sessionList.appendChild(row);
+      });
+    }
+    function renderSkillPanel() {
+      skillList.innerHTML = '';
+      const items = Array.isArray(catalogState.skills) ? catalogState.skills : [];
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-4 text-sm text-zinc-400';
+        empty.innerHTML = '<div class="font-medium text-zinc-100">暂无 skill</div><div class="mt-1">可新增 local skill，或点击“同步 skill”。</div>';
+        skillList.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const enabled = sessionContextState.enabledSkillNames.includes(item.name);
+        const row = document.createElement('div');
+        row.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3';
+        row.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="truncate text-sm font-semibold text-zinc-100">${escapeHtml(item.name || '')}</div>
+                <span class="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] uppercase text-zinc-300">${escapeHtml(item.source || 'builtin')}</span>
+                ${item.editable ? '<span class="rounded-full border border-sky-700 px-2 py-0.5 text-[10px] uppercase text-sky-200">editable</span>' : ''}
+              </div>
+              <div class="mt-2 text-xs text-zinc-400">${escapeHtml(item.description || '无描述')}</div>
+              <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-zinc-500">
+                <span>targetType: ${escapeHtml(item.targetType || '-')}</span>
+                <span>resultView: ${escapeHtml(item.resultView || '-')}</span>
+              </div>
+            </div>
+            <label class="flex shrink-0 items-center gap-2 text-xs text-zinc-200">
+              <input data-skill-toggle type="checkbox" class="h-4 w-4 rounded border-zinc-700 bg-zinc-950" ${enabled ? 'checked' : ''} />
+              <span>启用</span>
+            </label>
+          </div>`;
+        row.querySelector('[data-skill-toggle]').addEventListener('change', (event) => {
+          const next = new Set(sessionContextState.enabledSkillNames);
+          if (event.target.checked) next.add(item.name);
+          else next.delete(item.name);
+          sessionContextState.enabledSkillNames = Array.from(next);
+          updateSessionContext({
+            enabledSkillNames: sessionContextState.enabledSkillNames,
+            enabledMemoryIds: sessionContextState.enabledMemoryIds
+          });
+          renderSkillPanel();
+        });
+        row.addEventListener('dblclick', () => {
+          if (item.source !== 'local') return;
+          skillNameInput.value = item.name || '';
+          skillDescriptionInput.value = item.description || '';
+          skillTargetTypeInput.value = item.targetType || '';
+          skillResultViewInput.value = item.resultView || '';
+          skillPromptInput.value = item.prompt || '';
+        });
+        skillList.appendChild(row);
+      });
+    }
+    function renderMemoryPanel() {
+      memoryList.innerHTML = '';
+      const items = Array.isArray(catalogState.memory) ? catalogState.memory : [];
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-4 text-sm text-zinc-400';
+        empty.innerHTML = '<div class="font-medium text-zinc-100">暂无 memory</div><div class="mt-1">保存后可在当前 session 勾选启用。</div>';
+        memoryList.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const enabled = sessionContextState.enabledMemoryIds.includes(item.id);
+        const row = document.createElement('div');
+        row.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3';
+        row.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="truncate text-sm font-semibold text-zinc-100">${escapeHtml(item.title || item.id || '')}</div>
+                <span class="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] uppercase text-zinc-300">${escapeHtml(item.id || '')}</span>
+              </div>
+              <div class="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-400">${escapeHtml(item.content || '')}</div>
+            </div>
+            <label class="flex shrink-0 items-center gap-2 text-xs text-zinc-200">
+              <input data-memory-toggle type="checkbox" class="h-4 w-4 rounded border-zinc-700 bg-zinc-950" ${enabled ? 'checked' : ''} />
+              <span>启用</span>
+            </label>
+          </div>`;
+        row.querySelector('[data-memory-toggle]').addEventListener('change', (event) => {
+          const next = new Set(sessionContextState.enabledMemoryIds);
+          if (event.target.checked) next.add(item.id);
+          else next.delete(item.id);
+          sessionContextState.enabledMemoryIds = Array.from(next);
+          updateSessionContext({
+            enabledSkillNames: sessionContextState.enabledSkillNames,
+            enabledMemoryIds: sessionContextState.enabledMemoryIds
+          });
+          renderMemoryPanel();
+        });
+        row.addEventListener('dblclick', () => {
+          memoryIdInput.value = item.id || '';
+          memoryTitleInput.value = item.title || '';
+          memoryContentInput.value = item.content || '';
+        });
+        memoryList.appendChild(row);
+      });
+    }
+    function formatSessionMeta(item = {}) {
+      const parts = [];
+      if (item.updatedAt) parts.push(`更新于 ${formatDateTime(item.updatedAt)}`);
+      parts.push(`${Number(item.entryCount || 0)} 条记录`);
+      return parts.join(' · ');
+    }
+    function formatDateTime(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return '';
+      return date.toLocaleString();
+    }
+    function effectivePermissionMode() {
+      return selectedPermissionMode();
+    }
+    function selectedPermissionMode() {
+      return runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || 'acceptEdits';
+    }
+    function isAutoAcceptMode() {
+      return selectedPermissionMode() === 'acceptEdits';
+    }
+    function currentReviewContext() {
+      const diff = projectionState.diffs.find((item) => item?.pendingReview && (item.id || item.path || '') === projectionState.review.activeId) || projectionState.contexts.diff;
+      if (!diff?.pendingReview) return null;
+      if (!projectionState.review.activeId || projectionState.review.activeId !== (diff.id || diff.path || '')) return null;
+      return diff;
+    }
+    function hasActiveInteractiveAI() {
+      return !!(appState.session.claudeInteractiveActive && runtimeState.agentState === 'WAIT_INPUT');
+    }
+    function shouldShowReviewChoices() {
+      return !!(currentReviewContext() && appState.prompt.awaitingInput && runtimeState.agentState === 'WAIT_INPUT');
+    }
+    function syncPermissionMode(mode, { silent = false } = {}) {
+      const next = mode || 'acceptEdits';
+      storageSet(STORAGE_KEYS.permissionMode, next);
+      if (permissionModeSelect.value !== next) permissionModeSelect.value = next;
+      runtimeState.meta.permissionMode = next;
+      updateRuntimeMeta({ permissionMode: next });
+      sendJson({ action: 'set_permission_mode', permissionMode: next });
+      const nextPending = pickNextPendingDiff();
+      if (next !== 'acceptEdits' && nextPending) {
+        projectionState.currentDiff = nextPending;
+        projectionState.contexts.diff = nextPending;
+        projectionState.review.activeId = nextPending.id || nextPending.path || '';
+      }
+      projectionState.review.pendingAutoAcceptId = '';
+      if (!silent) appendSystemMessage(`权限模式已切换为 ${permissionModeSelect.options[permissionModeSelect.selectedIndex]?.text || permissionModeSelect.value}`);
+      renderStatusDetailPanel();
+      renderHeaderStatus();
+      renderDiffBadge();
+      renderSingleFileView();
+      renderChatStream();
+    }
+    function detectLanguageFromPath(path) {
+      const ext = String(path || '').split('.').pop()?.toLowerCase() || '';
+      const map = {
+        js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+        json: 'json', jsonc: 'jsonc', md: 'markdown', go: 'go', py: 'python', java: 'java',
+        kt: 'kotlin', swift: 'swift', html: 'html', css: 'css', scss: 'scss',
+        yml: 'yaml', yaml: 'yaml', xml: 'xml', sh: 'bash', bash: 'bash',
+        sql: 'sql', txt: 'plaintext'
+      };
+      return map[ext] || 'plaintext';
+    }
+    function normalizeFileContent(content) {
+      return String(content || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    }
+    function isCodeLikeLanguage(lang) {
+      return ['json', 'jsonc', 'javascript', 'typescript', 'go', 'python', 'java', 'kotlin', 'swift', 'html', 'css', 'scss', 'yaml', 'xml', 'bash', 'sql'].includes(lang);
+    }
+    function prettyPrintContent(content, lang) {
+      const text = normalizeFileContent(content);
+      if (!text.trim()) return text;
+      if (lang === 'json' || lang === 'jsonc') {
+        try {
+          return JSON.stringify(JSON.parse(text), null, 2);
+        } catch (_) {
+          return text;
+        }
+      }
+      return text;
+    }
+
+    function connect(forcePrompt = false) {
+      if (forcePrompt) appState.auth.token = '';
+      appState.ui.sessionAutoLoadAttempted = false;
+      const nextToken = String(tokenInput.value || appState.auth.token || '').trim();
+      if (!nextToken) {
+        setView('auth');
+        setAuthStatus('请输入 token。', true);
+        return;
+      }
+      appState.auth.token = nextToken;
+      storageSet(STORAGE_KEYS.token, appState.auth.token);
+      tokenInput.value = appState.auth.token;
+      setAuthLoading(true, '验证中…');
+      setAuthStatus('正在连接服务…');
+      if (appState.ws) {
+        appState.ws.onopen = null;
+        appState.ws.onclose = null;
+        appState.ws.onerror = null;
+        appState.ws.onmessage = null;
+        appState.ws.close();
+      }
+      try {
+        appState.ws = new WebSocket(getWsUrl());
+      } catch (err) {
+        setAuthLoading(false);
+        setAuthStatus(`创建 WebSocket 失败：${err.message || err}`, true);
+        return;
+      }
+      appState.ws.onopen = () => {
+        appState.connection.connected = true;
+        setAuthLoading(false);
+        setAuthStatus('连接成功。');
+        setView('chat');
+        appendSystemMessage('连接成功');
+        requestFSList(appState.workspace.cwd || '.');
+        requestSessionList();
+        requestSkillCatalog();
+        requestMemoryList();
+        renderApp();
+      };
+      appState.ws.onclose = () => {
+        const wasConnected = appState.connection.connected;
+        appState.connection.connected = false;
+        appState.connection.running = false;
+        appState.prompt = { awaitingInput: false, options: [], message: '' };
+        runtimeState.agentState = 'IDLE';
+        runtimeState.agentStateMessage = '';
+        runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') };
+        if (wasConnected) appendErrorMessage('连接已关闭，请检查 token 或服务状态。');
+        if (!appState.auth.token) {
+          setView('auth');
+          setAuthStatus('连接已关闭。', true);
+        }
+        renderApp();
+      };
+      appState.ws.onerror = () => {
+        setAuthLoading(false);
+        if (!appState.connection.connected) {
+          setView('auth');
+          setAuthStatus('连接失败，请检查 token 或服务状态。', true);
+        } else {
+          appendErrorMessage('WebSocket 连接错误，请检查服务状态。');
+        }
+      };
+      appState.ws.onmessage = (event) => {
+        let payload;
+        try { payload = JSON.parse(event.data); }
+        catch (err) {
+          appendErrorMessage(`收到无法解析的消息：${err.message || err}`);
+          return;
+        }
+        handleIncomingEvent(payload);
+      };
+    }
+
+    function buildStepContextFromPayload(payload = {}) {
+      const message = payload.msg || payload.message || payload.step || '';
+      const targetPath = payload.targetPath || payload.target || runtimeState.meta.targetPath || '';
+      return {
+        id: payload.contextId || `step:${payload.timestamp || message || Date.now()}`,
+        type: 'step',
+        message,
+        status: payload.status || 'running',
+        target: payload.target || targetPath,
+        targetPath,
+        tool: payload.tool || '',
+        command: payload.command || '',
+        timestamp: payload.timestamp || '',
+        title: payload.contextTitle || message || '当前步骤'
+      };
+    }
+    function buildErrorContextFromPayload(payload = {}) {
+      return {
+        id: payload.contextId || `error:${payload.timestamp || payload.msg || Date.now()}`,
+        message: payload.msg || payload.message || 'unknown error',
+        stack: payload.stack || '',
+        code: payload.code || '',
+        targetPath: payload.targetPath || runtimeState.meta.targetPath || '',
+        relatedStep: payload.step || projectionState.currentStep?.message || '',
+        command: payload.command || '',
+        timestamp: payload.timestamp || '',
+        title: payload.contextTitle || payload.msg || '最近错误'
+      };
+    }
+    function buildDiffContextFromPayload(payload = {}) {
+      const path = payload.path || payload.targetPath || runtimeState.meta.targetPath || '';
+      return {
+        id: payload.contextId || payload.id || `diff:${payload.timestamp || path || Date.now()}`,
+        path,
+        title: payload.title || payload.contextTitle || basename(path) || '最近改动',
+        diff: payload.diff || '',
+        lang: payload.lang || '',
+        pendingReview: payload.pendingReview !== false,
+        timestamp: payload.timestamp || '',
+        source: payload.source || runtimeState.meta.source || '',
+        skillName: payload.skillName || runtimeState.meta.skillName || ''
+      };
+    }
+
+    function appendUserMessage(text, label = '输入') {
+      projectionState.logEntries.push({ kind: 'user', message: text, label, timestamp: new Date().toISOString() });
+      renderChatStream();
+    }
+    function appendSystemMessage(message, timestamp = new Date().toISOString()) {
+      if (!message || /^(command started|AI 会话已续接)$/i.test(String(message).trim())) return;
+      projectionState.logEntries.push({ kind: 'system', message, timestamp });
+      renderChatStream();
+    }
+    function appendErrorMessage(message) {
+      projectionState.logEntries.push({ kind: 'error', context: buildErrorContextFromPayload({ msg: message }) });
+      renderChatStream();
+    }
+    function appendMarkdownMessage(message, timestamp, stream) {
+      if (looksLikeFrontendToolResultNoise(message)) return;
+      projectionState.logEntries.push({ kind: 'markdown', message, timestamp, stream });
+      renderChatStream();
+    }
+    function appendTerminalMessage(text, timestamp, stream, meta = {}) {
+      if (shouldSuppressTerminalNoise(text)) return;
+      const previous = projectionState.logEntries[projectionState.logEntries.length - 1];
+      if (previous && previous.kind === 'terminal' && previous.stream === stream && previous.executionId === (meta.executionId || '') && previous.phase === (meta.phase || stream)) {
+        previous.text = `${previous.text || ''}${previous.text ? '\n' : ''}${text}`;
+        previous.timestamp = timestamp || previous.timestamp;
+      } else {
+        projectionState.logEntries.push({ kind: 'terminal', text, timestamp, stream, executionId: meta.executionId || '', phase: meta.phase || stream, exitCode: meta.exitCode ?? null });
+      }
+      projectionState.rawTerminalByStream[stream || 'stdout'] = `${projectionState.rawTerminalByStream[stream || 'stdout'] || ''}${projectionState.rawTerminalByStream[stream || 'stdout'] ? '\n' : ''}${text}`;
+      renderChatStream();
+      renderTerminalDrawer();
+    }
+
+    function looksLikeFrontendToolResultNoise(message) {
+      const text = String(message || '').trim();
+      if (!text.startsWith('{') || !text.includes('tool_result')) return false;
+      return text.includes('Invalid pages parameter') || text.includes('tool_use_id') || text.includes('session_id');
+    }
+    function looksLikeMarkdown(message) {
+      if (!message) return false;
+      if (looksLikeFrontendToolResultNoise(message)) return false;
+      return /```|^#{1,6}\s|^>\s|^[-*+]\s|^\d+\.\s|\[[^\]]+\]\([^\)]+\)|\|.+\|/m.test(message) || message.length > 180;
+    }
+    function shouldSuppressTerminalNoise(text) {
+      const value = String(text || '').trim();
+      return !value || looksLikeFrontendToolResultNoise(value);
+    }
+    function enhanceCodeBlocks(root) {
+      root.querySelectorAll('pre code').forEach((code) => {
+        hljs.highlightElement(code);
+        const pre = code.parentElement;
+        if (!pre || pre.querySelector('.code-copy-btn')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'code-copy-btn';
+        btn.textContent = '复制';
+        btn.addEventListener('click', () => copyText(code.textContent || '', btn));
+        pre.appendChild(btn);
+      });
+    }
+    function copyText(text, trigger) {
+      if (!text) return;
+      const done = () => {
+        if (!trigger) return;
+        const origin = trigger.textContent;
+        trigger.textContent = '已复制';
+        setTimeout(() => { trigger.textContent = origin; }, 1200);
+      };
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done).catch(() => {});
+    }
+
+    function formatElapsedSeconds(ms) {
+      const sec = Math.max(0, Math.floor((ms || 0) / 1000));
+      return `${sec}s`;
+    }
+    function startActivityTimer() {
+      if (!activityState.startedAt) activityState.startedAt = Date.now();
+      if (activityState.timerId) return;
+      activityState.timerId = window.setInterval(() => {
+        statusTimer.textContent = formatElapsedSeconds(Date.now() - activityState.startedAt);
+      }, 1000);
+      statusTimer.textContent = formatElapsedSeconds(Date.now() - activityState.startedAt);
+    }
+    function stopActivityTimer() {
+      activityState.startedAt = 0;
+      if (activityState.timerId) {
+        clearInterval(activityState.timerId);
+        activityState.timerId = null;
+      }
+      statusTimer.textContent = '0s';
+      statusToolLabel.textContent = '';
+    }
+    function currentToolLabel() {
+      return projectionState.currentStep?.tool || runtimeState.meta.skillName || runtimeState.meta.source || '';
+    }
+    function renderActivityState() {
+      const active = appState.connection.connected && (runtimeState.agentState === 'THINKING' || runtimeState.agentState === 'RUNNING_TOOL');
+      statusActivity.classList.toggle('hidden', !active);
+      statusToolLabel.textContent = active && currentToolLabel() ? currentToolLabel() : '';
+      if (active) startActivityTimer();
+      else stopActivityTimer();
+    }
+    function compactAgentMessage() {
+      if (!appState.connection.connected) return '未连接';
+      if (runtimeState.agentState === 'WAIT_INPUT') return '等待输入';
+      if (runtimeState.agentState === 'RUNNING_TOOL') return '执行中';
+      if (runtimeState.agentState === 'THINKING') return '思考中';
+      return '已连接';
+    }
+    function renderRuntimeMetaBadge() {
+      const parts = [];
+      if (runtimeState.meta.contextTitle) parts.push(runtimeState.meta.contextTitle);
+      else if (runtimeState.meta.targetPath) parts.push(basename(runtimeState.meta.targetPath));
+      runtimeMetaBadge.textContent = parts.join(' · ');
+      runtimeMetaBadge.classList.toggle('hidden', parts.length === 0);
+    }
+    function renderSessionSummaryLabel() {
+      if (!appState.session.summaries.length) return appState.session.activeSessionId || '';
+      const active = appState.session.summaries.find((item) => item.id === appState.session.activeSessionId || item.id === appState.session.id);
+      if (!active) return appState.session.activeSessionId || '';
+      return active.title || active.id;
+    }
+    function mergeSessionSummary(summary) {
+      if (!summary?.id) return;
+      const next = Array.isArray(appState.session.summaries) ? [...appState.session.summaries] : [];
+      const index = next.findIndex((item) => item.id === summary.id);
+      if (index >= 0) next[index] = { ...next[index], ...summary };
+      else next.unshift(summary);
+      appState.session.summaries = next;
+    }
+    function renderHeaderStatus() {
+      statusText.textContent = compactAgentMessage();
+      statusDot.className = 'h-2.5 w-2.5 rounded-full ' + (!appState.connection.connected ? 'bg-red-500' : runtimeState.agentState === 'WAIT_INPUT' ? 'bg-blue-400' : runtimeState.agentState === 'RUNNING_TOOL' ? 'bg-violet-400' : runtimeState.agentState === 'THINKING' ? 'bg-amber-400' : 'bg-emerald-500');
+      const sessionLabel = renderSessionSummaryLabel();
+      projectTitleText.textContent = sessionLabel ? `会话 · ${sessionLabel}` : '未打开会话';
+      workspacePath.textContent = appState.workspace.cwd || '.';
+      const currentSummary = pickSessionSummary(appState.session.activeSessionId || appState.session.id || '');
+      const currentRuntime = currentSummary?.runtime || {};
+      const resumeId = currentRuntime.resumeSessionId || runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '');
+      resumeSessionBtn.textContent = appState.session.canResumeCurrent ? '恢复当前会话' : '继续当前';
+      resumeSessionBtn.classList.toggle('hidden', !(resumeId && appState.connection.connected && runtimeState.agentState === 'IDLE'));
+      const replyMode = appState.prompt.awaitingInput || runtimeState.agentState === 'WAIT_INPUT';
+      chatInput.placeholder = replyMode ? '继续回复当前会话' : '输入命令，如 claude、/build、pwd';
+      chatSendBtn.textContent = replyMode ? '回复' : '发送';
+      chatInput.disabled = !appState.connection.connected;
+      chatSendBtn.disabled = !appState.connection.connected;
+      if (replyMode) {
+        chatInputHint.textContent = shouldShowReviewChoices() ? (isAutoAcceptMode() ? '自动同意修改模式已开启，新 diff 只会自动确认一次。' : '等待审核或继续输入') : 'AI 会话已就绪，可继续输入';
+        chatInputHint.classList.remove('hidden');
+      } else if (!appState.session.id) {
+        chatInputHint.textContent = '可先打开会话列表选择历史会话，或直接创建新会话。';
+        chatInputHint.classList.remove('hidden');
+      } else {
+        chatInputHint.textContent = '';
+        chatInputHint.classList.add('hidden');
+      }
+      renderActivityState();
+    }
+    function renderDiffBadge() {
+      const count = pendingDiffCount();
+      const show = count > 0 || !!projectionState.contexts.diff;
+      diffBadgeDot.classList.toggle('hidden', !show);
+      diffBadgeDot.textContent = show ? String(Math.max(count, 1)) : '';
+    }
+    function renderStatusDetailPanel() {
+      statusDetailContent.innerHTML = '';
+      [
+        ['cwd', appState.workspace.cwd || '.'],
+        ['sessionId', appState.session.id || '(none)'],
+        ['resumeSessionId', runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '') || '(none)'],
+        ['permissionMode', storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || '(default)'],
+        ['agentState', runtimeState.agentState || 'IDLE'],
+        ['recentDiff', projectionState.contexts.diff?.path || '(none)'],
+        ['recentStep', projectionState.contexts.step?.message || '(none)'],
+        ['recentError', projectionState.contexts.error?.message || '(none)']
+      ].forEach(([label, value]) => {
+        const row = document.createElement('div');
+        row.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-3 py-2';
+        row.innerHTML = `<div class="text-[11px] uppercase tracking-wide text-zinc-500">${label}</div><div class="mt-1 break-all text-sm text-zinc-100">${escapeHtml(value || '(none)')}</div>`;
+        statusDetailContent.appendChild(row);
+      });
+    }
+
+    function triggerFileDownload(path) {
+      const target = String(path || '').trim();
+      if (!target) return;
+      const url = new URL('/download', window.location.origin);
+      url.searchParams.set('token', appState.auth.token || '');
+      url.searchParams.set('path', target);
+      const anchor = document.createElement('a');
+      anchor.href = url.toString();
+      anchor.download = basename(target) || 'download';
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      appendSystemMessage(`开始下载 ${basename(target) || target}`);
+    }
+    function clearFileLongPress(pointerId = null) {
+      if (fileDownloadState.timerId) {
+        clearTimeout(fileDownloadState.timerId);
+        fileDownloadState.timerId = null;
+      }
+      if (pointerId === null || fileDownloadState.pointerId === pointerId) {
+        fileDownloadState.pointerId = null;
+        fileDownloadState.path = '';
+      }
+    }
+
+    function renderFileList() {
+      fileList.innerHTML = '';
+      sidebarPath.textContent = appState.workspace.cwd || '.';
+      if (!appState.workspace.items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-400';
+        empty.textContent = '目录为空';
+        fileList.appendChild(empty);
+        return;
+      }
+      appState.workspace.items.forEach((item) => {
+        const path = joinPath(appState.workspace.cwd, item.name);
+        const active = appState.file.activePath === path || appState.workspace.highlightedFilePath === path;
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = `w-full rounded-3xl border px-4 py-3 text-left ${active ? 'border-blue-700 bg-blue-950/20' : 'border-zinc-800 bg-zinc-900/70 hover:bg-zinc-800'}`;
+        row.innerHTML = `
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <div class="truncate text-sm font-medium text-zinc-100">${item.is_dir ? '📁' : '📄'} ${escapeHtml(item.name)}</div>
+              <div class="mt-1 text-xs text-zinc-400">${item.is_dir ? '文件夹' : `${formatSize(item.size) || '文件'} · 长按下载`}</div>
+            </div>
+            <div class="shrink-0 text-xs ${active ? 'text-blue-300' : 'text-zinc-500'}">${item.is_dir ? '进入' : '打开'}</div>
+          </div>`;
+        if (!item.is_dir) {
+          const startLongPress = (event) => {
+            if (event.pointerType === 'mouse' && event.button !== 0) return;
+            clearFileLongPress();
+            fileDownloadState.pointerId = event.pointerId;
+            fileDownloadState.path = path;
+            fileDownloadState.timerId = window.setTimeout(() => {
+              fileDownloadState.suppressClickPath = path;
+              triggerFileDownload(path);
+              clearFileLongPress(event.pointerId);
+            }, 550);
+          };
+          row.addEventListener('pointerdown', startLongPress);
+          row.addEventListener('pointerup', (event) => clearFileLongPress(event.pointerId));
+          row.addEventListener('pointercancel', (event) => clearFileLongPress(event.pointerId));
+          row.addEventListener('pointerleave', (event) => clearFileLongPress(event.pointerId));
+          row.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            fileDownloadState.suppressClickPath = path;
+            clearFileLongPress();
+            triggerFileDownload(path);
+          });
+        }
+        row.addEventListener('click', () => {
+          if (!item.is_dir && fileDownloadState.suppressClickPath === path) {
+            fileDownloadState.suppressClickPath = '';
+            return;
+          }
+          if (item.is_dir) requestFSList(path);
+          else openFile(path);
+        });
+        fileList.appendChild(row);
+      });
+    }
+
+    function renderChatStream() {
+      if (appState.view.current !== 'chat') return;
+      chatContainer.innerHTML = '';
+      if (!projectionState.logEntries.length) {
+        const empty = document.createElement('section');
+        empty.className = 'rounded-[1.8rem] border border-zinc-800 bg-zinc-900/80 p-5 text-sm text-zinc-400';
+        if (appState.session.id) {
+          empty.innerHTML = '<div class="text-zinc-100 font-semibold">开始聊天</div><div class="mt-2">输入命令、slash command，或在文件页发送当前文件定向指令。</div>';
+        } else {
+          empty.innerHTML = '<div class="text-zinc-100 font-semibold">尚未打开会话</div><div class="mt-2">点击顶部“会话”查看历史，或点击“新会话”开始。</div>';
+        }
+        chatContainer.appendChild(empty);
+      }
+      projectionState.logEntries.forEach((entry) => {
+        if (entry.kind === 'system') {
+          const row = document.createElement('div');
+          row.className = 'py-1 text-center text-[11px] text-zinc-600';
+          row.textContent = `${entry.message}${entry.timestamp ? ` · ${formatTime(entry.timestamp)}` : ''}`;
+          chatContainer.appendChild(row);
+          return;
+        }
+        if (entry.kind === 'user') {
+          const row = document.createElement('div');
+          row.className = 'flex justify-end';
+          row.innerHTML = `
+            <div class="bubble-shadow max-w-[86%] rounded-[1.4rem] rounded-br-md bg-blue-600 px-4 py-3 text-sm text-white">
+              <pre class="whitespace-pre-wrap break-words font-sans">${escapeHtml(entry.message || '')}</pre>
+            </div>`;
+          chatContainer.appendChild(row);
+          return;
+        }
+        if (entry.kind === 'markdown') {
+          const row = document.createElement('div');
+          row.className = 'flex justify-start';
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble-shadow max-w-[92%] rounded-[1.4rem] rounded-bl-md border border-zinc-800 bg-zinc-900/92 px-4 py-3 text-sm text-zinc-100';
+          bubble.innerHTML = `<div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">assistant${entry.timestamp ? ` · ${formatTime(entry.timestamp)}` : ''}</div><div class="markdown-body">${marked.parse(entry.message || '')}</div>`;
+          row.appendChild(bubble);
+          chatContainer.appendChild(row);
+          enhanceCodeBlocks(bubble);
+          return;
+        }
+        if (entry.kind === 'terminal') {
+          const row = document.createElement('div');
+          row.className = 'flex justify-start';
+          row.innerHTML = `
+            <div class="bubble-shadow max-w-[92%] rounded-[1.4rem] rounded-bl-md border border-zinc-800 bg-zinc-900/92 px-4 py-3 text-sm ${entry.stream === 'stderr' ? 'text-red-200' : 'text-zinc-100'}">
+              <div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">${escapeHtml(entry.stream || 'stdout')}${entry.timestamp ? ` · ${formatTime(entry.timestamp)}` : ''}</div>
+              <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6">${escapeHtml(entry.text || '')}</pre>
+            </div>`;
+          chatContainer.appendChild(row);
+          return;
+        }
+        if (entry.kind === 'step') {
+          return;
+        }
+        if (entry.kind === 'diff') {
+          const diff = entry.context;
+          const isActiveReview = !!(diff?.pendingReview && projectionState.review.activeId && projectionState.review.activeId === diff.id);
+          const row = document.createElement('div');
+          row.className = 'rounded-[1.4rem] border border-violet-900/70 bg-violet-950/20 px-4 py-4';
+          const preview = String(diff.diff || '').split('\n').slice(0, 12).map(highlightDiffLine).join('');
+          row.innerHTML = `
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="text-[11px] uppercase tracking-wide text-violet-300">文件改动${diff.timestamp ? ` · ${formatTime(diff.timestamp)}` : ''}</div>
+                <div class="mt-2 truncate text-sm font-semibold text-zinc-100">${escapeHtml(diff.title || basename(diff.path) || '最近改动')}</div>
+                <div class="mt-1 break-all text-xs text-zinc-400">${escapeHtml(diff.path || '')}</div>
+              </div>
+              <button data-open-diff class="rounded-2xl border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800">查看</button>
+            </div>
+            <div class="mt-3 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/80 py-2 font-mono text-xs leading-6">${preview}</div>
+            ${isActiveReview ? `<div class="mt-3 flex flex-wrap gap-2">
+              <button data-accept class="rounded-2xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100 hover:bg-emerald-900/60">同意</button>
+              <button data-revert class="rounded-2xl border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-100 hover:bg-red-900/60">撤销</button>
+              <button data-revise class="rounded-2xl border border-amber-700 bg-amber-950/40 px-3 py-2 text-xs text-amber-100 hover:bg-amber-900/60">继续调整</button>
+            </div>` : `<div class="mt-3 text-xs text-zinc-500">${diff.pendingReview ? '等待当前审核上下文激活' : '该 diff 已处理'}</div>`}`;
+          row.querySelector('[data-open-diff]').addEventListener('click', () => openDiffContext(diff));
+          if (isActiveReview) {
+            row.querySelector('[data-accept]').addEventListener('click', () => sendReviewDecision('accept'));
+            row.querySelector('[data-revert]').addEventListener('click', () => sendReviewDecision('revert'));
+            row.querySelector('[data-revise]').addEventListener('click', () => sendReviewDecision('revise'));
+          }
+          chatContainer.appendChild(row);
+          return;
+        }
+        if (entry.kind === 'error') {
+          const context = entry.context;
+          const row = document.createElement('div');
+          row.className = 'flex justify-start';
+          row.innerHTML = `
+            <div class="bubble-shadow max-w-[92%] rounded-[1.4rem] rounded-bl-md border border-red-900/70 bg-red-950/20 px-4 py-3 text-sm text-red-100">
+              <div class="mb-2 text-[11px] uppercase tracking-wide text-red-300">error${context.timestamp ? ` · ${formatTime(context.timestamp)}` : ''}</div>
+              <pre class="whitespace-pre-wrap break-words font-sans">${escapeHtml(context.message || 'unknown error')}</pre>
+              <div class="mt-2 text-xs text-red-200">${escapeHtml([context.code, context.targetPath, context.relatedStep].filter(Boolean).join(' · '))}</div>
+            </div>`;
+          chatContainer.appendChild(row);
+        }
+      });
+      requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }));
+    }
+
+    function ensureExecutionSelection() {
+      if (!projectionState.terminalExecutions.length) {
+        projectionState.selectedExecutionId = '';
+        return null;
+      }
+      const exists = projectionState.terminalExecutions.some((item) => item.executionId === projectionState.selectedExecutionId);
+      if (!exists) projectionState.selectedExecutionId = projectionState.terminalExecutions[projectionState.terminalExecutions.length - 1]?.executionId || '';
+      return projectionState.terminalExecutions.find((item) => item.executionId === projectionState.selectedExecutionId) || projectionState.terminalExecutions[projectionState.terminalExecutions.length - 1] || null;
+    }
+    function upsertTerminalExecutionItem(patch = {}) {
+      const executionId = patch.executionId || '';
+      if (!executionId) return null;
+      const index = projectionState.terminalExecutions.findIndex((item) => item.executionId === executionId);
+      let current = index >= 0 ? { ...projectionState.terminalExecutions[index] } : { executionId, command: '', cwd: '', startedAt: '', finishedAt: '', exitCode: null, stdout: '', stderr: '' };
+      current = { ...current, ...patch };
+      if (index >= 0) projectionState.terminalExecutions.splice(index, 1, current);
+      else projectionState.terminalExecutions.push(current);
+      projectionState.selectedExecutionId = executionId;
+      return current;
+    }
+    function appendExecutionOutput(executionId, stream, text, meta = {}) {
+      if (!executionId) return;
+      const key = stream === 'stderr' ? 'stderr' : 'stdout';
+      const current = upsertTerminalExecutionItem({ executionId, command: meta.command || '', cwd: meta.cwd || '', startedAt: meta.startedAt || '' });
+      if (!current) return;
+      current[key] = `${current[key] || ''}${current[key] ? '\n' : ''}${text}`;
+      upsertTerminalExecutionItem(current);
+    }
+    function applyExecutionLogEvent(payload = {}) {
+      const executionId = payload.executionId || '';
+      if (!executionId) return;
+      const phase = payload.phase || payload.stream || '';
+      if (phase === 'started') {
+        upsertTerminalExecutionItem({ executionId, command: payload.msg || payload.command || '', cwd: payload.cwd || '', startedAt: payload.timestamp || new Date().toISOString(), finishedAt: '', exitCode: null, stdout: '', stderr: '' });
+        return;
+      }
+      if (phase === 'finished') {
+        upsertTerminalExecutionItem({ executionId, finishedAt: payload.timestamp || new Date().toISOString(), exitCode: payload.exitCode ?? null });
+        return;
+      }
+      const text = String(payload.msg || '').replace(/^\r+/, '');
+      if (!text) return;
+      appendExecutionOutput(executionId, payload.stream || 'stdout', text, { command: payload.command || '', cwd: payload.cwd || '', startedAt: payload.timestamp || '' });
+    }
+    function renderExecutionStatus(execution = {}) {
+      if (!execution.finishedAt) return '<span class="text-amber-300">运行中</span>';
+      const code = execution.exitCode;
+      if (code === null || code === undefined) return '<span class="text-zinc-400">已结束</span>';
+      return `<span class="${Number(code) === 0 ? 'text-emerald-300' : 'text-red-300'}">exit ${escapeHtml(String(code))}</span>`;
+    }
+    function renderTerminalDrawer() {
+      terminalDrawerContent.innerHTML = '';
+      if (!projectionState.terminalExecutions.length) {
+        const wrap = document.createElement('div');
+        wrap.className = 'rounded-[1.4rem] border border-zinc-800 bg-zinc-900/90 p-4';
+        wrap.innerHTML = `
+          <div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">stdout</div>
+          <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-zinc-100">${escapeHtml(projectionState.rawTerminalByStream.stdout || '')}</pre>
+          <div class="mt-4 mb-2 text-[11px] uppercase tracking-wide text-red-300">stderr</div>
+          <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-red-200">${escapeHtml(projectionState.rawTerminalByStream.stderr || '')}</pre>`;
+        terminalDrawerContent.appendChild(wrap);
+        return;
+      }
+      const selected = ensureExecutionSelection();
+      const wrap = document.createElement('div');
+      wrap.className = 'grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]';
+      const sidebar = document.createElement('div');
+      sidebar.className = 'space-y-2';
+      projectionState.terminalExecutions.slice().reverse().forEach((item) => {
+        const selectedClass = item.executionId === projectionState.selectedExecutionId ? 'border-blue-700 bg-blue-950/30' : 'border-zinc-800 bg-zinc-900/70';
+        const row = document.createElement('button');
+        row.className = `w-full rounded-2xl border px-3 py-3 text-left ${selectedClass}`;
+        row.innerHTML = `
+          <div class="truncate text-sm font-semibold text-zinc-100">${escapeHtml(item.command || item.executionId)}</div>
+          <div class="mt-1 text-[11px] text-zinc-500">${escapeHtml(formatDateTime(item.startedAt) || '')}</div>
+          <div class="mt-2 text-xs">${renderExecutionStatus(item)}</div>`;
+        row.addEventListener('click', () => {
+          projectionState.selectedExecutionId = item.executionId;
+          renderTerminalDrawer();
+        });
+        sidebar.appendChild(row);
+      });
+      const detail = document.createElement('div');
+      detail.className = 'rounded-[1.4rem] border border-zinc-800 bg-zinc-900/90 p-4';
+      const current = selected || { command: '', cwd: '', startedAt: '', finishedAt: '', stdout: '', stderr: '' };
+      detail.innerHTML = `
+        <div class="text-sm font-semibold text-zinc-100">${escapeHtml(current.command || current.executionId || '未命名执行')}</div>
+        <div class="mt-1 text-xs text-zinc-500">${escapeHtml(current.cwd || '')}</div>
+        <div class="mt-2 text-xs text-zinc-400">开始：${escapeHtml(formatDateTime(current.startedAt) || '-')} · 结束：${escapeHtml(formatDateTime(current.finishedAt) || '-')} · ${renderExecutionStatus(current)}</div>
+        <div class="mt-4 text-[11px] uppercase tracking-wide text-zinc-500">stdout</div>
+        <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-6 text-zinc-100">${escapeHtml(current.stdout || '')}</pre>
+        <div class="mt-4 text-[11px] uppercase tracking-wide text-red-300">stderr</div>
+        <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-6 text-red-200">${escapeHtml(current.stderr || '')}</pre>`;
+      wrap.appendChild(sidebar);
+      wrap.appendChild(detail);
+      terminalDrawerContent.appendChild(wrap);
+    }
+
+    function renderCodeViewer(content, path = '', langOverride = '', isText = true, errorMessage = '') {
+      const lang = langOverride || detectLanguageFromPath(path);
+      if (errorMessage) {
+        return `<div class="rounded-[1.4rem] border border-red-900/70 bg-red-950/20 px-4 py-4 text-sm text-red-100"><div class="font-medium text-red-200">文件读取失败</div><div class="mt-2 whitespace-pre-wrap break-words text-red-100">${escapeHtml(errorMessage)}</div></div>`;
+      }
+      if (!isText) {
+        return `<div class="rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80 px-4 py-4 text-sm text-zinc-300">当前文件似乎不是文本文件，暂不直接展示内容。</div>`;
+      }
+      const formatted = prettyPrintContent(content, lang);
+      if (formatted === '') {
+        return `<div class="rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80 px-4 py-4 text-sm text-zinc-300"><div class="font-medium text-zinc-100">当前文件为空</div><div class="mt-2 text-xs text-zinc-500">文件内容为空（0 B）。</div></div>`;
+      }
+      const escaped = escapeHtml(formatted);
+      const lines = formatted.split('\n');
+      const lineNumbers = lines.map((_, index) => `<div>${index + 1}</div>`).join('');
+      const codeClass = hljs.getLanguage(lang) ? `language-${lang}` : 'language-plaintext';
+      const whiteSpaceClass = isCodeLikeLanguage(lang) ? 'whitespace-pre' : 'whitespace-pre-wrap';
+      return `<div class="overflow-hidden rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80"><div class="grid grid-cols-[3.5rem_minmax(0,1fr)] font-mono text-xs leading-6"><div class="select-none border-r border-zinc-800/60 bg-zinc-950/70 px-3 py-2 text-right text-zinc-500">${lineNumbers}</div><div class="min-w-0 overflow-x-auto px-3 py-2"><pre class="min-w-max ${whiteSpaceClass} break-normal text-zinc-100"><code class="${codeClass}">${escaped}</code></pre></div></div></div>`;
+    }
+    function renderDiffViewer(diff) {
+      const lines = String(diff || '').split('\n');
+      return `<div class="rounded-[1.4rem] border border-zinc-800 bg-zinc-900/80 py-2 font-mono text-xs leading-6">${lines.map(highlightDiffLine).join('')}</div>`;
+    }
+    function normalizePath(path) {
+      return String(path || '').replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+    }
+    function pathMatches(left, right) {
+      const a = normalizePath(left);
+      const b = normalizePath(right);
+      if (!a || !b) return false;
+      return a === b || a.endsWith('/' + b) || b.endsWith('/' + a);
+    }
+    function currentFileDiff() {
+      if (appState.file.viewMode !== 'diff') return null;
+      const diff = currentReviewContext() || projectionState.contexts.diff;
+      if (!diff || !appState.file.activePath) return null;
+      return pathMatches(diff.path, appState.file.activePath) ? diff : null;
+    }
+    function isCurrentRequestedFilePath(path) {
+      return !!appState.file.requestedPath && pathMatches(path, appState.file.requestedPath);
+    }
+    function normalizeFileErrorMessage(message) {
+      const text = String(message || '').trim();
+      return text.replace(/^read file:\s*/i, '') || '文件读取失败';
+    }
+    function handleFileReadError(payload = {}) {
+      const message = normalizeFileErrorMessage(payload.msg || payload.message || '');
+      const targetPath = payload.targetPath || runtimeState.meta.targetPath || appState.file.requestedPath || appState.file.activePath || '';
+      if (!appState.file.loading) return;
+      if (payload.targetPath && !isCurrentRequestedFilePath(payload.targetPath)) return;
+      if (!payload.targetPath && !/^read file:/i.test(String(payload.msg || payload.message || ''))) return;
+      appState.file.activePath = targetPath;
+      appState.file.requestedPath = targetPath;
+      appState.file.content = '';
+      appState.file.lang = detectLanguageFromPath(targetPath);
+      appState.file.encoding = 'utf-8';
+      appState.file.isText = true;
+      appState.file.error = message;
+      appState.file.loading = false;
+      renderSingleFileView();
+    }
+    function renderSingleFileView() {
+      const open = !!appState.file.activePath;
+      setSingleFileOpen(open);
+      if (!open) return;
+      fileViewTitle.textContent = basename(appState.file.activePath) || '文件';
+      fileViewPath.textContent = appState.file.activePath || '';
+      fileLoadingBar.classList.toggle('hidden', !appState.file.loading);
+      const diff = currentFileDiff();
+      const reviewDiff = appState.file.viewMode === 'diff' ? currentReviewContext() : null;
+      const lang = appState.file.lang || detectLanguageFromPath(appState.file.activePath);
+      fileReviewBar.classList.toggle('hidden', !(reviewDiff && pathMatches(reviewDiff.path, appState.file.activePath) && !isAutoAcceptMode()));
+      appState.file.pendingReview = !!reviewDiff;
+      fileViewRevertBtn.classList.toggle('hidden', !diff);
+      fileCodeContainer.innerHTML = diff ? renderDiffViewer(diff.diff || '') : renderCodeViewer(appState.file.content || '', appState.file.activePath || '', lang, appState.file.isText !== false, appState.file.error || '');
+      fileCodeContainer.querySelectorAll('pre code').forEach((code) => {
+        if (!code.className) code.className = `language-${lang}`;
+        hljs.highlightElement(code);
+      });
+      enhanceCodeBlocks(fileCodeContainer);
+    }
+
+    function openFile(path, options = {}) {
+      appState.file.activePath = path;
+      appState.file.requestedPath = path;
+      appState.file.content = '';
+      appState.file.error = '';
+      appState.file.loading = true;
+      appState.file.lang = '';
+      appState.file.encoding = 'utf-8';
+      appState.file.isText = true;
+      appState.file.viewMode = options.viewMode === 'diff' ? 'diff' : 'content';
+      appState.workspace.highlightedFilePath = path;
+      setSidebarOpen(false);
+      renderFileList();
+      renderSingleFileView();
+      requestFSRead(path);
+    }
+    function closeFileView() {
+      appState.file.activePath = '';
+      appState.file.requestedPath = '';
+      appState.file.content = '';
+      appState.file.error = '';
+      appState.file.loading = false;
+      appState.file.viewMode = 'content';
+      renderSingleFileView();
+    }
+    function openDiffContext(diff) {
+      projectionState.currentDiff = diff;
+      if (diff?.path) {
+        appState.workspace.highlightedFilePath = diff.path;
+        renderFileList();
+        openFile(diff.path, { viewMode: 'diff' });
+      }
+    }
+
+    function effectivePromptOptions(message, options) {
+      if (shouldShowReviewChoices()) return ['accept', 'revert', 'revise'];
+      return Array.isArray(options) ? options : [];
+    }
+    function parseSlashCommand(command) {
+      const raw = String(command || '').trim();
+      if (!raw.startsWith('/')) return null;
+      const known = ['/help','/clear','/exit','/quit','/context','/fast','/model','/cost','/doctor','/compact','/init','/memory','/plan','/execute','/review','/analyze','/diff','/build','/test'];
+      const direct = known.find((item) => raw === item || raw.startsWith(item + ' '));
+      if (direct) return { key: direct, raw };
+      if (raw.startsWith('/run ')) return { key: '/run', raw };
+      if (raw.startsWith('/add-dir ')) return { key: '/add-dir', raw };
+      if (raw.startsWith('/git ')) return { key: '/git', raw };
+      if (raw.startsWith('/pr ')) return { key: '/pr', raw };
+      return { key: raw.split(/\s+/)[0], raw };
+    }
+    function resolveSlashContext(command) {
+      const raw = String(command || '').trim();
+      if (raw === '/diff') {
+        const diff = projectionState.contexts.diff;
+        if (!diff) return {};
+        return { targetType: 'diff', targetPath: diff.path || '', targetDiff: diff.diff || '', contextId: diff.id || '', contextTitle: diff.title || '' };
+      }
+      if (raw.startsWith('/review') || raw.startsWith('/analyze')) {
+        const diff = projectionState.contexts.diff;
+        if (diff) return { targetType: 'diff', targetPath: diff.path || '', targetDiff: diff.diff || '', contextId: diff.id || '', contextTitle: diff.title || '' };
+        if (appState.file.activePath) return { targetType: 'file', targetPath: appState.file.activePath, contextTitle: basename(appState.file.activePath) };
+      }
+      return {};
+    }
+    function sendSlashCommand(command) {
+      const contextPayload = resolveSlashContext(command);
+      updateRuntimeMeta({ source: 'slash-command', targetType: contextPayload.targetType || '', targetPath: contextPayload.targetPath || '', contextId: contextPayload.contextId || '', contextTitle: contextPayload.contextTitle || '' });
+      return sendJson({ action: 'slash_command', command, cwd: appState.workspace.cwd || '.', engine: appState.session.activeAI, permissionMode: effectivePermissionMode(), ...contextPayload });
+    }
+    function isGlobalSessionEvent(payload) {
+      return payload?.type === 'session_created' || payload?.type === 'session_list_result';
+    }
+    function isActiveSessionEvent(payload) {
+      if (payload?.type === 'fs_list_result' || payload?.type === 'fs_read_result') return true;
+      if (!payload?.sessionId) return true;
+      const activeSessionId = appState.session.activeSessionId || appState.session.id || '';
+      return !activeSessionId || payload.sessionId === activeSessionId;
+    }
+    function runCommand(command) {
+      const cmd = String(command || '').trim();
+      if (!cmd) return;
+      appState.prompt.awaitingInput = false;
+      appState.prompt.options = [];
+      appState.prompt.message = '';
+      appState.session.claudeInteractiveActive = false;
+      runtimeState.agentState = 'IDLE';
+      updateRuntimeMeta({ source: 'command', skillName: '', resultView: '', targetType: '', targetPath: '', contextId: '', contextTitle: '', targetText: '', resumeSessionId: '', command: cmd });
+      storageSet(STORAGE_KEYS.resumeSessionId, null);
+      if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: appState.workspace.cwd || '.', source: 'command', permissionMode: effectivePermissionMode(), resumeSessionId: '' })) return;
+      appendUserMessage(`${cmd}\n@ ${appState.workspace.cwd || '.'}`, '命令');
+    }
+    function sendInputRaw(raw, label = '回复') {
+      if (!raw) return;
+      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n`, permissionMode: effectivePermissionMode() })) return;
+      appendUserMessage(raw.replace(/\n$/, ''), label);
+    }
+    function sendReviewDecision(decision, options = {}) {
+      const diff = currentReviewContext() || projectionState.contexts.diff;
+      if (!diff) return;
+      const permissionMode = effectivePermissionMode();
+      if (decision === 'accept' && permissionMode !== 'acceptEdits') {
+        appendErrorMessage('当前 permission mode 不是 acceptEdits，不能直接 accept diff。');
+        return;
+      }
+      if (!sendJson({ action: 'review_decision', decision, contextId: diff.id || runtimeState.meta.contextId || '', contextTitle: diff.title || runtimeState.meta.contextTitle || '', targetPath: diff.path || runtimeState.meta.targetPath || '', permissionMode })) return;
+      if (!options.silent) appendUserMessage(`${decision}\n@ ${diff.path || diff.title || '当前 Diff'}`, options.autoTriggered ? '自动审核' : 'Diff 决策');
+      diff.pendingReview = decision === 'revise';
+      projectionState.diffs = projectionState.diffs.map((item) => {
+        const matched = buildDiffKey(item) === buildDiffKey(diff);
+        return matched ? { ...item, pendingReview: decision === 'revise' } : item;
+      });
+      const nextDiff = decision === 'revise' ? diff : pickNextPendingDiff();
+      projectionState.currentDiff = nextDiff || diff;
+      projectionState.contexts.diff = projectionState.currentDiff || null;
+      projectionState.review.activeId = nextDiff ? (nextDiff.id || nextDiff.path || '') : '';
+      if (decision === 'accept' && options.autoTriggered) {
+        projectionState.review.autoHandledId = diff.id || diff.path || '';
+        projectionState.review.pendingAutoAcceptId = '';
+      }
+      if (decision !== 'revise') appState.prompt.options = [];
+      renderDiffBadge();
+      renderSingleFileView();
+      renderChatStream();
+      if (nextDiff?.path && decision !== 'revise') openDiffContext(nextDiff);
+    }
+    function resumeSession(sessionId) {
+      if (!sessionId || !appState.connection.connected) return;
+      requestSessionLoad(sessionId);
+      appendSystemMessage(`已请求加载会话 ${sessionId}`);
+    }
+    function handlePrimarySubmit(rawValue) {
+      const value = String(rawValue || '').trim();
+      if (!value) return;
+      if (hasActiveInteractiveAI() || shouldShowReviewChoices()) {
+        if (['accept', 'revert', 'revise'].includes(value.toLowerCase()) && shouldShowReviewChoices()) {
+          sendReviewDecision(value.toLowerCase());
+          return;
+        }
+        sendInputRaw(value, '回复');
+        return;
+      }
+      const slash = parseSlashCommand(value);
+      if (slash) {
+        if (slash.key === '/clear') {
+          projectionState.logEntries = [];
+          projectionState.rawTerminalByStream = { stdout: '', stderr: '' };
+          projectionState.terminalExecutions = [];
+          projectionState.selectedExecutionId = '';
+          renderChatStream();
+          renderTerminalDrawer();
+          return;
+        }
+        if (slash.key === '/exit' || slash.key === '/quit') {
+          appendUserMessage(value, 'Slash Command');
+          sendSlashCommand(value);
+          return;
+        }
+        if (slash.key === '/fast') {
+          appState.session.fastMode = !appState.session.fastMode;
+          storageSet(STORAGE_KEYS.fastMode, appState.session.fastMode ? '1' : null);
+          appendSystemMessage(appState.session.fastMode ? 'fast mode 标记已开启。' : 'fast mode 标记已关闭。');
+          return;
+        }
+        appendUserMessage(value, 'Slash Command');
+        sendSlashCommand(value);
+        return;
+      }
+      runCommand(value);
+    }
+    function buildFileScopedPrompt(text) {
+      const path = appState.file.activePath || runtimeState.meta.targetPath || '';
+      const title = basename(path) || '当前文件';
+      return [`请只围绕当前文件继续处理。`, `TargetPath: ${path}`, `ContextTitle: ${title}`, `UserIntent: ${text}`].join('\n');
+    }
+
+    function handleIncomingEvent(payload) {
+      const globalEvent = isGlobalSessionEvent(payload);
+      const activeSessionEvent = isActiveSessionEvent(payload);
+      if (payload.type === 'session_history' && payload.sessionId) {
+        appState.session.id = payload.sessionId;
+      } else if (globalEvent && payload.sessionId) {
+        appState.session.id = payload.sessionId;
+      }
+      if (activeSessionEvent) updateRuntimeMeta(payload);
+      switch (payload.type) {
+        case 'session_created':
+          if (payload.summary?.id) {
+            mergeSessionSummary(payload.summary);
+            appState.session.activeSessionId = payload.summary.id;
+            storageSet(STORAGE_KEYS.activeSessionId, payload.summary.id);
+            appState.session.id = payload.summary.id;
+            appState.ui.sessionAutoLoadAttempted = true;
+            resetProjectionState();
+            toggleSessionPanel(false);
+            requestSessionList();
+            appendSystemMessage('已创建新会话');
+          }
+          break;
+        case 'session_list_result': {
+          appState.session.summaries = Array.isArray(payload.items) ? payload.items : [];
+          const activeSessionId = appState.session.activeSessionId || appState.session.id || '';
+          const hasActive = !!activeSessionId && appState.session.summaries.some((item) => item.id === activeSessionId);
+          const preferred = storageGet(STORAGE_KEYS.activeSessionId, '');
+          const hasPreferred = !!preferred && appState.session.summaries.some((item) => item.id === preferred);
+          if (!hasActive && activeSessionId) {
+            resetProjectionState();
+            appState.session.id = '';
+            appState.session.activeSessionId = '';
+            appState.session.canResumeCurrent = false;
+            appState.session.claudeInteractiveActive = false;
+            appState.prompt = { awaitingInput: false, options: [], message: '' };
+            runtimeState.agentState = 'IDLE';
+            runtimeState.agentStateMessage = '';
+            updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') });
+            storageSet(STORAGE_KEYS.activeSessionId, null);
+            storageSet(STORAGE_KEYS.resumeSessionId, null);
+          }
+          if (!appState.ui.sessionAutoLoadAttempted) {
+            appState.ui.sessionAutoLoadAttempted = true;
+            if (hasPreferred) {
+              appState.session.activeSessionId = preferred;
+              requestSessionLoad(preferred);
+            }
+          }
+          if (!hasPreferred && preferred) {
+            storageSet(STORAGE_KEYS.activeSessionId, null);
+            if (appState.session.activeSessionId === preferred) appState.session.activeSessionId = '';
+          }
+          break;
+        }
+        case 'session_history': {
+          const summary = payload.summary || {};
+          const nextId = summary.id || payload.sessionId || '';
+          if (summary.id) mergeSessionSummary(summary);
+          if (nextId) {
+            appState.session.id = nextId;
+            appState.session.activeSessionId = nextId;
+            storageSet(STORAGE_KEYS.activeSessionId, nextId);
+            appState.ui.sessionAutoLoadAttempted = true;
+          }
+          projectionState.logEntries = Array.isArray(payload.logEntries) ? payload.logEntries.map((entry) => ({ ...entry })) : [];
+          projectionState.diffs = Array.isArray(payload.diffs) && payload.diffs.length
+            ? payload.diffs.map((item) => ({ ...item }))
+            : (payload.currentDiff ? [{ ...payload.currentDiff }] : []);
+          projectionState.currentDiff = payload.currentDiff || projectionState.diffs[0] || null;
+          projectionState.currentStep = payload.currentStep || null;
+          projectionState.latestError = payload.latestError || null;
+          projectionState.contexts = { diff: projectionState.currentDiff, step: payload.currentStep || null, error: payload.latestError || null };
+          projectionState.review.activeId = projectionState.currentDiff?.pendingReview ? (projectionState.currentDiff?.id || projectionState.currentDiff?.path || '') : '';
+          projectionState.review.autoHandledId = '';
+          projectionState.review.pendingAutoAcceptId = '';
+          projectionState.rawTerminalByStream = payload.rawTerminalByStream || { stdout: '', stderr: '' };
+          projectionState.terminalExecutions = Array.isArray(payload.terminalExecutions) ? payload.terminalExecutions.map((item) => ({ ...item })) : [];
+          projectionState.selectedExecutionId = projectionState.terminalExecutions[projectionState.terminalExecutions.length - 1]?.executionId || '';
+          sessionContextState.enabledSkillNames = Array.isArray(payload.sessionContext?.enabledSkillNames) ? [...payload.sessionContext.enabledSkillNames] : [];
+          sessionContextState.enabledMemoryIds = Array.isArray(payload.sessionContext?.enabledMemoryIds) ? [...payload.sessionContext.enabledMemoryIds] : [];
+          appState.session.canResumeCurrent = !!payload.canResume;
+          if (payload.resumeRuntimeMeta) updateRuntimeMeta(payload.resumeRuntimeMeta);
+          requestFSList(appState.workspace.cwd || '.');
+          appendSystemMessage(`已加载历史会话${summary.title ? ` · ${summary.title}` : ''}`);
+          break;
+        }
+        case 'skill_catalog_result':
+          catalogState.skills = Array.isArray(payload.items) ? payload.items.map((item) => ({ ...item })) : [];
+          break;
+        case 'memory_list_result':
+          catalogState.memory = Array.isArray(payload.items) ? payload.items.map((item) => ({ ...item })) : [];
+          break;
+        case 'session_context_result':
+          sessionContextState.enabledSkillNames = Array.isArray(payload.sessionContext?.enabledSkillNames) ? [...payload.sessionContext.enabledSkillNames] : [];
+          sessionContextState.enabledMemoryIds = Array.isArray(payload.sessionContext?.enabledMemoryIds) ? [...payload.sessionContext.enabledMemoryIds] : [];
+          break;
+        case 'skill_sync_result':
+          catalogState.syncStatus = payload.msg || 'skill 同步完成';
+          appendSystemMessage(catalogState.syncStatus);
+          break;
+        case 'session_state':
+          if (!activeSessionEvent) break;
+          appendSystemMessage(payload.msg || payload.state || 'session update', payload.timestamp);
+          break;
+        case 'agent_state': {
+          if (!activeSessionEvent) break;
+          runtimeState.agentState = payload.state || 'IDLE';
+          runtimeState.agentStateMessage = payload.msg || '';
+          appState.connection.running = runtimeState.agentState !== 'IDLE';
+          const cmd = payload.command || '';
+          const isAI = cmd === 'claude' || cmd === 'gemini' || cmd.startsWith('claude ') || cmd.startsWith('gemini ');
+          appState.session.claudeInteractiveActive = isAI && payload.state === 'WAIT_INPUT';
+          if (isAI) appState.session.activeAI = cmd;
+          if (payload.resumeSessionId) storageSet(STORAGE_KEYS.resumeSessionId, payload.resumeSessionId);
+          else if (payload.state === 'IDLE') storageSet(STORAGE_KEYS.resumeSessionId, null);
+          if (payload.permissionMode) {
+            storageSet(STORAGE_KEYS.permissionMode, payload.permissionMode);
+            runtimeState.meta.permissionMode = payload.permissionMode;
+            if (permissionModeSelect.value !== payload.permissionMode) permissionModeSelect.value = payload.permissionMode;
+          }
+          if (payload.state === 'IDLE' && projectionState.review.activeId && projectionState.review.activeId !== projectionState.review.autoHandledId) {
+            projectionState.review.activeId = '';
+            if (projectionState.contexts.diff) projectionState.contexts.diff.pendingReview = false;
+          }
+          if (payload.step) {
+            const stepContext = buildStepContextFromPayload({ ...payload, msg: payload.step, status: runtimeState.agentState === 'RUNNING_TOOL' ? 'running' : 'info' });
+            projectionState.currentStep = stepContext;
+            projectionState.contexts.step = stepContext;
+            if (stepContext.targetPath) appState.workspace.highlightedFilePath = stepContext.targetPath;
+          } else if (payload.state === 'IDLE') {
+            projectionState.currentStep = null;
+            projectionState.contexts.step = null;
+          }
+          break;
+        }
+        case 'log': {
+          if (!activeSessionEvent) break;
+          const now = Date.now();
+          const msg = payload.msg || '';
+          const stream = payload.stream || 'stdout';
+          const phase = payload.phase || stream;
+          const executionId = payload.executionId || '';
+          if (msg === dedupState.lastLogMsg && stream === dedupState.lastLogStream && phase === dedupState.lastLogPhase && executionId === dedupState.lastLogExecutionId && (now - dedupState.lastLogTime) < 200) break;
+          dedupState.lastLogMsg = msg;
+          dedupState.lastLogStream = stream;
+          dedupState.lastLogPhase = phase;
+          dedupState.lastLogExecutionId = executionId;
+          dedupState.lastLogTime = now;
+          applyExecutionLogEvent(payload);
+          if (phase === 'started' || phase === 'finished') break;
+          if (stream !== 'stderr' && looksLikeMarkdown(msg) && !msg.startsWith('\r')) appendMarkdownMessage(msg, payload.timestamp, stream);
+          else appendTerminalMessage(msg.replace(/^\r+/, ''), payload.timestamp, stream, { executionId, phase, exitCode: payload.exitCode ?? null });
+          break;
+        }
+        case 'error': {
+          if (!activeSessionEvent) break;
+          const errorContext = buildErrorContextFromPayload(payload);
+          projectionState.latestError = errorContext;
+          projectionState.contexts.error = errorContext;
+          projectionState.logEntries.push({ kind: 'error', context: errorContext });
+          handleFileReadError(payload);
+          break;
+        }
+        case 'prompt_request':
+          if (!activeSessionEvent) break;
+          if (runtimeState.agentState === 'WAIT_INPUT' && !currentReviewContext()) projectionState.review.activeId = '';
+          appState.prompt.awaitingInput = true;
+          appState.prompt.message = payload.msg || '等待输入';
+          appState.prompt.options = effectivePromptOptions(payload.msg || '', payload.options || []);
+          break;
+        case 'step_update': {
+          if (!activeSessionEvent) break;
+          const stepMsg = payload.msg || payload.message || '';
+          const stepStatus = payload.status || '';
+          if (stepMsg === dedupState.lastStepMsg && stepStatus === dedupState.lastStepStatus) break;
+          dedupState.lastStepMsg = stepMsg;
+          dedupState.lastStepStatus = stepStatus;
+          const stepContext = buildStepContextFromPayload(payload);
+          projectionState.currentStep = stepContext;
+          projectionState.contexts.step = stepContext;
+          projectionState.logEntries.push({ kind: 'step', context: stepContext });
+          if (stepContext.targetPath) appState.workspace.highlightedFilePath = stepContext.targetPath;
+          break;
+        }
+        case 'file_diff': {
+          if (!activeSessionEvent) break;
+          const diffContext = buildDiffContextFromPayload(payload);
+          mergeDiffListItem(diffContext);
+          projectionState.review.activeId = diffContext.id || diffContext.path || '';
+          projectionState.review.pendingAutoAcceptId = diffContext.id || diffContext.path || '';
+          projectionState.logEntries.push({ kind: 'diff', context: diffContext });
+          const shouldAutoAccept = isAutoAcceptMode()
+            && projectionState.review.pendingAutoAcceptId === (diffContext.id || diffContext.path || '')
+            && projectionState.review.autoHandledId !== (diffContext.id || diffContext.path || '');
+          if (shouldAutoAccept) {
+            appendSystemMessage('当前为自动同意修改模式，已自动接受本次 diff。');
+            sendReviewDecision('accept', { silent: true, autoTriggered: true });
+          }
+          if (diffContext.path) {
+            appState.workspace.highlightedFilePath = diffContext.path;
+            if (appState.file.activePath === diffContext.path) renderSingleFileView();
+          }
+          break;
+        }
+        case 'runtime_info_result':
+          if (!activeSessionEvent) break;
+          projectionState.latestRuntimeInfo = payload;
+          appendMarkdownMessage([payload.title ? `## ${payload.title}` : '', payload.msg || '', ...(Array.isArray(payload.items) ? payload.items.map((item) => `- ${item.label}: ${item.value || '(none)'}`) : [])].filter(Boolean).join('\n'), payload.timestamp, 'stdout');
+          break;
+        case 'fs_list_result':
+          if (!activeSessionEvent) break;
+          appState.workspace.cwd = payload.current_path || appState.workspace.cwd;
+          appState.workspace.items = Array.isArray(payload.items) ? payload.items : [];
+          renderFileList();
+          break;
+        case 'fs_read_result': {
+          if (!activeSessionEvent) break;
+          if (!isCurrentRequestedFilePath(payload.path || '')) break;
+          appState.file.activePath = payload.path || appState.file.activePath;
+          appState.file.requestedPath = payload.path || appState.file.requestedPath;
+          appState.file.content = payload.content || '';
+          appState.file.lang = payload.lang || detectLanguageFromPath(payload.path || appState.file.activePath || '');
+          appState.file.encoding = payload.encoding || 'utf-8';
+          appState.file.isText = payload.isText !== false;
+          appState.file.error = '';
+          appState.file.loading = false;
+          renderSingleFileView();
+          break;
+        }
+        default:
+          if (!activeSessionEvent) break;
+          appendSystemMessage(`收到未处理事件 ${payload.type || 'unknown'}`, payload.timestamp);
+          break;
+      }
+      if (activeSessionEvent && runtimeState.agentState !== 'WAIT_INPUT') {
+        appState.prompt.awaitingInput = false;
+        appState.prompt.options = [];
+        projectionState.review.activeId = '';
+        if (payload.type !== 'prompt_request') appState.prompt.message = '';
+      }
+      if (activeSessionEvent && runtimeState.agentState === 'IDLE') {
+        appState.session.claudeInteractiveActive = false;
+      }
+      renderApp();
+    }
+
+    function renderApp() {
+      renderHeaderStatus();
+      renderRuntimeMetaBadge();
+      renderDiffBadge();
+      renderFileList();
+      renderSessionList();
+      renderSkillPanel();
+      renderMemoryPanel();
+      renderChatStream();
+      renderSingleFileView();
+      renderTerminalDrawer();
+      renderStatusDetailPanel();
+    }
+
+    function setPanelOpen(panel, open) {
+      panel.classList.toggle('pointer-events-none', !open);
+      panel.classList.toggle('opacity-0', !open);
+    }
+    function setTerminalDrawerOpen(open) {
+      appState.ui.terminalDrawerOpen = open;
+      setPanelOpen(terminalDrawer, open);
+    }
+    function setStatusDetailOpen(open) {
+      appState.ui.statusDetailOpen = open;
+      setPanelOpen(statusDetailPanel, open);
+    }
+    function toggleSessionPanel(force) {
+      const next = typeof force === 'boolean' ? force : !appState.ui.sessionPanelOpen;
+      appState.ui.sessionPanelOpen = next;
+      setPanelOpen(sessionPanel, next);
+    }
+    function toggleSkillPanel(force) {
+      const next = typeof force === 'boolean' ? force : !appState.ui.skillPanelOpen;
+      appState.ui.skillPanelOpen = next;
+      setPanelOpen(skillPanel, next);
+      if (next) {
+        requestSkillCatalog();
+        requestSessionContext();
+      }
+    }
+    function toggleMemoryPanel(force) {
+      const next = typeof force === 'boolean' ? force : !appState.ui.memoryPanelOpen;
+      appState.ui.memoryPanelOpen = next;
+      setPanelOpen(memoryPanel, next);
+      if (next) {
+        requestMemoryList();
+        requestSessionContext();
+      }
+    }
+    function ensureTerminalMetrics() {
+      const drawer = appState.ui.drawers.terminal;
+      drawer.maxHeight = Math.round((window.innerHeight || 800) * 0.75);
+      drawer.height = Math.min(Math.max(drawer.height || drawer.openHeight, drawer.minHeight), drawer.maxHeight);
+      drawer.openHeight = drawer.height;
+      terminalDrawerSheet.style.height = `${drawer.height}px`;
+    }
+    function bindTerminalGesture() {
+      const drawer = appState.ui.drawers.terminal;
+      terminalDrawerHandle.style.touchAction = 'none';
+      terminalDrawerHandle.addEventListener('pointerdown', (event) => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        ensureTerminalMetrics();
+        drawer.dragging = true;
+        drawer.pointerId = event.pointerId;
+        drawer.startY = event.clientY;
+        drawer.startHeight = drawer.height;
+        terminalDrawerHandle.setPointerCapture?.(event.pointerId);
+      });
+      terminalDrawerHandle.addEventListener('pointermove', (event) => {
+        if (!drawer.dragging || drawer.pointerId !== event.pointerId) return;
+        const delta = drawer.startY - event.clientY;
+        drawer.height = Math.min(Math.max(drawer.startHeight + delta, 0), drawer.maxHeight || drawer.startHeight);
+        terminalDrawerSheet.style.height = `${drawer.height}px`;
+      });
+      const finish = (event) => {
+        if (!drawer.dragging || (event && drawer.pointerId !== event.pointerId)) return;
+        drawer.dragging = false;
+        terminalDrawerHandle.releasePointerCapture?.(drawer.pointerId);
+        drawer.pointerId = null;
+        if (drawer.height < Math.max(120, drawer.minHeight * 0.72)) {
+          setTerminalDrawerOpen(false);
+          return;
+        }
+        drawer.openHeight = drawer.height;
+      };
+      terminalDrawerHandle.addEventListener('pointerup', finish);
+      terminalDrawerHandle.addEventListener('pointercancel', finish);
+    }
+
+    authForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      connect(false);
+    });
+    openSidebarBtn.addEventListener('click', () => setSidebarOpen(true));
+    closeSidebarBtn.addEventListener('click', () => setSidebarOpen(false));
+    sidebarOverlay.addEventListener('click', () => setSidebarOpen(false));
+    sidebarRefreshBtn.addEventListener('click', () => requestFSList(appState.workspace.cwd || '.'));
+    sidebarUpBtn.addEventListener('click', () => requestFSList(parentPath(appState.workspace.cwd || '.')));
+    sessionPanelBtn.addEventListener('click', () => toggleSessionPanel(true));
+    skillPanelBtn.addEventListener('click', () => toggleSkillPanel(true));
+    memoryPanelBtn.addEventListener('click', () => toggleMemoryPanel(true));
+    closeSessionPanelBtn.addEventListener('click', () => toggleSessionPanel(false));
+    closeSkillPanelBtn.addEventListener('click', () => toggleSkillPanel(false));
+    closeMemoryPanelBtn.addEventListener('click', () => toggleMemoryPanel(false));
+    sessionPanel.addEventListener('click', (event) => {
+      if (event.target === sessionPanel) toggleSessionPanel(false);
+    });
+    skillPanel.addEventListener('click', (event) => {
+      if (event.target === skillPanel) toggleSkillPanel(false);
+    });
+    memoryPanel.addEventListener('click', (event) => {
+      if (event.target === memoryPanel) toggleMemoryPanel(false);
+    });
+    skillSyncBtn.addEventListener('click', () => syncSkills());
+    saveSkillBtn.addEventListener('click', () => {
+      const name = String(skillNameInput.value || '').trim();
+      if (!name) {
+        appendErrorMessage('skill name 不能为空。');
+        return;
+      }
+      saveSkill({
+        name,
+        description: String(skillDescriptionInput.value || '').trim(),
+        targetType: String(skillTargetTypeInput.value || '').trim(),
+        resultView: String(skillResultViewInput.value || '').trim(),
+        prompt: String(skillPromptInput.value || '').trim()
+      });
+      skillNameInput.value = '';
+      skillDescriptionInput.value = '';
+      skillTargetTypeInput.value = '';
+      skillResultViewInput.value = '';
+      skillPromptInput.value = '';
+    });
+    saveMemoryBtn.addEventListener('click', () => {
+      const title = String(memoryTitleInput.value || '').trim();
+      const content = String(memoryContentInput.value || '').trim();
+      if (!title || !content) {
+        appendErrorMessage('memory title 和 content 不能为空。');
+        return;
+      }
+      saveMemory({
+        id: String(memoryIdInput.value || '').trim(),
+        title,
+        content
+      });
+      memoryIdInput.value = '';
+      memoryTitleInput.value = '';
+      memoryContentInput.value = '';
+    });
+    terminalBtn.addEventListener('click', () => setTerminalDrawerOpen(true));
+    closeTerminalDrawerBtn.addEventListener('click', () => setTerminalDrawerOpen(false));
+    statusDetailBtn.addEventListener('click', () => setStatusDetailOpen(true));
+    closeStatusDetailBtn.addEventListener('click', () => setStatusDetailOpen(false));
+    retokenBtn.addEventListener('click', () => {
+      appState.auth.token = '';
+      storageSet(STORAGE_KEYS.token, null);
+      tokenInput.value = '';
+      setView('auth');
+      setAuthStatus('请重新输入 token。');
+      tokenInput.focus();
+    });
+    reconnectBtn.addEventListener('click', () => connect(false));
+    permissionModeSelect.value = storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits');
+    permissionModeSelect.addEventListener('change', () => {
+      syncPermissionMode(permissionModeSelect.value || 'acceptEdits');
+    });
+    newSessionBtn.addEventListener('click', () => {
+      resetProjectionState();
+      appState.session.id = '';
+      appState.session.activeSessionId = '';
+      storageSet(STORAGE_KEYS.activeSessionId, null);
+      requestSessionCreate('');
+      appendSystemMessage('已请求创建新会话');
+    });
+    resumeSessionBtn.addEventListener('click', () => {
+      const currentSummary = pickSessionSummary(appState.session.activeSessionId || appState.session.id || '');
+      const runtime = currentSummary?.runtime || {};
+      const resumeId = runtime.resumeSessionId || runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '') || '';
+      if (resumeId) requestResumeSession({ ...runtime, resumeSessionId: resumeId });
+    });
+    diffBadgeBtn.addEventListener('click', () => {
+      const diff = currentReviewContext() || projectionState.contexts.diff || pickNextPendingDiff();
+      if (diff) openDiffContext(diff);
+    });
+    closeFileViewBtn.addEventListener('click', () => closeFileView());
+    fileViewRevertBtn.addEventListener('click', () => sendReviewDecision('revert'));
+    fileAcceptBtn.addEventListener('click', () => sendReviewDecision('accept'));
+    fileRevertBtn.addEventListener('click', () => sendReviewDecision('revert'));
+    fileReviseBtn.addEventListener('click', () => sendReviewDecision('revise'));
+    fileVoiceBtn.addEventListener('click', () => appendSystemMessage('语音入口暂为占位。'));
+    chatComposer.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const value = String(chatInput.value || '').trim();
+      if (!value) return;
+      handlePrimarySubmit(value);
+      chatInput.value = '';
+    });
+    fileComposer.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const value = String(fileInput.value || '').trim();
+      if (!value) return;
+      handlePrimarySubmit(buildFileScopedPrompt(value));
+      fileInput.value = '';
+    });
+    window.addEventListener('resize', ensureTerminalMetrics);
+
+    tokenInput.value = appState.auth.token;
+    bindTerminalGesture();
+    ensureTerminalMetrics();
+    setView('auth');
+    renderApp();
+    if (appState.auth.token) {
+      setAuthStatus(bootstrapToken ? '已从扫码链接读取 token，正在自动连接…' : '检测到已保存 token，正在自动连接…');
+      connect(false);
+    } else {
+      setAuthStatus('请输入 token 后继续。');
+    }
+  </script>
+</body>
+</html>

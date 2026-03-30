@@ -253,6 +253,7 @@ class SessionController extends ChangeNotifier {
     }
     return _pendingPlanQuestions[_pendingPlanQuestionIndex];
   }
+
   List<PlanQuestion> get pendingPlanQuestionList =>
       List.unmodifiable(_pendingPlanQuestions);
   Map<String, String> get pendingPlanAnswers =>
@@ -269,6 +270,7 @@ class SessionController extends ChangeNotifier {
     final total = _pendingPlanQuestions.length;
     return current > total ? '$total/$total' : '$current/$total';
   }
+
   bool get hasVisiblePrompt =>
       pendingInteraction != null || pendingPrompt != null;
   bool get shouldShowPromptComposer =>
@@ -326,6 +328,7 @@ class SessionController extends ChangeNotifier {
     final source = meta.source.trim().toLowerCase();
     return source == 'review-auto-accepted';
   }
+
   bool get shouldShowReviewChoices {
     if (!isManualReviewMode) {
       return false;
@@ -335,7 +338,8 @@ class SessionController extends ChangeNotifier {
     final prompt = pendingPrompt;
     return currentReviewDiff != null &&
         state == 'WAIT_INPUT' &&
-        (interaction?.isReview == true || prompt?.looksLikeReviewPrompt == true);
+        (interaction?.isReview == true ||
+            prompt?.looksLikeReviewPrompt == true);
   }
 
   String _debugReviewStateSummary() {
@@ -346,9 +350,8 @@ class SessionController extends ChangeNotifier {
   }
 
   void _pushDebug(String label, [String? details]) {
-    final suffix = details == null || details.trim().isEmpty
-        ? ''
-        : ' ${details.trim()}';
+    final suffix =
+        details == null || details.trim().isEmpty ? '' : ' ${details.trim()}';
     debugPrint('[session] $label$suffix');
   }
 
@@ -531,6 +534,27 @@ class SessionController extends ChangeNotifier {
     );
   }
 
+  String get _preferredAiCommand {
+    final engine = _config.engine.trim().toLowerCase();
+    if (engine == 'codex') {
+      return 'codex';
+    }
+    if (engine == 'gemini') {
+      return 'gemini';
+    }
+    return 'claude';
+  }
+
+  bool _isAiCommand(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized == 'claude' ||
+        normalized.startsWith('claude ') ||
+        normalized == 'codex' ||
+        normalized.startsWith('codex ') ||
+        normalized == 'gemini' ||
+        normalized.startsWith('gemini ');
+  }
+
   String get _currentDecisionPermissionMode {
     final interactionMode =
         pendingInteraction?.runtimeMeta.permissionMode.trim() ?? '';
@@ -549,7 +573,8 @@ class SessionController extends ChangeNotifier {
     try {
       await _restoreConfigFromPrefs();
     } catch (error, stack) {
-      _pushDebug('initialize prefs restore failed', 'errorType=${error.runtimeType}');
+      _pushDebug(
+          'initialize prefs restore failed', 'errorType=${error.runtimeType}');
       debugPrintStack(
         stackTrace: stack,
         label: '[session] initialize prefs restore stack',
@@ -605,7 +630,8 @@ class SessionController extends ChangeNotifier {
     try {
       await prefs.setString(_prefsKey, jsonEncode(config.toJson()));
     } catch (error, stack) {
-      _pushDebug('save config failed', 'key=$_prefsKey errorType=${error.runtimeType}');
+      _pushDebug('save config failed',
+          'key=$_prefsKey errorType=${error.runtimeType}');
       debugPrintStack(
         stackTrace: stack,
         label: '[session] save config stack',
@@ -1170,14 +1196,14 @@ class SessionController extends ChangeNotifier {
     final value = prompt.trim();
     final mergedMeta = (meta ?? currentMeta).merge(
       RuntimeMeta(
-        command: 'claude',
+        command: _preferredAiCommand,
         cwd: effectiveCwd,
         permissionMode: _config.permissionMode,
       ),
     );
     _service.send({
       'action': 'exec',
-      'cmd': 'claude',
+      'cmd': _preferredAiCommand,
       'cwd': effectiveCwd,
       'mode': 'pty',
       ...mergedMeta.toJson(),
@@ -1200,7 +1226,7 @@ class SessionController extends ChangeNotifier {
     }
     final mergedMeta = (meta ?? currentMeta).merge(
       RuntimeMeta(
-        command: 'claude',
+        command: _preferredAiCommand,
         cwd: effectiveCwd,
         permissionMode: _config.permissionMode,
       ),
@@ -1331,8 +1357,8 @@ class SessionController extends ChangeNotifier {
       return;
     }
     final lower = value.toLowerCase();
-    final isClaudeCommand = lower == 'claude' || lower.startsWith('claude ');
-    if (!isClaudeCommand) {
+    final isAiCommand = _isAiCommand(lower);
+    if (!isAiCommand) {
       _service.send({
         'action': 'exec',
         'cmd': value,
@@ -1353,8 +1379,11 @@ class SessionController extends ChangeNotifier {
       return;
     }
     _resetActionNeededTracking();
-    _startClaudeTurn(lower == 'claude' ? '' : value.substring('claude'.length).trim(), meta: currentMeta, label: '命令');
-    if (lower == 'claude') {
+    final aiHead = lower.split(RegExp(r'\s+')).first;
+    final aiPrompt =
+        lower == aiHead ? '' : value.substring(value.indexOf(' ') + 1).trim();
+    _startClaudeTurn(aiPrompt, meta: currentMeta, label: '命令');
+    if (lower == aiHead) {
       _pushUser(value, '命令');
     }
   }
@@ -1381,7 +1410,8 @@ class SessionController extends ChangeNotifier {
       sendReviewDecision(normalized);
       return;
     }
-    if (prompt?.looksLikePermissionPrompt == true || hasPendingPermissionPrompt) {
+    if (prompt?.looksLikePermissionPrompt == true ||
+        hasPendingPermissionPrompt) {
       final decision = _normalizePermissionDecision(normalized);
       if (decision == null) {
         return;
@@ -1553,7 +1583,8 @@ class SessionController extends ChangeNotifier {
       return normalized;
     }
     for (final option in question.options) {
-      if (option.value.trim() == normalized || option.displayText == normalized) {
+      if (option.value.trim() == normalized ||
+          option.displayText == normalized) {
         return option.displayText;
       }
     }
@@ -1872,8 +1903,7 @@ class SessionController extends ChangeNotifier {
             _matchesPendingSessionTarget(state.sessionId)) {
           _finishSessionLoading(sessionId: state.sessionId);
         }
-        if (_isIdleLikeState(state.state) &&
-            !_shouldPreserveBlockingPrompt()) {
+        if (_isIdleLikeState(state.state) && !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
           _pendingPrompt = null;
           _runtimePhase = null;
@@ -1951,8 +1981,8 @@ class SessionController extends ChangeNotifier {
       case PromptRequestEvent prompt:
         final currentInteraction = _pendingInteraction;
         final currentPrompt = _pendingPrompt;
-        final keepBlockingPrompt =
-            _shouldKeepExistingBlockingPrompt(prompt, currentInteraction, currentPrompt);
+        final keepBlockingPrompt = _shouldKeepExistingBlockingPrompt(
+            prompt, currentInteraction, currentPrompt);
         if (keepBlockingPrompt) {
           _pushDebug('忽略通用继续输入 prompt',
               'incoming=${prompt.message}\n${_debugReviewStateSummary()}');
@@ -3272,8 +3302,10 @@ class SessionController extends ChangeNotifier {
     _agentPhaseLabel = _compactAgentMessage();
     _syncActiveReviewSelection();
     final state = (_agentState?.state ?? '').trim().toUpperCase();
-    final hasBlockingPrompt =
-        awaitInput || hasPendingPermissionPrompt || shouldShowReviewChoices || hasPendingPlanQuestions;
+    final hasBlockingPrompt = awaitInput ||
+        hasPendingPermissionPrompt ||
+        shouldShowReviewChoices ||
+        hasPendingPlanQuestions;
     final active = _connected &&
         !hasBlockingPrompt &&
         (state == 'THINKING' || state == 'RUNNING_TOOL');

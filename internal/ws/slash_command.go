@@ -165,7 +165,18 @@ func buildExecRequestFromSlash(parsed *parsedSlashCommand, req protocol.SlashCom
 		return runtimepkg.ExecuteRequest{}, fmt.Errorf("%s requires arguments", parsed.spec.key)
 	}
 	command := parsed.spec.execTemplate
+	aiCmd := resolveAICommand(req.Engine)
 	switch parsed.spec.key {
+	case "/init":
+		command = aiCmd + " /init"
+	case "/compact":
+		command = aiCmd + " /compact"
+	case "/add-dir":
+		command = fmt.Sprintf("%s /add-dir %s", aiCmd, args)
+	case "/plan":
+		command = aiCmd + " /plan"
+	case "/execute":
+		command = aiCmd + " /execute"
 	case "/run":
 		command = args
 	case "/test":
@@ -176,8 +187,6 @@ func buildExecRequestFromSlash(parsed *parsedSlashCommand, req protocol.SlashCom
 			quoted = strconv.Quote(args)
 		}
 		command = fmt.Sprintf(parsed.spec.execTemplate, quoted)
-	case "/add-dir":
-		command = fmt.Sprintf(parsed.spec.execTemplate, args)
 	default:
 		if strings.Contains(parsed.spec.execTemplate, "%s") {
 			command = fmt.Sprintf(parsed.spec.execTemplate, args)
@@ -239,9 +248,13 @@ func executeSkillRequest(ctx context.Context, sessionID string, skillEvent proto
 	}
 	resumeReq := execReq
 	resumeReq.Mode = runner.ModePTY
-	resumeReq.Command = "claude"
+	resumeCmd := resolveAICommand(skillEvent.Engine)
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(execReq.Command)), "codex") {
+		resumeCmd = "codex"
+	}
+	resumeReq.Command = resumeCmd
 	resumeReq.RuntimeMeta = protocol.MergeRuntimeMeta(execReq.RuntimeMeta, protocol.RuntimeMeta{
-		Command:        "claude",
+		Command:        resumeCmd,
 		PermissionMode: execReq.PermissionMode,
 	})
 	if err := runtimeSvc.SendInputOrResume(ctx, sessionID, resumeReq, inputReq, emit); err == nil {
@@ -250,6 +263,17 @@ func executeSkillRequest(ctx context.Context, sessionID string, skillEvent proto
 		return runtimeSvc.Execute(ctx, sessionID, execReq, emit)
 	} else {
 		return err
+	}
+}
+
+func resolveAICommand(engine string) string {
+	switch strings.TrimSpace(strings.ToLower(engine)) {
+	case "codex":
+		return "codex"
+	case "gemini":
+		return "gemini"
+	default:
+		return "claude"
 	}
 }
 

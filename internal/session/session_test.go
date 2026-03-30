@@ -110,3 +110,12 @@ func TestControllerUpdatePermissionModePersistsToSnapshot(t *testing.T) {
 		t.Fatalf("expected permission mode to persist in snapshot, got %q", snapshot.ActiveMeta.PermissionMode)
 	}
 }
+
+func TestCommandDetectionSupportsCodex(t *testing.T) {
+	if !isAICommand("codex") {
+		t.Fatal("expected codex to be treated as AI command")
+	}
+	if !isClaudeCommand("codex") {
+		t.Fatal("expected codex to be treated as interactive AI command for lifecycle tracking")
+	}
+}

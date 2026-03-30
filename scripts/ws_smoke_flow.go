@@ -24,13 +24,17 @@ const (
 	scenarioFull                 smokeScenario = "full"
 	scenarioPermissionDiffReview smokeScenario = "permission-diff-review"
 	scenarioTerminalLogs         smokeScenario = "terminal-logs"
+	scenarioCodexBasic           smokeScenario = "codex-basic"
+	scenarioCodexReadmeWrite     smokeScenario = "codex-readme-write"
 )
 
 func main() {
 	var (
-		baseURL  = flag.String("url", "", "websocket url")
-		timeout  = flag.Duration("timeout", defaultSmokeTimeout, "overall smoke timeout")
-		scenario = flag.String("scenario", string(scenarioFull), "smoke scenario: full, permission-diff-review, or terminal-logs")
+		baseURL   = flag.String("url", "", "websocket url")
+		timeout   = flag.Duration("timeout", defaultSmokeTimeout, "overall smoke timeout")
+		scenario  = flag.String("scenario", string(scenarioFull), "smoke scenario: full, permission-diff-review, terminal-logs, codex-basic, or codex-readme-write")
+		aiCommand = flag.String("ai-command", strings.TrimSpace(os.Getenv("SMOKE_AI_COMMAND")), "AI command for codex-basic scenario")
+		engine    = flag.String("engine", strings.TrimSpace(os.Getenv("SMOKE_ENGINE")), "engine for codex-basic scenario")
 	)
 	flag.Parse()
 
@@ -42,7 +46,14 @@ func main() {
 		wsURL = buildWSURL()
 	}
 
-	if err := runSmoke(ctx, wsURL, smokeScenario(strings.TrimSpace(*scenario)), os.Stdout); err != nil {
+	if err := runSmoke(
+		ctx,
+		wsURL,
+		smokeScenario(strings.TrimSpace(*scenario)),
+		strings.TrimSpace(*aiCommand),
+		strings.TrimSpace(*engine),
+		os.Stdout,
+	); err != nil {
 		fmt.Fprintf(os.Stderr, "smoke failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -68,9 +79,11 @@ type smokeRunner struct {
 	conn       *websocket.Conn
 	transcript *transcript
 	ctx        context.Context
+	aiCommand  string
+	engine     string
 }
 
-func runSmoke(ctx context.Context, wsURL string, scenario smokeScenario, out *os.File) error {
+func runSmoke(ctx context.Context, wsURL string, scenario smokeScenario, aiCommand string, engine string, out *os.File) error {
 	tr := newTranscript(out)
 	tr.section("connect")
 
@@ -84,7 +97,13 @@ func runSmoke(ctx context.Context, wsURL string, scenario smokeScenario, out *os
 	}
 	defer conn.Close()
 
-	runner := &smokeRunner{conn: conn, transcript: tr, ctx: ctx}
+	runner := &smokeRunner{
+		conn:       conn,
+		transcript: tr,
+		ctx:        ctx,
+		aiCommand:  aiCommand,
+		engine:     engine,
+	}
 	conn.SetReadLimit(8 << 20)
 
 	if err := runner.bootstrap(); err != nil {
@@ -92,6 +111,22 @@ func runSmoke(ctx context.Context, wsURL string, scenario smokeScenario, out *os
 	}
 	if err := runner.selectSession(); err != nil {
 		return err
+	}
+	if scenario == scenarioCodexBasic {
+		if err := runner.codexBasicFlow(); err != nil {
+			return err
+		}
+		tr.section("done")
+		tr.line("done scenario=%s", scenarioCodexBasic)
+		return nil
+	}
+	if scenario == scenarioCodexReadmeWrite {
+		if err := runner.codexReadmeWriteFlow(); err != nil {
+			return err
+		}
+		tr.section("done")
+		tr.line("done scenario=%s", scenarioCodexReadmeWrite)
+		return nil
 	}
 	if err := runner.chatFlow(); err != nil {
 		return err
@@ -626,6 +661,188 @@ func (r *smokeRunner) terminalLogFlow() error {
 	return fmt.Errorf("did not find terminal execution %q in history: %s", executionID, history.compactString())
 }
 
+func (r *smokeRunner) codexBasicFlow() error {
+	r.transcript.section("codex-basic")
+
+	cmd := strings.TrimSpace(r.aiCommand)
+	if cmd == "" {
+		cmd = "codex --version"
+	}
+	engine := strings.TrimSpace(r.engine)
+	if engine == "" {
+		engine = "codex"
+	}
+
+	if err := r.send(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     cmd,
+		Mode:        "pty",
+		CWD:         ".",
+		RuntimeMeta: protocol.RuntimeMeta{
+			Engine: engine,
+			Source: "smoke-codex",
+		},
+		PermissionMode: "default",
+	}); err != nil {
+		return err
+	}
+
+	firstEvt, err := r.waitForAnyType(45*time.Second, []string{
+		protocol.EventTypePromptRequest,
+		protocol.EventTypeLog,
+		protocol.EventTypeError,
+		protocol.EventTypeAgentState,
+		protocol.EventTypeSessionState,
+	}, nil)
+	if err != nil {
+		return err
+	}
+	r.transcript.line("codex_first_event type=%s", firstEvt.stringField("type"))
+
+	if firstEvt.stringField("type") == protocol.EventTypePromptRequest {
+		if err := r.send(protocol.InputRequestEvent{
+			ClientEvent: protocol.ClientEvent{Action: "input"},
+			Data:        "echo CODEX_SMOKE_OK\n",
+		}); err != nil {
+			return err
+		}
+	}
+
+	if _, err := r.waitForAnyType(30*time.Second, []string{
+		protocol.EventTypeAgentState,
+		protocol.EventTypeSessionState,
+		protocol.EventTypeLog,
+		protocol.EventTypeError,
+	}, nil); err != nil {
+		return err
+	}
+
+	if err := r.send(protocol.SessionLoadRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_load"},
+		SessionID:   r.transcript.sessionID,
+	}); err != nil {
+		return err
+	}
+	history, err := r.waitForType(protocol.EventTypeSessionHistory, 30*time.Second, nil)
+	if err != nil {
+		return err
+	}
+	if history.nestedInt("summary", "entryCount") <= 0 {
+		return fmt.Errorf("expected codex-basic history entryCount > 0, got %d", history.nestedInt("summary", "entryCount"))
+	}
+	r.transcript.line("codex_history entry_count=%d", history.nestedInt("summary", "entryCount"))
+	return nil
+}
+
+func (r *smokeRunner) codexReadmeWriteFlow() error {
+	r.transcript.section("codex-readme-write")
+
+	const readmePath = "README.md"
+	const expectedPhrase = "Claude、Codex 等 AI CLI"
+	original, err := os.ReadFile(readmePath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", readmePath, err)
+	}
+	defer func() {
+		_ = os.WriteFile(readmePath, original, 0644)
+	}()
+
+	engine := strings.TrimSpace(r.engine)
+	if engine == "" {
+		engine = "codex"
+	}
+	prompt := "请只修改 README.md：把文档里“让手机成为你操控电脑上 Claude Code 的主入口”这句话改写为“让手机成为你操控电脑上 Claude、Codex 等 AI CLI 的主入口”。只改这一处并保存文件，然后回复 DONE。"
+	cmd := "codex exec --dangerously-bypass-approvals-and-sandbox " + shellSingleQuote(prompt)
+
+	if err := r.send(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     cmd,
+		Mode:        "exec",
+		CWD:         ".",
+		RuntimeMeta: protocol.RuntimeMeta{
+			Engine: engine,
+			Source: "smoke-codex-write",
+		},
+		PermissionMode: "default",
+	}); err != nil {
+		return err
+	}
+
+	if _, err := r.waitForAnyType(45*time.Second, []string{
+		protocol.EventTypeAgentState,
+		protocol.EventTypeSessionState,
+		protocol.EventTypePromptRequest,
+		protocol.EventTypeLog,
+	}, nil); err != nil {
+		return err
+	}
+
+	gotDiff := false
+	sawDone := false
+	deadline := time.Now().Add(4 * time.Minute)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return errors.New("timeout waiting codex README write completion")
+		}
+		evt, err := r.waitForAnyType(remaining, []string{
+			protocol.EventTypeFileDiff,
+			protocol.EventTypePromptRequest,
+			protocol.EventTypeInteractionRequest,
+			protocol.EventTypeAgentState,
+			protocol.EventTypeError,
+			protocol.EventTypeLog,
+			protocol.EventTypeProgress,
+		}, nil)
+		if err != nil {
+			return err
+		}
+		switch evt.stringField("type") {
+		case protocol.EventTypeFileDiff:
+			if strings.Contains(strings.ToLower(evt.stringField("path")), "readme") {
+				gotDiff = true
+				r.transcript.line("codex_readme_diff title=%q path=%q", evt.stringField("title"), evt.stringField("path"))
+			}
+		case protocol.EventTypeError:
+			return fmt.Errorf("codex write flow error: %s", evt.stringField("msg"))
+		case protocol.EventTypeAgentState:
+			if strings.EqualFold(evt.stringField("state"), "IDLE") && (gotDiff || sawDone) {
+				goto VERIFY
+			}
+		case protocol.EventTypeSessionState:
+			if strings.EqualFold(evt.stringField("state"), "closed") && (gotDiff || sawDone) {
+				goto VERIFY
+			}
+		case protocol.EventTypeLog:
+			if strings.Contains(strings.ToUpper(evt.stringField("msg")), "DONE") {
+				sawDone = true
+			}
+		}
+	}
+
+VERIFY:
+	updated, err := os.ReadFile(readmePath)
+	if err != nil {
+		return fmt.Errorf("read updated %s: %w", readmePath, err)
+	}
+	updatedText := string(updated)
+	if !strings.Contains(updatedText, expectedPhrase) {
+		return fmt.Errorf("README write assertion failed: expected phrase %q not found", expectedPhrase)
+	}
+	if string(original) == updatedText {
+		return errors.New("README content unchanged after codex write flow")
+	}
+	r.transcript.line("codex_readme_write_verified phrase=%q", expectedPhrase)
+	return nil
+}
+
+func shellSingleQuote(text string) string {
+	if text == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(text, "'", "'\"'\"'") + "'"
+}
+
 func reviewStateHasAcceptedGroup(evt eventMap, targetGroupID string) bool {
 	for _, group := range evt.objectSlice("groups") {
 		groupID := strings.TrimSpace(group.stringField("id"))
@@ -825,13 +1042,13 @@ func (r *smokeRunner) waitForPlanInteraction(timeout time.Duration) (eventMap, e
 		if err != nil {
 			return nil, err
 		}
-			if evt.stringField("type") == protocol.EventTypeError {
-				msg := strings.ToLower(evt.stringField("msg"))
-				if strings.Contains(msg, "plan") || strings.Contains(msg, "json") || strings.Contains(msg, "tool") {
-					return nil, fmt.Errorf("tool_truncation_or_error: %s", evt.stringField("msg"))
-				}
-				continue
+		if evt.stringField("type") == protocol.EventTypeError {
+			msg := strings.ToLower(evt.stringField("msg"))
+			if strings.Contains(msg, "plan") || strings.Contains(msg, "json") || strings.Contains(msg, "tool") {
+				return nil, fmt.Errorf("tool_truncation_or_error: %s", evt.stringField("msg"))
 			}
+			continue
+		}
 		if evt.stringField("type") == protocol.EventTypePromptRequest {
 			r.transcript.line("plan_permission_prompt msg=%q options=%v", evt.stringField("msg"), evt.stringSlice("options"))
 			if err := r.send(protocol.PermissionDecisionRequestEvent{
@@ -1177,6 +1394,35 @@ func (e eventMap) nestedArrayLen(parent, child string) int {
 		return 0
 	}
 	return len(items)
+}
+
+func (e eventMap) nestedInt(parent, child string) int {
+	rawParent, ok := e[parent]
+	if !ok {
+		return 0
+	}
+	parentMap, ok := rawParent.(map[string]any)
+	if !ok {
+		return 0
+	}
+	raw, ok := parentMap[child]
+	if !ok {
+		return 0
+	}
+	switch value := raw.(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case json.Number:
+		n, err := value.Int64()
+		if err == nil {
+			return int(n)
+		}
+	}
+	return 0
 }
 
 func (e eventMap) catalogMetaString(key string) string {

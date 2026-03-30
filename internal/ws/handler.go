@@ -645,7 +645,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					snapshot.ActiveMeta.Command,
 					controller.CurrentCommand,
 					projection.Runtime.Command,
-					"claude",
+					defaultAICommandFromEngine(
+						snapshot.ActiveMeta.Engine,
+						controller.ActiveMeta.Engine,
+						projection.Runtime.Engine,
+					),
 				),
 				CWD: firstNonEmptyString(
 					snapshot.ActiveMeta.CWD,
@@ -673,7 +677,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						snapshot.ActiveMeta.Command,
 						controller.CurrentCommand,
 						projection.Runtime.Command,
-						"claude",
+						defaultAICommandFromEngine(
+							snapshot.ActiveMeta.Engine,
+							controller.ActiveMeta.Engine,
+							projection.Runtime.Engine,
+						),
 					),
 					CWD: firstNonEmptyString(
 						snapshot.ActiveMeta.CWD,
@@ -771,6 +779,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					emit(protocol.NewErrorEvent(sessionID, message, ""))
 				}
 				continue
+			}
+			if !isClaudeCommandLike(inputMeta.Command) {
+				if err := service.SendPermissionDecision(ctx, sessionID, decision, inputMeta, emitAndPersist); err == nil {
+					continue
+				} else if !errors.Is(err, runner.ErrNoPendingControlRequest) {
+					message := err.Error()
+					if errors.Is(err, runner.ErrInputNotSupported) {
+						message = "当前会话不支持交互输入，无法继续处理该权限请求"
+					} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+						message = "当前没有可交互会话，无法继续处理该权限请求"
+					} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
+						message = "当前会话尚未进入可直接确认的交互阶段，请先等待会话就绪后再提交权限决策"
+					}
+					logx.Warn("ws", "send direct permission approve failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
+					emit(protocol.NewErrorEvent(sessionID, message, ""))
+					continue
+				}
 			}
 			replayInput := hotSwapApproveContinuation(permissionEvent)
 			req := runtimepkg.ExecuteRequest{
@@ -1603,6 +1628,29 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func defaultAICommandFromEngine(values ...string) string {
+	for _, value := range values {
+		switch strings.TrimSpace(strings.ToLower(value)) {
+		case "codex":
+			return "codex"
+		case "gemini":
+			return "gemini"
+		case "claude":
+			return "claude"
+		}
+	}
+	return "claude"
+}
+
+func isClaudeCommandLike(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return false
+	}
+	head := strings.ToLower(strings.TrimSpace(fields[0]))
+	return head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe"
 }
 
 func emitReviewStateFromProjection(emit func(any), sessionID string, projection store.ProjectionSnapshot) {

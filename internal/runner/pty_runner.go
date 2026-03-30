@@ -30,6 +30,7 @@ const (
 	ptyDebugReasonError     = "error"
 	ptyErrNoActiveRunner    = "no active runner"
 	ptyErrNotInteractive    = "runner is not ready for interactive input"
+	textPermissionRequestID = "__text_permission_prompt__"
 )
 
 type PtyRunner struct {
@@ -51,6 +52,7 @@ type PtyRunner struct {
 	claudeSessionID         string
 	permissionMode          string
 	pendingControlRequestID string
+	pendingPromptOptions    []string
 	lastToolName            string
 	lastToolTarget          string
 	fileSnapshots           map[string]fileSnapshot
@@ -365,11 +367,14 @@ func (r *PtyRunner) ClaudeSessionID() string {
 
 func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string) error {
 	behavior := ""
+	textDecision := ""
 	switch strings.TrimSpace(strings.ToLower(decision)) {
 	case "approve":
 		behavior = "allow"
+		textDecision = "y"
 	case "deny":
 		behavior = "deny"
+		textDecision = "n"
 	default:
 		return errors.New("permission decision must be one of: approve, deny")
 	}
@@ -378,6 +383,7 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 	writer := r.writer
 	closed := r.closed
 	requestID := strings.TrimSpace(r.pendingControlRequestID)
+	promptOptions := append([]string(nil), r.pendingPromptOptions...)
 	req := r.pendingReq
 	r.mu.Unlock()
 
@@ -386,6 +392,34 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 	}
 	if requestID == "" {
 		return ErrNoPendingControlRequest
+	}
+
+	if requestID == textPermissionRequestID {
+		token := resolveTextPermissionDecisionToken(decision, promptOptions)
+		if token == "" {
+			token = textDecision
+		}
+		writePayload := []byte(token + "\n")
+		writeDone := make(chan error, 1)
+		go func() {
+			_, err := writer.Write(writePayload)
+			writeDone <- err
+		}()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-writeDone:
+			if err != nil {
+				return fmt.Errorf("write text permission response: %w", err)
+			}
+		}
+		r.mu.Lock()
+		if r.pendingControlRequestID == requestID {
+			r.pendingControlRequestID = ""
+			r.pendingPromptOptions = nil
+		}
+		r.mu.Unlock()
+		return nil
 	}
 
 	payload := map[string]any{
@@ -420,6 +454,7 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 	r.mu.Lock()
 	if r.pendingControlRequestID == requestID {
 		r.pendingControlRequestID = ""
+		r.pendingPromptOptions = nil
 	}
 	r.mu.Unlock()
 	return nil
@@ -471,6 +506,7 @@ func (r *PtyRunner) clear() {
 	r.interactive = false
 	r.awaitingReadyPrompt = false
 	r.pendingControlRequestID = ""
+	r.pendingPromptOptions = nil
 	r.closed = true
 	r.suppressExitError = false
 }
@@ -1247,7 +1283,6 @@ func extractControlRequestPrompt(envelope claudeStreamEnvelope) string {
 	return "Claude requested permissions to continue"
 }
 
-
 type claudeCatalogAuthoringPayload struct {
 	MobileVCCatalogAuthoring bool   `json:"mobilevcCatalogAuthoring"`
 	Kind                     string `json:"kind"`
@@ -1327,10 +1362,16 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 					}
 				}
 			}
+			promptChoices := promptOptions(promptMessage)
 			if requestID != "" {
 				r.markInteractiveReady()
+				r.mu.Lock()
+				if r.pendingControlRequestID == requestID {
+					r.pendingPromptOptions = append([]string(nil), promptChoices...)
+				}
+				r.mu.Unlock()
 				sendEvent(sink, protocol.ApplyRuntimeMeta(
-					protocol.NewPromptRequestEvent(sessionID, promptMessage, promptOptions(promptMessage)),
+					protocol.NewPromptRequestEvent(sessionID, promptMessage, promptChoices),
 					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
 				))
 			}
@@ -1704,8 +1745,10 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 				if liveTailPrompt {
 					if !promptSent {
 						r.markInteractiveReady()
-						ptyLogPromptClassification(sessionID, "readOutput.liveTail", stream, trimmedPending, true, promptOptions(trimmedPending), "live_tail_prompt")
-						sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, trimmedPending, promptOptions(trimmedPending)))
+						options := promptOptions(trimmedPending)
+						r.cacheTextPermissionPrompt(trimmedPending, options)
+						ptyLogPromptClassification(sessionID, "readOutput.liveTail", stream, trimmedPending, true, options, "live_tail_prompt")
+						sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, trimmedPending, options))
 						promptSent = true
 					}
 				} else if trimmedPending != emittedTail {
@@ -1732,8 +1775,10 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 	if pending != "" {
 		if detectPrompt && isLiveTailPromptText(pending) && !promptSent {
 			r.markInteractiveReady()
-			ptyLogPromptClassification(sessionID, "readOutput.finalPending", stream, pending, true, promptOptions(pending), "final_live_tail_prompt")
-			sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, pending, promptOptions(pending)))
+			options := promptOptions(pending)
+			r.cacheTextPermissionPrompt(pending, options)
+			ptyLogPromptClassification(sessionID, "readOutput.finalPending", stream, pending, true, options, "final_live_tail_prompt")
+			sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, pending, options))
 		} else if pending != emittedTail {
 			ptyLogPromptClassification(sessionID, "readOutput.finalPending", stream, pending, false, nil, "final_normal_output")
 			sendEvent(sink, protocol.NewLogEvent(sessionID, pending, stream))
@@ -1817,6 +1862,8 @@ func isLiveTailPromptText(text string) bool {
 		strings.Contains(lower, "approval") ||
 		strings.Contains(lower, "allow once") ||
 		strings.Contains(lower, "allow this time") ||
+		strings.Contains(lower, "always allow") ||
+		strings.Contains(lower, "always deny") ||
 		strings.Contains(trimmed, "授权") ||
 		strings.Contains(trimmed, "权限") ||
 		strings.Contains(trimmed, "允许") {
@@ -1893,6 +1940,8 @@ func promptOptions(text string) []string {
 		options = []string{"yes", "no"}
 	case strings.Contains(lower, "permission") ||
 		strings.Contains(lower, "authorize") ||
+		strings.Contains(lower, "always allow") ||
+		strings.Contains(lower, "always deny") ||
 		strings.Contains(lower, "allow once") ||
 		strings.Contains(lower, "allow this time") ||
 		strings.Contains(trimmed, "授权") ||
@@ -1908,6 +1957,70 @@ func promptOptions(text string) []string {
 	}
 	logx.Info("pty", "promptOptions: options=%v preview=%q", options, ptyDebugPreview(trimmed))
 	return options
+}
+
+func resolveTextPermissionDecisionToken(decision string, options []string) string {
+	normalized := strings.TrimSpace(strings.ToLower(decision))
+	candidates := make([]string, 0, len(options))
+	for _, option := range options {
+		trimmed := strings.TrimSpace(option)
+		if trimmed != "" {
+			candidates = append(candidates, trimmed)
+		}
+	}
+	if len(candidates) == 0 {
+		if normalized == "approve" {
+			return "y"
+		}
+		if normalized == "deny" {
+			return "n"
+		}
+		return ""
+	}
+	if normalized == "approve" {
+		return candidates[0]
+	}
+	return candidates[len(candidates)-1]
+}
+
+func looksLikePermissionPrompt(message string, options []string) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(message))
+	if strings.Contains(trimmed, "permission") ||
+		strings.Contains(trimmed, "authorize") ||
+		strings.Contains(trimmed, "approval") ||
+		strings.Contains(trimmed, "allow once") ||
+		strings.Contains(trimmed, "allow this time") ||
+		strings.Contains(trimmed, "always allow") ||
+		strings.Contains(trimmed, "always deny") ||
+		strings.Contains(trimmed, "授权") ||
+		strings.Contains(trimmed, "权限") ||
+		strings.Contains(trimmed, "允许") {
+		return true
+	}
+	if len(options) == 0 {
+		return false
+	}
+	for _, option := range options {
+		value := strings.TrimSpace(strings.ToLower(option))
+		switch value {
+		case "y", "n", "yes", "no", "allow", "deny", "approve", "reject", "允许", "拒绝", "同意", "取消":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (r *PtyRunner) cacheTextPermissionPrompt(message string, options []string) {
+	if !looksLikePermissionPrompt(message, options) {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if strings.TrimSpace(r.pendingControlRequestID) == "" {
+		r.pendingControlRequestID = textPermissionRequestID
+		r.pendingPromptOptions = append([]string(nil), options...)
+	}
 }
 
 func shouldEmitClaudeTextAsPrompt(text string) bool {
