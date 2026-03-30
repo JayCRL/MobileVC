@@ -1,12 +1,14 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	adbpkg "mobilevc/internal/adb"
 	"mobilevc/internal/protocol"
 )
 
@@ -98,10 +100,21 @@ func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protoco
 		claudePath, claudeErr := exec.LookPath("claude")
 		codexPath, codexErr := exec.LookPath("codex")
 		ghPath, ghErr := exec.LookPath("gh")
+		adbStatus := adbpkg.DetectStatus(context.Background())
+		adbPath := adbStatus.ADBPath
+		if adbPath == "" {
+			adbPath = "not found"
+		}
+		emulatorPath := adbStatus.EmulatorPath
+		if emulatorPath == "" {
+			emulatorPath = "not found"
+		}
 		items := []protocol.RuntimeInfoItem{
 			{Label: "cwd_exists", Value: resolvedCWD, Available: pathExists(resolvedCWD), Status: availabilityStatus(pathExists(resolvedCWD)), Detail: cwdDetail(resolvedCWD)},
 			{Label: "claude_cli", Value: fallbackValue(claudePath, "not found"), Available: claudeErr == nil, Status: availabilityStatus(claudeErr == nil), Detail: doctorDetail(claudeErr)},
 			{Label: "codex_cli", Value: fallbackValue(codexPath, "not found"), Available: codexErr == nil, Status: availabilityStatus(codexErr == nil), Detail: doctorDetail(codexErr)},
+			{Label: "adb_cli", Value: adbPath, Available: adbStatus.ADBAvailable, Status: availabilityStatus(adbStatus.ADBAvailable), Detail: adbStatus.Message},
+			{Label: "emulator_cli", Value: emulatorPath, Available: adbStatus.EmulatorAvailable, Status: availabilityStatus(adbStatus.EmulatorAvailable), Detail: adbStatus.Message},
 			{Label: "gh_cli", Value: fallbackValue(ghPath, "not found"), Available: ghErr == nil, Status: availabilityStatus(ghErr == nil), Detail: doctorDetail(ghErr)},
 			{Label: "ws_session", Value: fallbackValue(sessionID, "(none)"), Available: sessionID != "", Status: availabilityStatus(sessionID != "")},
 			{Label: "active_runner", Value: ternary(snapshot.Running, "running", "idle"), Available: true, Status: ternary(snapshot.Running, "active", "ready")},

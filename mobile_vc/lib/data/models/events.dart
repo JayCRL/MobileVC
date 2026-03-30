@@ -332,22 +332,23 @@ class PromptRequestEvent extends AppEvent {
       '同意',
       '取消',
     };
-    final hasBinaryPermissionOptions =
-        optionValues.isNotEmpty && optionValues.every(binaryPermissionValues.contains);
+    final hasBinaryPermissionOptions = optionValues.isNotEmpty &&
+        optionValues.every(binaryPermissionValues.contains);
     final normalizedMessage = message.trim().toLowerCase();
-    final looksLikePermissionMessage = normalizedMessage.contains('permission') ||
-        normalizedMessage.contains('authorize') ||
-        normalizedMessage.contains('allow ') ||
-        normalizedMessage.contains('allow\n') ||
-        normalizedMessage.contains('confirm permission') ||
-        normalizedMessage.contains('confirm access') ||
-        normalizedMessage.contains('confirm authorization') ||
-        normalizedMessage.contains('请求授权') ||
-        normalizedMessage.contains('需要授权') ||
-        normalizedMessage.contains('确认授权') ||
-        normalizedMessage.contains('是否允许') ||
-        normalizedMessage.contains('允许') ||
-        normalizedMessage.contains('授权');
+    final looksLikePermissionMessage =
+        normalizedMessage.contains('permission') ||
+            normalizedMessage.contains('authorize') ||
+            normalizedMessage.contains('allow ') ||
+            normalizedMessage.contains('allow\n') ||
+            normalizedMessage.contains('confirm permission') ||
+            normalizedMessage.contains('confirm access') ||
+            normalizedMessage.contains('confirm authorization') ||
+            normalizedMessage.contains('请求授权') ||
+            normalizedMessage.contains('需要授权') ||
+            normalizedMessage.contains('确认授权') ||
+            normalizedMessage.contains('是否允许') ||
+            normalizedMessage.contains('允许') ||
+            normalizedMessage.contains('授权');
     return hasBinaryPermissionOptions || looksLikePermissionMessage;
   }
 
@@ -520,7 +521,10 @@ List<PlanQuestion> _parsePlanQuestions(Object? source) {
     }
     if (item is Map<String, dynamic>) {
       final options = _parsePromptOptions(
-        item['options'] ?? item['choices'] ?? item['buttons'] ?? item['selections'],
+        item['options'] ??
+            item['choices'] ??
+            item['buttons'] ??
+            item['selections'],
       );
       questions.add(PlanQuestion(
         id: (item['id'] ?? item['questionId'] ?? item['key'] ?? '').toString(),
@@ -576,9 +580,11 @@ class RuntimePhaseEvent extends AppEvent {
   final String kind;
   final String message;
 
-  bool get isPermissionBlocked => phase.trim().toLowerCase() == 'permission_blocked';
+  bool get isPermissionBlocked =>
+      phase.trim().toLowerCase() == 'permission_blocked';
 
-  factory RuntimePhaseEvent.fromJson(Map<String, dynamic> json) => RuntimePhaseEvent(
+  factory RuntimePhaseEvent.fromJson(Map<String, dynamic> json) =>
+      RuntimePhaseEvent(
         timestamp: _readTimestamp(json),
         sessionId: (json['sessionId'] ?? '').toString(),
         runtimeMeta: RuntimeMeta.fromJson(json),
@@ -1105,6 +1111,125 @@ class CatalogSyncResultEvent extends AppEvent {
             : const CatalogMetadata(),
         success: json['success'] == true,
         message: (json['msg'] ?? '').toString(),
+      );
+}
+
+class AdbDevicesResultEvent extends AppEvent {
+  const AdbDevicesResultEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.devices = const [],
+    this.selectedSerial = '',
+    this.availableAvds = const [],
+    this.preferredAvd = '',
+    this.adbAvailable = false,
+    this.emulatorAvailable = false,
+    this.suggestedAction = '',
+    this.message = '',
+  }) : super(type: 'adb_devices_result');
+
+  final List<AdbDevice> devices;
+  final String selectedSerial;
+  final List<String> availableAvds;
+  final String preferredAvd;
+  final bool adbAvailable;
+  final bool emulatorAvailable;
+  final String suggestedAction;
+  final String message;
+
+  factory AdbDevicesResultEvent.fromJson(Map<String, dynamic> json) =>
+      AdbDevicesResultEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        devices: ((json['devices'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(AdbDevice.fromJson)
+            .toList(),
+        selectedSerial: (json['selectedSerial'] ?? '').toString(),
+        availableAvds:
+            ((json['availableAvds'] as List?) ?? const []).map((item) {
+          return item.toString();
+        }).toList(),
+        preferredAvd: (json['preferredAvd'] ?? '').toString(),
+        adbAvailable: json['adbAvailable'] == true,
+        emulatorAvailable: json['emulatorAvailable'] == true,
+        suggestedAction: (json['suggestedAction'] ?? '').toString(),
+        message: (json['msg'] ?? '').toString(),
+      );
+}
+
+class AdbStreamStateEvent extends AppEvent {
+  const AdbStreamStateEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.running = false,
+    this.serial = '',
+    this.width = 0,
+    this.height = 0,
+    this.intervalMs = 0,
+    this.message = '',
+  }) : super(type: 'adb_stream_state');
+
+  final bool running;
+  final String serial;
+  final int width;
+  final int height;
+  final int intervalMs;
+  final String message;
+
+  factory AdbStreamStateEvent.fromJson(Map<String, dynamic> json) =>
+      AdbStreamStateEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        running: json['running'] == true,
+        serial: (json['serial'] ?? '').toString(),
+        width: (json['width'] as num?)?.toInt() ?? 0,
+        height: (json['height'] as num?)?.toInt() ?? 0,
+        intervalMs: (json['intervalMs'] as num?)?.toInt() ?? 0,
+        message: (json['msg'] ?? '').toString(),
+      );
+}
+
+class AdbFrameEvent extends AppEvent {
+  const AdbFrameEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.serial = '',
+    this.format = '',
+    this.width = 0,
+    this.height = 0,
+    this.seq = 0,
+    this.image = '',
+  }) : super(type: 'adb_frame');
+
+  final String serial;
+  final String format;
+  final int width;
+  final int height;
+  final int seq;
+  final String image;
+
+  factory AdbFrameEvent.fromJson(Map<String, dynamic> json) => AdbFrameEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        serial: (json['serial'] ?? '').toString(),
+        format: (json['format'] ?? '').toString(),
+        width: (json['width'] as num?)?.toInt() ?? 0,
+        height: (json['height'] as num?)?.toInt() ?? 0,
+        seq: (json['seq'] as num?)?.toInt() ?? 0,
+        image: (json['image'] ?? '').toString(),
       );
 }
 

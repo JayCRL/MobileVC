@@ -30,6 +30,9 @@ const (
 	EventTypeSkillSyncResult        = "skill_sync_result"
 	EventTypeCatalogSyncStatus      = "catalog_sync_status"
 	EventTypeCatalogSyncResult      = "catalog_sync_result"
+	EventTypeADBDevicesResult       = "adb_devices_result"
+	EventTypeADBStreamState         = "adb_stream_state"
+	EventTypeADBFrame               = "adb_frame"
 )
 
 type RuntimeMeta struct {
@@ -209,6 +212,15 @@ type SessionContext struct {
 	EnabledMemoryIDs  []string `json:"enabledMemoryIds,omitempty"`
 }
 
+type ADBDevice struct {
+	Serial      string `json:"serial"`
+	State       string `json:"state,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Product     string `json:"product,omitempty"`
+	DeviceName  string `json:"deviceName,omitempty"`
+	TransportID string `json:"transportId,omitempty"`
+}
+
 type FSListRequestEvent struct {
 	ClientEvent
 	Path string `json:"path,omitempty"`
@@ -217,6 +229,32 @@ type FSListRequestEvent struct {
 type FSReadRequestEvent struct {
 	ClientEvent
 	Path string `json:"path,omitempty"`
+}
+
+type ADBDevicesRequestEvent struct {
+	ClientEvent
+}
+
+type ADBStreamStartRequestEvent struct {
+	ClientEvent
+	Serial     string `json:"serial,omitempty"`
+	IntervalMS int    `json:"intervalMs,omitempty"`
+}
+
+type ADBStreamStopRequestEvent struct {
+	ClientEvent
+}
+
+type ADBEmulatorStartRequestEvent struct {
+	ClientEvent
+	AVD string `json:"avd,omitempty"`
+}
+
+type ADBTapRequestEvent struct {
+	ClientEvent
+	Serial string `json:"serial,omitempty"`
+	X      int    `json:"x"`
+	Y      int    `json:"y"`
 }
 
 type RuntimeInfoRequestEvent struct {
@@ -562,6 +600,38 @@ type RuntimeInfoResultEvent struct {
 	Message     string            `json:"msg,omitempty"`
 }
 
+type ADBDevicesResultEvent struct {
+	Event
+	Devices           []ADBDevice `json:"devices,omitempty"`
+	SelectedSerial    string      `json:"selectedSerial,omitempty"`
+	AvailableAVDs     []string    `json:"availableAvds,omitempty"`
+	PreferredAVD      string      `json:"preferredAvd,omitempty"`
+	ADBAvailable      bool        `json:"adbAvailable"`
+	EmulatorAvailable bool        `json:"emulatorAvailable"`
+	SuggestedAction   string      `json:"suggestedAction,omitempty"`
+	Message           string      `json:"msg,omitempty"`
+}
+
+type ADBStreamStateEvent struct {
+	Event
+	Running    bool   `json:"running"`
+	Serial     string `json:"serial,omitempty"`
+	Width      int    `json:"width,omitempty"`
+	Height     int    `json:"height,omitempty"`
+	IntervalMS int    `json:"intervalMs,omitempty"`
+	Message    string `json:"msg,omitempty"`
+}
+
+type ADBFrameEvent struct {
+	Event
+	Serial string `json:"serial,omitempty"`
+	Format string `json:"format,omitempty"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+	Seq    int    `json:"seq,omitempty"`
+	Image  string `json:"image,omitempty"`
+}
+
 func NewBaseEvent(eventType, sessionID string) Event {
 	return Event{
 		Type:      eventType,
@@ -771,6 +841,44 @@ func NewRuntimeInfoResultEvent(sessionID, query, title, message string, unavaila
 		Message:     message,
 		Unavailable: unavailable,
 		Items:       items,
+	}
+}
+
+func NewADBDevicesResultEvent(sessionID string, devices []ADBDevice, selectedSerial string, availableAVDs []string, preferredAVD string, adbAvailable, emulatorAvailable bool, suggestedAction, message string) ADBDevicesResultEvent {
+	return ADBDevicesResultEvent{
+		Event:             NewBaseEvent(EventTypeADBDevicesResult, sessionID),
+		Devices:           devices,
+		SelectedSerial:    selectedSerial,
+		AvailableAVDs:     availableAVDs,
+		PreferredAVD:      preferredAVD,
+		ADBAvailable:      adbAvailable,
+		EmulatorAvailable: emulatorAvailable,
+		SuggestedAction:   suggestedAction,
+		Message:           message,
+	}
+}
+
+func NewADBStreamStateEvent(sessionID string, running bool, serial string, width, height, intervalMS int, message string) ADBStreamStateEvent {
+	return ADBStreamStateEvent{
+		Event:      NewBaseEvent(EventTypeADBStreamState, sessionID),
+		Running:    running,
+		Serial:     serial,
+		Width:      width,
+		Height:     height,
+		IntervalMS: intervalMS,
+		Message:    message,
+	}
+}
+
+func NewADBFrameEvent(sessionID, serial, format, image string, width, height, seq int) ADBFrameEvent {
+	return ADBFrameEvent{
+		Event:  NewBaseEvent(EventTypeADBFrame, sessionID),
+		Serial: serial,
+		Format: format,
+		Width:  width,
+		Height: height,
+		Seq:    seq,
+		Image:  image,
 	}
 }
 

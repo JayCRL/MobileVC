@@ -121,6 +121,22 @@ class SessionController extends ChangeNotifier {
   bool _isSavingMemory = false;
   SessionContext? _pendingSessionContextTarget;
   SessionContext? _pendingSessionContextRollback;
+  final List<AdbDevice> _adbDevices = [];
+  final List<String> _adbAvailableAvds = [];
+  Uint8List? _adbFrameBytes;
+  String _adbSelectedSerial = '';
+  String _adbPreferredAvd = '';
+  String _adbSelectedAvd = '';
+  String _adbStatus = '';
+  String _adbSuggestedAction = '';
+  bool _adbAvailable = false;
+  bool _adbStreaming = false;
+  bool _adbEmulatorAvailable = false;
+  int _adbFrameWidth = 0;
+  int _adbFrameHeight = 0;
+  int _adbFrameSeq = 0;
+  int _adbFrameIntervalMs = 700;
+  Timer? _adbRefreshTimer;
 
   AppConfig get config => _config;
   bool get connecting => _connecting;
@@ -207,6 +223,25 @@ class SessionController extends ChangeNotifier {
       Set.unmodifiable(_pendingToggleMemoryIds);
   bool get isSavingSkill => _isSavingSkill;
   bool get isSavingMemory => _isSavingMemory;
+  List<AdbDevice> get adbDevices => List.unmodifiable(_adbDevices);
+  List<String> get adbAvailableAvds => List.unmodifiable(_adbAvailableAvds);
+  Uint8List? get adbFrameBytes => _adbFrameBytes;
+  String get adbSelectedSerial => _adbSelectedSerial;
+  String get adbPreferredAvd => _adbPreferredAvd;
+  String get adbSelectedAvd => _adbSelectedAvd;
+  String get adbStatus => _adbStatus;
+  String get adbSuggestedAction => _adbSuggestedAction;
+  bool get adbAvailable => _adbAvailable;
+  bool get adbStreaming => _adbStreaming;
+  bool get adbEmulatorAvailable => _adbEmulatorAvailable;
+  int get adbFrameWidth => _adbFrameWidth;
+  int get adbFrameHeight => _adbFrameHeight;
+  int get adbFrameSeq => _adbFrameSeq;
+  int get adbFrameIntervalMs => _adbFrameIntervalMs;
+  bool get hasAdbConnectedDevice =>
+      _adbDevices.any((item) => item.state.trim().toLowerCase() == 'device');
+  bool get canLaunchAdbEmulator =>
+      _adbEmulatorAvailable && _adbAvailableAvds.isNotEmpty;
   bool isSkillTogglePending(String name) =>
       _pendingToggleSkillNames.contains(name.trim());
   bool isMemoryTogglePending(String id) =>
@@ -616,6 +651,7 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> disposeController() async {
+    _stopAdbRefreshPolling();
     await _subscription?.cancel();
     await _service.dispose();
   }
@@ -690,6 +726,7 @@ class SessionController extends ChangeNotifier {
       requestMemoryList();
       requestSessionContext();
       requestReviewState();
+      requestAdbDevices();
     } catch (error) {
       _connected = false;
       _connectionMessage = '连接失败：$error';
@@ -702,6 +739,7 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _stopAdbRefreshPolling();
     await _service.disconnect();
     _connected = false;
     _selectedSessionId = '';
@@ -726,6 +764,20 @@ class SessionController extends ChangeNotifier {
     _memorySyncStatus = '';
     _skills.clear();
     _memoryItems.clear();
+    _adbDevices.clear();
+    _adbAvailableAvds.clear();
+    _adbFrameBytes = null;
+    _adbSelectedSerial = '';
+    _adbPreferredAvd = '';
+    _adbSelectedAvd = '';
+    _adbStatus = '';
+    _adbSuggestedAction = '';
+    _adbAvailable = false;
+    _adbStreaming = false;
+    _adbEmulatorAvailable = false;
+    _adbFrameWidth = 0;
+    _adbFrameHeight = 0;
+    _adbFrameSeq = 0;
     _agentState = null;
     _runtimePhase = null;
     _sessionState = null;
@@ -961,9 +1013,7 @@ class SessionController extends ChangeNotifier {
       return '';
     }
     final lines = <String>[
-      base == null
-          ? '请根据下面需求生成一个新的 AI 助手 skill。'
-          : '请根据下面需求修改这个 AI 助手 skill。',
+      base == null ? '请根据下面需求生成一个新的 AI 助手 skill。' : '请根据下面需求修改这个 AI 助手 skill。',
       '你必须只返回严格 JSON，不要输出 markdown、解释、代码块标记或额外文字。',
       '返回 JSON 顶层字段必须是：mobilevcCatalogAuthoring、kind、skill。',
       '其中 mobilevcCatalogAuthoring 必须为 true，kind 必须为 "skill"。',
@@ -1062,6 +1112,88 @@ class SessionController extends ChangeNotifier {
 
   void requestReviewState() {
     _service.send({'action': 'review_state_get'});
+  }
+
+  void requestAdbDevices() {
+    _service.send({'action': 'adb_devices'});
+  }
+
+  void selectAdbAvd(String value) {
+    _adbSelectedAvd = value.trim();
+    notifyListeners();
+  }
+
+  void setAdbFrameIntervalMs(int value) {
+    if (value <= 0) {
+      return;
+    }
+    _adbFrameIntervalMs = value;
+    notifyListeners();
+  }
+
+  void startAdbStream({String serial = ''}) {
+    _adbStatus = '正在连接 ADB 画面…';
+    notifyListeners();
+    _service.send({
+      'action': 'adb_stream_start',
+      if (serial.trim().isNotEmpty) 'serial': serial.trim(),
+      'intervalMs': _adbFrameIntervalMs,
+    });
+  }
+
+  void stopAdbStream() {
+    _service.send({'action': 'adb_stream_stop'});
+  }
+
+  void launchAdbEmulator({String avd = ''}) {
+    final target = avd.trim().isNotEmpty
+        ? avd.trim()
+        : (_adbSelectedAvd.trim().isNotEmpty
+            ? _adbSelectedAvd.trim()
+            : _adbPreferredAvd.trim());
+    _adbStatus = '正在启动模拟器…';
+    notifyListeners();
+    _service.send({
+      'action': 'adb_emulator_start',
+      if (target.isNotEmpty) 'avd': target,
+    });
+    _startAdbRefreshPolling();
+  }
+
+  void sendAdbTap(int x, int y, {String serial = ''}) {
+    if (x < 0 || y < 0) {
+      return;
+    }
+    _service.send({
+      'action': 'adb_tap',
+      if (serial.trim().isNotEmpty) 'serial': serial.trim(),
+      'x': x,
+      'y': y,
+    });
+  }
+
+  void _startAdbRefreshPolling() {
+    _stopAdbRefreshPolling();
+    var remaining = 30;
+    _adbRefreshTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (!_connected || remaining <= 0) {
+        timer.cancel();
+        if (identical(_adbRefreshTimer, timer)) {
+          _adbRefreshTimer = null;
+        }
+        return;
+      }
+      remaining -= 1;
+      requestAdbDevices();
+      if (hasAdbConnectedDevice) {
+        _stopAdbRefreshPolling();
+      }
+    });
+  }
+
+  void _stopAdbRefreshPolling() {
+    _adbRefreshTimer?.cancel();
+    _adbRefreshTimer = null;
   }
 
   void updateSessionContext({
@@ -2154,6 +2286,80 @@ class SessionController extends ChangeNotifier {
         }
         if (result.message.trim().isNotEmpty) {
           _pushSystem('session', result.message);
+        }
+        break;
+      case AdbDevicesResultEvent result:
+        _adbDevices
+          ..clear()
+          ..addAll(result.devices);
+        _adbAvailableAvds
+          ..clear()
+          ..addAll(result.availableAvds);
+        _adbPreferredAvd = result.preferredAvd.trim();
+        _adbAvailable = result.adbAvailable;
+        _adbEmulatorAvailable = result.emulatorAvailable;
+        _adbSuggestedAction = result.suggestedAction.trim();
+        if (result.selectedSerial.trim().isNotEmpty) {
+          _adbSelectedSerial = result.selectedSerial.trim();
+        } else if (_adbSelectedSerial.trim().isNotEmpty &&
+            !_adbDevices.any((item) => item.serial == _adbSelectedSerial)) {
+          _adbSelectedSerial = '';
+        }
+        final selectedAvd = _adbSelectedAvd.trim();
+        if (selectedAvd.isEmpty || !_adbAvailableAvds.contains(selectedAvd)) {
+          if (_adbPreferredAvd.isNotEmpty &&
+              _adbAvailableAvds.contains(_adbPreferredAvd)) {
+            _adbSelectedAvd = _adbPreferredAvd;
+          } else {
+            _adbSelectedAvd =
+                _adbAvailableAvds.isNotEmpty ? _adbAvailableAvds.first : '';
+          }
+        }
+        if (result.message.trim().isNotEmpty) {
+          _adbStatus = result.message.trim();
+        }
+        if (hasAdbConnectedDevice) {
+          _stopAdbRefreshPolling();
+        }
+        break;
+      case AdbStreamStateEvent state:
+        _adbStreaming = state.running;
+        if (state.serial.trim().isNotEmpty) {
+          _adbSelectedSerial = state.serial.trim();
+        }
+        if (state.width > 0) {
+          _adbFrameWidth = state.width;
+        }
+        if (state.height > 0) {
+          _adbFrameHeight = state.height;
+        }
+        if (state.intervalMs > 0) {
+          _adbFrameIntervalMs = state.intervalMs;
+        }
+        if (state.message.trim().isNotEmpty) {
+          _adbStatus = state.message.trim();
+        }
+        if (!state.running && _adbStatus.trim().isEmpty) {
+          _adbStatus = 'ADB 预览已停止';
+        }
+        break;
+      case AdbFrameEvent frame:
+        try {
+          _adbFrameBytes = base64Decode(frame.image);
+          _adbFrameSeq = frame.seq;
+          if (frame.serial.trim().isNotEmpty) {
+            _adbSelectedSerial = frame.serial.trim();
+          }
+          if (frame.width > 0) {
+            _adbFrameWidth = frame.width;
+          }
+          if (frame.height > 0) {
+            _adbFrameHeight = frame.height;
+          }
+          _adbStreaming = true;
+          _adbStatus = 'ADB 画面预览中';
+        } catch (_) {
+          _adbStatus = 'ADB 帧解码失败';
         }
         break;
       case UnknownEvent unknown:

@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"mobilevc/internal/adb"
 	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
@@ -173,6 +175,107 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		runtimepkg.Enqueue(ctx, writeCh, event)
 	}
 
+	var adbMu sync.Mutex
+	var adbCancel context.CancelFunc
+	adbActiveSerial := ""
+
+	stopADBStream := func(message string) {
+		adbMu.Lock()
+		cancel := adbCancel
+		activeSerial := adbActiveSerial
+		adbCancel = nil
+		adbActiveSerial = ""
+		adbMu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		if strings.TrimSpace(message) != "" {
+			emit(protocol.NewADBStreamStateEvent(selectedSessionID, false, activeSerial, 0, 0, 0, message))
+		}
+	}
+
+	emitADBDevices := func(message string) {
+		status := adb.DetectStatus(ctx)
+		items := make([]protocol.ADBDevice, 0, len(status.Devices))
+		for _, item := range status.Devices {
+			items = append(items, protocol.ADBDevice{
+				Serial:      item.Serial,
+				State:       item.State,
+				Model:       item.Model,
+				Product:     item.Product,
+				DeviceName:  item.DeviceName,
+				TransportID: item.TransportID,
+			})
+		}
+		statusMessage := strings.TrimSpace(status.Message)
+		if strings.TrimSpace(message) != "" {
+			statusMessage = message
+		}
+		emit(protocol.NewADBDevicesResultEvent(
+			selectedSessionID,
+			items,
+			status.PreferredSerial,
+			status.AvailableAVDs,
+			status.PreferredAVD,
+			status.ADBAvailable,
+			status.EmulatorAvailable,
+			status.SuggestedAction,
+			statusMessage,
+		))
+	}
+
+	startADBStream := func(serial string, interval time.Duration) {
+		stopADBStream("")
+		streamCtx, cancel := context.WithCancel(ctx)
+		adbMu.Lock()
+		adbCancel = cancel
+		adbMu.Unlock()
+
+		go func(sessionID string, requestedSerial string, frameInterval time.Duration) {
+			resolvedSerial, err := adb.ResolveSerial(streamCtx, requestedSerial)
+			if err != nil {
+				emit(protocol.NewADBStreamStateEvent(sessionID, false, requestedSerial, 0, 0, int(frameInterval/time.Millisecond), err.Error()))
+				return
+			}
+
+			adbMu.Lock()
+			adbActiveSerial = resolvedSerial
+			adbMu.Unlock()
+
+			seq := 0
+			for {
+				frame, frameErr := adb.CaptureFrame(streamCtx, resolvedSerial)
+				if frameErr != nil {
+					if streamCtx.Err() != nil {
+						return
+					}
+					emit(protocol.NewADBStreamStateEvent(sessionID, false, resolvedSerial, 0, 0, int(frameInterval/time.Millisecond), frameErr.Error()))
+					stopADBStream("")
+					return
+				}
+				seq++
+				emit(protocol.NewADBFrameEvent(
+					sessionID,
+					frame.Serial,
+					frame.Format,
+					base64.StdEncoding.EncodeToString(frame.Data),
+					frame.Width,
+					frame.Height,
+					seq,
+				))
+				emit(protocol.NewADBStreamStateEvent(sessionID, true, frame.Serial, frame.Width, frame.Height, int(frameInterval/time.Millisecond), "ADB 画面预览中"))
+
+				timer := time.NewTimer(frameInterval)
+				select {
+				case <-streamCtx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+		}(selectedSessionID, serial, interval)
+	}
+
 	switchRuntimeSession := func(sessionID string) {
 		logx.Info("ws", "switch runtime session: connectionID=%s previousSessionID=%s nextSessionID=%s remoteAddr=%s", connectionID, selectedSessionID, sessionID, remoteAddr)
 		runtimeSvc.Cleanup()
@@ -241,6 +344,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer func() {
+		stopADBStream("")
 		cancel()
 		runtimeSvc.Cleanup()
 		writerWG.Wait()
@@ -991,6 +1095,71 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emit(result)
+		case "adb_devices":
+			var adbReq protocol.ADBDevicesRequestEvent
+			if err := json.Unmarshal(payload, &adbReq); err != nil {
+				logx.Warn("ws", "invalid adb_devices request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_devices request: %v", err), ""))
+				continue
+			}
+			emitADBDevices("ADB 设备列表已刷新")
+		case "adb_stream_start":
+			var adbReq protocol.ADBStreamStartRequestEvent
+			if err := json.Unmarshal(payload, &adbReq); err != nil {
+				logx.Warn("ws", "invalid adb_stream_start request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_stream_start request: %v", err), ""))
+				continue
+			}
+			interval := time.Duration(adbReq.IntervalMS) * time.Millisecond
+			if interval <= 0 {
+				interval = 700 * time.Millisecond
+			}
+			if interval < 250*time.Millisecond {
+				interval = 250 * time.Millisecond
+			}
+			startADBStream(adbReq.Serial, interval)
+		case "adb_stream_stop":
+			var adbReq protocol.ADBStreamStopRequestEvent
+			if err := json.Unmarshal(payload, &adbReq); err != nil {
+				logx.Warn("ws", "invalid adb_stream_stop request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_stream_stop request: %v", err), ""))
+				continue
+			}
+			stopADBStream("ADB 画面预览已停止")
+		case "adb_emulator_start":
+			var adbReq protocol.ADBEmulatorStartRequestEvent
+			if err := json.Unmarshal(payload, &adbReq); err != nil {
+				logx.Warn("ws", "invalid adb_emulator_start request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_emulator_start request: %v", err), ""))
+				continue
+			}
+			if err := adb.StartEmulator(adbReq.AVD); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			emitADBDevices("模拟器启动中，等待设备上线…")
+		case "adb_tap":
+			var adbReq protocol.ADBTapRequestEvent
+			if err := json.Unmarshal(payload, &adbReq); err != nil {
+				logx.Warn("ws", "invalid adb_tap request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_tap request: %v", err), ""))
+				continue
+			}
+			if adbReq.X < 0 || adbReq.Y < 0 {
+				emit(protocol.NewErrorEvent(selectedSessionID, "adb tap 坐标必须为非负整数", ""))
+				continue
+			}
+			adbMu.Lock()
+			activeSerial := adbActiveSerial
+			adbMu.Unlock()
+			serial := strings.TrimSpace(adbReq.Serial)
+			if serial == "" {
+				serial = activeSerial
+			}
+			if err := adb.Tap(ctx, serial, adbReq.X, adbReq.Y); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
 		case "slash_command":
 			var slashReq protocol.SlashCommandRequestEvent
 			if err := json.Unmarshal(payload, &slashReq); err != nil {
