@@ -418,6 +418,16 @@ func createHistorySessionForHandlerTest(t *testing.T, h *Handler, conn *websocke
 	return sessionID
 }
 
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
 func seedNativeCodexSessionFixture(t *testing.T, homeDir, cwd string) string {
 	t.Helper()
 	if _, err := exec.LookPath("sqlite3"); err != nil {
@@ -499,6 +509,12 @@ func TestApplyEventToProjectionPersistsAgentAndPromptState(t *testing.T) {
 }
 
 func TestHandlerSkillCatalogLifecycle(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	writeTestFile(t,
+		filepath.Join(homeDir, ".claude", "skills", "image-generation", "SKILL.md"),
+		"---\nname: image-generation\ndescription: Generate images from text.\n---\n# Image Generation\n\nUse the image model.\n",
+	)
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
@@ -579,7 +595,7 @@ func TestHandlerSkillCatalogLifecycle(t *testing.T) {
 	foundExternal := false
 	for _, raw := range syncedItems {
 		item, _ := raw.(map[string]any)
-		if item["name"] == "external-diff-summary" {
+		if item["name"] == "image-generation" {
 			foundExternal = true
 			if item["source"] != string(store.SkillSourceExternal) {
 				t.Fatalf("expected external source, got %#v", item)
@@ -763,6 +779,8 @@ func TestHandlerMemoryListAndUpsert(t *testing.T) {
 }
 
 func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
@@ -771,7 +789,29 @@ func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 	h.SessionStore = tempStore
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
-	_ = createHistorySessionForHandlerTest(t, h, conn, "memory-sync-session")
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "memory-sync-session")
+	projectRoot := filepath.Join(homeDir, "workspace", "demo-project")
+	projectChild := filepath.Join(projectRoot, "mobile_vc")
+	if err := os.MkdirAll(projectChild, 0o755); err != nil {
+		t.Fatalf("mkdir project child: %v", err)
+	}
+	memoryDir := filepath.Join(
+		homeDir,
+		".claude",
+		"projects",
+		encodeClaudeProjectPath(projectRoot),
+		"memory",
+	)
+	writeTestFile(t,
+		filepath.Join(memoryDir, "testing_notes.md"),
+		"# Testing Notes\n\nRemember the real Claude project memory synced.\n",
+	)
+	if _, err := tempStore.SaveProjection(context.Background(), sessionID, store.ProjectionSnapshot{
+		RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+		Runtime:             store.SessionRuntime{CWD: projectChild},
+	}); err != nil {
+		t.Fatalf("save projection: %v", err)
+	}
 
 	if err := conn.WriteJSON(protocol.MemoryRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "memory_upsert"},
@@ -804,12 +844,28 @@ func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected memory items after sync, got %#v", listEvent)
 	}
-	if len(items) != 1 {
-		t.Fatalf("expected one local memory item to remain after sync, got %#v", items)
+	if len(items) != 2 {
+		t.Fatalf("expected local and external memory items after sync, got %#v", items)
 	}
-	item, _ := items[0].(map[string]any)
-	if item["id"] != "m-test" || item["syncState"] != string(store.CatalogSyncStateDraft) {
-		t.Fatalf("unexpected synced memory item payload: %#v", item)
+	foundLocal := false
+	foundExternal := false
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["id"] == "m-test" {
+			foundLocal = true
+			if item["syncState"] != string(store.CatalogSyncStateDraft) {
+				t.Fatalf("unexpected local memory payload: %#v", item)
+			}
+		}
+		if item["id"] == "testing_notes" {
+			foundExternal = true
+			if item["source"] != "claude-project-memory" || item["syncState"] != string(store.CatalogSyncStateSynced) {
+				t.Fatalf("unexpected external memory payload: %#v", item)
+			}
+		}
+	}
+	if !foundLocal || !foundExternal {
+		t.Fatalf("expected both local and external memories, got %#v", items)
 	}
 }
 
