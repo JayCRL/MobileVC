@@ -193,6 +193,20 @@ func newClaudePromptCommand(ctx context.Context, command string, prompt string, 
 	return cmd
 }
 
+func newCodexAppServerCommand(ctx context.Context, command string) *exec.Cmd {
+	spec := getShellSpec()
+	head := codexExecutable(command)
+	if head == "" {
+		head = "codex"
+	}
+	if runtime.GOOS != "windows" {
+		cmd := exec.CommandContext(ctx, head, "app-server", "--listen", "stdio://")
+		cmd.Env = shellEnvironment(spec, command)
+		return cmd
+	}
+	return newShellCommand(ctx, head+" app-server --listen stdio://", ModeExec)
+}
+
 func shouldUseWindowsClaudeEntry(command string, spec shellSpec) bool {
 	return spec.claudeNode != "" && spec.claudeCLI != "" && isClaudeCommandName(command)
 }
@@ -221,6 +235,19 @@ func isClaudeCommandName(command string) bool {
 	return head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\\claude`) || head == "claude.exe" || head == "claude.cmd" || head == "claude.ps1"
 }
 
+func isCodexCommandName(command string) bool {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		return false
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return false
+	}
+	head := strings.ToLower(fields[0])
+	return head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\\codex`) || head == "codex.exe" || head == "codex.cmd" || head == "codex.ps1"
+}
+
 func isAICommandName(command string) bool {
 	trimmed := strings.TrimSpace(command)
 	if trimmed == "" {
@@ -235,6 +262,55 @@ func isAICommandName(command string) bool {
 	isGemini := head == "gemini" || strings.HasSuffix(head, "/gemini") || strings.HasSuffix(head, `\\gemini`) || head == "gemini.exe" || head == "gemini.cmd" || head == "gemini.ps1"
 	isCodex := head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\\codex`) || head == "codex.exe" || head == "codex.cmd" || head == "codex.ps1"
 	return isClaude || isGemini || isCodex
+}
+
+func codexExecutable(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return ""
+	}
+	head := strings.TrimSpace(fields[0])
+	if isCodexCommandName(head) {
+		return head
+	}
+	return ""
+}
+
+func extractCodexModelFlag(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "-m", "--model":
+			if i+1 < len(fields) {
+				return strings.TrimSpace(fields[i+1])
+			}
+		}
+	}
+	return ""
+}
+
+func extractCodexInitialPrompt(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) <= 1 || !isCodexCommandName(fields[0]) {
+		return ""
+	}
+	start := 1
+	if len(fields) > 1 && strings.EqualFold(strings.TrimSpace(fields[1]), "resume") {
+		start = 2
+		if start < len(fields) && !strings.HasPrefix(fields[start], "-") {
+			start++
+		}
+	}
+	var remaining []string
+	for i := start; i < len(fields); i++ {
+		switch fields[i] {
+		case "--resume", "-m", "--model":
+			i++
+			continue
+		}
+		remaining = append(remaining, fields[i])
+	}
+	return strings.TrimSpace(strings.Join(remaining, " "))
 }
 
 func claudeCommandArgs(command string) []string {

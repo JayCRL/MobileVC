@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 
@@ -50,6 +51,7 @@ type PtyRunner struct {
 	currentDir              string
 	sink                    EventSink
 	claudeSessionID         string
+	codexSession            *codexAppSession
 	permissionMode          string
 	pendingControlRequestID string
 	pendingPromptOptions    []string
@@ -81,6 +83,12 @@ func (w *claudeShellOnceWriter) Write(data []byte) (int, error) {
 	resumeSessionID := w.runner.claudeSessionID
 	w.runner.mu.Unlock()
 	logx.Info("pty", "lazy shell writer received input: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q preview=%q", req.SessionID, cwd, permMode, resumeSessionID, ptyDebugPreview(string(data)))
+	if shouldUseCodexAppServer(req.Command) {
+		if err := w.runner.startCodexAppServerOnFirstInput(context.Background(), req, cwd, sink, data); err != nil {
+			return 0, err
+		}
+		return len(data), nil
+	}
 	if err := w.runner.startClaudeStreamOnFirstInput(context.Background(), req, cwd, sink, data); err != nil {
 		return 0, err
 	}
@@ -125,6 +133,55 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.interactive = false
 		r.mu.Unlock()
 		return r.runClaudeResumeInteractive(ctx, req, cwd, sink)
+	}
+
+	if shouldUseCodexAppServer(req.Command) {
+		initialPrompt := extractCodexInitialPrompt(req.Command)
+		if initialPrompt != "" {
+			r.mu.Lock()
+			r.permissionMode = req.PermissionMode
+			r.interactive = false
+			r.pendingReq = req
+			r.pendingCWD = cwd
+			r.currentDir = cwd
+			r.sink = sink
+			r.closed = false
+			r.processDone = make(chan struct{})
+			r.processErr = nil
+			r.lazyStart = false
+			r.mu.Unlock()
+			return r.runCodexAppServer(ctx, req, cwd, sink, initialPrompt)
+		}
+		r.mu.Lock()
+		r.lazyStart = true
+		r.interactive = false
+		r.awaitingReadyPrompt = true
+		r.pendingReq = req
+		r.pendingCWD = cwd
+		r.currentDir = cwd
+		r.sink = sink
+		r.closed = false
+		r.processDone = make(chan struct{})
+		r.processErr = nil
+		r.permissionMode = req.PermissionMode
+		r.mu.Unlock()
+		defer r.clear()
+
+		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+
+		r.mu.Lock()
+		r.writer = &claudeShellOnceWriter{runner: r}
+		r.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-r.processDone:
+			r.mu.Lock()
+			err := r.processErr
+			r.mu.Unlock()
+			return err
+		}
 	}
 
 	if shouldUseClaudeStreamJSON(req.Command) {
@@ -254,6 +311,9 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
 		logx.Info("pty", "runner write requested: sessionID=%s lazyStart=%t interactive=%t awaitingReadyPrompt=%t closed=%t cwd=%q permissionMode=%q resumeSessionID=%q preview=%q", req.SessionID, lazyStart, interactive, awaitingReadyPrompt, closed, cwd, permissionMode, resumeSessionID, ptyDebugPreview(string(data)))
 
 		if lazyStart && !interactive {
+			if shouldUseCodexAppServer(req.Command) {
+				return r.startCodexAppServerOnFirstInput(ctx, req, cwd, sink, data)
+			}
 			return r.startClaudeStreamOnFirstInput(ctx, req, cwd, sink, data)
 		}
 
@@ -266,6 +326,24 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
 
 		if writer == nil || closed {
 			return errors.New("no active pty session")
+		}
+
+		if shouldUseCodexAppServer(req.Command) {
+			writeDone := make(chan error, 1)
+			go func() {
+				_, err := writer.Write(data)
+				writeDone <- err
+			}()
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case err := <-writeDone:
+				if err != nil {
+					return fmt.Errorf("write codex input: %w", err)
+				}
+				return nil
+			}
 		}
 
 		// 关键修复：对于交互式 AI 工具，确保发送 \r\n 触发执行
@@ -350,6 +428,9 @@ func (r *PtyRunner) waitForInteractiveReady(ctx context.Context) error {
 func (r *PtyRunner) HasPendingPermissionRequest() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.codexSession != nil {
+		return r.codexSession.HasPendingPermissionRequest()
+	}
 	return strings.TrimSpace(r.pendingControlRequestID) != ""
 }
 
@@ -380,12 +461,20 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 	}
 
 	r.mu.Lock()
+	codexSession := r.codexSession
 	writer := r.writer
 	closed := r.closed
 	requestID := strings.TrimSpace(r.pendingControlRequestID)
 	promptOptions := append([]string(nil), r.pendingPromptOptions...)
 	req := r.pendingReq
 	r.mu.Unlock()
+
+	if codexSession != nil {
+		if closed {
+			return errors.New("no active pty session")
+		}
+		return codexSession.WritePermissionResponse(ctx, decision)
+	}
 
 	if writer == nil || closed {
 		return errors.New("no active pty session")
@@ -464,10 +553,14 @@ func (r *PtyRunner) Close() error {
 	r.mu.Lock()
 	closer := r.closer
 	cmd := r.cmd
+	codexSession := r.codexSession
 	r.closed = true
 	r.suppressExitError = true
 	r.mu.Unlock()
 
+	if codexSession != nil {
+		_ = codexSession.Close()
+	}
 	if closer != nil {
 		_ = closer.Close()
 	}
@@ -490,12 +583,19 @@ func (r *PtyRunner) SetPermissionMode(mode string) {
 	r.permissionMode = mode
 }
 
+func (r *PtyRunner) currentPermissionMode() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.permissionMode
+}
+
 func (r *PtyRunner) clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.writer = nil
 	r.closer = nil
 	r.cmd = nil
+	r.codexSession = nil
 	r.currentDir = ""
 	r.lastToolName = ""
 	r.lastToolTarget = ""
@@ -572,6 +672,61 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	readWG.Wait()
 
 	if waitErr != nil {
+		message := waitErr.Error()
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			message = fmt.Sprintf("command exited with code %d", exitErr.ExitCode())
+		}
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, message, ""))
+		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished with error"))
+		return waitErr
+	}
+
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
+	return nil
+}
+
+func (r *PtyRunner) runCodexAppServer(ctx context.Context, req ExecRequest, cwd string, sink EventSink, initialPrompt string) error {
+	resumeSessionID := extractResumeArg(req.Command)
+	if resumeSessionID == "" {
+		resumeSessionID = strings.TrimSpace(req.RuntimeMeta.ResumeSessionID)
+	}
+
+	app, err := newCodexAppSession(ctx, r, req, cwd, sink, resumeSessionID)
+	if err != nil {
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, err.Error(), ""))
+		return err
+	}
+
+	r.mu.Lock()
+	r.codexSession = app
+	r.writer = &codexAppWriter{session: app}
+	r.closer = app.stdin
+	r.cmd = app.cmd
+	r.currentDir = cwd
+	r.closed = false
+	r.lazyStart = false
+	r.interactive = true
+	r.awaitingReadyPrompt = false
+	r.mu.Unlock()
+	defer r.clear()
+
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
+
+	if strings.TrimSpace(initialPrompt) != "" {
+		if err := app.SendUserInput(ctx, []byte(initialPrompt)); err != nil {
+			_ = app.Close()
+			sendEvent(sink, protocol.NewErrorEvent(req.SessionID, err.Error(), ""))
+			return err
+		}
+	}
+
+	waitErr := app.cmd.Wait()
+	if waitErr != nil {
+		if r.shouldSuppressExitError() {
+			sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
+			return nil
+		}
 		message := waitErr.Error()
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) {
@@ -850,8 +1005,92 @@ func (r *PtyRunner) finishLazyProcess(err error, sink EventSink, sessionID strin
 	}
 }
 
+func (r *PtyRunner) startCodexAppServerOnFirstInput(ctx context.Context, req ExecRequest, cwd string, sink EventSink, firstInput []byte) error {
+	r.mu.Lock()
+	if !r.lazyStart {
+		writer := r.writer
+		closed := r.closed
+		interactive := r.interactive
+		r.mu.Unlock()
+		if !interactive || writer == nil || closed {
+			return errors.New("runner is not ready for interactive input")
+		}
+		_, err := writer.Write(firstInput)
+		return err
+	}
+	r.lazyStart = false
+	r.mu.Unlock()
+
+	text := strings.TrimSpace(string(firstInput))
+	if text == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	resumeSessionID := r.claudeSessionID
+	if resumeSessionID == "" {
+		resumeSessionID = extractResumeArg(req.Command)
+	}
+	if resumeSessionID == "" {
+		resumeSessionID = strings.TrimSpace(req.RuntimeMeta.ResumeSessionID)
+	}
+	r.mu.Unlock()
+
+	app, err := newCodexAppSession(ctx, r, req, cwd, sink, resumeSessionID)
+	if err != nil {
+		r.finishLazyProcess(err, sink, req.SessionID)
+		return err
+	}
+
+	writer := &codexAppWriter{session: app}
+	r.mu.Lock()
+	r.codexSession = app
+	r.cmd = app.cmd
+	r.currentDir = cwd
+	r.closed = false
+	r.interactive = true
+	r.awaitingReadyPrompt = false
+	r.writer = writer
+	r.closer = app.stdin
+	r.pendingReq = req
+	r.pendingCWD = cwd
+	r.mu.Unlock()
+
+	go func() {
+		waitErr := app.cmd.Wait()
+		if waitErr != nil {
+			if r.shouldSuppressExitError() {
+				r.finishLazyProcess(nil, sink, req.SessionID)
+				return
+			}
+			message := waitErr.Error()
+			var exitErr *exec.ExitError
+			if errors.As(waitErr, &exitErr) {
+				message = fmt.Sprintf("command exited with code %d", exitErr.ExitCode())
+			}
+			sendEvent(sink, protocol.NewErrorEvent(req.SessionID, message, ""))
+			sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished with error"))
+			r.finishLazyProcess(waitErr, sink, req.SessionID)
+			return
+		}
+		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
+		r.finishLazyProcess(nil, sink, req.SessionID)
+	}()
+
+	if err := app.SendUserInput(ctx, firstInput); err != nil {
+		_ = app.Close()
+		r.finishLazyProcess(err, sink, req.SessionID)
+		return err
+	}
+	return nil
+}
+
 func shouldUseClaudeStreamJSON(command string) bool {
 	return isClaudeCommandName(command)
+}
+
+func shouldUseCodexAppServer(command string) bool {
+	return isCodexCommandName(command)
 }
 
 func shouldUseClaudeResumeInteractive(command string) bool {
@@ -1170,6 +1409,9 @@ func appendUniqueString(values []string, value string) []string {
 
 func extractResumeArg(command string) string {
 	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) >= 3 && isCodexCommandName(fields[0]) && strings.EqualFold(strings.TrimSpace(fields[1]), "resume") && !strings.HasPrefix(fields[2], "-") {
+		return fields[2]
+	}
 	for i := 0; i < len(fields); i++ {
 		if fields[i] == "--resume" && i+1 < len(fields) {
 			return fields[i+1]
@@ -1669,9 +1911,11 @@ func (c *interactiveCloser) Close() error {
 func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID string, stream string, detectPrompt bool, sink EventSink) {
 	parser := adapter.NewGenericParser()
 	buf := make([]byte, ptyReadBufferSize)
+	var ansiCarry string
 	var pending string
 	var emittedTail string
 	var promptSent bool
+	var lastLiveTailEmit time.Time
 
 	for {
 		select {
@@ -1683,7 +1927,9 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 		n, err := reader.Read(buf)
 		if n > 0 {
 			rawChunk := string(buf[:n])
-			chunk := adapter.StripANSI(rawChunk)
+			chunk, nextCarry := adapter.StripANSIChunk(rawChunk, ansiCarry)
+			ansiCarry = nextCarry
+			chunk = normalizeScreenRedrawChunk(rawChunk, chunk)
 			if strings.Contains(chunk, "❯") {
 				r.markInteractiveReady()
 			}
@@ -1752,9 +1998,14 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 						promptSent = true
 					}
 				} else if trimmedPending != emittedTail {
+					now := time.Now()
+					if shouldDeferLiveTailEmission(trimmedPending, emittedTail, rawChunk, lastLiveTailEmit, now) {
+						continue
+					}
 					ptyLogPromptClassification(sessionID, "readOutput.liveTail", stream, trimmedPending, false, nil, "normal_output")
 					sendEvent(sink, protocol.NewLogEvent(sessionID, trimmedPending, stream))
 					emittedTail = trimmedPending
+					lastLiveTailEmit = now
 				}
 			}
 		}
@@ -1788,6 +2039,95 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 	for _, event := range parser.Flush(sessionID, stream) {
 		sendEvent(sink, event)
 	}
+}
+
+func shouldDeferLiveTailEmission(pending, emittedTail, rawChunk string, lastEmit time.Time, now time.Time) bool {
+	trimmed := strings.TrimSpace(pending)
+	if trimmed == "" || trimmed == emittedTail {
+		return false
+	}
+	if endsWithLiveTailBoundary(trimmed) {
+		return false
+	}
+	if lastEmit.IsZero() {
+		return utf8.RuneCountInString(trimmed) < 12
+	}
+	if looksLikeScreenRedrawChunk(rawChunk) && now.Sub(lastEmit) < 250*time.Millisecond {
+		return true
+	}
+	if sharedPrefix := commonPrefixRunes(trimmed, emittedTail); sharedPrefix > 0 {
+		delta := utf8.RuneCountInString(trimmed) - sharedPrefix
+		if delta < 8 && now.Sub(lastEmit) < 180*time.Millisecond {
+			return true
+		}
+	}
+	return utf8.RuneCountInString(trimmed) < 16 && now.Sub(lastEmit) < 120*time.Millisecond
+}
+
+func normalizeScreenRedrawChunk(rawChunk, chunk string) string {
+	if chunk == "" || !looksLikeScreenRedrawChunk(rawChunk) {
+		return chunk
+	}
+
+	normalized := strings.ReplaceAll(chunk, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	parts := strings.Split(normalized, "\n")
+
+	var compact strings.Builder
+	nonEmpty := 0
+	empty := 0
+	longParts := 0
+	for _, part := range parts {
+		if part == "" {
+			empty++
+			continue
+		}
+		nonEmpty++
+		if utf8.RuneCountInString(part) > 2 {
+			longParts++
+		}
+		compact.WriteString(part)
+	}
+
+	if nonEmpty < 4 || longParts > 0 || empty < nonEmpty/2 {
+		return chunk
+	}
+	return compact.String()
+}
+
+func endsWithLiveTailBoundary(text string) bool {
+	if text == "" {
+		return false
+	}
+	last, _ := utf8.DecodeLastRuneInString(text)
+	switch last {
+	case ' ', '\t', '.', ',', '!', '?', ':', ';', ')', ']', '}', '>', '。', '，', '！', '？', '：', '；':
+		return true
+	default:
+		return false
+	}
+}
+
+func looksLikeScreenRedrawChunk(raw string) bool {
+	return strings.Contains(raw, "\x1b[K") ||
+		strings.Contains(raw, "\x1b[?2026") ||
+		strings.Contains(raw, "\x1b[1;1H") ||
+		strings.Contains(raw, "\x1b[?25") ||
+		strings.Contains(raw, "\x1b[39;49m")
+}
+
+func commonPrefixRunes(left, right string) int {
+	lr := []rune(left)
+	rr := []rune(right)
+	limit := len(lr)
+	if len(rr) < limit {
+		limit = len(rr)
+	}
+	count := 0
+	for count < limit && lr[count] == rr[count] {
+		count++
+	}
+	return count
 }
 
 func shouldFlushParserBeforeLiveTail(text string, isPrompt bool) bool {

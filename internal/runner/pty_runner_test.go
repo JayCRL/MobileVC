@@ -1186,3 +1186,120 @@ func TestPtyRunnerLazyStartDoesNotTreatManagedSessionIDAsResume(t *testing.T) {
 	}
 	_ = runner.Close()
 }
+
+func TestShouldDeferLiveTailEmissionForTinyScreenRedrawChunks(t *testing.T) {
+	now := time.Now()
+	if !shouldDeferLiveTailEmission("Tip", "", "\x1b[39;49m\x1b[KT", time.Time{}, now) {
+		t.Fatal("expected first tiny redraw chunk to be deferred")
+	}
+	if shouldDeferLiveTailEmission("Tip: ", "Tip", "\x1b[39;49m\x1b[K ", now.Add(-300*time.Millisecond), now) {
+		t.Fatal("expected boundary-terminated live tail to emit")
+	}
+}
+
+func TestNormalizeScreenRedrawChunkCollapsesSingleCharacterRedraw(t *testing.T) {
+	raw := "\x1b[39;49m\x1b[KT\x1b[39m\x1b[49m\x1b[0m\r\n\x1b[39;49m\x1b[K\x1b[39m\x1b[49m\x1b[0m\r\n\x1b[39;49m\x1b[Ki\x1b[39m\x1b[49m\x1b[0m\r\n\x1b[39;49m\x1b[K\x1b[39m\x1b[49m\x1b[0m\r\n\x1b[39;49m\x1b[Kp\x1b[39m\x1b[49m\x1b[0m\r\n\x1b[39;49m\x1b[K \x1b[39m\x1b[49m\x1b[0m\r\n"
+	chunk := "T\r\n\r\ni\r\n\r\np\r\n \r\n"
+	if got := normalizeScreenRedrawChunk(raw, chunk); got != "Tip " {
+		t.Fatalf("unexpected normalized chunk: %q", got)
+	}
+}
+
+func TestExtractResumeArgSupportsCodexResumeSubcommand(t *testing.T) {
+	if got := extractResumeArg("codex resume thread-123 -m gpt-5"); got != "thread-123" {
+		t.Fatalf("expected codex resume session id, got %q", got)
+	}
+}
+
+func TestExtractCodexInitialPromptStripsResumeAndModelFlags(t *testing.T) {
+	if got := extractCodexInitialPrompt("codex resume thread-123 -m gpt-5 /plan"); got != "/plan" {
+		t.Fatalf("unexpected codex initial prompt: %q", got)
+	}
+}
+
+func TestCodexAppSessionCoalescesAssistantDeltasBeforePrompt(t *testing.T) {
+	runner := NewPtyRunner()
+	var events []any
+	app := &codexAppSession{
+		runner:    runner,
+		sessionID: "s-codex-delta",
+		sink:      func(event any) { events = append(events, event) },
+	}
+	app.setThreadID("thread-123")
+
+	for _, delta := range []string{"T", "ip", " : ", "hello", " world"} {
+		params, err := json.Marshal(map[string]any{
+			"threadId": "thread-123",
+			"turnId":   "turn-1",
+			"itemId":   "item-1",
+			"delta":    delta,
+		})
+		if err != nil {
+			t.Fatalf("marshal delta: %v", err)
+		}
+		app.handleNotification(codexRPCMessage{Method: "item/agentMessage/delta", Params: params})
+	}
+
+	completed, err := json.Marshal(map[string]any{
+		"threadId": "thread-123",
+		"turn": map[string]any{
+			"id":     "turn-1",
+			"status": "completed",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal completed: %v", err)
+	}
+	app.handleNotification(codexRPCMessage{Method: "turn/completed", Params: completed})
+
+	var logs []protocol.LogEvent
+	var prompts []protocol.PromptRequestEvent
+	for _, event := range events {
+		switch v := event.(type) {
+		case protocol.LogEvent:
+			logs = append(logs, v)
+		case protocol.PromptRequestEvent:
+			prompts = append(prompts, v)
+		}
+	}
+
+	if len(logs) != 1 {
+		t.Fatalf("expected a single coalesced log, got %#v", logs)
+	}
+	if logs[0].Message != "Tip : hello world" {
+		t.Fatalf("unexpected coalesced log message: %q", logs[0].Message)
+	}
+	if len(prompts) != 1 || prompts[0].ResumeSessionID != "thread-123" {
+		t.Fatalf("expected invisible continue prompt with thread id, got %#v", prompts)
+	}
+}
+
+func TestCodexAppSessionWritePermissionResponseEncodesJSONRPCResult(t *testing.T) {
+	buf := &nopWriteCloser{}
+	runner := NewPtyRunner()
+	runner.permissionMode = "acceptEdits"
+	app := &codexAppSession{
+		runner:    runner,
+		sessionID: "s-codex-permission",
+		stdin:     buf,
+	}
+	app.cachePendingApproval(&codexPendingApproval{
+		id:     json.RawMessage("42"),
+		method: "item/fileChange/requestApproval",
+	})
+
+	if err := app.WritePermissionResponse(context.Background(), "approve"); err != nil {
+		t.Fatalf("write permission response: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `"id":42`) {
+		t.Fatalf("expected numeric request id in response, got %q", output)
+	}
+	if !strings.Contains(output, `"decision":"acceptForSession"`) {
+		t.Fatalf("expected acceptForSession decision, got %q", output)
+	}
+	if app.HasPendingPermissionRequest() {
+		t.Fatal("expected pending approval to be cleared")
+	}
+}

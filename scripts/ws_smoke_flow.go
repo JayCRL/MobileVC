@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,18 +22,20 @@ const defaultSmokeTimeout = 8 * time.Minute
 type smokeScenario string
 
 const (
-	scenarioFull                 smokeScenario = "full"
-	scenarioPermissionDiffReview smokeScenario = "permission-diff-review"
-	scenarioTerminalLogs         smokeScenario = "terminal-logs"
-	scenarioCodexBasic           smokeScenario = "codex-basic"
-	scenarioCodexReadmeWrite     smokeScenario = "codex-readme-write"
+	scenarioFull                  smokeScenario = "full"
+	scenarioPermissionDiffReview  smokeScenario = "permission-diff-review"
+	scenarioTerminalLogs          smokeScenario = "terminal-logs"
+	scenarioCodexBasic            smokeScenario = "codex-basic"
+	scenarioCodexChatOnce         smokeScenario = "codex-chat-once"
+	scenarioCodexFileCreateReview smokeScenario = "codex-file-create-review"
+	scenarioCodexReadmeWrite      smokeScenario = "codex-readme-write"
 )
 
 func main() {
 	var (
 		baseURL   = flag.String("url", "", "websocket url")
 		timeout   = flag.Duration("timeout", defaultSmokeTimeout, "overall smoke timeout")
-		scenario  = flag.String("scenario", string(scenarioFull), "smoke scenario: full, permission-diff-review, terminal-logs, codex-basic, or codex-readme-write")
+		scenario  = flag.String("scenario", string(scenarioFull), "smoke scenario: full, permission-diff-review, terminal-logs, codex-basic, codex-chat-once, codex-file-create-review, or codex-readme-write")
 		aiCommand = flag.String("ai-command", strings.TrimSpace(os.Getenv("SMOKE_AI_COMMAND")), "AI command for codex-basic scenario")
 		engine    = flag.String("engine", strings.TrimSpace(os.Getenv("SMOKE_ENGINE")), "engine for codex-basic scenario")
 	)
@@ -118,6 +121,22 @@ func runSmoke(ctx context.Context, wsURL string, scenario smokeScenario, aiComma
 		}
 		tr.section("done")
 		tr.line("done scenario=%s", scenarioCodexBasic)
+		return nil
+	}
+	if scenario == scenarioCodexChatOnce {
+		if err := runner.codexChatOnceFlow(); err != nil {
+			return err
+		}
+		tr.section("done")
+		tr.line("done scenario=%s", scenarioCodexChatOnce)
+		return nil
+	}
+	if scenario == scenarioCodexFileCreateReview {
+		if err := runner.codexFileCreateReviewFlow(); err != nil {
+			return err
+		}
+		tr.section("done")
+		tr.line("done scenario=%s", scenarioCodexFileCreateReview)
 		return nil
 	}
 	if scenario == scenarioCodexReadmeWrite {
@@ -734,6 +753,323 @@ func (r *smokeRunner) codexBasicFlow() error {
 	return nil
 }
 
+func (r *smokeRunner) codexChatOnceFlow() error {
+	r.transcript.section("codex-chat-once")
+
+	cmd := strings.TrimSpace(r.aiCommand)
+	if cmd == "" {
+		cmd = "codex"
+	}
+	engine := strings.TrimSpace(r.engine)
+	if engine == "" {
+		engine = "codex"
+	}
+
+	if err := r.send(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     cmd,
+		Mode:        "pty",
+		CWD:         ".",
+		RuntimeMeta: protocol.RuntimeMeta{
+			Engine: engine,
+			Source: "smoke-codex-chat-once",
+		},
+		PermissionMode: "default",
+	}); err != nil {
+		return err
+	}
+
+	if _, err := r.waitForAnyType(45*time.Second, []string{
+		protocol.EventTypeAgentState,
+		protocol.EventTypeSessionState,
+		protocol.EventTypePromptRequest,
+		protocol.EventTypeLog,
+	}, nil); err != nil {
+		return err
+	}
+
+	token := fmt.Sprintf("MOBILEVC_CODEX_PROBE_%d", time.Now().Unix())
+	prompt := fmt.Sprintf("Reply with exactly %s and nothing else. Do not use tools.\n", token)
+	if err := r.send(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        prompt,
+	}); err != nil {
+		return err
+	}
+
+	var stdoutChunks []string
+	sawToken := false
+	sawReady := false
+	deadline := time.Now().Add(4 * time.Minute)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("timeout waiting codex chat completion token=%q", token)
+		}
+		evt, err := r.waitForAnyType(remaining, []string{
+			protocol.EventTypeLog,
+			protocol.EventTypePromptRequest,
+			protocol.EventTypeAgentState,
+			protocol.EventTypeSessionState,
+			protocol.EventTypeError,
+			protocol.EventTypeProgress,
+		}, nil)
+		if err != nil {
+			return err
+		}
+		switch evt.stringField("type") {
+		case protocol.EventTypeError:
+			return fmt.Errorf("codex chat flow error: %s", evt.stringField("msg"))
+		case protocol.EventTypeLog:
+			if !strings.EqualFold(evt.stringField("stream"), "stdout") {
+				continue
+			}
+			chunk := strings.TrimSpace(evt.stringField("msg"))
+			if chunk == "" {
+				continue
+			}
+			stdoutChunks = append(stdoutChunks, chunk)
+			r.transcript.line("codex_chat_chunk len=%d msg=%q", len([]rune(chunk)), chunk)
+			if strings.Contains(chunk, token) {
+				sawToken = true
+			}
+		case protocol.EventTypePromptRequest:
+			sawReady = true
+			if sawToken {
+				goto VERIFY
+			}
+		case protocol.EventTypeAgentState:
+			state := strings.ToUpper(strings.TrimSpace(evt.stringField("state")))
+			if evt.boolField("awaitInput") || state == "WAIT_INPUT" || state == "IDLE" {
+				sawReady = true
+				if sawToken {
+					goto VERIFY
+				}
+			}
+		case protocol.EventTypeSessionState:
+			if strings.EqualFold(strings.TrimSpace(evt.stringField("state")), "closed") && sawToken {
+				goto VERIFY
+			}
+		}
+	}
+
+VERIFY:
+	if !sawToken {
+		return fmt.Errorf("codex chat flow reached ready state without token=%q; stdoutChunks=%q", token, stdoutChunks)
+	}
+	if !sawReady {
+		return fmt.Errorf("codex chat flow produced token=%q but never returned to input-ready state", token)
+	}
+	if err := assertNoCharFragmentation(stdoutChunks, token); err != nil {
+		return err
+	}
+
+	if err := r.send(protocol.SessionLoadRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_load"},
+		SessionID:   r.transcript.sessionID,
+	}); err != nil {
+		return err
+	}
+	history, err := r.waitForType(protocol.EventTypeSessionHistory, 30*time.Second, nil)
+	if err != nil {
+		return err
+	}
+	if history.nestedInt("summary", "entryCount") <= 0 {
+		return fmt.Errorf("expected codex-chat-once history entryCount > 0, got %d", history.nestedInt("summary", "entryCount"))
+	}
+	r.transcript.line("codex_chat_verified token=%q chunks=%d history_entries=%d", token, len(stdoutChunks), history.nestedInt("summary", "entryCount"))
+	return nil
+}
+
+func (r *smokeRunner) codexFileCreateReviewFlow() error {
+	r.transcript.section("codex-file-create-review")
+
+	cmd := strings.TrimSpace(r.aiCommand)
+	if cmd == "" {
+		cmd = "codex"
+	}
+	engine := strings.TrimSpace(r.engine)
+	if engine == "" {
+		engine = "codex"
+	}
+
+	token := fmt.Sprintf("MOBILEVC_CODEX_FILE_%d", time.Now().Unix())
+	fileName := fmt.Sprintf("codex_smoke_file_%d.txt", time.Now().Unix())
+	filePath := filepath.Join("..", fileName)
+	_ = os.Remove(filePath)
+	defer func() { _ = os.Remove(filePath) }()
+
+	if err := r.send(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     cmd,
+		Mode:        "pty",
+		CWD:         ".",
+		RuntimeMeta: protocol.RuntimeMeta{
+			Engine: engine,
+			Source: "smoke-codex-file-create-review",
+		},
+		PermissionMode: "default",
+	}); err != nil {
+		return err
+	}
+
+	if _, err := r.waitForAnyType(45*time.Second, []string{
+		protocol.EventTypeAgentState,
+		protocol.EventTypeSessionState,
+		protocol.EventTypePromptRequest,
+		protocol.EventTypeLog,
+	}, nil); err != nil {
+		return err
+	}
+
+	prompt := fmt.Sprintf("Using the built-in file editing tool only, create a new file at relative path %s, which is outside the current working directory. Write exactly %s into that file with no extra newline content. Do not use command execution, shell commands, python, perl, or any other terminal-based write method. I need this to trigger the permission flow and produce a real file diff in the session. If approval is required, wait for approval and then continue. After the file is written, reply with exactly DONE.", filePath, token)
+	if err := r.send(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        prompt + "\n",
+	}); err != nil {
+		return err
+	}
+
+	var (
+		approved       bool
+		gotDiff        bool
+		sentReview     bool
+		sawDone        bool
+		reviewAccepted bool
+	)
+	deadline := time.Now().Add(4 * time.Minute)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("timeout waiting codex file create review completion path=%q", filePath)
+		}
+		evt, err := r.waitForAnyType(remaining, []string{
+			protocol.EventTypePromptRequest,
+			protocol.EventTypeInteractionRequest,
+			protocol.EventTypeFileDiff,
+			protocol.EventTypeReviewState,
+			protocol.EventTypeStepUpdate,
+			protocol.EventTypeAgentState,
+			protocol.EventTypeSessionState,
+			protocol.EventTypeLog,
+			protocol.EventTypeError,
+			protocol.EventTypeProgress,
+		}, nil)
+		if err != nil {
+			return err
+		}
+
+		switch evt.stringField("type") {
+		case protocol.EventTypeError:
+			return fmt.Errorf("codex file create flow error: %s", evt.stringField("msg"))
+		case protocol.EventTypeStepUpdate:
+			if strings.EqualFold(strings.TrimSpace(evt.stringField("tool")), "commandExecution") &&
+				(strings.Contains(evt.stringField("target"), filePath) || strings.Contains(evt.stringField("target"), fileName)) {
+				return fmt.Errorf("codex used commandExecution for file write instead of file editing tool: %s", evt.stringField("target"))
+			}
+		case protocol.EventTypePromptRequest, protocol.EventTypeInteractionRequest:
+			if isCodexApprovalEvent(evt) && !approved {
+				r.transcript.line("codex_permission_approve msg=%q options=%v", evt.stringField("msg"), evt.stringSlice("options"))
+				if err := r.send(protocol.PermissionDecisionRequestEvent{
+					ClientEvent:        protocol.ClientEvent{Action: "permission_decision"},
+					Decision:           "approve",
+					PermissionMode:     firstNonEmpty(evt.stringField("permissionMode"), "default"),
+					ResumeSessionID:    evt.stringField("resumeSessionId"),
+					PromptMessage:      evt.stringField("msg"),
+					FallbackCommand:    "codex",
+					FallbackCWD:        ".",
+					FallbackEngine:     "codex",
+					FallbackTarget:     evt.stringField("target"),
+					FallbackTargetType: evt.stringField("targetType"),
+				}); err != nil {
+					return err
+				}
+				approved = true
+			}
+		case protocol.EventTypeFileDiff:
+			if samePathish(evt.stringField("path"), filePath, fileName) {
+				gotDiff = true
+				r.transcript.line("codex_file_diff title=%q path=%q", evt.stringField("title"), evt.stringField("path"))
+				if !sentReview {
+					if err := r.send(protocol.ReviewDecisionRequestEvent{
+						ClientEvent: protocol.ClientEvent{Action: "review_decision"},
+						Decision:    "accept",
+						GroupID: firstNonEmpty(
+							evt.stringField("groupId"),
+							evt.stringField("executionId"),
+							evt.stringField("contextId"),
+							evt.stringField("path"),
+						),
+						GroupTitle: firstNonEmpty(evt.stringField("groupTitle"), evt.stringField("title")),
+						ContextID:  firstNonEmpty(evt.stringField("contextId"), evt.stringField("path")),
+						ContextTitle: firstNonEmpty(
+							evt.stringField("contextTitle"),
+							evt.stringField("title"),
+						),
+						ExecutionID: evt.stringField("executionId"),
+						TargetPath:  evt.stringField("path"),
+					}); err != nil {
+						return err
+					}
+					sentReview = true
+					r.transcript.line("codex_review_decision decision=%q path=%q", "accept", filePath)
+				}
+			}
+		case protocol.EventTypeReviewState:
+			for _, group := range evt.objectSlice("groups") {
+				if !samePathish(group.stringField("path"), filePath, fileName) &&
+					!strings.EqualFold(strings.TrimSpace(group.stringField("title")), "Updating "+filePath) &&
+					!strings.EqualFold(strings.TrimSpace(group.stringField("title")), "Updating "+fileName) &&
+					!groupHasDiffPath(group, filePath, fileName) {
+					continue
+				}
+				status := strings.ToLower(strings.TrimSpace(group.stringField("reviewStatus")))
+				if status == "accepted" && !group.boolField("pendingReview") {
+					reviewAccepted = true
+					r.transcript.line("codex_review_state status=%q pending=%v", status, group.boolField("pendingReview"))
+				}
+			}
+		case protocol.EventTypeLog:
+			if strings.Contains(strings.ToUpper(evt.stringField("msg")), "DONE") {
+				sawDone = true
+				r.transcript.line("codex_done_log msg=%q", evt.stringField("msg"))
+			}
+		case protocol.EventTypeAgentState:
+			state := strings.ToUpper(strings.TrimSpace(evt.stringField("state")))
+			if gotDiff && reviewAccepted && sawDone && (evt.boolField("awaitInput") || state == "WAIT_INPUT" || state == "IDLE") {
+				goto VERIFY
+			}
+		case protocol.EventTypeSessionState:
+			if gotDiff && reviewAccepted && sawDone && strings.EqualFold(strings.TrimSpace(evt.stringField("state")), "closed") {
+				goto VERIFY
+			}
+		}
+	}
+
+VERIFY:
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("read created file %s: %w", filePath, err)
+	}
+	if strings.TrimSpace(string(content)) != token {
+		return fmt.Errorf("created file content mismatch: want=%q got=%q", token, strings.TrimSpace(string(content)))
+	}
+	if !approved {
+		return errors.New("expected a Codex permission approval step but none occurred")
+	}
+	if !gotDiff {
+		return fmt.Errorf("expected a file_diff for %q but none occurred", filePath)
+	}
+	if !sentReview || !reviewAccepted {
+		return fmt.Errorf("expected review accept flow for %q to complete", filePath)
+	}
+	if !sawDone {
+		return fmt.Errorf("expected Codex to confirm DONE for %q", filePath)
+	}
+	r.transcript.line("codex_file_create_review_verified path=%q token=%q", filePath, token)
+	return nil
+}
+
 func (r *smokeRunner) codexReadmeWriteFlow() error {
 	r.transcript.section("codex-readme-write")
 
@@ -865,6 +1201,79 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func assertNoCharFragmentation(chunks []string, token string) error {
+	if len(chunks) == 0 {
+		return errors.New("codex chat flow produced no stdout chunks")
+	}
+	smallChunkCount := 0
+	longestChunk := 0
+	var joined strings.Builder
+	for _, chunk := range chunks {
+		trimmed := strings.TrimSpace(chunk)
+		if trimmed == "" {
+			continue
+		}
+		runes := len([]rune(trimmed))
+		if runes <= 2 {
+			smallChunkCount++
+		}
+		if runes > longestChunk {
+			longestChunk = runes
+		}
+		joined.WriteString(trimmed)
+	}
+	if !strings.Contains(joined.String(), token) {
+		return fmt.Errorf("codex chat flow missing token=%q in stdout chunks=%q", token, chunks)
+	}
+	if longestChunk <= 2 && smallChunkCount >= max(8, len([]rune(token))/2) {
+		return fmt.Errorf("stdout appears fragmented into character-sized chunks: smallChunkCount=%d longestChunk=%d chunks=%q", smallChunkCount, longestChunk, chunks)
+	}
+	return nil
+}
+
+func isCodexApprovalEvent(evt eventMap) bool {
+	switch evt.stringField("type") {
+	case protocol.EventTypePromptRequest:
+		options := evt.stringSlice("options")
+		if len(options) == 0 {
+			return false
+		}
+		msg := strings.ToLower(strings.TrimSpace(evt.stringField("msg")))
+		return strings.Contains(msg, "codex") ||
+			strings.Contains(msg, "权限") ||
+			strings.Contains(msg, "修改文件") ||
+			strings.Contains(msg, "command") ||
+			(strings.EqualFold(firstNonEmpty(options...), "approve"))
+	case protocol.EventTypeInteractionRequest:
+		return strings.EqualFold(strings.TrimSpace(evt.stringField("kind")), "permission")
+	default:
+		return false
+	}
+}
+
+func groupHasDiffPath(group eventMap, path string, base string) bool {
+	for _, diff := range group.objectSlice("diffs") {
+		if samePathish(diff.stringField("path"), path, base) {
+			return true
+		}
+	}
+	return false
+}
+
+func samePathish(candidate string, expected string, expectedBase string) bool {
+	trimmed := strings.TrimSpace(candidate)
+	if trimmed == "" {
+		return false
+	}
+	if strings.EqualFold(trimmed, expected) {
+		return true
+	}
+	if expectedBase != "" && strings.EqualFold(filepath.Base(trimmed), expectedBase) {
+		return true
+	}
+	return false
 }
 
 func isWritePermissionEvent(evt eventMap) bool {

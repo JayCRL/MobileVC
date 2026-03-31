@@ -185,21 +185,72 @@ func StartEmulator(avd string) error {
 
 	cmd := exec.Command(emulatorPath, "-avd", resolvedAVD)
 	cmd.Env = os.Environ()
-	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	logPath := filepath.Join(os.TempDir(), "mobilevc_emulator_start.log")
+	logFile, err := os.Create(logPath)
 	if err != nil {
-		return fmt.Errorf("open os.DevNull failed: %w", err)
+		return fmt.Errorf("create emulator startup log failed: %w", err)
 	}
-	cmd.Stdout = devNull
-	cmd.Stderr = devNull
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
-		_ = devNull.Close()
+		_ = logFile.Close()
 		return fmt.Errorf("start emulator failed: %w", err)
 	}
+
+	waitCh := make(chan error, 1)
 	go func() {
-		_ = cmd.Wait()
-		_ = devNull.Close()
+		waitErr := cmd.Wait()
+		_ = logFile.Close()
+		if waitErr != nil {
+			waitCh <- buildEmulatorStartupError(waitErr, resolvedAVD, logPath)
+			return
+		}
+		waitCh <- buildEmulatorStartupError(nil, resolvedAVD, logPath)
 	}()
-	return nil
+
+	select {
+	case waitErr := <-waitCh:
+		return waitErr
+	case <-time.After(4 * time.Second):
+		return nil
+	}
+}
+
+func buildEmulatorStartupError(waitErr error, avd, logPath string) error {
+	logText := ""
+	if data, err := os.ReadFile(logPath); err == nil {
+		logText = strings.TrimSpace(string(data))
+	}
+	if logText != "" {
+		lines := strings.Split(logText, "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(lines[i])
+			if line == "" {
+				continue
+			}
+			if strings.HasPrefix(line, "ERROR") {
+				return fmt.Errorf("启动模拟器 %s 失败：%s", avd, line)
+			}
+		}
+	}
+	if waitErr != nil {
+		return fmt.Errorf("启动模拟器 %s 失败：%w", avd, waitErr)
+	}
+	if logText != "" {
+		return fmt.Errorf("启动模拟器 %s 后立即退出：%s", avd, lastNonEmptyLine(logText))
+	}
+	return fmt.Errorf("启动模拟器 %s 后立即退出", avd)
+}
+
+func lastNonEmptyLine(text string) string {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func DetectStatus(ctx context.Context) Status {
@@ -298,6 +349,27 @@ func Tap(ctx context.Context, serial string, x, y int) error {
 	output, err := exec.CommandContext(commandCtx, adbPath, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("adb tap failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func WarmupScreen(ctx context.Context, serial string) error {
+	resolvedSerial, err := ResolveSerial(ctx, serial)
+	if err != nil {
+		return err
+	}
+	adbPath, err := resolveADBPath()
+	if err != nil {
+		return err
+	}
+	for _, keycode := range []string{"KEYCODE_WAKEUP", "KEYCODE_MENU"} {
+		commandCtx, cancel := context.WithTimeout(ctx, defaultCommandTimeout)
+		args := deviceArgs(resolvedSerial, "shell", "input", "keyevent", keycode)
+		output, runErr := exec.CommandContext(commandCtx, adbPath, args...).CombinedOutput()
+		cancel()
+		if runErr != nil {
+			return fmt.Errorf("adb warmup keyevent %s failed: %w: %s", keycode, runErr, strings.TrimSpace(string(output)))
+		}
 	}
 	return nil
 }
