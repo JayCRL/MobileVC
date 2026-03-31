@@ -19,7 +19,7 @@ const (
 	defaultH264BitRate      = 2_000_000
 	defaultH264MaxDimension = 1280
 	defaultH264TimeLimit    = 170 * time.Second
-	defaultH264FrameRate    = 15
+	defaultH264FrameRate    = 30
 )
 
 var screenSizePattern = regexp.MustCompile(`(\d+)x(\d+)`)
@@ -171,6 +171,13 @@ func PumpH264Stream(ctx context.Context, reader io.Reader, cfg H264StreamConfig,
 		return fmt.Errorf("create h264 reader failed: %w", err)
 	}
 
+	frameDuration := time.Second / time.Duration(normalized.FrameRate)
+	minDuration := frameDuration / 2
+	if minDuration < time.Second/120 {
+		minDuration = time.Second / 120
+	}
+	maxDuration := frameDuration * 3
+	lastEmitAt := time.Time{}
 	sample := make([]byte, 0, 128*1024)
 	hasVCL := false
 	flush := func() error {
@@ -179,10 +186,24 @@ func PumpH264Stream(ctx context.Context, reader io.Reader, cfg H264StreamConfig,
 			hasVCL = false
 			return nil
 		}
+		duration := frameDuration
+		now := time.Now()
+		if !lastEmitAt.IsZero() {
+			observed := now.Sub(lastEmitAt)
+			switch {
+			case observed < minDuration:
+				duration = minDuration
+			case observed > maxDuration:
+				duration = maxDuration
+			default:
+				duration = observed
+			}
+		}
+		lastEmitAt = now
 		frame := append([]byte(nil), sample...)
 		sample = sample[:0]
 		hasVCL = false
-		return emit(frame, time.Second/time.Duration(normalized.FrameRate))
+		return emit(frame, duration)
 	}
 
 	for {
@@ -207,23 +228,103 @@ func PumpH264Stream(ctx context.Context, reader io.Reader, cfg H264StreamConfig,
 			}
 			continue
 		case h264reader.NalUnitTypeCodedSliceIdr, h264reader.NalUnitTypeCodedSliceNonIdr:
-			if hasVCL {
+			startsPicture, err := startsNewPicture(nal.Data)
+			if err != nil {
+				return fmt.Errorf("parse h264 slice header failed: %w", err)
+			}
+			if hasVCL && startsPicture {
 				if err := flush(); err != nil {
 					return err
 				}
 			}
 			sample = appendAnnexB(sample, nal.Data)
 			hasVCL = true
-			if err := flush(); err != nil {
-				return err
-			}
 		default:
-			if len(sample) == 0 && nal.UnitType != h264reader.NalUnitTypeSPS && nal.UnitType != h264reader.NalUnitTypePPS && nal.UnitType != h264reader.NalUnitTypeSEI {
+			if hasVCL {
+				if err := flush(); err != nil {
+					return err
+				}
+			}
+			if len(sample) == 0 &&
+				nal.UnitType != h264reader.NalUnitTypeSPS &&
+				nal.UnitType != h264reader.NalUnitTypePPS &&
+				nal.UnitType != h264reader.NalUnitTypeSEI {
 				continue
 			}
 			sample = appendAnnexB(sample, nal.Data)
 		}
 	}
+}
+
+func startsNewPicture(nal []byte) (bool, error) {
+	if len(nal) <= 1 {
+		return false, fmt.Errorf("slice nal is too short")
+	}
+	firstMBInSlice, err := readUE(removeEmulationPreventionBytes(nal[1:]))
+	if err != nil {
+		return false, err
+	}
+	return firstMBInSlice == 0, nil
+}
+
+func removeEmulationPreventionBytes(data []byte) []byte {
+	if len(data) < 3 {
+		return append([]byte(nil), data...)
+	}
+	result := make([]byte, 0, len(data))
+	zeroRun := 0
+	for _, b := range data {
+		if zeroRun >= 2 && b == 0x03 {
+			zeroRun = 0
+			continue
+		}
+		result = append(result, b)
+		if b == 0 {
+			zeroRun++
+		} else {
+			zeroRun = 0
+		}
+	}
+	return result
+}
+
+func readUE(data []byte) (uint, error) {
+	var (
+		bitIndex int
+		zeros    int
+	)
+	for {
+		bit, err := readBit(data, &bitIndex)
+		if err != nil {
+			return 0, err
+		}
+		if bit == 1 {
+			break
+		}
+		zeros++
+	}
+	if zeros == 0 {
+		return 0, nil
+	}
+	suffix := uint(0)
+	for i := 0; i < zeros; i++ {
+		bit, err := readBit(data, &bitIndex)
+		if err != nil {
+			return 0, err
+		}
+		suffix = (suffix << 1) | uint(bit)
+	}
+	return uint((1<<zeros)-1) + suffix, nil
+}
+
+func readBit(data []byte, bitIndex *int) (byte, error) {
+	if *bitIndex >= len(data)*8 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	byteIndex := *bitIndex / 8
+	shift := 7 - (*bitIndex % 8)
+	*bitIndex = *bitIndex + 1
+	return (data[byteIndex] >> shift) & 0x01, nil
 }
 
 func parseScreenSize(output string) (Size, error) {

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
@@ -19,19 +20,28 @@ import (
 )
 
 type adbWebRTCBridge struct {
-	mu          sync.Mutex
-	peer        *webrtc.PeerConnection
-	cancel      context.CancelFunc
-	serial      string
-	screenSize  adb.Size
-	sessionIDFn func() string
-	emit        func(any)
+	mu                  sync.Mutex
+	peer                *webrtc.PeerConnection
+	cancel              context.CancelFunc
+	streamCancel        context.CancelFunc
+	streamToken         int
+	lastKeyframeRequest time.Time
+	serial              string
+	screenSize          adb.Size
+	sessionIDFn         func() string
+	emit                func(any)
 }
 
 type adbControlMessage struct {
-	Type string `json:"type"`
-	X    int    `json:"x,omitempty"`
-	Y    int    `json:"y,omitempty"`
+	Type       string `json:"type"`
+	X          int    `json:"x,omitempty"`
+	Y          int    `json:"y,omitempty"`
+	StartX     int    `json:"startX,omitempty"`
+	StartY     int    `json:"startY,omitempty"`
+	EndX       int    `json:"endX,omitempty"`
+	EndY       int    `json:"endY,omitempty"`
+	DurationMS int    `json:"durationMs,omitempty"`
+	Keycode    string `json:"keycode,omitempty"`
 }
 
 func newADBWebRTCBridge(sessionIDFn func() string, emit func(any)) *adbWebRTCBridge {
@@ -49,6 +59,9 @@ func (b *adbWebRTCBridge) Stop(message string) {
 	screenSize := b.screenSize
 	b.peer = nil
 	b.cancel = nil
+	b.streamCancel = nil
+	b.streamToken = 0
+	b.lastKeyframeRequest = time.Time{}
 	b.serial = ""
 	b.screenSize = adb.Size{}
 	b.mu.Unlock()
@@ -64,7 +77,7 @@ func (b *adbWebRTCBridge) Stop(message string) {
 	}
 }
 
-func (b *adbWebRTCBridge) HandleOffer(ctx context.Context, serial, sdpType, sdp string) error {
+func (b *adbWebRTCBridge) HandleOffer(ctx context.Context, serial, sdpType, sdp string, iceServers []protocol.WebRTCIceServer) error {
 	if strings.TrimSpace(sdp) == "" {
 		return fmt.Errorf("缺少 WebRTC SDP offer")
 	}
@@ -91,7 +104,9 @@ func (b *adbWebRTCBridge) HandleOffer(ctx context.Context, serial, sdpType, sdp 
 		return fmt.Errorf("register webrtc codecs failed: %w", err)
 	}
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
-	peer, err := api.NewPeerConnection(webrtc.Configuration{})
+	peer, err := api.NewPeerConnection(webrtc.Configuration{
+		ICEServers: buildICEServers(iceServers),
+	})
 	if err != nil {
 		return fmt.Errorf("create peer connection failed: %w", err)
 	}
@@ -114,7 +129,7 @@ func (b *adbWebRTCBridge) HandleOffer(ctx context.Context, serial, sdpType, sdp 
 		_ = peer.Close()
 		return fmt.Errorf("add h264 track failed: %w", err)
 	}
-	go drainRTCP(sender)
+	go drainRTCP(sender, b.requestKeyframe)
 
 	streamCtx, cancel := context.WithCancel(ctx)
 	var startVideoOnce sync.Once
@@ -195,6 +210,30 @@ func (b *adbWebRTCBridge) HandleOffer(ctx context.Context, serial, sdpType, sdp 
 	return nil
 }
 
+func buildICEServers(configs []protocol.WebRTCIceServer) []webrtc.ICEServer {
+	if len(configs) == 0 {
+		return nil
+	}
+	servers := make([]webrtc.ICEServer, 0, len(configs))
+	for _, config := range configs {
+		urls := make([]string, 0, len(config.URLs))
+		for _, rawURL := range config.URLs {
+			if trimmed := strings.TrimSpace(rawURL); trimmed != "" {
+				urls = append(urls, trimmed)
+			}
+		}
+		if len(urls) == 0 {
+			continue
+		}
+		servers = append(servers, webrtc.ICEServer{
+			URLs:       urls,
+			Username:   strings.TrimSpace(config.Username),
+			Credential: strings.TrimSpace(config.Credential),
+		})
+	}
+	return servers
+}
+
 func (b *adbWebRTCBridge) handleControlMessage(ctx context.Context, serial string, screenSize adb.Size, payload []byte) error {
 	var message adbControlMessage
 	if err := json.Unmarshal(payload, &message); err != nil {
@@ -212,6 +251,40 @@ func (b *adbWebRTCBridge) handleControlMessage(ctx context.Context, serial strin
 			message.Y = screenSize.Height - 1
 		}
 		return adb.Tap(ctx, serial, message.X, message.Y)
+	case "swipe":
+		if message.StartX < 0 || message.StartY < 0 || message.EndX < 0 || message.EndY < 0 {
+			return fmt.Errorf("adb swipe 坐标必须为非负整数")
+		}
+		if screenSize.Width > 0 {
+			if message.StartX >= screenSize.Width {
+				message.StartX = screenSize.Width - 1
+			}
+			if message.EndX >= screenSize.Width {
+				message.EndX = screenSize.Width - 1
+			}
+		}
+		if screenSize.Height > 0 {
+			if message.StartY >= screenSize.Height {
+				message.StartY = screenSize.Height - 1
+			}
+			if message.EndY >= screenSize.Height {
+				message.EndY = screenSize.Height - 1
+			}
+		}
+		return adb.Swipe(
+			ctx,
+			serial,
+			message.StartX,
+			message.StartY,
+			message.EndX,
+			message.EndY,
+			message.DurationMS,
+		)
+	case "keyevent":
+		if strings.TrimSpace(message.Keycode) == "" {
+			return fmt.Errorf("adb keyevent keycode 不能为空")
+		}
+		return adb.Keyevent(ctx, serial, message.Keycode)
 	default:
 		return fmt.Errorf("暂不支持的 ADB 控制消息类型: %s", message.Type)
 	}
@@ -219,10 +292,10 @@ func (b *adbWebRTCBridge) handleControlMessage(ctx context.Context, serial strin
 
 func (b *adbWebRTCBridge) streamVideo(ctx context.Context, serial string, screenSize adb.Size, track *webrtc.TrackLocalStaticSample) {
 	config := adb.H264StreamConfig{
-		BitRate:      2_000_000,
-		MaxDimension: 1280,
+		BitRate:      1_500_000,
+		MaxDimension: 960,
 		TimeLimit:    170 * time.Second,
-		FrameRate:    15,
+		FrameRate:    30,
 	}
 
 	if err := adb.WarmupScreen(ctx, serial); err != nil && ctx.Err() == nil {
@@ -233,19 +306,37 @@ func (b *adbWebRTCBridge) streamVideo(ctx context.Context, serial string, screen
 		if ctx.Err() != nil {
 			return
 		}
-		stream, err := adb.StartH264Stream(ctx, serial, config)
+		streamCtx, streamCancel := context.WithCancel(ctx)
+		b.mu.Lock()
+		b.streamToken++
+		token := b.streamToken
+		b.streamCancel = streamCancel
+		b.mu.Unlock()
+		stream, err := adb.StartH264Stream(streamCtx, serial, config)
 		if err != nil {
+			streamCancel()
+			b.clearStreamCancel(token)
 			b.emit(protocol.NewADBWebRTCStateEvent(b.sessionID(), false, false, serial, screenSize.Width, screenSize.Height, err.Error()))
 			b.Stop("")
 			return
 		}
 
-		pumpErr := adb.PumpH264Stream(ctx, stream.Reader(), config, func(frame []byte, duration time.Duration) error {
+		pumpErr := adb.PumpH264Stream(streamCtx, stream.Reader(), config, func(frame []byte, duration time.Duration) error {
 			return track.WriteSample(media.Sample{Data: frame, Duration: duration})
 		})
 		closeErr := stream.Close()
+		streamCancel()
+		b.clearStreamCancel(token)
 		if ctx.Err() != nil {
 			return
+		}
+		if errors.Is(pumpErr, context.Canceled) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(120 * time.Millisecond):
+				continue
+			}
 		}
 		if pumpErr != nil && !errors.Is(pumpErr, context.Canceled) && !errors.Is(pumpErr, io.EOF) {
 			b.emit(protocol.NewADBWebRTCStateEvent(b.sessionID(), false, false, serial, screenSize.Width, screenSize.Height, "H264 推流中断: "+pumpErr.Error()))
@@ -264,6 +355,14 @@ func (b *adbWebRTCBridge) streamVideo(ctx context.Context, serial string, screen
 	}
 }
 
+func (b *adbWebRTCBridge) clearStreamCancel(token int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.streamToken == token {
+		b.streamCancel = nil
+	}
+}
+
 func (b *adbWebRTCBridge) sessionID() string {
 	if b.sessionIDFn == nil {
 		return ""
@@ -271,14 +370,42 @@ func (b *adbWebRTCBridge) sessionID() string {
 	return b.sessionIDFn()
 }
 
-func drainRTCP(sender *webrtc.RTPSender) {
+func (b *adbWebRTCBridge) requestKeyframe() {
+	b.mu.Lock()
+	cancel := b.streamCancel
+	now := time.Now()
+	if cancel == nil || now.Sub(b.lastKeyframeRequest) < 800*time.Millisecond {
+		b.mu.Unlock()
+		return
+	}
+	b.lastKeyframeRequest = now
+	b.mu.Unlock()
+
+	logx.Info("ws", "forcing adb keyframe refresh: sessionID=%s", b.sessionID())
+	cancel()
+}
+
+func drainRTCP(sender *webrtc.RTPSender, onKeyframe func()) {
 	if sender == nil {
 		return
 	}
 	buffer := make([]byte, 1500)
 	for {
-		if _, _, err := sender.Read(buffer); err != nil {
+		n, _, err := sender.Read(buffer)
+		if err != nil {
 			return
+		}
+		packets, packetErr := rtcp.Unmarshal(buffer[:n])
+		if packetErr != nil {
+			continue
+		}
+		for _, packet := range packets {
+			switch packet.(type) {
+			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+				if onKeyframe != nil {
+					onKeyframe()
+				}
+			}
 		}
 	}
 }

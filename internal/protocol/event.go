@@ -259,11 +259,34 @@ type ADBTapRequestEvent struct {
 	Y      int    `json:"y"`
 }
 
+type ADBSwipeRequestEvent struct {
+	ClientEvent
+	Serial     string `json:"serial,omitempty"`
+	StartX     int    `json:"startX"`
+	StartY     int    `json:"startY"`
+	EndX       int    `json:"endX"`
+	EndY       int    `json:"endY"`
+	DurationMS int    `json:"durationMs,omitempty"`
+}
+
+type ADBKeyeventRequestEvent struct {
+	ClientEvent
+	Serial  string `json:"serial,omitempty"`
+	Keycode string `json:"keycode"`
+}
+
+type WebRTCIceServer struct {
+	URLs       []string `json:"urls,omitempty"`
+	Username   string   `json:"username,omitempty"`
+	Credential string   `json:"credential,omitempty"`
+}
+
 type ADBWebRTCOfferRequestEvent struct {
 	ClientEvent
-	Serial string `json:"serial,omitempty"`
-	Type   string `json:"sdpType,omitempty"`
-	SDP    string `json:"sdp,omitempty"`
+	Serial     string            `json:"serial,omitempty"`
+	Type       string            `json:"sdpType,omitempty"`
+	SDP        string            `json:"sdp,omitempty"`
+	ICEServers []WebRTCIceServer `json:"iceServers,omitempty"`
 }
 
 type ADBWebRTCStopRequestEvent struct {

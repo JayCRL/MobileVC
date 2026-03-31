@@ -353,6 +353,59 @@ func Tap(ctx context.Context, serial string, x, y int) error {
 	return nil
 }
 
+func Swipe(ctx context.Context, serial string, startX, startY, endX, endY, durationMS int) error {
+	resolvedSerial, err := ResolveSerial(ctx, serial)
+	if err != nil {
+		return err
+	}
+	adbPath, err := resolveADBPath()
+	if err != nil {
+		return err
+	}
+	if durationMS <= 0 {
+		durationMS = 220
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, 2*defaultCommandTimeout)
+	defer cancel()
+
+	args := deviceArgs(
+		resolvedSerial,
+		"shell",
+		"input",
+		"swipe",
+		strconv.Itoa(startX),
+		strconv.Itoa(startY),
+		strconv.Itoa(endX),
+		strconv.Itoa(endY),
+		strconv.Itoa(durationMS),
+	)
+	output, err := exec.CommandContext(commandCtx, adbPath, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("adb swipe failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func Keyevent(ctx context.Context, serial string, keycode string) error {
+	resolvedSerial, err := ResolveSerial(ctx, serial)
+	if err != nil {
+		return err
+	}
+	adbPath, err := resolveADBPath()
+	if err != nil {
+		return err
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, defaultCommandTimeout)
+	defer cancel()
+	args := deviceArgs(resolvedSerial, "shell", "input", "keyevent", keycode)
+	output, err := exec.CommandContext(commandCtx, adbPath, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("adb keyevent %s failed: %w: %s", keycode, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 func WarmupScreen(ctx context.Context, serial string) error {
 	resolvedSerial, err := ResolveSerial(ctx, serial)
 	if err != nil {
