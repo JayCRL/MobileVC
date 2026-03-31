@@ -237,11 +237,16 @@ class _SessionHomePageState extends State<SessionHomePage> {
         TextEditingController(text: controller.config.engine);
     final permissionController =
         TextEditingController(text: controller.config.permissionMode);
+    final iceServersController = TextEditingController(
+      text: controller.config.adbIceServersJson,
+    );
     String scanHint = '';
 
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
@@ -264,6 +269,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
                   engine: engineController.text.trim(),
                   permissionMode: permissionController.text.trim(),
                   fastMode: controller.fastMode,
+                  adbIceServersJson: iceServersController.text.trim(),
                 ),
               );
               if (scanned == null) {
@@ -291,6 +297,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
                   engine: engineController.text.trim(),
                   permissionMode: permissionController.text.trim(),
                   fastMode: controller.fastMode,
+                  adbIceServersJson: iceServersController.text.trim(),
                 ),
               );
               if (connect) {
@@ -356,6 +363,23 @@ class _SessionHomePageState extends State<SessionHomePage> {
                         controller: permissionController,
                         decoration: const InputDecoration(
                             labelText: 'Permission Mode')),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: iceServersController,
+                      minLines: 3,
+                      maxLines: 6,
+                      decoration: const InputDecoration(
+                        labelText: 'ADB ICE Servers JSON',
+                        hintText:
+                            '[{"urls":["stun:stun.l.google.com:19302"]},{"urls":["turn:your-turn-host:3478?transport=udp"],"username":"user","credential":"pass"}]',
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '公网 ADB 预览需要配置 TURN/ICE。只填 STUN 可能仍无法穿透，公网优先填 TURN。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                     const SizedBox(height: 16),
                     Row(
                       children: [
@@ -642,7 +666,6 @@ class _SessionHomePageState extends State<SessionHomePage> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (context) => AdbDebugPage(controller: controller),
-        fullscreenDialog: true,
       ),
     );
   }

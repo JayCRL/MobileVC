@@ -1631,7 +1631,7 @@
       const diff = currentFileDiff();
       const reviewDiff = appState.file.viewMode === 'diff' ? currentReviewContext() : null;
       const lang = appState.file.lang || detectLanguageFromPath(appState.file.activePath);
-      fileReviewBar.classList.toggle('hidden', !(reviewDiff && pathMatches(reviewDiff.path, appState.file.activePath) && !isAutoAcceptMode()));
+      fileReviewBar.classList.toggle('hidden', !(reviewDiff && pathMatches(reviewDiff.path, appState.file.activePath)));
       appState.file.pendingReview = !!reviewDiff;
       fileViewRevertBtn.classList.toggle('hidden', !diff);
       fileCodeContainer.innerHTML = diff ? renderDiffViewer(diff.diff || '') : renderCodeViewer(appState.file.content || '', appState.file.activePath || '', lang, appState.file.isText !== false, appState.file.error || '');

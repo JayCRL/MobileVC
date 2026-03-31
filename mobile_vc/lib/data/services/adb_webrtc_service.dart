@@ -22,6 +22,7 @@ class AdbWebRtcService {
   bool get isReady => _initialized;
 
   Future<void> start({
+    List<Map<String, dynamic>> iceServers = const <Map<String, dynamic>>[],
     required Future<void> Function(String sdpType, String sdp) onOfferReady,
     void Function(RTCPeerConnectionState state)? onConnectionState,
   }) async {
@@ -29,7 +30,7 @@ class AdbWebRtcService {
     await stop();
 
     final peerConnection = await createPeerConnection(<String, dynamic>{
-      'iceServers': const <Map<String, dynamic>>[],
+      'iceServers': iceServers,
       'sdpSemantics': 'unified-plan',
     });
 
@@ -44,6 +45,15 @@ class AdbWebRtcService {
       unawaited(_attachRemoteTrack(event.track));
     };
     peerConnection.onConnectionState = onConnectionState;
+
+    // iOS native WebRTC is less reliable with legacy offerToReceiveVideo
+    // constraints; create an explicit recvonly video transceiver first.
+    await peerConnection.addTransceiver(
+      kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
+      init: RTCRtpTransceiverInit(
+        direction: TransceiverDirection.RecvOnly,
+      ),
+    );
 
     final dataChannel = await peerConnection.createDataChannel(
       'adb-control',
@@ -104,6 +114,50 @@ class AdbWebRtcService {
     controlChannel.send(
       RTCDataChannelMessage(
         jsonEncode(<String, dynamic>{'type': 'tap', 'x': x, 'y': y}),
+      ),
+    );
+  }
+
+  void sendSwipe(
+    int startX,
+    int startY,
+    int endX,
+    int endY, {
+    int durationMs = 220,
+  }) {
+    final controlChannel = _controlChannel;
+    if (controlChannel == null ||
+        controlChannel.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    controlChannel.send(
+      RTCDataChannelMessage(
+        jsonEncode(<String, dynamic>{
+          'type': 'swipe',
+          'startX': startX,
+          'startY': startY,
+          'endX': endX,
+          'endY': endY,
+          'durationMs': durationMs,
+        }),
+      ),
+    );
+  }
+
+  void sendKeyevent(String keycode) {
+    final controlChannel = _controlChannel;
+    final normalized = keycode.trim();
+    if (normalized.isEmpty ||
+        controlChannel == null ||
+        controlChannel.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    controlChannel.send(
+      RTCDataChannelMessage(
+        jsonEncode(<String, dynamic>{
+          'type': 'keyevent',
+          'keycode': normalized,
+        }),
       ),
     );
   }

@@ -1562,6 +1562,9 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		var envelope claudeStreamEnvelope
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
 			logx.Warn("pty", "claude stream json parse failed: sessionID=%s reason=json_unmarshal_failed err=%v preview=%q", sessionID, err, ptyDebugPreview(line))
+			if shouldSuppressClaudeRawLine(line) {
+				continue
+			}
 			sendEvent(sink, protocol.NewLogEvent(sessionID, line, "stdout"))
 			continue
 		}
@@ -1701,6 +1704,38 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		}
 		sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read claude stream: %v", err), ""))
 	}
+}
+
+func shouldSuppressClaudeRawLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return true
+	}
+	if !(strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) {
+		return false
+	}
+
+	// Claude stream-json occasionally emits oversized or schema-drifting JSON
+	// payloads that failed to decode into our envelope model. Showing the raw
+	// payload in the mobile timeline creates "garbled command spam" UX.
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return false
+	}
+
+	if _, ok := payload["type"]; ok {
+		return true
+	}
+	if _, ok := payload["message"]; ok {
+		return true
+	}
+	if _, ok := payload["tool_use_result"]; ok {
+		return true
+	}
+	if _, ok := payload["session_id"]; ok {
+		return true
+	}
+	return false
 }
 
 func (r *PtyRunner) rememberAssistantText(text string) {

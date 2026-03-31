@@ -168,9 +168,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-			persistCtx, persistCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer persistCancel()
-			if _, err := h.SessionStore.SaveProjection(persistCtx, sessionID, snapshot); err != nil {
+		persistCtx, persistCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer persistCancel()
+		if _, err := h.SessionStore.SaveProjection(persistCtx, sessionID, snapshot); err != nil {
 			logx.Error("ws", "save session projection failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 		}
 	}
@@ -1207,6 +1207,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
+		case "adb_swipe":
+			var adbReq protocol.ADBSwipeRequestEvent
+			if err := json.Unmarshal(payload, &adbReq); err != nil {
+				logx.Warn("ws", "invalid adb_swipe request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_swipe request: %v", err), ""))
+				continue
+			}
+			if adbReq.StartX < 0 || adbReq.StartY < 0 || adbReq.EndX < 0 || adbReq.EndY < 0 {
+				emit(protocol.NewErrorEvent(selectedSessionID, "adb swipe 坐标必须为非负整数", ""))
+				continue
+			}
+			adbMu.Lock()
+			activeSerial := adbActiveSerial
+			adbMu.Unlock()
+			serial := strings.TrimSpace(adbReq.Serial)
+			if serial == "" {
+				serial = activeSerial
+			}
+			if err := adb.Swipe(ctx, serial, adbReq.StartX, adbReq.StartY, adbReq.EndX, adbReq.EndY, adbReq.DurationMS); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+		case "adb_keyevent":
+			var adbReq protocol.ADBKeyeventRequestEvent
+			if err := json.Unmarshal(payload, &adbReq); err != nil {
+				logx.Warn("ws", "invalid adb_keyevent request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_keyevent request: %v", err), ""))
+				continue
+			}
+			if strings.TrimSpace(adbReq.Keycode) == "" {
+				emit(protocol.NewErrorEvent(selectedSessionID, "adb keyevent keycode 不能为空", ""))
+				continue
+			}
+			adbMu.Lock()
+			activeSerial := adbActiveSerial
+			adbMu.Unlock()
+			serial := strings.TrimSpace(adbReq.Serial)
+			if serial == "" {
+				serial = activeSerial
+			}
+			if err := adb.Keyevent(ctx, serial, adbReq.Keycode); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
 		case "adb_webrtc_offer":
 			var adbReq protocol.ADBWebRTCOfferRequestEvent
 			if err := json.Unmarshal(payload, &adbReq); err != nil {
@@ -1215,7 +1259,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			stopADBStream("")
-			if err := adbRTC.HandleOffer(ctx, adbReq.Serial, adbReq.Type, adbReq.SDP); err != nil {
+			if err := adbRTC.HandleOffer(ctx, adbReq.Serial, adbReq.Type, adbReq.SDP, adbReq.ICEServers); err != nil {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}

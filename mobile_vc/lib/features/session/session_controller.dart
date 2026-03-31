@@ -374,16 +374,17 @@ class SessionController extends ChangeNotifier {
   }
 
   bool get shouldShowReviewChoices {
-    if (!isManualReviewMode) {
-      return false;
-    }
     final state = (_agentState?.state ?? '').trim().toUpperCase();
     final interaction = pendingInteraction;
     final prompt = pendingPrompt;
     return currentReviewDiff != null &&
         state == 'WAIT_INPUT' &&
+        !hasPendingPermissionPrompt &&
+        !hasPendingPlanPrompt &&
+        !hasPendingPlanQuestions &&
         (interaction?.isReview == true ||
-            prompt?.looksLikeReviewPrompt == true);
+            prompt?.looksLikeReviewPrompt == true ||
+            hasPendingReview);
   }
 
   String _debugReviewStateSummary() {
@@ -473,10 +474,6 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> acceptAllPendingDiffs() async {
-    if (!isManualReviewMode) {
-      _pushSystem('session', '当前是自动接受修改模式，无需手动审核 diff');
-      return;
-    }
     final diffs = List<HistoryContext>.from(_pendingDiffs);
     if (diffs.isEmpty) {
       _pushSystem('error', '当前没有待审核的 diff');
@@ -739,6 +736,15 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> connect() async {
+    if (_isInvalidLoopbackHostForMobile()) {
+      _connecting = false;
+      _connected = false;
+      _connectionMessage = 'iPhone 不能使用 localhost/127.0.0.1，请改成 Mac 的局域网 IP';
+      _pushSystem('error', _connectionMessage);
+      _syncDerivedState();
+      notifyListeners();
+      return;
+    }
     _connecting = true;
     _connectionMessage = '连接中...';
     _syncDerivedState();
@@ -1183,6 +1189,14 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> _startAdbStream({String serial = ''}) async {
+    if (_isInvalidLoopbackHostForMobile()) {
+      _adbStatus = 'iPhone 不能连接 localhost/127.0.0.1，请改成 Mac 的局域网 IP';
+      _adbStreaming = false;
+      _adbWebRtcConnected = false;
+      _adbWebRtcStarting = false;
+      notifyListeners();
+      return;
+    }
     final target =
         serial.trim().isNotEmpty ? serial.trim() : _adbSelectedSerial.trim();
     _adbWebRtcStartTimeout?.cancel();
@@ -1191,12 +1205,15 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
     try {
       await _adbWebRtc.start(
+        iceServers: _config.adbIceServers,
         onOfferReady: (sdpType, sdp) async {
           _service.send({
             'action': 'adb_webrtc_offer',
             if (target.isNotEmpty) 'serial': target,
             'sdpType': sdpType,
             'sdp': sdp,
+            if (_config.adbIceServers.isNotEmpty)
+              'iceServers': _config.adbIceServers,
           });
         },
         onConnectionState: _handleAdbWebRtcConnectionState,
@@ -1205,7 +1222,9 @@ class SessionController extends ChangeNotifier {
         if (_adbWebRtcConnected || _adbStreaming) {
           return;
         }
-        _adbStatus = 'WebRTC 建链超时，请重试';
+        _adbStatus = _config.adbIceServers.isEmpty
+            ? 'WebRTC 建链超时，请配置 TURN/ICE 后重试'
+            : 'WebRTC 建链超时，请检查 TURN/ICE 配置';
         _adbWebRtcStarting = false;
         _adbStreaming = false;
         notifyListeners();
@@ -1266,6 +1285,54 @@ class SessionController extends ChangeNotifier {
       if (serial.trim().isNotEmpty) 'serial': serial.trim(),
       'x': x,
       'y': y,
+    });
+  }
+
+  void sendAdbKeyevent(String keycode, {String serial = ''}) {
+    final normalized = keycode.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    if (_adbWebRtc.canSendControl) {
+      _adbWebRtc.sendKeyevent(normalized);
+      return;
+    }
+    _service.send({
+      'action': 'adb_keyevent',
+      if (serial.trim().isNotEmpty) 'serial': serial.trim(),
+      'keycode': normalized,
+    });
+  }
+
+  void sendAdbSwipe(
+    int startX,
+    int startY,
+    int endX,
+    int endY, {
+    String serial = '',
+    int durationMs = 220,
+  }) {
+    if (startX < 0 || startY < 0 || endX < 0 || endY < 0) {
+      return;
+    }
+    if (_adbWebRtc.canSendControl) {
+      _adbWebRtc.sendSwipe(
+        startX,
+        startY,
+        endX,
+        endY,
+        durationMs: durationMs,
+      );
+      return;
+    }
+    _service.send({
+      'action': 'adb_swipe',
+      if (serial.trim().isNotEmpty) 'serial': serial.trim(),
+      'startX': startX,
+      'startY': startY,
+      'endX': endX,
+      'endY': endY,
+      'durationMs': durationMs,
     });
   }
 
@@ -1338,6 +1405,20 @@ class SessionController extends ChangeNotifier {
         break;
     }
     notifyListeners();
+  }
+
+  bool _isInvalidLoopbackHostForMobile() {
+    if (kIsWeb) {
+      return false;
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+      case TargetPlatform.android:
+        final host = _config.host.trim().toLowerCase();
+        return host == 'localhost' || host == '127.0.0.1';
+      default:
+        return false;
+    }
   }
 
   void updateSessionContext({
@@ -2672,10 +2753,6 @@ class SessionController extends ChangeNotifier {
     String normalized, {
     bool pushTimeline = true,
   }) {
-    if (!isManualReviewMode) {
-      _pushSystem('session', '当前是自动接受修改模式，无需手动审核 diff');
-      return;
-    }
     final reviewedDiffId = _diffIdentity(diff);
     _activeReviewDiffId = reviewedDiffId;
     final groupId = _groupIdForDiff(diff);
