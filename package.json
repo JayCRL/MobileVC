@@ -1,6 +1,6 @@
 {
   "name": "@justprove/mobilevc",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Claude Code mobile workspace launcher with precompiled MobileVC backend binaries.",
   "license": "MIT",
   "type": "commonjs",
@@ -29,10 +29,10 @@
     "qrcode-terminal": "^0.12.0"
   },
   "optionalDependencies": {
-    "@justprove/mobilevc-server-darwin-arm64": "0.1.6",
-    "@justprove/mobilevc-server-darwin-x64": "0.1.6",
-    "@justprove/mobilevc-server-linux-arm64": "0.1.6",
-    "@justprove/mobilevc-server-linux-x64": "0.1.6",
-    "@justprove/mobilevc-server-win32-x64": "0.1.6"
+    "@justprove/mobilevc-server-darwin-arm64": "0.1.7",
+    "@justprove/mobilevc-server-darwin-x64": "0.1.7",
+    "@justprove/mobilevc-server-linux-arm64": "0.1.7",
+    "@justprove/mobilevc-server-linux-x64": "0.1.7",
+    "@justprove/mobilevc-server-win32-x64": "0.1.7"
   }
 }
