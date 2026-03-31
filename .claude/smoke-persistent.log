@@ -1,0 +1,35 @@
+connected
+init session_state active connected
+init agent_state IDLE 空闲
+init skill_catalog_result  
+init memory_list_result  
+init session_list_result  
+send {'action': 'session_create', 'title': 'smoke-persistent-log'}
+create session_created  
+create session_state active session selected
+create session_list_result  
+send {'action': 'exec', 'cmd': 'claude', 'mode': 'pty'}
+exec agent_state THINKING 思考中
+exec session_state active command started
+exec prompt_request  Claude 会话已就绪，可继续输入
+send {'action': 'input', 'data': '请先简短确认你已就绪，然后继续保持同一个会话。\n'}
+turn1 agent_state WAIT_INPUT Claude 会话已就绪，可继续输入
+turn1 agent_state THINKING 思考中
+turn1 session_state active AI 会话已续接
+turn1 log  已就绪，我们继续保持同一个会话。
+turn1 progress  耗时 5.2s · 1 轮 · $0.0546
+turn1 agent_state IDLE 会话已暂停，可继续对话
+send {'action': 'input', 'data': '第二句：继续确认你还在同一个会话里。\n'}
+turn2 agent_state THINKING 思考中
+turn2 session_state active command started
+turn2 prompt_request  Claude 会话已就绪，可继续输入
+turn2 agent_state WAIT_INPUT Claude 会话已就绪，可继续输入
+turn2 agent_state THINKING 思考中
+turn2 session_state active AI 会话已续接
+turn2 log  是的，我还在同一个会话里。
+turn2 progress  耗时 7.6s · 1 轮 · $0.0322
+send {'action': 'input', 'data': '第三句：再确认一次连续交互正常。\n'}
+turn3 agent_state THINKING 思考中
+turn3 log  连续交互正常。
+turn3 progress  耗时 3.7s · 1 轮 · $0.0444
+done
