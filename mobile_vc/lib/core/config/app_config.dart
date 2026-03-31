@@ -7,6 +7,8 @@ class AppConfig {
     this.token = 'test',
     this.cwd = '.',
     this.engine = 'claude',
+    this.model = '',
+    this.reasoningEffort = '',
     this.permissionMode = 'default',
     this.fastMode = false,
     this.adbIceServersJson = '',
@@ -17,6 +19,8 @@ class AppConfig {
   final String token;
   final String cwd;
   final String engine;
+  final String model;
+  final String reasoningEffort;
   final String permissionMode;
   final bool fastMode;
   final String adbIceServersJson;
@@ -82,6 +86,8 @@ class AppConfig {
     String? token,
     String? cwd,
     String? engine,
+    String? model,
+    String? reasoningEffort,
     String? permissionMode,
     bool? fastMode,
     String? adbIceServersJson,
@@ -92,6 +98,8 @@ class AppConfig {
       token: token ?? this.token,
       cwd: cwd ?? this.cwd,
       engine: engine ?? this.engine,
+      model: model ?? this.model,
+      reasoningEffort: reasoningEffort ?? this.reasoningEffort,
       permissionMode: permissionMode ?? this.permissionMode,
       fastMode: fastMode ?? this.fastMode,
       adbIceServersJson: adbIceServersJson ?? this.adbIceServersJson,
@@ -104,6 +112,8 @@ class AppConfig {
         'token': token,
         'cwd': cwd,
         'engine': engine,
+        'model': model,
+        'reasoningEffort': reasoningEffort,
         'permissionMode': permissionMode,
         'fastMode': fastMode,
         'adbIceServersJson': adbIceServersJson,
@@ -116,6 +126,8 @@ class AppConfig {
       token: (json['token'] ?? 'test').toString(),
       cwd: (json['cwd'] ?? '.').toString(),
       engine: (json['engine'] ?? 'claude').toString(),
+      model: (json['model'] ?? '').toString(),
+      reasoningEffort: (json['reasoningEffort'] ?? '').toString(),
       permissionMode: (json['permissionMode'] ?? 'default').toString(),
       fastMode: json['fastMode'] == true,
       adbIceServersJson: (json['adbIceServersJson'] ?? '').toString(),

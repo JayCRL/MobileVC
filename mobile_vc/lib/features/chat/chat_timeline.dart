@@ -102,9 +102,8 @@ class _ChatTimelineState extends State<ChatTimeline> {
             : (widget.pendingPrompt?.hasVisiblePrompt == true
                 ? widget.pendingPrompt
                 : null));
-    final visiblePlanQuestion = widget.shouldShowPlanChoices
-        ? widget.pendingPlanQuestion
-        : null;
+    final visiblePlanQuestion =
+        widget.shouldShowPlanChoices ? widget.pendingPlanQuestion : null;
     final visiblePromptMessage = visiblePrompt is InteractionRequestEvent
         ? visiblePrompt.message
         : visiblePrompt is PromptRequestEvent
@@ -116,8 +115,7 @@ class _ChatTimelineState extends State<ChatTimeline> {
         widget.items[i],
         if (reviewAnchorIndex == i && widget.activeReviewDiff != null)
           TimelineItem(
-            id:
-                'review-summary-${widget.activeReviewDiff!.id}-${widget.pendingDiffCount}',
+            id: 'review-summary-${widget.activeReviewDiff!.id}-${widget.pendingDiffCount}',
             kind: 'review_summary',
             timestamp: widget.items[i].timestamp,
             title: widget.activeReviewDiff!.title,
@@ -142,17 +140,14 @@ class _ChatTimelineState extends State<ChatTimeline> {
               : 'prompt_request',
           timestamp: visiblePrompt.timestamp,
           title: visiblePrompt is InteractionRequestEvent
-              ? (visiblePrompt.title.isNotEmpty
-                  ? visiblePrompt.title
-                  : '交互确认')
+              ? (visiblePrompt.title.isNotEmpty ? visiblePrompt.title : '交互确认')
               : '授权确认',
           body: visiblePromptMessage,
           meta: visiblePrompt.runtimeMeta,
         ),
       if (visiblePlanQuestion != null)
         TimelineItem(
-          id:
-              'pending-plan-${visiblePlanQuestion.id}-${widget.pendingPlanProgressLabel}',
+          id: 'pending-plan-${visiblePlanQuestion.id}-${widget.pendingPlanProgressLabel}',
           kind: 'plan_request',
           timestamp: DateTime.now(),
           title: visiblePlanQuestion.displayLabel,
@@ -163,61 +158,92 @@ class _ChatTimelineState extends State<ChatTimeline> {
     if (items.isEmpty) {
       return const SizedBox.shrink();
     }
-    return ListView.separated(
-      controller: _scrollController,
-      reverse: false,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
-      itemBuilder: (context, index) {
-        final item = items[index];
-        if (item.kind == 'file_diff') {
-          return const SizedBox.shrink();
-        }
-        if (item.kind == 'review_summary') {
-          return _ReviewSummaryCard(
-            diff: item.context,
-            reviewGroup: widget.activeReviewGroup,
-            pendingDiffCount: widget.pendingDiffCount,
-            pendingReviewGroupCount: widget.pendingReviewGroupCount,
-            isManualReviewMode: widget.isManualReviewMode,
-            isAutoAcceptMode: widget.isAutoAcceptMode,
-            shouldShowReviewChoices: widget.shouldShowReviewChoices,
-            onOpenDiff: widget.onOpenDiff,
-            onReviewDecision: widget.onReviewDecision,
-            onAcceptAll: widget.onAcceptAll,
+    final displayItems = <Object>[
+      _TimelineHeaderModel(
+        totalCount: items
+            .whereType<TimelineItem>()
+            .where((item) => item.kind != 'file_diff')
+            .length,
+        hasPrompt: visiblePrompt != null,
+        hasPlan: visiblePlanQuestion != null,
+        pendingDiffCount: widget.pendingDiffCount,
+        autoAccept: widget.isAutoAcceptMode,
+      ),
+      ...items,
+    ];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Theme.of(context).colorScheme.primary.withValues(alpha: 0.04),
+            Theme.of(context).colorScheme.surface,
+            Theme.of(context).colorScheme.surface,
+          ],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: ListView.separated(
+        controller: _scrollController,
+        reverse: false,
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 128),
+        itemBuilder: (context, index) {
+          final entry = displayItems[index];
+          if (entry is _TimelineHeaderModel) {
+            return _TimelineOverviewCard(model: entry);
+          }
+          final item = entry as TimelineItem;
+          if (item.kind == 'file_diff') {
+            return const SizedBox.shrink();
+          }
+          if (item.kind == 'review_summary') {
+            return _ReviewSummaryCard(
+              diff: item.context,
+              reviewGroup: widget.activeReviewGroup,
+              pendingDiffCount: widget.pendingDiffCount,
+              pendingReviewGroupCount: widget.pendingReviewGroupCount,
+              isManualReviewMode: widget.isManualReviewMode,
+              isAutoAcceptMode: widget.isAutoAcceptMode,
+              shouldShowReviewChoices: widget.shouldShowReviewChoices,
+              onOpenDiff: widget.onOpenDiff,
+              onReviewDecision: widget.onReviewDecision,
+              onAcceptAll: widget.onAcceptAll,
+            );
+          }
+          if ((item.kind == 'prompt_request' ||
+                  item.kind == 'interaction_request') &&
+              visiblePrompt != null) {
+            return visiblePrompt is InteractionRequestEvent
+                ? _InteractionRequestCard(
+                    interaction: visiblePrompt,
+                    onSubmit: widget.onPromptSubmit,
+                  )
+                : _PromptRequestCard(
+                    prompt: visiblePrompt as PromptRequestEvent,
+                    onSubmit: widget.onPromptSubmit,
+                  );
+          }
+          if (item.kind == 'plan_request' && visiblePlanQuestion != null) {
+            return _PlanQuestionCard(
+              question: visiblePlanQuestion,
+              progressLabel: widget.pendingPlanProgressLabel,
+              onSubmit: widget.onPromptSubmit,
+            );
+          }
+          return EventCard(
+            item: item,
+            onTap: () {
+              if (item.kind == 'runtime_info_result') {
+                widget.onOpenRuntimeInfo?.call();
+              } else if (item.kind == 'fs_read_result') {
+                widget.onOpenFile?.call();
+              }
+            },
           );
-        }
-        if ((item.kind == 'prompt_request' || item.kind == 'interaction_request') &&
-            visiblePrompt != null) {
-          return visiblePrompt is InteractionRequestEvent
-              ? _InteractionRequestCard(
-                  interaction: visiblePrompt,
-                  onSubmit: widget.onPromptSubmit,
-                )
-              : _PromptRequestCard(
-                  prompt: visiblePrompt as PromptRequestEvent,
-                  onSubmit: widget.onPromptSubmit,
-                );
-        }
-        if (item.kind == 'plan_request' && visiblePlanQuestion != null) {
-          return _PlanQuestionCard(
-            question: visiblePlanQuestion,
-            progressLabel: widget.pendingPlanProgressLabel,
-            onSubmit: widget.onPromptSubmit,
-          );
-        }
-        return EventCard(
-          item: item,
-          onTap: () {
-            if (item.kind == 'runtime_info_result') {
-              widget.onOpenRuntimeInfo?.call();
-            } else if (item.kind == 'fs_read_result') {
-              widget.onOpenFile?.call();
-            }
-          },
-        );
-      },
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemCount: items.length,
+        },
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemCount: displayItems.length,
+      ),
     );
   }
 
@@ -249,6 +275,120 @@ class _ChatTimelineState extends State<ChatTimeline> {
   }
 }
 
+class _TimelineHeaderModel {
+  const _TimelineHeaderModel({
+    required this.totalCount,
+    required this.hasPrompt,
+    required this.hasPlan,
+    required this.pendingDiffCount,
+    required this.autoAccept,
+  });
+
+  final int totalCount;
+  final bool hasPrompt;
+  final bool hasPlan;
+  final int pendingDiffCount;
+  final bool autoAccept;
+}
+
+class _TimelineOverviewCard extends StatelessWidget {
+  const _TimelineOverviewCard({required this.model});
+
+  final _TimelineHeaderModel model;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            theme.colorScheme.primaryContainer,
+            Color.alphaBlend(
+              theme.colorScheme.primary.withValues(alpha: 0.08),
+              theme.colorScheme.surface,
+            ),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.7),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: theme.colorScheme.primary.withValues(alpha: 0.10),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface.withValues(alpha: 0.72),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  Icons.forum_rounded,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '会话时间线',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '这里聚合 AI 回复、工具结果、审核步骤和交互请求，整个会话会按时间顺序持续展开。',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _OverviewChip(label: '消息', value: '${model.totalCount}'),
+              if (model.pendingDiffCount > 0)
+                _OverviewChip(
+                  label: '待审核',
+                  value: '${model.pendingDiffCount}',
+                ),
+              if (model.hasPrompt)
+                const _OverviewChip(label: '授权', value: '待确认'),
+              if (model.hasPlan) const _OverviewChip(label: '计划', value: '待选择'),
+              _OverviewChip(
+                label: '模式',
+                value: model.autoAccept ? '自动接受修改' : '标准确认',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _InteractionRequestCard extends StatelessWidget {
   const _InteractionRequestCard({
     required this.interaction,
@@ -264,36 +404,15 @@ class _InteractionRequestCard extends StatelessWidget {
     final options = interaction.options
         .where((option) => option.displayText.isNotEmpty)
         .toList();
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: Theme.of(context)
-              .colorScheme
-              .outlineVariant
-              .withValues(alpha: 0.5),
-        ),
-      ),
+    return _ActionCardFrame(
+      icon: Icons.touch_app_rounded,
+      title:
+          interaction.title.trim().isEmpty ? '交互确认' : interaction.title.trim(),
+      description: interaction.message.trim(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (interaction.title.trim().isNotEmpty) ...[
-            Text(
-              interaction.title.trim(),
-              style: Theme.of(context)
-                  .textTheme
-                  .titleSmall
-                  ?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-          ],
-          if (interaction.message.trim().isNotEmpty)
-            Text(interaction.message.trim()),
           if (actions.isNotEmpty) ...[
-            const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -346,12 +465,14 @@ class _InteractionActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     switch (action.variant) {
       case 'primary':
-        return FilledButton(onPressed: onPressed, child: Text(action.displayLabel));
+        return FilledButton(
+            onPressed: onPressed, child: Text(action.displayLabel));
       case 'tonal':
         return FilledButton.tonal(
             onPressed: onPressed, child: Text(action.displayLabel));
       default:
-        return OutlinedButton(onPressed: onPressed, child: Text(action.displayLabel));
+        return OutlinedButton(
+            onPressed: onPressed, child: Text(action.displayLabel));
     }
   }
 }
@@ -368,30 +489,14 @@ class _PromptRequestCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final options = _resolvedOptions();
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: Theme.of(context)
-              .colorScheme
-              .outlineVariant
-              .withValues(alpha: 0.5),
-        ),
-      ),
+    return _ActionCardFrame(
+      icon: Icons.verified_user_outlined,
+      title: '授权确认',
+      description: prompt.message.trim(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (prompt.message.trim().isNotEmpty) ...[
-            Text(
-              prompt.message.trim(),
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-          ],
           if (options.isNotEmpty) ...[
-            if (prompt.message.trim().isNotEmpty) const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -433,51 +538,23 @@ class _PlanQuestionCard extends StatelessWidget {
     final options = question.options
         .where((option) => option.displayText.isNotEmpty)
         .toList(growable: false);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: Theme.of(context)
-              .colorScheme
-              .outlineVariant
-              .withValues(alpha: 0.5),
-        ),
-      ),
+    return _ActionCardFrame(
+      icon: Icons.account_tree_outlined,
+      title: question.displayLabel.isNotEmpty ? question.displayLabel : '计划选择',
+      description: question.message.trim(),
+      trailing: progressLabel.isEmpty
+          ? null
+          : Text(
+              progressLabel,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  question.displayLabel.isNotEmpty
-                      ? question.displayLabel
-                      : '计划选择',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w800),
-                ),
-              ),
-              if (progressLabel.isNotEmpty)
-                Text(
-                  progressLabel,
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w700,
-                      ),
-                ),
-            ],
-          ),
-          if (question.message.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(question.message.trim()),
-          ],
           if (options.isNotEmpty) ...[
-            const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -519,8 +596,6 @@ class _PromptOptionButton extends StatelessWidget {
   }
 }
 
-enum _PromptButtonStyle { outlined }
-
 class _ReviewSummaryCard extends StatelessWidget {
   const _ReviewSummaryCard({
     required this.diff,
@@ -555,21 +630,36 @@ class _ReviewSummaryCard extends StatelessWidget {
     final isSingle = pendingDiffCount <= 1;
     final group = reviewGroup;
     final groupFileCount = group?.files.length ?? 0;
-    final pendingLabelCount = groupFileCount > 0 ? groupFileCount : pendingDiffCount;
+    final pendingLabelCount =
+        groupFileCount > 0 ? groupFileCount : pendingDiffCount;
     final showReviewButtons =
         isSingle && isManualReviewMode && shouldShowReviewChoices;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          colors: [
+            Theme.of(context).colorScheme.surface,
+            Theme.of(context).colorScheme.surfaceContainerLow,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(
           color: Theme.of(context)
               .colorScheme
               .outlineVariant
               .withValues(alpha: 0.55),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -605,9 +695,8 @@ class _ReviewSummaryCard extends StatelessWidget {
                           ? '当前有 $pendingLabelCount 个文件待审核，可进入 differ 逐个处理。'
                           : '当前文件已准备好审核，可直接在这里完成操作。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                             height: 1.45,
                           ),
                     ),
@@ -678,7 +767,8 @@ class _ReviewSummaryCard extends StatelessWidget {
                 FilledButton.tonalIcon(
                   onPressed: onOpenDiff,
                   icon: const Icon(Icons.difference_outlined, size: 16),
-                  label: Text(pendingLabelCount > 1 ? '进入 differ 处理' : '查看 diff'),
+                  label:
+                      Text(pendingLabelCount > 1 ? '进入 differ 处理' : '查看 diff'),
                 ),
                 if (pendingLabelCount > 1)
                   FilledButton(
@@ -700,7 +790,8 @@ class _ReviewSummaryCard extends StatelessWidget {
   String _statusText() {
     final group = reviewGroup;
     final groupFileCount = group?.files.length ?? 0;
-    final pendingLabelCount = groupFileCount > 0 ? groupFileCount : pendingDiffCount;
+    final pendingLabelCount =
+        groupFileCount > 0 ? groupFileCount : pendingDiffCount;
     if (isAutoAcceptMode) {
       return '自动接受修改模式已开启，新的 diff 会自动确认。';
     }
@@ -716,3 +807,128 @@ class _ReviewSummaryCard extends StatelessWidget {
   }
 }
 
+class _ActionCardFrame extends StatelessWidget {
+  const _ActionCardFrame({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.child,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            theme.colorScheme.surface,
+            theme.colorScheme.surfaceContainerHigh,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: theme.colorScheme.primary, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (description.trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        description.trim(),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 12),
+                trailing!,
+              ],
+            ],
+          ),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _OverviewChip extends StatelessWidget {
+  const _OverviewChip({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+        ),
+      ),
+      child: Text(
+        '$label · $value',
+        style: theme.textTheme.labelMedium?.copyWith(
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}

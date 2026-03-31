@@ -53,6 +53,8 @@ type RuntimeMeta struct {
 	TargetText      string `json:"targetText,omitempty"`
 	Command         string `json:"command,omitempty"`
 	Engine          string `json:"engine,omitempty"`
+	Model           string `json:"model,omitempty"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 	CWD             string `json:"cwd,omitempty"`
 	PermissionMode  string `json:"permissionMode,omitempty"`
 	ClaudeLifecycle string `json:"claudeLifecycle,omitempty"`
@@ -1011,6 +1013,12 @@ func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
 	}
 	if overlay.Engine != "" {
 		merged.Engine = overlay.Engine
+	}
+	if overlay.Model != "" {
+		merged.Model = overlay.Model
+	}
+	if overlay.ReasoningEffort != "" {
+		merged.ReasoningEffort = overlay.ReasoningEffort
 	}
 	if overlay.CWD != "" {
 		merged.CWD = overlay.CWD
