@@ -140,6 +140,7 @@ class SessionController extends ChangeNotifier {
   int _adbFrameSeq = 0;
   int _adbFrameIntervalMs = 700;
   Timer? _adbRefreshTimer;
+  Timer? _adbWebRtcStartTimeout;
   bool _adbWebRtcConnected = false;
   bool _adbWebRtcStarting = false;
 
@@ -524,6 +525,21 @@ class SessionController extends ChangeNotifier {
     return sessionState == 'RUNNING' && _activityVisible;
   }
 
+  bool get _canBypassBusyGuardForCodexContinuation {
+    if (!shouldShowClaudeMode) {
+      return false;
+    }
+    final command = currentMeta.command.trim().toLowerCase();
+    if (!(command == 'codex' || command.startsWith('codex '))) {
+      return false;
+    }
+    return !awaitInput &&
+        !hasPendingPermissionPrompt &&
+        !hasPendingPlanQuestions &&
+        !hasPendingPlanPrompt &&
+        !shouldShowReviewChoices;
+  }
+
   String get agentPhaseLabel => _agentPhaseLabel;
   bool get activityVisible => _activityVisible;
   DateTime? get activityStartedAt => _activityStartedAt;
@@ -666,6 +682,7 @@ class SessionController extends ChangeNotifier {
 
   Future<void> disposeController() async {
     _stopAdbRefreshPolling();
+    _adbWebRtcStartTimeout?.cancel();
     await _subscription?.cancel();
     await _adbWebRtc.dispose();
     await _service.dispose();
@@ -1168,6 +1185,7 @@ class SessionController extends ChangeNotifier {
   Future<void> _startAdbStream({String serial = ''}) async {
     final target =
         serial.trim().isNotEmpty ? serial.trim() : _adbSelectedSerial.trim();
+    _adbWebRtcStartTimeout?.cancel();
     _adbStatus = '正在建立 WebRTC + H264 调试链路…';
     _adbWebRtcStarting = true;
     notifyListeners();
@@ -1183,12 +1201,22 @@ class SessionController extends ChangeNotifier {
         },
         onConnectionState: _handleAdbWebRtcConnectionState,
       );
+      _adbWebRtcStartTimeout = Timer(const Duration(seconds: 12), () async {
+        if (_adbWebRtcConnected || _adbStreaming) {
+          return;
+        }
+        _adbStatus = 'WebRTC 建链超时，请重试';
+        _adbWebRtcStarting = false;
+        _adbStreaming = false;
+        notifyListeners();
+        await _adbWebRtc.stop();
+      });
     } catch (error) {
       _adbStatus = 'WebRTC 启动失败：$error';
       _adbStreaming = false;
       _adbWebRtcConnected = false;
-    } finally {
       _adbWebRtcStarting = false;
+      _adbWebRtcStartTimeout?.cancel();
       notifyListeners();
     }
   }
@@ -1198,10 +1226,12 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> _stopAdbStream() async {
+    _adbWebRtcStartTimeout?.cancel();
     _service.send({'action': 'adb_webrtc_stop'});
     await _adbWebRtc.stop();
     _adbStreaming = false;
     _adbWebRtcConnected = false;
+    _adbWebRtcStarting = false;
     if (_adbStatus.trim().isEmpty) {
       _adbStatus = 'ADB WebRTC 调试已停止';
     }
@@ -1266,16 +1296,22 @@ class SessionController extends ChangeNotifier {
   void _handleAdbWebRtcConnectionState(RTCPeerConnectionState state) {
     switch (state) {
       case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+        _adbWebRtcStartTimeout?.cancel();
+        _adbWebRtcStarting = false;
         _adbWebRtcConnected = true;
         _adbStreaming = true;
         _adbStatus = 'WebRTC 已连接，正在接收 H264 画面';
         break;
       case RTCPeerConnectionState.RTCPeerConnectionStateConnecting:
+        _adbWebRtcStartTimeout?.cancel();
+        _adbWebRtcStarting = false;
         _adbWebRtcConnected = false;
         _adbStreaming = true;
         _adbStatus = 'WebRTC 连接中…';
         break;
       case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+        _adbWebRtcStartTimeout?.cancel();
+        _adbWebRtcStarting = false;
         _adbWebRtcConnected = false;
         _adbStreaming = false;
         if (_adbStatus.trim().isEmpty) {
@@ -1283,11 +1319,15 @@ class SessionController extends ChangeNotifier {
         }
         break;
       case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+        _adbWebRtcStartTimeout?.cancel();
+        _adbWebRtcStarting = false;
         _adbWebRtcConnected = false;
         _adbStreaming = false;
         _adbStatus = 'WebRTC 连接失败';
         break;
       case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
+        _adbWebRtcStartTimeout?.cancel();
+        _adbWebRtcStarting = false;
         _adbWebRtcConnected = false;
         _adbStreaming = false;
         if (_adbStatus.trim().isEmpty) {
@@ -1584,7 +1624,7 @@ class SessionController extends ChangeNotifier {
       return;
     }
     if (shouldShowClaudeMode) {
-      if (isSessionBusy) {
+      if (isSessionBusy && !_canBypassBusyGuardForCodexContinuation) {
         _pushSystem('session', '当前 AI 助手会话仍在处理中，请稍后再试。');
         return;
       }
@@ -2190,6 +2230,18 @@ class SessionController extends ChangeNotifier {
       case ErrorEvent error:
         _fileListLoading = false;
         _fileReading = false;
+        final errorMessage = error.message.trim();
+        if (errorMessage.contains('ADB') ||
+            errorMessage.contains('adb ') ||
+            errorMessage.contains('模拟器') ||
+            errorMessage.contains('emulator') ||
+            errorMessage.contains('WebRTC')) {
+          _adbStatus = errorMessage;
+          _adbStreaming = false;
+          _adbWebRtcConnected = false;
+          _adbWebRtcStarting = false;
+          _adbWebRtcStartTimeout?.cancel();
+        }
         _latestError = HistoryContext(
           id: error.runtimeMeta.contextId,
           type: 'error',
@@ -2476,6 +2528,10 @@ class SessionController extends ChangeNotifier {
       case AdbWebRtcStateEvent state:
         _adbStreaming = state.running;
         _adbWebRtcConnected = state.connected;
+        if (state.running || state.connected) {
+          _adbWebRtcStarting = false;
+          _adbWebRtcStartTimeout?.cancel();
+        }
         if (state.serial.trim().isNotEmpty) {
           _adbSelectedSerial = state.serial.trim();
         }

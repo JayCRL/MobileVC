@@ -7,7 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/config/app_config.dart';
-import '../../features/adb/adb_debug_sheet.dart';
+import '../../features/adb/adb_debug_page.dart';
 import '../../features/chat/chat_timeline.dart';
 import '../../features/chat/command_input_bar.dart';
 import '../../features/diff/diff_viewer_sheet.dart';
@@ -639,53 +639,11 @@ class _SessionHomePageState extends State<SessionHomePage> {
     if (!context.mounted) {
       return;
     }
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return FractionallySizedBox(
-          heightFactor: 0.94,
-          child: ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-            child: Material(
-              color: Theme.of(context).colorScheme.surface,
-              child: ListenableBuilder(
-                listenable: controller,
-                builder: (context, _) {
-                  return AdbDebugSheet(
-                    devices: controller.adbDevices,
-                    availableAvds: controller.adbAvailableAvds,
-                    selectedSerial: controller.adbSelectedSerial,
-                    selectedAvd: controller.adbSelectedAvd,
-                    status: controller.adbStatus,
-                    adbAvailable: controller.adbAvailable,
-                    emulatorAvailable: controller.adbEmulatorAvailable,
-                    suggestedAction: controller.adbSuggestedAction,
-                    streaming: controller.adbStreaming,
-                    webRtcConnected: controller.adbWebRtcConnected,
-                    webRtcStarting: controller.adbWebRtcStarting,
-                    renderer: controller.adbRenderer,
-                    frameWidth: controller.adbFrameWidth,
-                    frameHeight: controller.adbFrameHeight,
-                    onRefreshDevices: controller.requestAdbDevices,
-                    onSelectAvd: controller.selectAdbAvd,
-                    onLaunchEmulator: (avd) =>
-                        controller.launchAdbEmulator(avd: avd),
-                    onStart: (serial) =>
-                        controller.startAdbStream(serial: serial),
-                    onStop: controller.stopAdbStream,
-                    onTapPreview: (x, y, serial) =>
-                        controller.sendAdbTap(x, y, serial: serial),
-                  );
-                },
-              ),
-            ),
-          ),
-        );
-      },
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (context) => AdbDebugPage(controller: controller),
+        fullscreenDialog: true,
+      ),
     );
   }
 

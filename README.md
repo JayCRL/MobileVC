@@ -275,6 +275,30 @@ mobilevc setup
 mobilevc start
 ```
 
+### 3.1 Flutter 扫码连接 / 手动连接
+
+执行 `mobilevc start` 后，启动器会在终端输出：
+
+- 本机访问地址
+- 局域网访问地址
+- 一张给 Flutter 客户端使用的二维码
+
+Flutter 端连接方式有两种：
+
+1. 扫码连接
+
+- 打开 Flutter 客户端里的 `连接配置`
+- 点击 `扫码连接`
+- 扫描 `mobilevc start` 输出的二维码
+- App 会自动回填 `Host / Port / Token`
+
+2. 手动连接
+
+- 在 `连接配置` 里直接填写 `Host / Port / Token`
+- 也可以继续手动设置 `CWD / Engine / Permission Mode`
+
+如果二维码不可用，也可以直接使用终端里打印出来的局域网地址手动填写。
+
 ### 4. 查看状态 / 日志 / 停止
 
 ```bash
