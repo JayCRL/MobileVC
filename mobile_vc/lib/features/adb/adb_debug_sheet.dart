@@ -122,6 +122,7 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
 
   Widget _buildStandardLayout(BuildContext context, double previewAspectRatio) {
     final scheme = Theme.of(context).colorScheme;
+    final showLivePreview = widget.streaming || widget.webRtcStarting;
     return Padding(
       padding: EdgeInsets.fromLTRB(
         16,
@@ -157,18 +158,79 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
           ],
           const SizedBox(height: 12),
           _buildControlPanel(context),
-          const SizedBox(height: 14),
-          Expanded(
-            child: Center(
-              child: widget.expandPreview
-                  ? _buildPreview(context, previewAspectRatio)
-                  : ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxHeight: MediaQuery.of(context).size.height * 0.62,
+          if (showLivePreview) ...[
+            const SizedBox(height: 14),
+            Expanded(
+              child: Center(
+                child: widget.expandPreview
+                    ? _buildPreview(context, previewAspectRatio)
+                    : ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: MediaQuery.of(context).size.height * 0.62,
+                        ),
+                        child: _buildPreview(context, previewAspectRatio),
                       ),
-                      child: _buildPreview(context, previewAspectRatio),
-                    ),
+              ),
             ),
+          ] else ...[
+            const SizedBox(height: 14),
+            _buildPreflightCard(context, scheme),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPreflightCard(BuildContext context, ColorScheme scheme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  Icons.developer_mode_rounded,
+                  color: scheme.onPrimaryContainer,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '点击“进入调试”后直接进入全屏调试器',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            '进入前这里只保留设备选择和控制区，不再显示模拟手机小窗。',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '连接成功后会切到沉浸式全屏画面，点击和滑动会直接回传到 adb。',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
           ),
         ],
       ),

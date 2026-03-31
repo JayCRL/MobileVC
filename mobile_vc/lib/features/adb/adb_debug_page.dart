@@ -16,13 +16,18 @@ class AdbDebugPage extends StatelessWidget {
         final canStop = controller.adbStreaming || controller.adbWebRtcStarting;
         final immersive =
             controller.adbStreaming || controller.adbWebRtcStarting;
+        final safePadding = MediaQuery.of(context).padding;
         return Scaffold(
           body: Stack(
             children: [
               Positioned.fill(
-                child: SafeArea(
-                  top: !immersive,
-                  bottom: !immersive,
+                child: Padding(
+                  padding: immersive
+                      ? EdgeInsets.zero
+                      : EdgeInsets.only(
+                          top: safePadding.top,
+                          bottom: safePadding.bottom,
+                        ),
                   child: AdbDebugSheet(
                     devices: controller.adbDevices,
                     availableAvds: controller.adbAvailableAvds,
@@ -65,75 +70,71 @@ class AdbDebugPage extends StatelessWidget {
               ),
               Positioned(
                 right: 18,
-                bottom: 18 + MediaQuery.of(context).padding.bottom,
-                child: SafeArea(
-                  top: false,
-                  left: false,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: () {
-                            if (controller.adbStreaming ||
-                                controller.adbWebRtcConnected) {
-                              controller.sendAdbKeyevent('KEYCODE_BACK',
-                                  serial: controller.adbSelectedSerial);
-                            } else {
-                              Navigator.of(context).maybePop();
-                            }
-                          },
-                          borderRadius: BorderRadius.circular(999),
-                          child: Ink(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.58),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.14),
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.arrow_back_rounded,
-                              color: Colors.white,
-                              size: 22,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: () {
-                            if (canStop) {
-                              controller.stopAdbStream();
-                            }
+                bottom: 18 + safePadding.bottom,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () {
+                          if (controller.adbStreaming ||
+                              controller.adbWebRtcConnected) {
+                            controller.sendAdbKeyevent('KEYCODE_BACK',
+                                serial: controller.adbSelectedSerial);
+                          } else {
                             Navigator.of(context).maybePop();
-                          },
-                          borderRadius: BorderRadius.circular(999),
-                          child: Ink(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.58),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.14),
-                              ),
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(999),
+                        child: Ink(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.58),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.14),
                             ),
-                            child: const Icon(
-                              Icons.close_rounded,
-                              color: Colors.white,
-                              size: 22,
-                            ),
+                          ),
+                          child: const Icon(
+                            Icons.arrow_back_rounded,
+                            color: Colors.white,
+                            size: 22,
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 12),
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () {
+                          if (canStop) {
+                            controller.stopAdbStream();
+                          }
+                          Navigator.of(context).maybePop();
+                        },
+                        borderRadius: BorderRadius.circular(999),
+                        child: Ink(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.58),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.14),
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.close_rounded,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],

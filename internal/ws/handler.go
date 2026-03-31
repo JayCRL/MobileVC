@@ -1941,6 +1941,9 @@ func findClaudeProjectMemoryDir(cwd string) (string, error) {
 	}
 	current := normalized
 	for {
+		if sameFilePath(current, homeDir) {
+			break
+		}
 		candidate := filepath.Join(homeDir, ".claude", "projects", encodeClaudeProjectPath(current), "memory")
 		info, err := os.Stat(candidate)
 		if err == nil && info.IsDir() {
@@ -1953,6 +1956,10 @@ func findClaudeProjectMemoryDir(cwd string) (string, error) {
 		current = parent
 	}
 	return "", nil
+}
+
+func sameFilePath(left, right string) bool {
+	return filepath.Clean(strings.TrimSpace(left)) == filepath.Clean(strings.TrimSpace(right))
 }
 
 func encodeClaudeProjectPath(path string) string {
