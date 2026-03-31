@@ -33,11 +33,15 @@ class AdbWebRtcService {
       'sdpSemantics': 'unified-plan',
     });
 
+    peerConnection.onAddStream = (MediaStream stream) {
+      _attachRemoteStream(stream);
+    };
     peerConnection.onTrack = (RTCTrackEvent event) {
       if (event.streams.isNotEmpty) {
-        _remoteStream = event.streams.first;
-        renderer.srcObject = _remoteStream;
+        _attachRemoteStream(event.streams.first);
+        return;
       }
+      unawaited(_attachRemoteTrack(event.track));
     };
     peerConnection.onConnectionState = onConnectionState;
 
@@ -61,6 +65,20 @@ class AdbWebRtcService {
       throw StateError('missing local SDP offer');
     }
     await onOfferReady(local.type ?? 'offer', local.sdp!);
+  }
+
+  void _attachRemoteStream(MediaStream stream) {
+    _remoteStream = stream;
+    renderer.srcObject = stream;
+  }
+
+  Future<void> _attachRemoteTrack(MediaStreamTrack? track) async {
+    if (track == null) {
+      return;
+    }
+    final stream = _remoteStream ?? await createLocalMediaStream('adb-remote');
+    await stream.addTrack(track, addToNative: false);
+    _attachRemoteStream(stream);
   }
 
   Future<void> applyAnswer(String sdpType, String sdp) async {
