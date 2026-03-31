@@ -22,3 +22,21 @@ func TestStripANSIPreservesPlainText(t *testing.T) {
 		t.Fatalf("plain text changed: %q", got)
 	}
 }
+
+func TestStripANSIChunkCarriesIncompleteSequenceAcrossChunks(t *testing.T) {
+	first, carry := StripANSIChunk("\x1b[39;4", "")
+	if first != "" {
+		t.Fatalf("expected empty first chunk, got %q", first)
+	}
+	if carry != "\x1b[39;4" {
+		t.Fatalf("unexpected carry after first chunk: %q", carry)
+	}
+
+	second, carry := StripANSIChunk("9mTip", carry)
+	if second != "Tip" {
+		t.Fatalf("expected stripped text, got %q", second)
+	}
+	if carry != "" {
+		t.Fatalf("expected empty carry after completing sequence, got %q", carry)
+	}
+}

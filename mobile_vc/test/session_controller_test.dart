@@ -67,7 +67,7 @@ void main() {
       await _flushEvents();
 
       final signal = _expectSignal(controller, ActionNeededType.continueInput);
-      expect(signal.message, 'Claude 需要你继续输入');
+      expect(signal.message, 'AI 助手需要你继续输入');
     });
 
     test('permission prompt 到来时产出权限确认信号', () async {
@@ -112,7 +112,7 @@ void main() {
       await _flushEvents();
 
       final signal = _expectSignal(controller, ActionNeededType.permission);
-      expect(signal.message, 'Claude 需要你确认权限');
+      expect(signal.message, 'AI 助手需要你确认权限');
     });
 
     test('permission-like prompt_request 到来时也进入权限状态', () async {
@@ -143,7 +143,7 @@ void main() {
 
       expect(controller.shouldShowPermissionChoices, isTrue);
       final signal = _expectSignal(controller, ActionNeededType.permission);
-      expect(signal.message, 'Claude 需要你确认权限');
+      expect(signal.message, 'AI 助手需要你确认权限');
     });
 
     test('review prompt 到来时产出审核信号', () async {
@@ -197,7 +197,7 @@ void main() {
       await _flushEvents();
 
       final signal = _expectSignal(controller, ActionNeededType.review);
-      expect(signal.message, 'Claude 需要你处理代码审核');
+      expect(signal.message, 'AI 助手需要你处理代码审核');
     });
 
     test('普通 prompt 到来时产出等待回复信号', () async {
@@ -221,7 +221,7 @@ void main() {
       await _flushEvents();
 
       final signal = _expectSignal(controller, ActionNeededType.reply);
-      expect(signal.message, 'Claude 正在等待你的回复');
+      expect(signal.message, 'AI 助手正在等待你的回复');
     });
 
     test('permission prompt 遇到普通 WAIT_INPUT 更新时保持原授权提示', () async {
@@ -276,7 +276,7 @@ void main() {
       expect(controller.pendingPrompt?.message, 'Allow edit a.dart?');
       expect(controller.pendingInteraction, isNull);
       final signal = _expectSignal(controller, ActionNeededType.permission);
-      expect(signal.message, 'Claude 需要你确认权限');
+      expect(signal.message, 'AI 助手需要你确认权限');
     });
 
     test('review prompt 不会被普通 WAIT_INPUT 更新覆盖', () async {
@@ -344,7 +344,7 @@ void main() {
       );
       expect(controller.currentReviewDiff?.path, '/workspace/a.dart');
       final signal = _expectSignal(controller, ActionNeededType.review);
-      expect(signal.message, 'Claude 需要你处理代码审核');
+      expect(signal.message, 'AI 助手需要你处理代码审核');
     });
 
     test('普通 WAIT_INPUT 更新不会覆盖已有普通 prompt', () async {
@@ -384,7 +384,7 @@ void main() {
 
       expect(controller.pendingPrompt?.message, '请补充上下文');
       final signal = _expectSignal(controller, ActionNeededType.reply);
-      expect(signal.message, 'Claude 正在等待你的回复');
+      expect(signal.message, 'AI 助手正在等待你的回复');
     });
 
     test('断开连接时不发信号', () async {
@@ -533,7 +533,8 @@ void main() {
       expect(service.sentPayloads[0]['cmd'], 'claude');
     });
 
-    test('sendInputText 非等待态输入 claude 后跟正文时会启动 Claude 并通过 input 发送正文', () async {
+    test('sendInputText 非等待态输入 claude 后跟正文时会启动 Claude 并通过 input 发送正文',
+        () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -673,7 +674,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
           raw: const {'type': 'agent_state'},
           state: 'THINKING',
           message: '思考中',
@@ -687,7 +689,8 @@ void main() {
         PromptRequestEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', contextId: 'perm-1'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', contextId: 'perm-1'),
           raw: const {'type': 'prompt_request', 'msg': 'Allow edit a.dart?'},
           message: 'Allow edit a.dart?',
           options: const [PromptOption(value: 'y'), PromptOption(value: 'n')],
@@ -710,7 +713,8 @@ void main() {
         SessionStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
           raw: const {'type': 'session_state'},
           state: 'RUNNING',
           message: 'claude running',
@@ -720,7 +724,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
           raw: const {'type': 'agent_state'},
           state: 'THINKING',
           message: '思考中',
@@ -735,7 +740,8 @@ void main() {
         LogEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
           raw: const {'type': 'log'},
           message: '你好，我是 Claude，由 Anthropic 开发。有什么我可以帮你处理的吗？',
           stream: 'stdout',
@@ -745,7 +751,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
           raw: const {'type': 'agent_state'},
           state: 'IDLE',
           message: '完成',
@@ -770,7 +777,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
           raw: const {'type': 'agent_state'},
           state: 'THINKING',
           message: '第一轮思考中',
@@ -781,7 +789,8 @@ void main() {
         SessionStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
           raw: const {'type': 'session_state'},
           state: 'RUNNING',
           message: '第一轮运行中',
@@ -794,7 +803,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
           raw: const {'type': 'agent_state'},
           state: 'WAIT_INPUT',
           message: '等待输入',
@@ -815,7 +825,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 2)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-2'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-2'),
           raw: const {'type': 'agent_state'},
           state: 'THINKING',
           message: '第二轮思考中',
@@ -826,7 +837,8 @@ void main() {
         SessionStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 2)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-2'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-2'),
           raw: const {'type': 'session_state'},
           state: 'RUNNING',
           message: '第二轮运行中',
@@ -839,7 +851,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 3)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-2'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-2'),
           raw: const {'type': 'agent_state'},
           state: 'WAIT_INPUT',
           message: '等待输入',
@@ -860,7 +873,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 4)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-3'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-3'),
           raw: const {'type': 'agent_state'},
           state: 'THINKING',
           message: '第三轮思考中',
@@ -871,7 +885,8 @@ void main() {
         SessionStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 4)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-3'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-3'),
           raw: const {'type': 'session_state'},
           state: 'RUNNING',
           message: '第三轮运行中',
@@ -885,7 +900,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 5)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-3'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-3'),
           raw: const {'type': 'agent_state'},
           state: 'WAIT_INPUT',
           message: '等待输入',
@@ -897,7 +913,8 @@ void main() {
         LogEvent(
           timestamp: _timestamp.add(const Duration(seconds: 5)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-3'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-3'),
           raw: const {'type': 'log'},
           message: '第三轮回复完成，继续吧。',
           stream: 'stdout',
@@ -909,6 +926,53 @@ void main() {
       expect(controller.pendingPrompt, isNull);
       expect(controller.activityVisible, isFalse);
       expect(controller.isSessionBusy, isFalse);
+    });
+
+    test('codex 会话在残留 busy 状态下仍允许继续输入', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            executionId: 'exec-codex-1',
+            claudeLifecycle: 'resumable',
+          ),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'codex still rendering',
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            executionId: 'exec-codex-1',
+            claudeLifecycle: 'resumable',
+          ),
+          raw: const {'type': 'agent_state'},
+          state: 'THINKING',
+          message: '处理中',
+          command: 'codex',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.isSessionBusy, isTrue);
+
+      controller.sendInputText('继续');
+
+      expect(service.sentPayloads, isNotEmpty);
+      expect(service.sentPayloads.last['action'], 'input');
+      expect(service.sentPayloads.last['data'], '继续\n');
     });
   });
 
@@ -963,8 +1027,8 @@ void main() {
           runtimeMeta: const RuntimeMeta(command: 'claude'),
           raw: const {'type': 'session_history'},
           summary: const SessionSummary(id: 'session-new', title: '新会话'),
-          resumeRuntimeMeta:
-              const RuntimeMeta(command: 'claude', claudeLifecycle: 'resumable'),
+          resumeRuntimeMeta: const RuntimeMeta(
+              command: 'claude', claudeLifecycle: 'resumable'),
         ),
       );
       await _flushEvents();
@@ -1058,8 +1122,7 @@ void main() {
       expect(service.sentPayloads.single['action'], 'session_create');
     });
 
-    test(
-        '手动 loadSession 仍能恢复历史 timeline / diff / session meta / terminal logs',
+    test('手动 loadSession 仍能恢复历史 timeline / diff / session meta / terminal logs',
         () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -2337,7 +2400,8 @@ void main() {
       expect(controller.pendingDiffs.single.pendingReview, isTrue);
     });
 
-    test('permission allow 后出现 diff 不会自动 accept，必须显式 review_decision 才推进', () async {
+    test('permission allow 后出现 diff 不会自动 accept，必须显式 review_decision 才推进',
+        () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -2551,7 +2615,7 @@ void main() {
       expect(controller.pendingPlanQuestion?.id, 'q1');
       expect(controller.pendingPlanProgressLabel, '1/1');
       final signal = _expectSignal(controller, ActionNeededType.plan);
-      expect(signal.message, 'Claude 需要你完成计划选择');
+      expect(signal.message, 'AI 助手需要你完成计划选择');
     });
 
     test('单问题 plan 选择会发送 plan_decision', () async {
@@ -2895,8 +2959,6 @@ void main() {
       expect(service.sentPayloads.single['action'], 'permission_decision');
       expect(service.sentPayloads.single['decision'], 'approve');
     });
-
-
   });
 }
 
