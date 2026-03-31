@@ -869,6 +869,34 @@ func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 	}
 }
 
+func TestFindClaudeProjectMemoryDirDoesNotFallbackToHomeLevelMemory(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	writeTestFile(t,
+		filepath.Join(
+			homeDir,
+			".claude",
+			"projects",
+			encodeClaudeProjectPath(homeDir),
+			"memory",
+			"mobilevc.md",
+		),
+		"# Home Memory\n\nThis should not be treated as the current project memory.\n",
+	)
+	cwd := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+
+	got, err := findClaudeProjectMemoryDir(cwd)
+	if err != nil {
+		t.Fatalf("findClaudeProjectMemoryDir: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("expected no project memory match for home-level fallback, got %q", got)
+	}
+}
+
 func TestHandlerPermissionDecisionWithoutActiveClaudeRunnerDoesNotResumeLoop(t *testing.T) {
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
