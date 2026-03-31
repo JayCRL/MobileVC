@@ -1281,6 +1281,55 @@ void main() {
       expect(controller.timeline.any((item) => item.body.contains('command finished with error')), isFalse);
     });
 
+    test('codex 工具噪声仅保留在 terminal logs，不进入 timeline', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'log'},
+          message:
+              '2026-03-31T18:15:54.641890Z ERROR codex_core::tools::router: error=Exit code: 128',
+          stream: 'stderr',
+        ),
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 120)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'log'},
+          message:
+              'Wall time: 0 seconds\nOutput:\nfatal: not a git repository (or any of the parent directories): .git',
+          stream: 'stderr',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.terminalStderr, contains('codex_core::tools::router'));
+      expect(controller.terminalStderr, contains('fatal: not a git repository'));
+      expect(
+        controller.timeline
+            .any((item) => item.body.contains('codex_core::tools::router')),
+        isFalse,
+      );
+      expect(
+        controller.timeline
+            .any((item) => item.body.contains('fatal: not a git repository')),
+        isFalse,
+      );
+      expect(
+        controller.timeline.any((item) => item.body.contains('Wall time:')),
+        isFalse,
+      );
+    });
+
     test('手动 loadSession 仍能恢复历史 timeline / diff / session meta / terminal logs',
         () async {
       final service = _FakeMobileVcWsService();

@@ -3001,6 +3001,9 @@ class SessionController extends ChangeNotifier {
   }
 
   bool _shouldKeepTimelineItem(TimelineItem item) {
+    if (_shouldHideTimelineLogMessage(item.body, item.stream)) {
+      return false;
+    }
     if (_shouldFilterTimelineText(item.title) ||
         _shouldFilterTimelineText(item.body)) {
       return false;
@@ -3092,6 +3095,9 @@ class SessionController extends ChangeNotifier {
   String? _timelineKindForLog(String message, String stream) {
     final trimmed = message.trim();
     if (trimmed.isEmpty) {
+      return null;
+    }
+    if (_shouldHideTimelineLogMessage(trimmed, stream)) {
       return null;
     }
     if (_looksLikeFrontendToolResultNoise(trimmed) ||
@@ -3224,6 +3230,35 @@ class SessionController extends ChangeNotifier {
     return text.contains('Invalid pages parameter') ||
         text.contains('tool_use_id') ||
         text.contains('session_id');
+  }
+
+  bool _shouldHideTimelineLogMessage(String message, String stream) {
+    final trimmed = message.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    final lower = trimmed.toLowerCase();
+    if (lower.contains('codex_core::tools::router')) {
+      return true;
+    }
+    if (lower.contains(
+        'fatal: not a git repository (or any of the parent directories): .git')) {
+      return true;
+    }
+    if (lower.startsWith('wall time:')) {
+      return true;
+    }
+    if (lower.startsWith('output fatal: not a git repository')) {
+      return true;
+    }
+    if (lower.contains('\noutput:\n') || lower.contains('\noutput\n')) {
+      return true;
+    }
+    if (stream.trim().toLowerCase() == 'stderr' &&
+        lower.startsWith('error=exit code:')) {
+      return true;
+    }
+    return false;
   }
 
   bool _looksLikeProcessNoise(String message) {

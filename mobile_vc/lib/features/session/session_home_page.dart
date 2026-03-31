@@ -426,6 +426,8 @@ class _SessionHomePageState extends State<SessionHomePage> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
       builder: (context) {
         controller.requestSessionList();
         return SessionListSheet(
