@@ -2231,6 +2231,9 @@ class SessionController extends ChangeNotifier {
         _fileListLoading = false;
         _fileReading = false;
         final errorMessage = error.message.trim();
+        if (_shouldSuppressIntentionalHandoffNoise(errorMessage)) {
+          break;
+        }
         if (errorMessage.contains('ADB') ||
             errorMessage.contains('adb ') ||
             errorMessage.contains('模拟器') ||
@@ -2748,16 +2751,32 @@ class SessionController extends ChangeNotifier {
   }
 
   TimelineItem _timelineFromHistory(HistoryLogEntry entry) {
+    final restoredBody = _restoredHistoryBody(entry);
+    final restoredKind = _restoredHistoryKind(entry, restoredBody);
     return TimelineItem(
-      id: 'history-${entry.kind}-${entry.timestamp}-${entry.message.hashCode}',
-      kind: entry.kind,
+      id: 'history-${restoredKind}-${entry.timestamp}-${restoredBody.hashCode}',
+      kind: restoredKind,
       timestamp:
           DateTime.tryParse(entry.timestamp)?.toLocal() ?? DateTime.now(),
       title: entry.label,
-      body: entry.message.isNotEmpty ? entry.message : entry.text,
+      body: restoredBody,
       stream: entry.stream,
       context: entry.context,
     );
+  }
+
+  String _restoredHistoryBody(HistoryLogEntry entry) {
+    if (entry.kind == 'terminal') {
+      return entry.text.isNotEmpty ? entry.text : entry.message;
+    }
+    return entry.message.isNotEmpty ? entry.message : entry.text;
+  }
+
+  String _restoredHistoryKind(HistoryLogEntry entry, String body) {
+    if (entry.kind != 'terminal') {
+      return entry.kind;
+    }
+    return _timelineKindForLog(body, entry.stream) ?? entry.kind;
   }
 
   void _upsertSession(SessionSummary summary) {
@@ -2826,6 +2845,10 @@ class SessionController extends ChangeNotifier {
     }
     final normalizedState = state.state.trim().toLowerCase();
     final normalizedMessage = state.message.trim();
+    if (_shouldSuppressIntentionalHandoffNoise(normalizedMessage)) {
+      _lastSessionTimelineKey = key;
+      return;
+    }
     final looksLikeNoise = normalizedMessage.isEmpty
         ? _looksLikeProcessNoise(normalizedState)
         : _looksLikeProcessNoise(normalizedMessage);
@@ -2911,6 +2934,24 @@ class SessionController extends ChangeNotifier {
       return 'markdown';
     }
     return 'terminal';
+  }
+
+  bool _shouldSuppressIntentionalHandoffNoise(String message) {
+    final trimmed = message.trim().toLowerCase();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    final runtimeMessage = _runtimePhase?.message.trim().toLowerCase() ?? '';
+    final temporaryHandoff = _runtimePermissionMode.trim() == 'acceptEdits' ||
+        runtimeMessage.contains('权限') ||
+        runtimeMessage.contains('permission') ||
+        runtimeMessage.contains('授权');
+    if (!temporaryHandoff) {
+      return false;
+    }
+    return trimmed == 'command finished with error' ||
+        trimmed.contains('signal: killed') ||
+        trimmed.contains('command exited with code -1');
   }
 
   bool _looksLikeAssistantReply(String message) {

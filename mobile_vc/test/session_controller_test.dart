@@ -1122,6 +1122,82 @@ void main() {
       expect(service.sentPayloads.single['action'], 'session_create');
     });
 
+    test('历史 terminal entry 优先用 text，并可恢复成 markdown', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-history',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(id: 'session-history', title: '历史会话'),
+          logEntries: const [
+            HistoryLogEntry(
+              kind: 'terminal',
+              message: '不是在 ChatGPT 应用里那个聊天形态；这里我是通过 Codex/CX 这个编码代理在你的工作区里协作。',
+              text: '不是在 ChatGPT 应用里那个聊天形态；这里我是通过 Codex/CX 这个编码代理在你的工作区里协作。\n底层是 GPT 系列模型。',
+              stream: 'stdout',
+              timestamp: '2026-03-31T08:06:44Z',
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      final item = controller.timeline.firstWhere(
+        (entry) => entry.body.contains('底层是 GPT 系列模型。'),
+      );
+      expect(item.body, '不是在 ChatGPT 应用里那个聊天形态；这里我是通过 Codex/CX 这个编码代理在你的工作区里协作。\n底层是 GPT 系列模型。');
+      expect(item.kind, 'markdown');
+    });
+
+    test('权限交接中的 signal killed 噪声不会进入 timeline', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Allow edit a.dart?',
+        ),
+      );
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(permissionMode: 'acceptEdits'),
+          raw: const {'type': 'session_state'},
+          state: 'closed',
+          message: 'command finished with error',
+        ),
+      );
+      service.emit(
+        ErrorEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(permissionMode: 'acceptEdits'),
+          raw: const {'type': 'error', 'msg': 'signal: killed'},
+          message: 'signal: killed',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.timeline.any((item) => item.body.contains('signal: killed')), isFalse);
+      expect(controller.timeline.any((item) => item.body.contains('command finished with error')), isFalse);
+    });
+
     test('手动 loadSession 仍能恢复历史 timeline / diff / session meta / terminal logs',
         () async {
       final service = _FakeMobileVcWsService();

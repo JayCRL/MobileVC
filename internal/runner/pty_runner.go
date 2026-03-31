@@ -668,6 +668,10 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	readWG.Wait()
 
 	if waitErr != nil {
+		if r.shouldSuppressExitError() {
+			sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
+			return nil
+		}
 		message := waitErr.Error()
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) {
