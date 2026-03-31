@@ -123,59 +123,202 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
   Widget _buildStandardLayout(BuildContext context, double previewAspectRatio) {
     final scheme = Theme.of(context).colorScheme;
     final showLivePreview = widget.streaming || widget.webRtcStarting;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        8,
-        16,
-        24 + MediaQuery.of(context).viewInsets.bottom,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            scheme.primary.withValues(alpha: 0.06),
+            scheme.surface,
+            scheme.surface,
+          ],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (widget.showInlineHeader) ...[
-            Text(
-              'ADB 调试',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '使用 WebRTC + H264 把电脑上的 Android 模拟器实时推到手机端，点击画面会即时回传到 adb。',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
-            ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          8,
+          16,
+          24 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.showInlineHeader) ...[
+              Text(
+                'ADB 调试',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '使用 WebRTC + H264 把电脑上的 Android 模拟器实时推到手机端，点击画面会即时回传到 adb。',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 14),
+            ],
+            _buildHeroBanner(context),
             const SizedBox(height: 14),
-          ],
-          _buildDeviceSelector(context),
-          if (widget.availableAvds.isNotEmpty) ...[
+            _buildDeviceSelector(context),
+            if (widget.availableAvds.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildAvdSelector(context),
+            ],
             const SizedBox(height: 12),
-            _buildAvdSelector(context),
-          ],
-          const SizedBox(height: 12),
-          _buildControlPanel(context),
-          if (showLivePreview) ...[
-            const SizedBox(height: 14),
-            Expanded(
-              child: Center(
-                child: widget.expandPreview
-                    ? _buildPreview(context, previewAspectRatio)
-                    : ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxHeight: MediaQuery.of(context).size.height * 0.62,
+            _buildControlPanel(context),
+            if (showLivePreview) ...[
+              const SizedBox(height: 14),
+              Expanded(
+                child: Center(
+                  child: widget.expandPreview
+                      ? _buildPreview(context, previewAspectRatio)
+                      : ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight:
+                                MediaQuery.of(context).size.height * 0.62,
+                          ),
+                          child: _buildPreview(context, previewAspectRatio),
                         ),
-                        child: _buildPreview(context, previewAspectRatio),
-                      ),
+                ),
+              ),
+            ] else ...[
+              const SizedBox(height: 14),
+              _buildPreflightCard(context, scheme),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeroBanner(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            scheme.primaryContainer,
+            Color.alphaBlend(
+              scheme.primary.withValues(alpha: 0.08),
+              scheme.surface,
+            ),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.8)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withValues(alpha: 0.10),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            right: -18,
+            top: -28,
+            child: Container(
+              width: 112,
+              height: 112,
+              decoration: BoxDecoration(
+                color: scheme.onPrimaryContainer.withValues(alpha: 0.06),
+                shape: BoxShape.circle,
               ),
             ),
-          ] else ...[
-            const SizedBox(height: 14),
-            _buildPreflightCard(context, scheme),
-          ],
+          ),
+          Positioned(
+            right: 26,
+            bottom: -30,
+            child: Container(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.10),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: scheme.surface.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(
+                      Icons.developer_mode_rounded,
+                      color: scheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Android Remote Debug',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.4,
+                          ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '进入前专注设备与环境准备，连接成功后直接切换到全屏调试器。',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      height: 1.35,
+                    ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _buildStatusBadge(
+                    context,
+                    icon: widget.adbAvailable
+                        ? Icons.check_circle_rounded
+                        : Icons.error_outline_rounded,
+                    label: 'ADB ${widget.adbAvailable ? "已就绪" : "未就绪"}',
+                    highlighted: widget.adbAvailable,
+                  ),
+                  _buildStatusBadge(
+                    context,
+                    icon: widget.emulatorAvailable
+                        ? Icons.memory_rounded
+                        : Icons.smart_display_outlined,
+                    label:
+                        '模拟器 ${widget.emulatorAvailable ? "可用" : "不可用"}',
+                  ),
+                  _buildStatusBadge(
+                    context,
+                    icon: widget.webRtcConnected
+                        ? Icons.wifi_tethering_rounded
+                        : Icons.video_settings_rounded,
+                    label: widget.webRtcConnected ? 'WebRTC 已连接' : 'WebRTC / H264',
+                  ),
+                ],
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -186,9 +329,16 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
       decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: BorderRadius.circular(24),
+        color: scheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(28),
         border: Border.all(color: scheme.outlineVariant),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -225,12 +375,27 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
                   color: scheme.onSurfaceVariant,
                 ),
           ),
-          const SizedBox(height: 10),
-          Text(
-            '连接成功后会切到沉浸式全屏画面，点击和滑动会直接回传到 adb。',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _buildInfoTile(
+                  context,
+                  icon: Icons.touch_app_rounded,
+                  title: '实时触控',
+                  value: '点击和滑动直接转成 adb 输入',
                 ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildInfoTile(
+                  context,
+                  icon: Icons.fullscreen_rounded,
+                  title: '全屏进入',
+                  value: '连接后立即切到沉浸式调试视图',
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -400,55 +565,61 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
   }
 
   Widget _buildDeviceSelector(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final item in widget.devices)
-          ChoiceChip(
-            label: Text(item.displayLabel),
-            selected: _selectedSerial.trim() == item.serial,
-            onSelected: (_) {
-              setState(() => _selectedSerial = item.serial);
-            },
-          ),
-        if (widget.devices.isEmpty)
-          Text(
-            '当前未发现在线设备。',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-      ],
+    return _buildSectionCard(
+      context,
+      title: '在线设备',
+      subtitle: '选择一个已连接的 Android 设备或模拟器',
+      child: widget.devices.isEmpty
+          ? _buildEmptySectionState(
+              context,
+              icon: Icons.usb_off_rounded,
+              title: '当前未发现在线设备',
+              description: '可以先自动检测，或者启动一个本地 AVD。',
+            )
+          : Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final item in widget.devices)
+                  ChoiceChip(
+                    avatar: Icon(
+                      item.state.trim().toLowerCase() == 'device'
+                          ? Icons.check_circle_rounded
+                          : Icons.pending_rounded,
+                      size: 18,
+                    ),
+                    label: Text(item.displayLabel),
+                    selected: _selectedSerial.trim() == item.serial,
+                    onSelected: (_) {
+                      setState(() => _selectedSerial = item.serial);
+                    },
+                  ),
+              ],
+            ),
     );
   }
 
   Widget _buildAvdSelector(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '可启动模拟器',
-          style: Theme.of(context)
-              .textTheme
-              .labelLarge
-              ?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final avd in widget.availableAvds)
-              ChoiceChip(
-                label: Text(avd),
-                selected: _selectedAvd.trim() == avd,
-                onSelected: (_) {
-                  setState(() => _selectedAvd = avd);
-                  widget.onSelectAvd(avd);
-                },
-              ),
-          ],
-        ),
-      ],
+    return _buildSectionCard(
+      context,
+      title: '模拟器模板',
+      subtitle: '没有在线设备时，可直接拉起一个预置 AVD',
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final avd in widget.availableAvds)
+            ChoiceChip(
+              avatar: const Icon(Icons.smart_display_rounded, size: 18),
+              label: Text(avd),
+              selected: _selectedAvd.trim() == avd,
+              onSelected: (_) {
+                setState(() => _selectedAvd = avd);
+                widget.onSelectAvd(avd);
+              },
+            ),
+        ],
+      ),
     );
   }
 
@@ -458,25 +629,121 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
         .any((item) => item.state.trim().toLowerCase() == 'device');
     final canLaunchEmulator =
         widget.emulatorAvailable && widget.availableAvds.isNotEmpty;
+    final primaryLabel = widget.streaming || widget.webRtcStarting
+        ? (widget.webRtcConnected ? '调试中' : '连接中')
+        : hasConnectedDevice
+            ? '进入调试'
+            : canLaunchEmulator
+                ? '启动模拟器'
+                : '无法调试';
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          colors: [
+            scheme.surface,
+            scheme.surfaceContainerLow,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(28),
         border: Border.all(color: scheme.outlineVariant),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '调试控制台',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.status.trim().isEmpty
+                          ? '等待启动 WebRTC 调试'
+                          : widget.status.trim(),
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                            height: 1.35,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              _buildStatusBadge(
+                context,
+                icon: widget.streaming || widget.webRtcStarting
+                    ? Icons.wifi_tethering_rounded
+                    : Icons.bolt_rounded,
+                label: primaryLabel,
+                highlighted: widget.streaming || widget.webRtcStarting,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              SizedBox(
+                width: 126,
+                child: _buildInfoTile(
+                  context,
+                  icon: Icons.route_rounded,
+                  title: '建议动作',
+                  value: widget.suggestedAction.trim().isEmpty
+                      ? '等待检测'
+                      : _suggestionLabel(widget.suggestedAction),
+                ),
+              ),
+              SizedBox(
+                width: 126,
+                child: _buildInfoTile(
+                  context,
+                  icon: Icons.memory_rounded,
+                  title: '传输链路',
+                  value: 'WebRTC / H264',
+                ),
+              ),
+              if (widget.frameWidth > 0 && widget.frameHeight > 0)
+                SizedBox(
+                  width: 148,
+                  child: _buildInfoTile(
+                    context,
+                    icon: Icons.straighten_rounded,
+                    title: '映射分辨率',
+                    value: '${widget.frameWidth} x ${widget.frameHeight}',
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              FilledButton.tonalIcon(
+              OutlinedButton.icon(
                 onPressed: widget.onRefreshDevices,
-                icon: const Icon(Icons.devices_outlined),
+                icon: const Icon(Icons.radar_rounded),
                 label: const Text('自动检测'),
               ),
               if (widget.streaming || widget.webRtcStarting)
@@ -512,33 +779,176 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionCard(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: 0.86),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.85)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    bool highlighted = false,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: highlighted
+            ? scheme.primary.withValues(alpha: 0.14)
+            : scheme.surface.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: highlighted
+              ? scheme.primary.withValues(alpha: 0.28)
+              : scheme.outlineVariant.withValues(alpha: 0.72),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 16,
+            color: highlighted ? scheme.primary : scheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: highlighted ? scheme.primary : scheme.onSurface,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoTile(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String value,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.8)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: scheme.primary),
           const SizedBox(height: 10),
           Text(
-            widget.status.trim().isEmpty
-                ? '等待启动 WebRTC 调试'
-                : widget.status.trim(),
-            style: Theme.of(context).textTheme.bodyMedium,
+            title,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
-            'adb ${widget.adbAvailable ? "已就绪" : "未就绪"}'
-            ' · emulator ${widget.emulatorAvailable ? "已就绪" : "未就绪"}'
-            ' · 传输：WebRTC / H264'
-            '${widget.suggestedAction.trim().isNotEmpty ? ' · 建议：${_suggestionLabel(widget.suggestedAction)}' : ''}',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            value,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  height: 1.3,
+                ),
           ),
-          if (widget.frameWidth > 0 && widget.frameHeight > 0) ...[
-            const SizedBox(height: 6),
-            Text(
-              '映射分辨率 ${widget.frameWidth} x ${widget.frameHeight}'
-              '${_selectedSerial.trim().isNotEmpty ? ' · $_selectedSerial' : ''}',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptySectionState(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String description,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.7)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(14),
             ),
-          ],
+            child: Icon(icon, color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

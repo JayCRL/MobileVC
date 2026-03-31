@@ -54,7 +54,6 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final meta = widget.catalogMeta;
     final enabledCount = widget.enabledSkillNames.length;
     final items = _filteredSkills;
@@ -73,6 +72,7 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
             _HeroCard(
               title: 'Skill 管理',
               description: '这里是当前会话唯一的 skill 启用入口。轻点即可执行，开关控制它是否持续参与当前会话。',
+              logo: '💊',
               primaryAction: FilledButton.tonalIcon(
                 onPressed: widget.onSync,
                 icon: meta.isSyncing
@@ -145,23 +145,36 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
                       actionLabel: '一句话生成 skill',
                       onAction: () => _openGenerateSheet(context),
                     )
-                  : ListView.separated(
-                      itemCount: items.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final item = items[index];
-                        final enabled =
-                            widget.enabledSkillNames.contains(item.name);
-                        return _SkillCapsuleCard(
-                          skill: item,
-                          enabled: enabled,
-                          onTap: item.name.trim().isEmpty
-                              ? null
-                              : () => widget.onExecuteSkill(item.name),
-                          onLongPress: () => _openDetailSheet(context, item),
-                          onToggleEnabled: () =>
-                              widget.onToggleEnabled(item.name),
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final columns = constraints.maxWidth >= 720 ? 2 : 1;
+                        final gap = 10.0;
+                        final itemWidth =
+                            (constraints.maxWidth - gap * (columns - 1)) /
+                                columns;
+                        return SingleChildScrollView(
+                          child: Align(
+                            alignment: Alignment.topLeft,
+                            child: Wrap(
+                              spacing: gap,
+                              runSpacing: gap,
+                              children: [
+                                for (final item in items)
+                                  SizedBox(
+                                    width: itemWidth,
+                                    child: _SkillCapsuleCard(
+                                      skill: item,
+                                      enabled: widget.enabledSkillNames
+                                          .contains(item.name),
+                                      onTap: () =>
+                                          _openDetailSheet(context, item),
+                                      onToggleEnabled: () =>
+                                          widget.onToggleEnabled(item.name),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         );
                       },
                     ),
@@ -238,101 +251,172 @@ class _SkillManagementSheetState extends State<SkillManagementSheet> {
 
   void _openDetailSheet(BuildContext context, SkillDefinition item) {
     final controller = TextEditingController();
-    showModalBottomSheet<void>(
+    showDialog<void>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
       builder: (context) {
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            16,
-            8,
-            16,
-            24 + MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                item.name.isEmpty ? '未命名 skill' : item.name,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _MetaChip(
-                      label: 'target',
-                      value: item.targetType.isEmpty ? '-' : item.targetType),
-                  _MetaChip(
-                      label: 'view',
-                      value: item.resultView.isEmpty ? '-' : item.resultView),
-                  _MetaChip(
-                      label: 'source',
-                      value: item.source.isEmpty ? '-' : item.source),
-                  _MetaChip(label: '编辑', value: item.editable ? '可编辑' : '只读'),
+        final theme = Theme.of(context);
+        return Dialog(
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+          backgroundColor: Colors.transparent,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
+            child: Container(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface,
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color:
+                      theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.14),
+                    blurRadius: 36,
+                    offset: const Offset(0, 18),
+                  ),
                 ],
               ),
-              if (item.description.trim().isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _DetailBlock(title: '说明', content: item.description.trim()),
-              ],
-              if (item.prompt.trim().isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _DetailBlock(title: 'Prompt', content: item.prompt.trim()),
-              ],
-              const SizedBox(height: 12),
-              TextField(
-                key: ValueKey('skillDetail.modifyInput:${item.name}'),
-                controller: controller,
-                minLines: 3,
-                maxLines: 6,
-                enabled: item.editable,
-                decoration: InputDecoration(
-                  hintText: item.editable
-                      ? '一句话告诉 AI 助手你想怎么修改这个 skill'
-                      : '该 skill 为只读，不能直接修改',
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  18,
+                  18,
+                  18,
+                  18 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: const Text('💊',
+                                style: TextStyle(fontSize: 22)),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.name.isEmpty ? '未命名 skill' : item.name,
+                                  style: theme.textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: -0.3,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Skill 详情卡片',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _MetaChip(
+                            label: 'target',
+                            value:
+                                item.targetType.isEmpty ? '-' : item.targetType,
+                          ),
+                          _MetaChip(
+                            label: 'view',
+                            value:
+                                item.resultView.isEmpty ? '-' : item.resultView,
+                          ),
+                          _MetaChip(
+                            label: 'source',
+                            value: item.source.isEmpty ? '-' : item.source,
+                          ),
+                          _MetaChip(
+                            label: '编辑',
+                            value: item.editable ? '可编辑' : '只读',
+                          ),
+                        ],
+                      ),
+                      if (item.description.trim().isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        _DetailBlock(
+                            title: '说明', content: item.description.trim()),
+                      ],
+                      if (item.prompt.trim().isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        _DetailBlock(
+                            title: 'Prompt', content: item.prompt.trim()),
+                      ],
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: ValueKey('skillDetail.modifyInput:${item.name}'),
+                        controller: controller,
+                        minLines: 3,
+                        maxLines: 6,
+                        enabled: item.editable,
+                        decoration: InputDecoration(
+                          hintText: item.editable
+                              ? '一句话告诉 AI 助手你想怎么修改这个 skill'
+                              : '该 skill 为只读，不能直接修改',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: item.name.trim().isEmpty
+                                  ? null
+                                  : () {
+                                      widget.onExecuteSkill(item.name);
+                                      Navigator.of(context).pop();
+                                    },
+                              icon: const Icon(Icons.play_arrow),
+                              label: const Text('立即执行'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: !item.editable
+                                  ? null
+                                  : () {
+                                      final value = controller.text.trim();
+                                      if (value.isEmpty) {
+                                        return;
+                                      }
+                                      widget.onReviseSkill(item, value);
+                                      Navigator.of(context).pop();
+                                    },
+                              icon: const Icon(Icons.edit_outlined),
+                              label: const Text('让 AI 助手修改'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        widget.onExecuteSkill(item.name);
-                        Navigator.of(context).pop();
-                      },
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('立即执行'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: !item.editable
-                          ? null
-                          : () {
-                              final value = controller.text.trim();
-                              if (value.isEmpty) {
-                                return;
-                              }
-                              widget.onReviseSkill(item, value);
-                              Navigator.of(context).pop();
-                            },
-                      icon: const Icon(Icons.edit_outlined),
-                      label: const Text('让 AI 助手修改'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
         );
       },
@@ -345,31 +429,42 @@ class _SkillCapsuleCard extends StatelessWidget {
     required this.skill,
     required this.enabled,
     required this.onTap,
-    required this.onLongPress,
     required this.onToggleEnabled,
   });
 
   final SkillDefinition skill;
   final bool enabled;
-  final VoidCallback? onTap;
-  final VoidCallback onLongPress;
+  final VoidCallback onTap;
   final VoidCallback onToggleEnabled;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        key: ValueKey('skillCapsule:${skill.name}'),
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        onLongPress: onLongPress,
+    return Container(
+      decoration: BoxDecoration(
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
         child: Ink(
-          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(24),
+            gradient: LinearGradient(
+              colors: [
+                enabled
+                    ? theme.colorScheme.primary.withValues(alpha: 0.10)
+                    : theme.colorScheme.surface,
+                theme.colorScheme.surface,
+              ],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+            borderRadius: BorderRadius.circular(999),
             border: Border.all(
               color: enabled
                   ? theme.colorScheme.primary.withValues(alpha: 0.45)
@@ -383,58 +478,76 @@ class _SkillCapsuleCard extends StatelessWidget {
               ),
             ],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              Expanded(
+                child: InkWell(
+                  key: ValueKey('skillCapsule:${skill.name}'),
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(999),
+                  ),
+                  onTap: onTap,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                    child: Row(
                       children: [
-                        Text(
-                          skill.name.isEmpty ? '未命名 skill' : skill.name,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
+                        Container(
+                          width: 42,
+                          height: 42,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: enabled
+                                ? theme.colorScheme.primaryContainer
+                                : theme.colorScheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child:
+                              const Text('💊', style: TextStyle(fontSize: 22)),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                skill.name.isEmpty ? '未命名 skill' : skill.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                skill.description.trim().isNotEmpty
+                                    ? skill.description.trim()
+                                    : '点击查看详情与执行入口',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          skill.description.trim().isNotEmpty
-                              ? skill.description.trim()
-                              : '轻点执行，长按查看详情与修改入口。',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            height: 1.45,
-                          ),
+                        const SizedBox(width: 10),
+                        Icon(
+                          Icons.open_in_new_rounded,
+                          size: 18,
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Switch(
-                    value: enabled,
-                    onChanged: (_) => onToggleEnabled(),
-                  ),
-                ],
+                ),
               ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _MetaChip(
-                      label: 'target',
-                      value: skill.targetType.isEmpty ? '-' : skill.targetType),
-                  _MetaChip(
-                      label: 'source',
-                      value: skill.source.isEmpty ? '-' : skill.source),
-                  _MetaChip(
-                      label: 'sync',
-                      value: skill.syncState.isEmpty ? '-' : skill.syncState),
-                  _MetaChip(label: '状态', value: enabled ? '已启用' : '未启用'),
-                ],
+              Padding(
+                padding: const EdgeInsets.only(right: 8, left: 4),
+                child: Switch(
+                  value: enabled,
+                  onChanged: (_) => onToggleEnabled(),
+                ),
               ),
             ],
           ),
@@ -448,6 +561,7 @@ class _HeroCard extends StatelessWidget {
   const _HeroCard({
     required this.title,
     required this.description,
+    required this.logo,
     required this.primaryAction,
     required this.secondaryAction,
     required this.chips,
@@ -455,6 +569,7 @@ class _HeroCard extends StatelessWidget {
 
   final String title;
   final String description;
+  final String logo;
   final Widget primaryAction;
   final Widget secondaryAction;
   final List<Widget> chips;
@@ -479,14 +594,31 @@ class _HeroCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.2,
-            ),
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(logo, style: const TextStyle(fontSize: 22)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 10),
           Text(
             description,
             style: theme.textTheme.bodySmall?.copyWith(

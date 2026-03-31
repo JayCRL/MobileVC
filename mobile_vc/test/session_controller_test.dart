@@ -530,7 +530,29 @@ void main() {
 
       expect(service.sentPayloads, hasLength(1));
       expect(service.sentPayloads[0]['action'], 'exec');
-      expect(service.sentPayloads[0]['cmd'], 'claude');
+      expect(service.sentPayloads[0]['cmd'], 'claude --model sonnet');
+    });
+
+    test('Claude 模型切换会把选中的模型注入启动命令', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.saveConfig(
+        const AppConfig(
+          engine: 'claude',
+          model: 'opus',
+        ),
+      );
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('claude');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(service.sentPayloads[0]['cmd'], 'claude --model opus');
     });
 
     test('sendInputText 非等待态输入 claude 后跟正文时会启动 Claude 并通过 input 发送正文',
@@ -547,9 +569,92 @@ void main() {
 
       expect(service.sentPayloads, hasLength(2));
       expect(service.sentPayloads[0]['action'], 'exec');
-      expect(service.sentPayloads[0]['cmd'], 'claude');
+      expect(service.sentPayloads[0]['cmd'], 'claude --model sonnet');
       expect(service.sentPayloads[1]['action'], 'input');
       expect(service.sentPayloads[1]['data'], '请帮我总结当前问题\n');
+    });
+
+    test('Codex 模型切换会把模型与推理强度注入启动命令', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.saveConfig(
+        const AppConfig(
+          engine: 'codex',
+          model: 'gpt-5-codex',
+          reasoningEffort: 'high',
+        ),
+      );
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('codex');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(
+        service.sentPayloads[0]['cmd'],
+        'codex -m gpt-5-codex --config model_reasoning_effort=high',
+      );
+    });
+
+    test('runtime_info /model 结果会自动回填 Claude 模型配置', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+      await controller.connect();
+
+      service.emit(
+        RuntimeInfoResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', engine: 'claude'),
+          raw: const {'type': 'runtime_info_result'},
+          query: 'model',
+          items: const [
+            RuntimeInfoItem(
+              label: 'active_ai',
+              value: 'opus',
+              available: true,
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.config.model, 'opus');
+    });
+
+    test('runtime_info /model 结果会自动回填 Codex 模型与强度配置', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+      await controller.connect();
+
+      service.emit(
+        RuntimeInfoResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'runtime_info_result'},
+          query: 'model',
+          items: const [
+            RuntimeInfoItem(
+              label: 'active_ai',
+              value: 'gpt-5.4 · HIGH',
+              available: true,
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.config.model, 'gpt-5.4');
+      expect(controller.config.reasoningEffort, 'high');
     });
 
     test('sendInputText 在 Claude 模式下继续普通文本时走 input 而不是新的 exec', () async {
@@ -1139,7 +1244,8 @@ void main() {
             HistoryLogEntry(
               kind: 'terminal',
               message: '不是在 ChatGPT 应用里那个聊天形态；这里我是通过 Codex/CX 这个编码代理在你的工作区里协作。',
-              text: '不是在 ChatGPT 应用里那个聊天形态；这里我是通过 Codex/CX 这个编码代理在你的工作区里协作。\n底层是 GPT 系列模型。',
+              text:
+                  '不是在 ChatGPT 应用里那个聊天形态；这里我是通过 Codex/CX 这个编码代理在你的工作区里协作。\n底层是 GPT 系列模型。',
               stream: 'stdout',
               timestamp: '2026-03-31T08:06:44Z',
             ),
@@ -1151,7 +1257,8 @@ void main() {
       final item = controller.timeline.firstWhere(
         (entry) => entry.body.contains('底层是 GPT 系列模型。'),
       );
-      expect(item.body, '不是在 ChatGPT 应用里那个聊天形态；这里我是通过 Codex/CX 这个编码代理在你的工作区里协作。\n底层是 GPT 系列模型。');
+      expect(item.body,
+          '不是在 ChatGPT 应用里那个聊天形态；这里我是通过 Codex/CX 这个编码代理在你的工作区里协作。\n底层是 GPT 系列模型。');
       expect(item.kind, 'markdown');
     });
 
@@ -1277,8 +1384,14 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.timeline.any((item) => item.body.contains('signal: killed')), isFalse);
-      expect(controller.timeline.any((item) => item.body.contains('command finished with error')), isFalse);
+      expect(
+          controller.timeline
+              .any((item) => item.body.contains('signal: killed')),
+          isFalse);
+      expect(
+          controller.timeline
+              .any((item) => item.body.contains('command finished with error')),
+          isFalse);
     });
 
     test('codex 工具噪声仅保留在 terminal logs，不进入 timeline', () async {
@@ -1313,7 +1426,8 @@ void main() {
       await _flushEvents();
 
       expect(controller.terminalStderr, contains('codex_core::tools::router'));
-      expect(controller.terminalStderr, contains('fatal: not a git repository'));
+      expect(
+          controller.terminalStderr, contains('fatal: not a git repository'));
       expect(
         controller.timeline
             .any((item) => item.body.contains('codex_core::tools::router')),

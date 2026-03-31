@@ -40,7 +40,9 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
             .where((item) => widget.enabledMemoryIds.contains(item.id))
             .toList(growable: false);
       case _MemoryFilter.editable:
-        return widget.items.where((item) => item.editable).toList(growable: false);
+        return widget.items
+            .where((item) => item.editable)
+            .toList(growable: false);
       case _MemoryFilter.all:
         return widget.items;
     }
@@ -64,7 +66,9 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
           children: [
             _HeroCard(
               title: 'Memory 管理',
-              description: 'Memory 是会话级长期上下文。打开详情可查看完整内容，并像编辑单文件一样一句话让 AI 助手帮你修改。',
+              logo: '🍞',
+              description:
+                  'Memory 是会话级长期上下文。打开详情可查看完整内容，并像编辑单文件一样一句话让 AI 助手帮你修改。',
               action: FilledButton.tonalIcon(
                 onPressed: widget.onSync,
                 icon: meta.isSyncing
@@ -78,15 +82,18 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
               ),
               chips: [
                 _MetaChip(label: '总数', value: '${widget.items.length}'),
-                _MetaChip(label: '已启用', value: '${widget.enabledMemoryIds.length}'),
+                _MetaChip(
+                    label: '已启用', value: '${widget.enabledMemoryIds.length}'),
                 _MetaChip(label: '状态', value: _syncStateLabel(meta.syncState)),
                 if (meta.lastSyncedAt != null)
-                  _MetaChip(label: '最近同步', value: _timeLabel(meta.lastSyncedAt)),
+                  _MetaChip(
+                      label: '最近同步', value: _timeLabel(meta.lastSyncedAt)),
               ],
             ),
             if (widget.syncStatus.trim().isNotEmpty) ...[
               const SizedBox(height: 10),
-              _StatusBanner(message: widget.syncStatus, tone: _bannerTone(meta)),
+              _StatusBanner(
+                  message: widget.syncStatus, tone: _bannerTone(meta)),
             ],
             const SizedBox(height: 12),
             SingleChildScrollView(
@@ -102,38 +109,61 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
                   _FilterChip(
                     label: '已启用',
                     selected: _filter == _MemoryFilter.enabled,
-                    onTap: () => setState(() => _filter = _MemoryFilter.enabled),
+                    onTap: () =>
+                        setState(() => _filter = _MemoryFilter.enabled),
                   ),
                   const SizedBox(width: 8),
                   _FilterChip(
                     label: '可编辑',
                     selected: _filter == _MemoryFilter.editable,
-                    onTap: () => setState(() => _filter = _MemoryFilter.editable),
+                    onTap: () =>
+                        setState(() => _filter = _MemoryFilter.editable),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: ListView(
-                children: [
-                  if (items.isEmpty)
-                    const _EmptyState()
-                  else
-                    ...[
-                      for (var index = 0; index < items.length; index++) ...[
-                        if (index > 0) const SizedBox(height: 10),
-                        _MemoryCard(
-                          item: items[index],
-                          enabled: widget.enabledMemoryIds.contains(items[index].id),
-                          onToggleEnabled: () => widget.onToggleEnabled(items[index].id),
-                          onTap: () => _openDetailSheet(context, items[index]),
-                        ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final columns = constraints.maxWidth >= 720 ? 2 : 1;
+                  final gap = 10.0;
+                  final itemWidth =
+                      (constraints.maxWidth - gap * (columns - 1)) / columns;
+                  return SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        if (items.isEmpty)
+                          const _EmptyState()
+                        else
+                          Align(
+                            alignment: Alignment.topLeft,
+                            child: Wrap(
+                              spacing: gap,
+                              runSpacing: gap,
+                              children: [
+                                for (final item in items)
+                                  SizedBox(
+                                    width: itemWidth,
+                                    child: _MemoryCard(
+                                      item: item,
+                                      enabled: widget.enabledMemoryIds
+                                          .contains(item.id),
+                                      onToggleEnabled: () =>
+                                          widget.onToggleEnabled(item.id),
+                                      onTap: () =>
+                                          _openDetailSheet(context, item),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        _ComposerCard(onSave: widget.onSave),
                       ],
-                    ],
-                  const SizedBox(height: 12),
-                  _ComposerCard(onSave: widget.onSave),
-                ],
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -144,76 +174,149 @@ class _MemoryManagementSheetState extends State<MemoryManagementSheet> {
 
   void _openDetailSheet(BuildContext context, MemoryItem item) {
     final controller = TextEditingController();
-    showModalBottomSheet<void>(
+    showDialog<void>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
       builder: (context) {
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            16,
-            8,
-            16,
-            24 + MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                item.title.isEmpty ? item.id : item.title,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _MetaChip(label: 'id', value: item.id),
-                  _MetaChip(label: 'source', value: item.source.isEmpty ? '-' : item.source),
-                  _MetaChip(label: 'sync', value: item.syncState.isEmpty ? '-' : item.syncState),
-                  _MetaChip(label: '编辑', value: item.editable ? '可编辑' : '只读'),
+        final theme = Theme.of(context);
+        return Dialog(
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+          backgroundColor: Colors.transparent,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
+            child: Container(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface,
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color:
+                      theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.14),
+                    blurRadius: 36,
+                    offset: const Offset(0, 18),
+                  ),
                 ],
               ),
-              const SizedBox(height: 12),
-              _DetailBlock(
-                title: '完整内容',
-                content: item.content.trim().isEmpty ? '暂无内容' : item.content.trim(),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                key: ValueKey('memoryDetail.modifyInput:${item.id}'),
-                controller: controller,
-                minLines: 3,
-                maxLines: 6,
-                enabled: item.editable,
-                decoration: InputDecoration(
-                  hintText: item.editable ? '一句话告诉 AI 助手你想怎么修改这条 memory' : '该 memory 为只读，不能直接修改',
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  18,
+                  18,
+                  18,
+                  18 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: const Text('🍞',
+                                style: TextStyle(fontSize: 22)),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.title.isEmpty ? item.id : item.title,
+                                  style: theme.textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: -0.3,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '记忆详情卡片',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _MetaChip(label: 'id', value: item.id),
+                          _MetaChip(
+                            label: 'source',
+                            value: item.source.isEmpty ? '-' : item.source,
+                          ),
+                          _MetaChip(
+                            label: 'sync',
+                            value:
+                                item.syncState.isEmpty ? '-' : item.syncState,
+                          ),
+                          _MetaChip(
+                            label: '编辑',
+                            value: item.editable ? '可编辑' : '只读',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      _DetailBlock(
+                        title: '完整内容',
+                        content: item.content.trim().isEmpty
+                            ? '暂无内容'
+                            : item.content.trim(),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        key: ValueKey('memoryDetail.modifyInput:${item.id}'),
+                        controller: controller,
+                        minLines: 3,
+                        maxLines: 6,
+                        enabled: item.editable,
+                        decoration: InputDecoration(
+                          hintText: item.editable
+                              ? '一句话告诉 AI 助手你想怎么修改这条 memory'
+                              : '该 memory 为只读，不能直接修改',
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: !item.editable
+                              ? null
+                              : () {
+                                  final value = controller.text.trim();
+                                  if (value.isEmpty) {
+                                    return;
+                                  }
+                                  widget.onReviseMemory(item, value);
+                                  Navigator.of(context).pop();
+                                },
+                          icon: const Icon(Icons.auto_fix_high),
+                          label: const Text('让 AI 助手修改这个 memory'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: !item.editable
-                      ? null
-                      : () {
-                          final value = controller.text.trim();
-                          if (value.isEmpty) {
-                            return;
-                          }
-                          widget.onReviseMemory(item, value);
-                          Navigator.of(context).pop();
-                        },
-                  icon: const Icon(Icons.auto_fix_high),
-                  label: const Text('让 AI 助手修改这个 memory'),
-                ),
-              ),
-            ],
+            ),
           ),
         );
       },
@@ -261,7 +364,10 @@ class _ComposerCardState extends State<_ComposerCard> {
         color: Theme.of(context).colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4),
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.4),
         ),
       ),
       child: Column(
@@ -365,71 +471,105 @@ class _MemoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        key: ValueKey('memoryCard:${item.id}'),
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
+    return Container(
+      decoration: BoxDecoration(
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
         child: Ink(
-          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(24),
+            gradient: LinearGradient(
+              colors: [
+                enabled
+                    ? theme.colorScheme.primary.withValues(alpha: 0.10)
+                    : theme.colorScheme.surface,
+                theme.colorScheme.surface,
+              ],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+            borderRadius: BorderRadius.circular(999),
             border: Border.all(
               color: enabled
                   ? theme.colorScheme.primary.withValues(alpha: 0.45)
                   : theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
             ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              Expanded(
+                child: InkWell(
+                  key: ValueKey('memoryCard:${item.id}'),
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(999),
+                  ),
+                  onTap: onTap,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                    child: Row(
                       children: [
-                        Text(
-                          item.title.isEmpty ? item.id : item.title,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
+                        Container(
+                          width: 42,
+                          height: 42,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: enabled
+                                ? theme.colorScheme.primaryContainer
+                                : theme.colorScheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child:
+                              const Text('🍞', style: TextStyle(fontSize: 22)),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.title.isEmpty ? item.id : item.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                item.id,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          item.content.trim().isEmpty
-                              ? '点击查看完整内容并继续修改。'
-                              : item.content.trim().replaceAll('\n', ' '),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            height: 1.45,
-                          ),
+                        const SizedBox(width: 10),
+                        Icon(
+                          Icons.open_in_new_rounded,
+                          size: 18,
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Switch(
-                    value: enabled,
-                    onChanged: (_) => onToggleEnabled(),
-                  ),
-                ],
+                ),
               ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _MetaChip(label: 'id', value: item.id),
-                  _MetaChip(label: 'source', value: item.source.isEmpty ? '-' : item.source),
-                  _MetaChip(label: 'sync', value: item.syncState.isEmpty ? '-' : item.syncState),
-                  _MetaChip(label: '状态', value: enabled ? '已启用' : '未启用'),
-                ],
+              Padding(
+                padding: const EdgeInsets.only(right: 8, left: 4),
+                child: Switch(
+                  value: enabled,
+                  onChanged: (_) => onToggleEnabled(),
+                ),
               ),
             ],
           ),
@@ -442,12 +582,14 @@ class _MemoryCard extends StatelessWidget {
 class _HeroCard extends StatelessWidget {
   const _HeroCard({
     required this.title,
+    required this.logo,
     required this.description,
     required this.action,
     required this.chips,
   });
 
   final String title;
+  final String logo;
   final String description;
   final Widget action;
   final List<Widget> chips;
@@ -474,6 +616,17 @@ class _HeroCard extends StatelessWidget {
         children: [
           Row(
             children: [
+              Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(logo, style: const TextStyle(fontSize: 22)),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   title,

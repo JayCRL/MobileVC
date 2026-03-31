@@ -126,6 +126,12 @@ func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protoco
 }
 
 func detectModelValue(meta protocol.RuntimeMeta) string {
+	if strings.TrimSpace(meta.Model) != "" {
+		if strings.TrimSpace(meta.ReasoningEffort) != "" {
+			return strings.TrimSpace(meta.Model) + " · " + strings.TrimSpace(strings.ToUpper(meta.ReasoningEffort))
+		}
+		return strings.TrimSpace(meta.Model)
+	}
 	commandHead := ""
 	if fields := strings.Fields(strings.TrimSpace(meta.Command)); len(fields) > 0 {
 		commandHead = strings.ToLower(fields[0])

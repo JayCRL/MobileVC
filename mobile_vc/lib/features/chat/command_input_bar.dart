@@ -14,8 +14,10 @@ class CommandInputBar extends StatefulWidget {
     required this.onOpenLogs,
     required this.onOpenSkills,
     required this.onOpenMemory,
+    required this.onOpenModels,
     required this.onPermissionModeChanged,
     required this.showClaudeMode,
+    required this.modelSummary,
     required this.shouldShowPermissionChoices,
     required this.shouldShowReviewChoices,
     required this.shouldShowPlanChoices,
@@ -33,8 +35,10 @@ class CommandInputBar extends StatefulWidget {
   final VoidCallback onOpenLogs;
   final VoidCallback onOpenSkills;
   final VoidCallback onOpenMemory;
+  final VoidCallback onOpenModels;
   final ValueChanged<String> onPermissionModeChanged;
   final bool showClaudeMode;
+  final String modelSummary;
   final bool shouldShowPermissionChoices;
   final bool shouldShowReviewChoices;
   final bool shouldShowPlanChoices;
@@ -128,9 +132,7 @@ class _CommandInputBarState extends State<CommandInputBar> {
             : widget.hasPendingReview
                 ? '先处理待审核 diff，再继续'
                 : widget.isBusy
-                    ? (widget.showClaudeMode
-                        ? 'AI 助手正在处理中'
-                        : '当前 shell 会话仍在运行')
+                    ? (widget.showClaudeMode ? 'AI 助手正在处理中' : '当前 shell 会话仍在运行')
                     : (widget.showClaudeMode ? '给 AI 助手发送消息' : '输入命令');
     final modeLabel = widget.showClaudeMode ? 'AI' : 'Shell';
     final modeColor = widget.showClaudeMode
@@ -144,24 +146,80 @@ class _CommandInputBarState extends State<CommandInputBar> {
         child: Padding(
           padding: EdgeInsets.fromLTRB(10, 6, 10, bottomInset > 0 ? 8 : 10),
           child: Container(
-            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.97),
+              gradient: LinearGradient(
+                colors: [
+                  Colors.white.withValues(alpha: 0.98),
+                  scheme.surface,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
               borderRadius: BorderRadius.circular(30),
               border: Border.all(
                 color: scheme.outlineVariant.withValues(alpha: 0.5),
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
+                  color: Colors.black.withValues(alpha: 0.07),
+                  blurRadius: 28,
+                  offset: const Offset(0, 10),
                 ),
               ],
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: modeColor,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: modeColor.withValues(alpha: 0.28),
+                              blurRadius: 8,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '$modeLabel 工作台',
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: modeColor,
+                            ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        widget.awaitInput
+                            ? '等待输入'
+                            : widget.isBusy
+                                ? '处理中'
+                                : '空闲',
+                        style:
+                            Theme.of(context).textTheme.labelMedium?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: SingleChildScrollView(
@@ -190,6 +248,12 @@ class _CommandInputBarState extends State<CommandInputBar> {
                           icon: Icons.psychology_alt_outlined,
                           label: 'Memory',
                           onPressed: widget.onOpenMemory,
+                        ),
+                        const SizedBox(width: 8),
+                        _ToolChip(
+                          icon: Icons.model_training_outlined,
+                          label: '模型 · ${widget.modelSummary}',
+                          onPressed: widget.onOpenModels,
                         ),
                         const SizedBox(width: 8),
                         DecoratedBox(
@@ -237,34 +301,6 @@ class _CommandInputBarState extends State<CommandInputBar> {
                       ],
                     ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: modeColor,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: modeColor.withValues(alpha: 0.28),
-                            blurRadius: 8,
-                            spreadRadius: 1,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      modeLabel,
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: modeColor,
-                          ),
-                    ),
-                  ],
                 ),
                 const SizedBox(height: 10),
                 Container(
@@ -368,7 +404,7 @@ class _ToolChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: const Color(0xFFF7F8FC),
+      color: Colors.white.withValues(alpha: 0.85),
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
         onTap: onPressed,
