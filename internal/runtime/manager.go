@@ -306,9 +306,17 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 				emit(mapped)
 			}
 		})
-		if err != nil {
-			emit(protocol.ApplyRuntimeMeta(protocol.NewErrorEvent(sessionID, err.Error(), ""), preparedReq.RuntimeMeta))
-		}
+			if err != nil {
+				if strings.Contains(strings.ToLower(err.Error()), "signal: killed") {
+					snapshot := s.manager.snapshot()
+					if snapshot.TemporaryElevated {
+						err = nil
+					}
+				}
+			}
+			if err != nil {
+				emit(protocol.ApplyRuntimeMeta(protocol.NewErrorEvent(sessionID, err.Error(), ""), preparedReq.RuntimeMeta))
+			}
 		if s.manager.finishIfCurrent(selected) {
 			for _, event := range s.controller.OnCommandFinished(preparedReq.RuntimeMeta) {
 				emit(event)
