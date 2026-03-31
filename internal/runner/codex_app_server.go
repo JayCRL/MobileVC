@@ -24,7 +24,10 @@ const (
 	codexPromptDeny    = "deny"
 )
 
-var codexDiffPathPattern = regexp.MustCompile(`^diff --git a/(.+) b/(.+)$`)
+var (
+	codexDiffPathPattern         = regexp.MustCompile(`^diff --git a/(.+) b/(.+)$`)
+	codexStructuredStderrPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T[^\s]+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+[A-Za-z0-9_.:-]+:`)
+)
 
 type codexRPCMessage struct {
 	JSONRPC string          `json:"jsonrpc,omitempty"`
@@ -1019,8 +1022,12 @@ func codexGuessLangFromPath(path string) string {
 }
 
 func codexShouldIgnoreStderr(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
+	trimmed := strings.TrimSpace(text)
+	lower := strings.ToLower(trimmed)
 	if lower == "" {
+		return true
+	}
+	if codexStructuredStderrPattern.MatchString(trimmed) && strings.Contains(lower, "codex_") {
 		return true
 	}
 	if strings.Contains(lower, "could not update path") {

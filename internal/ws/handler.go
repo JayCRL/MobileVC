@@ -650,7 +650,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emit(protocol.NewCatalogSyncStatusEvent(selectedSessionID, string(store.CatalogDomainMemory), toProtocolCatalogMetadata(snapshot.Meta)))
-			if err := syncExternalMemories(h.SessionStore, ctx); err != nil {
+			syncCWD := resolveCatalogSyncCWD(h.SessionStore, ctx, selectedSessionID, sessionListFilterCWD)
+			if err := syncExternalMemories(h.SessionStore, ctx, syncCWD); err != nil {
 				snapshot.Meta.SyncState = store.CatalogSyncStateFailed
 				snapshot.Meta.LastError = err.Error()
 				_ = h.SessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot)
@@ -1685,30 +1686,28 @@ func syncExternalSkills(sessionStore store.Store, ctx context.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
-	filtered := make([]store.SkillDefinition, 0, len(snapshot.Items)+1)
+	externalItems, err := loadClaudeSkillDefinitions(now)
+	if err != nil {
+		return err
+	}
+	filtered := make([]store.SkillDefinition, 0, len(snapshot.Items)+len(externalItems))
+	seen := make(map[string]struct{}, len(snapshot.Items)+len(externalItems))
 	for _, item := range snapshot.Items {
 		if item.Source == store.SkillSourceLocal {
 			filtered = append(filtered, item)
+			seen[item.Name] = struct{}{}
 		}
 	}
-	filtered = append(filtered, store.SkillDefinition{
-		Name:          "external-diff-summary",
-		Description:   "外部同步示例 skill",
-		Prompt:        "请总结下面上下文的关键变化、影响范围和验证建议。",
-		ResultView:    "review-card",
-		TargetType:    "diff",
-		Source:        store.SkillSourceExternal,
-		SourceOfTruth: store.CatalogSourceTruthClaude,
-		SyncState:     store.CatalogSyncStateSynced,
-		Editable:      false,
-		DriftDetected: false,
-		UpdatedAt:     now,
-		LastSyncedAt:  now,
-	})
+	for _, item := range externalItems {
+		if _, ok := seen[item.Name]; ok {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
 	snapshot.Items = filtered
 	snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
 	snapshot.Meta.SyncState = store.CatalogSyncStateSynced
-	snapshot.Meta.DriftDetected = false
+	snapshot.Meta.DriftDetected = catalogHasDraftSkill(filtered)
 	snapshot.Meta.LastSyncedAt = now
 	snapshot.Meta.LastError = ""
 	snapshot.Meta.VersionToken = fmt.Sprintf("skills-%d", now.UnixNano())
@@ -1760,7 +1759,7 @@ func upsertMemoryItem(sessionStore store.Store, ctx context.Context, item protoc
 	return sessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot)
 }
 
-func syncExternalMemories(sessionStore store.Store, ctx context.Context) error {
+func syncExternalMemories(sessionStore store.Store, ctx context.Context, cwd string) error {
 	if sessionStore == nil {
 		return fmt.Errorf("session store unavailable")
 	}
@@ -1769,24 +1768,266 @@ func syncExternalMemories(sessionStore store.Store, ctx context.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
-	filtered := make([]store.MemoryItem, 0, len(snapshot.Items))
+	externalItems, err := loadClaudeProjectMemories(cwd, now)
+	if err != nil {
+		return err
+	}
+	filtered := make([]store.MemoryItem, 0, len(snapshot.Items)+len(externalItems))
+	seen := make(map[string]struct{}, len(snapshot.Items)+len(externalItems))
 	for _, item := range snapshot.Items {
 		if item.Source == "local" {
-			item.SourceOfTruth = store.CatalogSourceTruthClaude
-			item.SyncState = store.CatalogSyncStateDraft
-			item.Editable = true
-			item.DriftDetected = true
 			filtered = append(filtered, item)
+			seen[item.ID] = struct{}{}
 		}
+	}
+	for _, item := range externalItems {
+		if _, ok := seen[item.ID]; ok {
+			continue
+		}
+		filtered = append(filtered, item)
 	}
 	snapshot.Items = filtered
 	snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
 	snapshot.Meta.SyncState = store.CatalogSyncStateSynced
-	snapshot.Meta.DriftDetected = false
+	snapshot.Meta.DriftDetected = catalogHasDraftMemory(filtered)
 	snapshot.Meta.LastSyncedAt = now
 	snapshot.Meta.LastError = ""
 	snapshot.Meta.VersionToken = fmt.Sprintf("memory-%d", now.UnixNano())
 	return sessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot)
+}
+
+func resolveCatalogSyncCWD(sessionStore store.Store, ctx context.Context, sessionID, fallbackCWD string) string {
+	if sessionStore != nil && strings.TrimSpace(sessionID) != "" {
+		record, err := sessionStore.GetSession(ctx, sessionID)
+		if err == nil {
+			if cwd := normalizeSessionCWD(record.Projection.Runtime.CWD); cwd != "" {
+				return cwd
+			}
+			if cwd := normalizeSessionCWD(record.Summary.Runtime.CWD); cwd != "" {
+				return cwd
+			}
+		}
+	}
+	return normalizeSessionCWD(fallbackCWD)
+}
+
+func loadClaudeSkillDefinitions(now time.Time) ([]store.SkillDefinition, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home dir for skill sync: %w", err)
+	}
+	root := filepath.Join(homeDir, ".claude", "skills")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read claude skills dir: %w", err)
+	}
+	items := make([]store.SkillDefinition, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillPath := filepath.Join(root, entry.Name(), "SKILL.md")
+		content, err := os.ReadFile(skillPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("read claude skill %s: %w", entry.Name(), err)
+		}
+		meta, body := parseMarkdownFrontMatter(string(content))
+		name := firstNonEmptyString(strings.TrimSpace(meta["name"]), strings.TrimSpace(entry.Name()))
+		if name == "" {
+			continue
+		}
+		info, err := os.Stat(skillPath)
+		if err != nil {
+			return nil, fmt.Errorf("stat claude skill %s: %w", entry.Name(), err)
+		}
+		items = append(items, store.SkillDefinition{
+			Name:          name,
+			Description:   strings.TrimSpace(meta["description"]),
+			Prompt:        strings.TrimSpace(body),
+			ResultView:    firstNonEmptyString(strings.TrimSpace(meta["resultview"]), "review-card"),
+			TargetType:    firstNonEmptyString(strings.TrimSpace(meta["targettype"]), "context"),
+			Source:        store.SkillSourceExternal,
+			SourceOfTruth: store.CatalogSourceTruthClaude,
+			SyncState:     store.CatalogSyncStateSynced,
+			Editable:      false,
+			DriftDetected: false,
+			UpdatedAt:     info.ModTime().UTC(),
+			LastSyncedAt:  now,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Name < items[j].Name
+	})
+	return items, nil
+}
+
+func loadClaudeProjectMemories(cwd string, now time.Time) ([]store.MemoryItem, error) {
+	memoryDir, err := findClaudeProjectMemoryDir(cwd)
+	if err != nil {
+		return nil, err
+	}
+	if memoryDir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(memoryDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read claude memory dir: %w", err)
+	}
+	items := make([]store.MemoryItem, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".md") {
+			continue
+		}
+		path := filepath.Join(memoryDir, name)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read claude memory %s: %w", name, err)
+		}
+		if hasBinaryContent(content) {
+			continue
+		}
+		meta, body := parseMarkdownFrontMatter(string(content))
+		id := strings.TrimSuffix(name, filepath.Ext(name))
+		title := firstNonEmptyString(
+			strings.TrimSpace(meta["title"]),
+			strings.TrimSpace(meta["name"]),
+			extractMarkdownTitle(body),
+			id,
+		)
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, fmt.Errorf("stat claude memory %s: %w", name, err)
+		}
+		items = append(items, store.MemoryItem{
+			ID:            id,
+			Title:         title,
+			Content:       strings.TrimSpace(body),
+			Source:        "claude-project-memory",
+			SourceOfTruth: store.CatalogSourceTruthClaude,
+			SyncState:     store.CatalogSyncStateSynced,
+			Editable:      false,
+			DriftDetected: false,
+			UpdatedAt:     info.ModTime().UTC(),
+			LastSyncedAt:  now,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ID < items[j].ID
+	})
+	return items, nil
+}
+
+func findClaudeProjectMemoryDir(cwd string) (string, error) {
+	normalized := normalizeSessionCWD(cwd)
+	if normalized == "" {
+		return "", nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir for memory sync: %w", err)
+	}
+	current := normalized
+	for {
+		candidate := filepath.Join(homeDir, ".claude", "projects", encodeClaudeProjectPath(current), "memory")
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			return candidate, nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return "", nil
+}
+
+func encodeClaudeProjectPath(path string) string {
+	normalized := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	if normalized == "" || normalized == "." {
+		return ""
+	}
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-")
+	encoded := replacer.Replace(normalized)
+	if !strings.HasPrefix(encoded, "-") {
+		encoded = "-" + encoded
+	}
+	return encoded
+}
+
+func parseMarkdownFrontMatter(content string) (map[string]string, string) {
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	if !strings.HasPrefix(normalized, "---\n") {
+		return nil, normalized
+	}
+	end := strings.Index(normalized[4:], "\n---\n")
+	if end < 0 {
+		return nil, normalized
+	}
+	rawFrontMatter := normalized[4 : 4+end]
+	body := normalized[4+end+5:]
+	meta := make(map[string]string)
+	for _, line := range strings.Split(rawFrontMatter, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		value := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
+		meta[key] = value
+	}
+	return meta, strings.TrimSpace(body)
+}
+
+func extractMarkdownTitle(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		title := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		if title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
+func catalogHasDraftSkill(items []store.SkillDefinition) bool {
+	for _, item := range items {
+		if item.Source == store.SkillSourceLocal &&
+			(item.SyncState != store.CatalogSyncStateSynced || item.DriftDetected) {
+			return true
+		}
+	}
+	return false
+}
+
+func catalogHasDraftMemory(items []store.MemoryItem) bool {
+	for _, item := range items {
+		if item.Source == "local" &&
+			(item.SyncState != store.CatalogSyncStateSynced || item.DriftDetected) {
+			return true
+		}
+	}
+	return false
 }
 
 func toHistoryContext(ctx *store.SnapshotContext) *protocol.HistoryContext {

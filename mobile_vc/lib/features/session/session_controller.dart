@@ -2894,9 +2894,110 @@ class SessionController extends ChangeNotifier {
   }
 
   void _pushTimelineItem(TimelineItem item) {
-    if (_shouldKeepTimelineItem(item)) {
-      _timeline.add(item);
+    if (!_shouldKeepTimelineItem(item)) {
+      return;
     }
+    if (_shouldMergeIntoPreviousTimelineItem(item)) {
+      final previous = _timeline.removeLast();
+      _timeline.add(
+        TimelineItem(
+          id: previous.id,
+          kind: previous.kind,
+          timestamp: item.timestamp,
+          title: previous.title,
+          body: _mergeTimelineBodies(previous.body, item.body),
+          stream: previous.stream,
+          status: item.status.isNotEmpty ? item.status : previous.status,
+          meta: item.meta,
+          context: item.context ?? previous.context,
+        ),
+      );
+      return;
+    }
+    _timeline.add(item);
+  }
+
+  bool _shouldMergeIntoPreviousTimelineItem(TimelineItem item) {
+    if (_timeline.isEmpty || item.kind != 'markdown') {
+      return false;
+    }
+    final previous = _timeline.last;
+    if (previous.kind != 'markdown') {
+      return false;
+    }
+    if (previous.stream != item.stream) {
+      return false;
+    }
+    if (previous.title.isNotEmpty || item.title.isNotEmpty) {
+      return false;
+    }
+    final sameExecution = previous.meta.executionId.trim() ==
+        item.meta.executionId.trim();
+    final sameContext =
+        previous.meta.contextId.trim() == item.meta.contextId.trim();
+    final sameCommand =
+        previous.meta.command.trim().toLowerCase() ==
+            item.meta.command.trim().toLowerCase() &&
+        previous.meta.engine.trim().toLowerCase() ==
+            item.meta.engine.trim().toLowerCase();
+    if (!(sameExecution || sameContext || sameCommand)) {
+      return false;
+    }
+    final gap = item.timestamp.difference(previous.timestamp).inMilliseconds;
+    return gap >= 0 && gap <= 5000;
+  }
+
+  String _mergeTimelineBodies(String previous, String next) {
+    if (previous.isEmpty) {
+      return next;
+    }
+    if (next.isEmpty) {
+      return previous;
+    }
+    if (_endsWithWhitespace(previous) || _startsWithWhitespace(next)) {
+      return '$previous$next';
+    }
+    if (_endsWithSentencePunctuation(previous)) {
+      if (_startsWithBlockLikeMarkdown(next)) {
+        return '$previous\n\n$next';
+      }
+      if (!_startsWithClosingPunctuation(next) &&
+          !_boundaryHasCjk(previous, next)) {
+        return '$previous $next';
+      }
+    }
+    return '$previous$next';
+  }
+
+  bool _endsWithWhitespace(String value) => RegExp(r'\s$').hasMatch(value);
+
+  bool _startsWithWhitespace(String value) => RegExp(r'^\s').hasMatch(value);
+
+  bool _endsWithSentencePunctuation(String value) {
+    return RegExp(r'[.!?。！？:：;；]$').hasMatch(value);
+  }
+
+  bool _startsWithBlockLikeMarkdown(String value) {
+    return RegExp(r'^(#{1,6}\s|[-*+]\s|>\s|```|\d+\.\s)').hasMatch(value);
+  }
+
+  bool _startsWithClosingPunctuation(String value) {
+    return RegExp(r'^[)\]}>.,!?;:，。！？；：]').hasMatch(value);
+  }
+
+  bool _boundaryHasCjk(String previous, String next) {
+    final previousRune = previous.runes.isEmpty ? null : previous.runes.last;
+    final nextRune = next.runes.isEmpty ? null : next.runes.first;
+    if (previousRune == null || nextRune == null) {
+      return false;
+    }
+    return _isCjkRune(previousRune) || _isCjkRune(nextRune);
+  }
+
+  bool _isCjkRune(int rune) {
+    return (rune >= 0x3400 && rune <= 0x4DBF) ||
+        (rune >= 0x4E00 && rune <= 0x9FFF) ||
+        (rune >= 0xF900 && rune <= 0xFAFF);
   }
 
   bool _shouldKeepTimelineItem(TimelineItem item) {

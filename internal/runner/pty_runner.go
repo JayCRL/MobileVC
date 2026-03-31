@@ -2035,7 +2035,7 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 						sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, trimmedPending, options))
 						promptSent = true
 					}
-				} else if trimmedPending != emittedTail {
+				} else if stream != "stderr" && trimmedPending != emittedTail {
 					now := time.Now()
 					if shouldDeferLiveTailEmission(trimmedPending, emittedTail, rawChunk, lastLiveTailEmit, now) {
 						continue
