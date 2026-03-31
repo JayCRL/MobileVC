@@ -21,7 +21,11 @@
 </p>
 
 <p align="center">
-  官网：<a href="https://www.mobilevc.top">https://www.mobilevc.top</a>
+  <strong>官网：</strong><a href="https://www.mobilevc.top">https://www.mobilevc.top</a>
+</p>
+
+<p align="center">
+  快速访问：<a href="https://www.mobilevc.top">mobilevc.top</a>
 </p>
 
 ---
