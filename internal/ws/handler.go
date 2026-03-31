@@ -168,7 +168,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if _, err := h.SessionStore.SaveProjection(ctx, sessionID, snapshot); err != nil {
+			persistCtx, persistCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer persistCancel()
+			if _, err := h.SessionStore.SaveProjection(persistCtx, sessionID, snapshot); err != nil {
 			logx.Error("ws", "save session projection failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 		}
 	}
@@ -2248,9 +2250,28 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 		snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "diff", Context: &store.SnapshotContext{ID: diff.ContextID, Path: diff.Path, Title: diff.Title, Diff: diff.Diff, Lang: diff.Lang, PendingReview: diff.PendingReview, Timestamp: e.Timestamp.Format(time.RFC3339), Source: e.Source, SkillName: e.SkillName, ExecutionID: diff.ExecutionID, GroupID: diff.GroupID, GroupTitle: diff.GroupTitle, ReviewStatus: diff.ReviewStatus}})
 		return snapshot, true
 	case protocol.AgentStateEvent:
-		return snapshot, false
+		snapshot.Controller.State = session.ControllerState(e.State)
+		snapshot.Controller.CurrentCommand = firstNonEmptyString(e.Command, snapshot.Controller.CurrentCommand)
+		snapshot.Controller.LastStep = firstNonEmptyString(e.Step, snapshot.Controller.LastStep)
+		snapshot.Controller.LastTool = firstNonEmptyString(e.Tool, snapshot.Controller.LastTool)
+		snapshot.Controller.ActiveMeta = protocol.MergeRuntimeMeta(snapshot.Controller.ActiveMeta, e.RuntimeMeta)
+		snapshot.Runtime.ResumeSessionID = firstNonEmptyString(e.RuntimeMeta.ResumeSessionID, snapshot.Runtime.ResumeSessionID)
+		snapshot.Runtime.Command = firstNonEmptyString(e.RuntimeMeta.Command, snapshot.Runtime.Command, snapshot.Controller.CurrentCommand)
+		snapshot.Runtime.Engine = firstNonEmptyString(e.RuntimeMeta.Engine, snapshot.Runtime.Engine)
+		snapshot.Runtime.CWD = firstNonEmptyString(e.RuntimeMeta.CWD, snapshot.Runtime.CWD)
+		snapshot.Runtime.PermissionMode = firstNonEmptyString(e.RuntimeMeta.PermissionMode, snapshot.Runtime.PermissionMode)
+		snapshot.Runtime.ClaudeLifecycle = normalizeProjectionLifecycle(firstNonEmptyString(e.RuntimeMeta.ClaudeLifecycle, snapshot.Runtime.ClaudeLifecycle), firstNonEmptyString(e.RuntimeMeta.ResumeSessionID, snapshot.Runtime.ResumeSessionID))
+		return snapshot, true
 	case protocol.PromptRequestEvent:
-		return snapshot, false
+		snapshot.Controller.State = session.ControllerStateWaitInput
+		snapshot.Controller.ActiveMeta = protocol.MergeRuntimeMeta(snapshot.Controller.ActiveMeta, e.RuntimeMeta)
+		snapshot.Runtime.ResumeSessionID = firstNonEmptyString(e.RuntimeMeta.ResumeSessionID, snapshot.Runtime.ResumeSessionID)
+		snapshot.Runtime.Command = firstNonEmptyString(e.RuntimeMeta.Command, snapshot.Runtime.Command, snapshot.Controller.CurrentCommand)
+		snapshot.Runtime.Engine = firstNonEmptyString(e.RuntimeMeta.Engine, snapshot.Runtime.Engine)
+		snapshot.Runtime.CWD = firstNonEmptyString(e.RuntimeMeta.CWD, snapshot.Runtime.CWD)
+		snapshot.Runtime.PermissionMode = firstNonEmptyString(e.RuntimeMeta.PermissionMode, snapshot.Runtime.PermissionMode)
+		snapshot.Runtime.ClaudeLifecycle = normalizeProjectionLifecycle(firstNonEmptyString(e.RuntimeMeta.ClaudeLifecycle, "waiting_input", snapshot.Runtime.ClaudeLifecycle), firstNonEmptyString(e.RuntimeMeta.ResumeSessionID, snapshot.Runtime.ResumeSessionID))
+		return snapshot, true
 	default:
 		return snapshot, false
 	}

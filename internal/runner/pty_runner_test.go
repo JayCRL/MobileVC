@@ -305,6 +305,28 @@ func TestPtyRunnerFlushesFileDiffBeforeInteractivePrompt(t *testing.T) {
 	}
 }
 
+func TestPtyRunnerLazyStartIgnoresEmptyFirstInput(t *testing.T) {
+	runner := NewPtyRunner()
+	runner.mu.Lock()
+	runner.lazyStart = true
+	runner.pendingReq = ExecRequest{SessionID: "s-empty", Command: "claude"}
+	runner.pendingCWD = "."
+	runner.sink = func(any) {}
+	runner.processDone = make(chan struct{})
+	runner.closed = false
+	runner.mu.Unlock()
+
+	if err := runner.startClaudeStreamOnFirstInput(context.Background(), runner.pendingReq, ".", func(any) {}, []byte("\n")); err != nil {
+		t.Fatalf("empty first input should be ignored: %v", err)
+	}
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if !runner.lazyStart {
+		t.Fatal("expected lazyStart to remain true after empty first input")
+	}
+}
+
 func TestPtyRunnerSuppressesLazyStreamExitNoiseAfterClose(t *testing.T) {
 	runner := NewPtyRunner()
 	runner.mu.Lock()

@@ -167,8 +167,6 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.mu.Unlock()
 		defer r.clear()
 
-		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
-
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
 		r.mu.Unlock()
@@ -214,8 +212,6 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.permissionMode = req.PermissionMode
 		r.mu.Unlock()
 		defer r.clear()
-
-		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
 
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
@@ -830,13 +826,13 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 		_, err := writer.Write(firstInput)
 		return err
 	}
-	r.lazyStart = false
-	r.mu.Unlock()
-
 	text := strings.TrimSpace(string(firstInput))
 	if text == "" {
+		r.mu.Unlock()
 		return nil
 	}
+	r.lazyStart = false
+	r.mu.Unlock()
 
 	r.mu.Lock()
 	resumeSessionID := r.claudeSessionID
@@ -879,6 +875,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 			return fmt.Errorf("start claude stream command: %w", err)
 		}
 		logx.Info("pty", "started claude stream command from first input: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q", req.SessionID, cwd, permMode, resumeSessionID)
+		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
 
 		streamWriter := &claudeStreamWriter{writer: stdin}
 		r.mu.Lock()
@@ -952,6 +949,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 		return fmt.Errorf("start claude prompt command: %w", err)
 	}
 	logx.Info("pty", "started claude prompt command: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q", req.SessionID, cwd, permMode, resumeSessionID)
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
 
 	r.mu.Lock()
 	r.cmd = cmd
@@ -1018,13 +1016,13 @@ func (r *PtyRunner) startCodexAppServerOnFirstInput(ctx context.Context, req Exe
 		_, err := writer.Write(firstInput)
 		return err
 	}
-	r.lazyStart = false
-	r.mu.Unlock()
-
 	text := strings.TrimSpace(string(firstInput))
 	if text == "" {
+		r.mu.Unlock()
 		return nil
 	}
+	r.lazyStart = false
+	r.mu.Unlock()
 
 	r.mu.Lock()
 	resumeSessionID := r.claudeSessionID
@@ -1041,6 +1039,7 @@ func (r *PtyRunner) startCodexAppServerOnFirstInput(ctx context.Context, req Exe
 		r.finishLazyProcess(err, sink, req.SessionID)
 		return err
 	}
+	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
 
 	writer := &codexAppWriter{session: app}
 	r.mu.Lock()

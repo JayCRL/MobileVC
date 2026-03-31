@@ -1,4 +1,4 @@
----
+---111
 
 # 📱 MobileVC — 手机就是你的 AI 编程助手控制台
 
@@ -18,6 +18,10 @@
   <img src="https://img.shields.io/badge/Go-1.21-blue" />
   <img src="https://img.shields.io/badge/Flutter-3.13-blue" />
   <img src="https://img.shields.io/badge/License-MIT-green" />
+</p>
+
+<p align="center">
+  官网：<a href="https://www.mobilevc.top">https://www.mobilevc.top</a>
 </p>
 
 ---

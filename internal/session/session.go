@@ -213,6 +213,11 @@ func (c *Controller) OnExecStart(command string, meta protocol.RuntimeMeta) []an
 	if meta.SkillName != "" {
 		message = "执行 skill：" + meta.SkillName
 	}
+	if isClaudeCommand(command) && normalizeClaudeLifecycle(meta.ClaudeLifecycle) == "starting" {
+		c.currentState = ControllerStateIdle
+		message = "等待输入"
+		return []any{c.newAgentStateEvent(message, true)}
+	}
 	return []any{c.newAgentStateEvent(message, false)}
 }
 

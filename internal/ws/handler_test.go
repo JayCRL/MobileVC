@@ -466,6 +466,38 @@ func int64String(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
 
+func TestApplyEventToProjectionPersistsAgentAndPromptState(t *testing.T) {
+	snapshot := store.ProjectionSnapshot{}
+	agent := protocol.NewAgentStateEvent("s1", string(session.ControllerStateThinking), "思考中", false, "claude", "", "")
+	agent.RuntimeMeta = protocol.RuntimeMeta{Command: "claude", Engine: "claude", CWD: "/tmp", PermissionMode: "default", ClaudeLifecycle: "starting"}
+	updated, ok := applyEventToProjection(snapshot, agent)
+	if !ok {
+		t.Fatal("expected agent state event to be persisted")
+	}
+	if updated.Controller.State != session.ControllerStateThinking {
+		t.Fatalf("unexpected controller state: %v", updated.Controller.State)
+	}
+	if updated.Runtime.Command != "claude" {
+		t.Fatalf("unexpected runtime command: %q", updated.Runtime.Command)
+	}
+
+	prompt := protocol.NewPromptRequestEvent("s1", "等待输入", []string{"y", "n"})
+	prompt.RuntimeMeta = protocol.RuntimeMeta{Command: "claude", ResumeSessionID: "resume-1"}
+	updated, ok = applyEventToProjection(updated, prompt)
+	if !ok {
+		t.Fatal("expected prompt request event to be persisted")
+	}
+	if updated.Controller.State != session.ControllerStateWaitInput {
+		t.Fatalf("unexpected controller wait state: %v", updated.Controller.State)
+	}
+	if updated.Runtime.ClaudeLifecycle != "waiting_input" {
+		t.Fatalf("unexpected runtime lifecycle: %q", updated.Runtime.ClaudeLifecycle)
+	}
+	if updated.Runtime.ResumeSessionID != "resume-1" {
+		t.Fatalf("unexpected resume session id: %q", updated.Runtime.ResumeSessionID)
+	}
+}
+
 func TestHandlerSkillCatalogLifecycle(t *testing.T) {
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
