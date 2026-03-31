@@ -1155,6 +1155,89 @@ void main() {
       expect(item.kind, 'markdown');
     });
 
+    test('连续 codex markdown 日志会合并成单条回复', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      const meta = RuntimeMeta(
+        command: 'codex',
+        engine: 'codex',
+        executionId: 'exec-codex-1',
+        contextId: 'turn-1',
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: meta,
+          raw: const {'type': 'log'},
+          message: '这是第一句。',
+          stream: 'stdout',
+        ),
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 120)),
+          sessionId: 'session-1',
+          runtimeMeta: meta,
+          raw: const {'type': 'log'},
+          message: '这是第二句。',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      final markdownItems =
+          controller.timeline.where((item) => item.kind == 'markdown').toList();
+      expect(markdownItems, hasLength(1));
+      expect(markdownItems.single.body, '这是第一句。这是第二句。');
+    });
+
+    test('英文 markdown 分片合并时会补句间空格', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      const meta = RuntimeMeta(
+        command: 'codex',
+        engine: 'codex',
+        executionId: 'exec-codex-2',
+        contextId: 'turn-2',
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: meta,
+          raw: const {'type': 'log'},
+          message: 'First sentence explains the current issue clearly.',
+          stream: 'stdout',
+        ),
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 180)),
+          sessionId: 'session-1',
+          runtimeMeta: meta,
+          raw: const {'type': 'log'},
+          message: 'Second sentence describes the expected fix path.',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      final markdownItems =
+          controller.timeline.where((item) => item.kind == 'markdown').toList();
+      expect(markdownItems, hasLength(1));
+      expect(
+        markdownItems.single.body,
+        'First sentence explains the current issue clearly. Second sentence describes the expected fix path.',
+      );
+    });
+
     test('权限交接中的 signal killed 噪声不会进入 timeline', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);

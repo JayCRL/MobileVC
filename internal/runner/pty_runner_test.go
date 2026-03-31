@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,20 @@ type nopWriteCloser struct {
 
 func (w *nopWriteCloser) Close() error {
 	return nil
+}
+
+type chunkReader struct {
+	chunks []string
+	index  int
+}
+
+func (r *chunkReader) Read(p []byte) (int, error) {
+	if r.index >= len(r.chunks) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.chunks[r.index])
+	r.index++
+	return n, nil
 }
 
 func TestPtyRunnerPromptAndInput(t *testing.T) {
@@ -1371,5 +1386,43 @@ func TestCodexAppSessionWritePermissionResponseEncodesJSONRPCResult(t *testing.T
 	}
 	if app.HasPendingPermissionRequest() {
 		t.Fatal("expected pending approval to be cleared")
+	}
+}
+
+func TestCodexShouldIgnoreStderrFiltersStructuredInternalCodexLogs(t *testing.T) {
+	text := "2026-03-31T17:40:33.818322Z ERROR codex_core::tools::router: error=Exit code: 1"
+	if !codexShouldIgnoreStderr(text) {
+		t.Fatalf("expected structured internal codex log to be ignored: %q", text)
+	}
+}
+
+func TestCodexShouldIgnoreStderrKeepsPlainUserFacingErrors(t *testing.T) {
+	text := "tool execution failed: exit status 1"
+	if codexShouldIgnoreStderr(text) {
+		t.Fatalf("expected plain stderr to remain visible: %q", text)
+	}
+}
+
+func TestReadOutputDoesNotDuplicateChunkedStderrLiveTail(t *testing.T) {
+	runner := NewPtyRunner()
+	reader := &chunkReader{
+		chunks: []string{
+			"zsh:1: command ",
+			"not found: cl",
+			"auxe\n",
+		},
+	}
+	var logs []protocol.LogEvent
+	runner.readOutput(context.Background(), reader, "s-stderr", "stderr", false, func(event any) {
+		if log, ok := event.(protocol.LogEvent); ok {
+			logs = append(logs, log)
+		}
+	})
+
+	if len(logs) != 1 {
+		t.Fatalf("expected a single stderr log, got %#v", logs)
+	}
+	if logs[0].Message != "zsh:1: command not found: clauxe" {
+		t.Fatalf("unexpected stderr log message: %q", logs[0].Message)
 	}
 }
