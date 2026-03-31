@@ -1,5 +1,3 @@
----111
-
 # 📱 MobileVC — 手机就是你的 AI 编程助手控制台
 
 <p align="center">
