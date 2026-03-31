@@ -778,6 +778,54 @@ func TestPtyRunnerCatalogAuthoringEmitsStructuredEvent(t *testing.T) {
 	}
 }
 
+func TestPtyRunnerClaudeStreamSuppressesExitNoiseAfterClose(t *testing.T) {
+	runner := NewPtyRunner()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventsCh := make(chan any, 32)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runner.runClaudeStream(ctx, ExecRequest{
+			SessionID: "s-close-stream",
+			Command:   "claude --print --output-format stream-json --input-format stream-json --permission-prompt-tool stdio",
+			Mode:      ModePTY,
+		}, ".", func(event any) {
+			eventsCh <- event
+		})
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	if err := runner.Close(); err != nil {
+		t.Fatalf("close runner: %v", err)
+	}
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("run claude stream: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for stream runner shutdown")
+	}
+	close(eventsCh)
+
+	for event := range eventsCh {
+		switch v := event.(type) {
+		case protocol.ErrorEvent:
+			message := strings.ToLower(v.Message)
+			if strings.Contains(message, "signal") || strings.Contains(message, "killed") || strings.Contains(message, "command exited") {
+				t.Fatalf("expected stream close noise to be suppressed, got %#v", v)
+			}
+		case protocol.SessionStateEvent:
+			if strings.Contains(strings.ToLower(v.Message), "finished with error") {
+				t.Fatalf("expected stream close noise to be suppressed, got %#v", v)
+			}
+		}
+	}
+}
+
 func TestPtyRunnerClaudeResumeUsesInteractiveWriter(t *testing.T) {
 	runner := NewPtyRunner()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
