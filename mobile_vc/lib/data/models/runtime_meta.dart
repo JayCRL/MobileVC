@@ -15,6 +15,8 @@ class RuntimeMeta {
     this.targetText = '',
     this.command = '',
     this.engine = '',
+    this.model = '',
+    this.reasoningEffort = '',
     this.cwd = '',
     this.permissionMode = '',
     this.claudeLifecycle = '',
@@ -38,6 +40,8 @@ class RuntimeMeta {
   final String targetText;
   final String command;
   final String engine;
+  final String model;
+  final String reasoningEffort;
   final String cwd;
   final String permissionMode;
   final String claudeLifecycle;
@@ -59,25 +63,35 @@ class RuntimeMeta {
       targetType: other.targetType.isNotEmpty ? other.targetType : targetType,
       targetPath: other.targetPath.isNotEmpty ? other.targetPath : targetPath,
       resultView: other.resultView.isNotEmpty ? other.resultView : resultView,
-      resumeSessionId:
-          other.resumeSessionId.isNotEmpty ? other.resumeSessionId : resumeSessionId,
-      executionId: other.executionId.isNotEmpty ? other.executionId : executionId,
+      resumeSessionId: other.resumeSessionId.isNotEmpty
+          ? other.resumeSessionId
+          : resumeSessionId,
+      executionId:
+          other.executionId.isNotEmpty ? other.executionId : executionId,
       groupId: other.groupId.isNotEmpty ? other.groupId : groupId,
       groupTitle: other.groupTitle.isNotEmpty ? other.groupTitle : groupTitle,
       contextId: other.contextId.isNotEmpty ? other.contextId : contextId,
-      contextTitle: other.contextTitle.isNotEmpty ? other.contextTitle : contextTitle,
+      contextTitle:
+          other.contextTitle.isNotEmpty ? other.contextTitle : contextTitle,
       targetText: other.targetText.isNotEmpty ? other.targetText : targetText,
       command: other.command.isNotEmpty ? other.command : command,
       engine: other.engine.isNotEmpty ? other.engine : engine,
+      model: other.model.isNotEmpty ? other.model : model,
+      reasoningEffort: other.reasoningEffort.isNotEmpty
+          ? other.reasoningEffort
+          : reasoningEffort,
       cwd: other.cwd.isNotEmpty ? other.cwd : cwd,
-      permissionMode:
-          other.permissionMode.isNotEmpty ? other.permissionMode : permissionMode,
+      permissionMode: other.permissionMode.isNotEmpty
+          ? other.permissionMode
+          : permissionMode,
       claudeLifecycle: other.claudeLifecycle.isNotEmpty
           ? other.claudeLifecycle
           : claudeLifecycle,
       targetDiff: other.targetDiff.isNotEmpty ? other.targetDiff : targetDiff,
-      targetTitle: other.targetTitle.isNotEmpty ? other.targetTitle : targetTitle,
-      targetStack: other.targetStack.isNotEmpty ? other.targetStack : targetStack,
+      targetTitle:
+          other.targetTitle.isNotEmpty ? other.targetTitle : targetTitle,
+      targetStack:
+          other.targetStack.isNotEmpty ? other.targetStack : targetStack,
     );
   }
 
@@ -97,6 +111,8 @@ class RuntimeMeta {
         if (targetText.isNotEmpty) 'targetText': targetText,
         if (command.isNotEmpty) 'command': command,
         if (engine.isNotEmpty) 'engine': engine,
+        if (model.isNotEmpty) 'model': model,
+        if (reasoningEffort.isNotEmpty) 'reasoningEffort': reasoningEffort,
         if (cwd.isNotEmpty) 'cwd': cwd,
         if (permissionMode.isNotEmpty) 'permissionMode': permissionMode,
         if (claudeLifecycle.isNotEmpty) 'claudeLifecycle': claudeLifecycle,
@@ -123,6 +139,8 @@ class RuntimeMeta {
       targetText: read('targetText'),
       command: read('command'),
       engine: read('engine'),
+      model: read('model'),
+      reasoningEffort: read('reasoningEffort'),
       cwd: read('cwd'),
       permissionMode: read('permissionMode'),
       claudeLifecycle: read('claudeLifecycle'),

@@ -215,8 +215,10 @@ class _SessionHomePageState extends State<SessionHomePage> {
         onOpenLogs: () => _openLogs(context),
         onOpenSkills: () => _openSkills(context),
         onOpenMemory: () => _openMemory(context),
+        onOpenModels: () => _openModelSwitcher(context),
         onPermissionModeChanged: controller.updatePermissionMode,
         showClaudeMode: controller.shouldShowClaudeMode,
+        modelSummary: controller.currentAiModelSummary,
         isSessionLoading: controller.isLoadingSession,
       ),
     );
@@ -267,6 +269,8 @@ class _SessionHomePageState extends State<SessionHomePage> {
                   token: tokenController.text.trim(),
                   cwd: cwdController.text.trim(),
                   engine: engineController.text.trim(),
+                  model: controller.config.model,
+                  reasoningEffort: controller.config.reasoningEffort,
                   permissionMode: permissionController.text.trim(),
                   fastMode: controller.fastMode,
                   adbIceServersJson: iceServersController.text.trim(),
@@ -295,6 +299,8 @@ class _SessionHomePageState extends State<SessionHomePage> {
                   token: tokenController.text.trim(),
                   cwd: cwdController.text.trim(),
                   engine: engineController.text.trim(),
+                  model: controller.config.model,
+                  reasoningEffort: controller.config.reasoningEffort,
                   permissionMode: permissionController.text.trim(),
                   fastMode: controller.fastMode,
                   adbIceServersJson: iceServersController.text.trim(),
@@ -660,6 +666,145 @@ class _SessionHomePageState extends State<SessionHomePage> {
     );
   }
 
+  Future<void> _openModelSwitcher(BuildContext context) async {
+    final engine = controller.currentAiEngine;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        var selectedModel = controller.selectedAiModel;
+        var selectedEffort = controller.selectedAiReasoningEffort;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final theme = Theme.of(context);
+            final supportsModels = engine == 'claude' || engine == 'codex';
+            final modelOptions =
+                engine == 'codex' ? _codexModelChoices : _claudeModelChoices;
+            return FractionallySizedBox(
+              heightFactor: 0.7,
+              child: ClipRRect(
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(28)),
+                child: Material(
+                  color: theme.colorScheme.surface,
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      8,
+                      16,
+                      24 + MediaQuery.of(context).viewInsets.bottom,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '模型切换',
+                          style: theme.textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          supportsModels
+                              ? '当前为 ${engine == 'codex' ? 'Codex' : 'Claude'} 模式，切换后的配置会用于下一次 AI 启动。'
+                              : '当前模式暂不支持快捷切换模型。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        if (supportsModels) ...[
+                          Text(
+                            '模型',
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              for (final option in modelOptions)
+                                _ModelChoiceCard(
+                                  title: option.title,
+                                  subtitle: option.subtitle,
+                                  selected: selectedModel == option.value,
+                                  onTap: () => setSheetState(() {
+                                    selectedModel = option.value;
+                                  }),
+                                ),
+                            ],
+                          ),
+                          if (engine == 'codex') ...[
+                            const SizedBox(height: 18),
+                            Text(
+                              '推理强度',
+                              style: theme.textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                for (final effort in _codexReasoningEfforts)
+                                  ChoiceChip(
+                                    label: Text(effort.toUpperCase()),
+                                    selected: selectedEffort == effort,
+                                    onSelected: (_) => setSheetState(() {
+                                      selectedEffort = effort;
+                                    }),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ] else ...[
+                          Expanded(
+                            child: Center(
+                              child: Text(
+                                '当前引擎暂不支持模型快捷切换。',
+                                style: theme.textTheme.bodyMedium,
+                              ),
+                            ),
+                          ),
+                        ],
+                        const Spacer(),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: !supportsModels
+                                ? null
+                                : () async {
+                                    await controller.updateAiModelSelection(
+                                      model: selectedModel,
+                                      reasoningEffort: selectedEffort,
+                                    );
+                                    if (context.mounted) {
+                                      Navigator.of(context).pop();
+                                    }
+                                  },
+                            icon: const Icon(Icons.model_training_outlined),
+                            label: Text(
+                              engine == 'codex'
+                                  ? '应用 ${selectedModel.toUpperCase()} · ${selectedEffort.toUpperCase()}'
+                                  : '应用 ${selectedModel.toUpperCase()}',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _openAdbDebug(BuildContext context) async {
     await controller.prepareAdbDebug();
     if (!context.mounted) {
@@ -892,39 +1037,222 @@ class _ContextSelectionBar extends StatelessWidget {
   }
 }
 
+class _ModelChoice {
+  const _ModelChoice({
+    required this.value,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final String value;
+  final String title;
+  final String subtitle;
+}
+
+const List<_ModelChoice> _claudeModelChoices = <_ModelChoice>[
+  _ModelChoice(
+    value: 'sonnet',
+    title: 'Sonnet',
+    subtitle: '更均衡，适合作为默认工作模型',
+  ),
+  _ModelChoice(
+    value: 'opus',
+    title: 'Opus',
+    subtitle: '更强推理，适合复杂任务与重审阅',
+  ),
+];
+
+const List<_ModelChoice> _codexModelChoices = <_ModelChoice>[
+  _ModelChoice(
+    value: 'gpt-5-codex',
+    title: 'GPT-5-Codex',
+    subtitle: '当前默认的 Codex 工作模型',
+  ),
+  _ModelChoice(
+    value: 'gpt-5',
+    title: 'GPT-5',
+    subtitle: '通用型 GPT-5，适合更广泛的文本任务',
+  ),
+];
+
+const List<String> _codexReasoningEfforts = <String>[
+  'low',
+  'medium',
+  'high',
+];
+
+class _ModelChoiceCard extends StatelessWidget {
+  const _ModelChoiceCard({
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 160,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(22),
+          child: Ink(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  selected
+                      ? scheme.primary.withValues(alpha: 0.12)
+                      : scheme.surface,
+                  scheme.surface,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: selected
+                    ? scheme.primary.withValues(alpha: 0.42)
+                    : scheme.outlineVariant.withValues(alpha: 0.55),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                        height: 1.35,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _LandingBrand extends StatelessWidget {
   const _LandingBrand();
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Image.asset(
-          'lib/logo-2.png',
-          width: 96,
-          height: 96,
-          fit: BoxFit.contain,
-        ),
-        const SizedBox(height: 16),
-        Text(
-          'MobileVC',
-          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.4,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              scheme.primaryContainer,
+              Color.alphaBlend(
+                scheme.primary.withValues(alpha: 0.08),
+                scheme.surface,
               ),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(32),
+          border: Border.all(
+            color: scheme.outlineVariant.withValues(alpha: 0.7),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: scheme.primary.withValues(alpha: 0.10),
+              blurRadius: 28,
+              offset: const Offset(0, 14),
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
-        Text(
-          '连接 AI 助手会话、文件树与 diff 审核的统一工作台',
-          style: Theme.of(context)
-              .textTheme
-              .bodyMedium
-              ?.copyWith(color: scheme.onSurfaceVariant),
-          textAlign: TextAlign.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Image.asset(
+              'lib/logo-2.png',
+              width: 108,
+              height: 108,
+              fit: BoxFit.contain,
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'MobileVC',
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.5,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '连接 AI 助手会话、文件树与 diff 审核的统一工作台',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: scheme.onSurfaceVariant, height: 1.45),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                _LandingChip(label: 'Session'),
+                _LandingChip(label: 'Diff Review'),
+                _LandingChip(label: 'Files'),
+                _LandingChip(label: 'ADB Debug'),
+              ],
+            ),
+          ],
         ),
-      ],
+      ),
+    );
+  }
+}
+
+class _LandingChip extends StatelessWidget {
+  const _LandingChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: scheme.outlineVariant.withValues(alpha: 0.55),
+        ),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+      ),
     );
   }
 }

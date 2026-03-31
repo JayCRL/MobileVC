@@ -306,17 +306,17 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 				emit(mapped)
 			}
 		})
-			if err != nil {
-				if strings.Contains(strings.ToLower(err.Error()), "signal: killed") {
-					snapshot := s.manager.snapshot()
-					if snapshot.TemporaryElevated {
-						err = nil
-					}
+		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "signal: killed") {
+				snapshot := s.manager.snapshot()
+				if snapshot.TemporaryElevated {
+					err = nil
 				}
 			}
-			if err != nil {
-				emit(protocol.ApplyRuntimeMeta(protocol.NewErrorEvent(sessionID, err.Error(), ""), preparedReq.RuntimeMeta))
-			}
+		}
+		if err != nil {
+			emit(protocol.ApplyRuntimeMeta(protocol.NewErrorEvent(sessionID, err.Error(), ""), preparedReq.RuntimeMeta))
+		}
 		if s.manager.finishIfCurrent(selected) {
 			for _, event := range s.controller.OnCommandFinished(preparedReq.RuntimeMeta) {
 				emit(event)
@@ -653,8 +653,13 @@ func (s *Service) prepareExecuteRequest(req ExecuteRequest) ExecuteRequest {
 		}
 	}
 	prepared.RuntimeMeta = protocol.MergeRuntimeMeta(prepared.RuntimeMeta, protocol.RuntimeMeta{
-		Command:        prepared.Command,
-		CWD:            prepared.CWD,
+		Command: prepared.Command,
+		CWD:     prepared.CWD,
+		Model:   detectRuntimeModel(prepared.Command, prepared.RuntimeMeta.Engine),
+		ReasoningEffort: detectRuntimeReasoningEffort(
+			prepared.Command,
+			prepared.RuntimeMeta.Engine,
+		),
 		PermissionMode: prepared.PermissionMode,
 		ClaudeLifecycle: firstNonEmptyRuntimeValue(prepared.RuntimeMeta.ClaudeLifecycle, func() string {
 			if prepared.Mode == runner.ModePTY && runnerIsClaudeSession(nil, prepared.Command, prepared.RuntimeMeta.Command) {
@@ -1101,6 +1106,55 @@ func ensureCodexResumeCommand(command, resumeSessionID string) string {
 	}
 	rebuilt = append(rebuilt, extra...)
 	return strings.Join(rebuilt, " ")
+}
+
+func detectRuntimeModel(command, engine string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return ""
+	}
+	head := strings.ToLower(strings.TrimSpace(fields[0]))
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "-m", "--model":
+			if i+1 < len(fields) {
+				return strings.TrimSpace(fields[i+1])
+			}
+		}
+	}
+	switch {
+	case head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\codex`) || head == "codex.exe":
+		return "gpt-5-codex"
+	case head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\claude`) || head == "claude.exe":
+		return "sonnet"
+	}
+	switch strings.TrimSpace(strings.ToLower(engine)) {
+	case "codex":
+		return "gpt-5-codex"
+	case "claude":
+		return "sonnet"
+	default:
+		return ""
+	}
+}
+
+func detectRuntimeReasoningEffort(command, engine string) string {
+	if strings.TrimSpace(strings.ToLower(engine)) != "codex" &&
+		!isCodexCommandHead(command) {
+		return ""
+	}
+	fields := strings.Fields(strings.TrimSpace(command))
+	for i := 0; i < len(fields); i++ {
+		if fields[i] != "--config" || i+1 >= len(fields) {
+			continue
+		}
+		value := strings.TrimSpace(fields[i+1])
+		const prefix = "model_reasoning_effort="
+		if strings.HasPrefix(strings.ToLower(value), prefix) {
+			return strings.TrimSpace(value[len(prefix):])
+		}
+	}
+	return ""
 }
 
 func newManagedClaudeSessionID() string {

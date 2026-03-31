@@ -115,7 +115,6 @@ class SessionController extends ChangeNotifier {
   bool _shouldSuppressNextActionNeededSignal = false;
   bool _autoSessionRequested = false;
   bool _autoSessionCreating = false;
-  String _autoSessionLoadingId = '';
   bool _isLoadingSession = false;
   String _pendingSessionTargetId = '';
   final Set<String> _pendingToggleSkillNames = <String>{};
@@ -145,6 +144,24 @@ class SessionController extends ChangeNotifier {
   bool _adbWebRtcStarting = false;
 
   AppConfig get config => _config;
+  String get currentAiEngine => _resolvedAiEngine(
+        command: currentMeta.command,
+        engine: currentMeta.engine,
+      );
+  String get selectedAiModel => _resolvedAiModel(
+        currentAiEngine,
+        currentMeta.model.isNotEmpty ? currentMeta.model : _config.model,
+      );
+  String get selectedAiReasoningEffort => _resolvedAiReasoningEffort(
+        currentAiEngine,
+        currentMeta.reasoningEffort.isNotEmpty
+            ? currentMeta.reasoningEffort
+            : _config.reasoningEffort,
+      );
+  bool get supportsAiModelSwitch =>
+      currentAiEngine == 'claude' || currentAiEngine == 'codex';
+  String get currentAiModelSummary => _aiModelSummary(
+      currentAiEngine, selectedAiModel, selectedAiReasoningEffort);
   bool get connecting => _connecting;
   bool get connected => _connected;
   bool get fileListLoading => _fileListLoading;
@@ -594,17 +611,27 @@ class SessionController extends ChangeNotifier {
   }
 
   String get _preferredAiCommand {
-    final runtimeEngine = _resumeRuntimeMeta.engine.trim();
-    final engine = (runtimeEngine.isNotEmpty ? runtimeEngine : _config.engine)
-        .trim()
-        .toLowerCase();
-    if (engine == 'codex') {
-      return 'codex';
+    final engine = currentAiEngine;
+    final parts = <String>[];
+    switch (engine) {
+      case 'codex':
+        parts.add('codex');
+        parts.addAll(['-m', selectedAiModel]);
+        final effort = selectedAiReasoningEffort.trim();
+        if (effort.isNotEmpty) {
+          parts.addAll(['--config', 'model_reasoning_effort=$effort']);
+        }
+        return parts.join(' ');
+      case 'gemini':
+        return 'gemini';
+      default:
+        parts.add('claude');
+        final model = selectedAiModel.trim();
+        if (model.isNotEmpty) {
+          parts.addAll(['--model', model]);
+        }
+        return parts.join(' ');
     }
-    if (engine == 'gemini') {
-      return 'gemini';
-    }
-    return 'claude';
   }
 
   bool _isAiCommand(String value) {
@@ -755,7 +782,6 @@ class SessionController extends ChangeNotifier {
       _connectionMessage = '已连接';
       _autoSessionRequested = false;
       _autoSessionCreating = false;
-      _autoSessionLoadingId = '';
       _runtimePermissionMode = '';
       requestSessionList();
       await switchWorkingDirectory(_config.cwd);
@@ -949,6 +975,32 @@ class SessionController extends ChangeNotifier {
         'Permission mode 已切换为 ${_permissionModeLabel(permissionMode)}，将对下一次交互生效');
     _syncDerivedState();
     notifyListeners();
+  }
+
+  Future<void> updateAiModelSelection({
+    required String model,
+    String reasoningEffort = '',
+  }) async {
+    final engine = currentAiEngine;
+    if (!(engine == 'claude' || engine == 'codex')) {
+      _pushSystem('session', '当前模式暂不支持快捷切换模型');
+      return;
+    }
+    final normalizedModel = _resolvedAiModel(engine, model);
+    final normalizedEffort =
+        _resolvedAiReasoningEffort(engine, reasoningEffort);
+    await saveConfig(
+      _config.copyWith(
+        model: normalizedModel,
+        reasoningEffort: normalizedEffort,
+      ),
+    );
+    _pushSystem(
+      'session',
+      engine == 'codex'
+          ? 'Codex 模型已切换为 ${_codexModelLabel(normalizedModel)} · ${normalizedEffort.toUpperCase()}，将对下一次 Codex 启动生效'
+          : 'Claude 模型已切换为 ${_claudeModelLabel(normalizedModel)}，将对下一次 Claude 启动生效',
+    );
   }
 
   void requestFileList([String? path]) {
@@ -2144,7 +2196,6 @@ class SessionController extends ChangeNotifier {
       case SessionCreatedEvent created:
         _autoSessionRequested = false;
         _autoSessionCreating = false;
-        _autoSessionLoadingId = '';
         _selectedSessionId = created.summary.id;
         _selectedSessionTitle = created.summary.title;
         _upsertSession(created.summary);
@@ -2159,7 +2210,6 @@ class SessionController extends ChangeNotifier {
       case SessionHistoryEvent history:
         _autoSessionRequested = false;
         _autoSessionCreating = false;
-        _autoSessionLoadingId = '';
         _resetActionNeededTracking(suppressNextSignal: true);
         _selectedSessionId = history.summary.id;
         _selectedSessionTitle = history.summary.title;
@@ -2255,6 +2305,7 @@ class SessionController extends ChangeNotifier {
         break;
       case SessionStateEvent state:
         _sessionState = state;
+        _maybeAutoSyncAiModel(state.runtimeMeta);
         _syncRuntimePermissionMode();
         if (_isLoadingSession &&
             _matchesPendingSessionTarget(state.sessionId)) {
@@ -2272,6 +2323,7 @@ class SessionController extends ChangeNotifier {
         break;
       case AgentStateEvent agent:
         _agentState = agent;
+        _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
         if (_isIdleLikeState(agent.state) && !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
@@ -2293,6 +2345,10 @@ class SessionController extends ChangeNotifier {
       case LogEvent log:
         _appendTerminalLog(log.stream, log.message,
             executionId: log.runtimeMeta.executionId);
+        _maybeAutoSyncAiModel(
+          log.runtimeMeta,
+          rawText: log.message,
+        );
         _handleLogTimeline(log);
         if (!_shouldPreserveBlockingPrompt() &&
             _looksLikeAssistantReply(log.message) &&
@@ -2304,6 +2360,10 @@ class SessionController extends ChangeNotifier {
         }
         break;
       case ProgressEvent progress:
+        _maybeAutoSyncAiModel(
+          progress.runtimeMeta,
+          rawText: progress.message,
+        );
         if (progress.message.isNotEmpty && _currentStepSummary.isEmpty) {
           _currentStepSummary = progress.message;
         }
@@ -2480,6 +2540,10 @@ class SessionController extends ChangeNotifier {
         break;
       case RuntimeInfoResultEvent runtimeInfo:
         _runtimeInfo = runtimeInfo;
+        _maybeAutoSyncAiModel(
+          runtimeInfo.runtimeMeta,
+          runtimeInfo: runtimeInfo,
+        );
         break;
       case SkillCatalogResultEvent result:
         _skillCatalogMeta = result.meta;
@@ -2831,7 +2895,7 @@ class SessionController extends ChangeNotifier {
     final restoredBody = _restoredHistoryBody(entry);
     final restoredKind = _restoredHistoryKind(entry, restoredBody);
     return TimelineItem(
-      id: 'history-${restoredKind}-${entry.timestamp}-${restoredBody.hashCode}',
+      id: 'history-$restoredKind-${entry.timestamp}-${restoredBody.hashCode}',
       kind: restoredKind,
       timestamp:
           DateTime.tryParse(entry.timestamp)?.toLocal() ?? DateTime.now(),
@@ -2931,12 +2995,11 @@ class SessionController extends ChangeNotifier {
     if (previous.title.isNotEmpty || item.title.isNotEmpty) {
       return false;
     }
-    final sameExecution = previous.meta.executionId.trim() ==
-        item.meta.executionId.trim();
+    final sameExecution =
+        previous.meta.executionId.trim() == item.meta.executionId.trim();
     final sameContext =
         previous.meta.contextId.trim() == item.meta.contextId.trim();
-    final sameCommand =
-        previous.meta.command.trim().toLowerCase() ==
+    final sameCommand = previous.meta.command.trim().toLowerCase() ==
             item.meta.command.trim().toLowerCase() &&
         previous.meta.engine.trim().toLowerCase() ==
             item.meta.engine.trim().toLowerCase();
@@ -4238,6 +4301,58 @@ class SessionController extends ChangeNotifier {
     }
   }
 
+  void _maybeAutoSyncAiModel(
+    RuntimeMeta meta, {
+    String rawText = '',
+    RuntimeInfoResultEvent? runtimeInfo,
+  }) {
+    final engine = _resolvedAiEngine(
+      command: meta.command.isNotEmpty ? meta.command : currentMeta.command,
+      engine: meta.engine.isNotEmpty ? meta.engine : currentMeta.engine,
+    );
+    if (!(engine == 'claude' || engine == 'codex')) {
+      return;
+    }
+
+    String nextModel = meta.model.trim();
+    String nextEffort = meta.reasoningEffort.trim().toLowerCase();
+
+    if (runtimeInfo != null &&
+        runtimeInfo.query.trim().toLowerCase() == 'model') {
+      final activeItem =
+          runtimeInfo.items.where((item) => item.label == 'active_ai');
+      if (activeItem.isNotEmpty) {
+        final parsed =
+            _parseAiModelFromText(engine, activeItem.first.value.trim());
+        nextModel = parsed.$1.isNotEmpty ? parsed.$1 : nextModel;
+        nextEffort = parsed.$2.isNotEmpty ? parsed.$2 : nextEffort;
+      }
+    }
+
+    if (rawText.trim().isNotEmpty) {
+      final parsed = _parseAiModelFromText(engine, rawText);
+      nextModel = parsed.$1.isNotEmpty ? parsed.$1 : nextModel;
+      nextEffort = parsed.$2.isNotEmpty ? parsed.$2 : nextEffort;
+    }
+
+    if (nextModel.isEmpty) {
+      return;
+    }
+    final normalizedModel = nextModel.trim();
+    final normalizedEffort = nextEffort.trim().toLowerCase();
+    final modelChanged = normalizedModel != _config.model.trim();
+    final effortChanged = engine == 'codex' &&
+        normalizedEffort.isNotEmpty &&
+        normalizedEffort != _config.reasoningEffort.trim().toLowerCase();
+    if (!modelChanged && !effortChanged) {
+      return;
+    }
+    unawaited(saveConfig(_config.copyWith(
+      model: normalizedModel,
+      reasoningEffort: engine == 'codex' ? normalizedEffort : '',
+    )));
+  }
+
   String _parentDirectory(String path) {
     final normalized = path.replaceAll('\\', '/').trim();
     if (normalized.isEmpty || normalized == '.' || normalized == '/') {
@@ -4253,3 +4368,119 @@ class SessionController extends ChangeNotifier {
     return withoutTrailing.substring(0, index);
   }
 }
+
+(String, String) _parseAiModelFromText(String engine, String text) {
+  final normalized = text.trim();
+  if (normalized.isEmpty) {
+    return ('', '');
+  }
+  final lower = normalized.toLowerCase();
+  if (engine == 'claude') {
+    if (lower.contains('opus')) {
+      return ('opus', '');
+    }
+    if (lower.contains('sonnet')) {
+      return ('sonnet', '');
+    }
+    return ('', '');
+  }
+  String model = '';
+  final modelMatch = RegExp(r'(gpt[-\s]?\d(?:\.\d+)?(?:[-\s][a-z0-9]+)?)',
+          caseSensitive: false)
+      .firstMatch(normalized);
+  if (modelMatch != null) {
+    model = modelMatch.group(1)!.toLowerCase().replaceAll(' ', '-');
+  } else if (lower.contains('codex')) {
+    model = 'gpt-5-codex';
+  }
+  String effort = '';
+  for (final candidate in _codexReasoningEffortOptions) {
+    if (lower.contains(candidate)) {
+      effort = candidate;
+      break;
+    }
+  }
+  return (model, effort);
+}
+
+String _resolvedAiEngine({
+  required String command,
+  required String engine,
+}) {
+  final normalizedEngine = engine.trim().toLowerCase();
+  if (normalizedEngine == 'codex' || normalizedEngine == 'gemini') {
+    return normalizedEngine;
+  }
+  final normalizedCommand = command.trim().toLowerCase();
+  if (normalizedCommand == 'codex' || normalizedCommand.startsWith('codex ')) {
+    return 'codex';
+  }
+  if (normalizedCommand == 'gemini' ||
+      normalizedCommand.startsWith('gemini ')) {
+    return 'gemini';
+  }
+  return 'claude';
+}
+
+String _resolvedAiModel(String engine, String configured) {
+  final normalized = configured.trim();
+  switch (engine) {
+    case 'codex':
+      return normalized.isNotEmpty ? normalized : 'gpt-5-codex';
+    case 'claude':
+      return normalized.isNotEmpty ? normalized : 'sonnet';
+    default:
+      return normalized;
+  }
+}
+
+String _resolvedAiReasoningEffort(String engine, String configured) {
+  if (engine != 'codex') {
+    return '';
+  }
+  final normalized = configured.trim().toLowerCase();
+  if (_codexReasoningEffortOptions.contains(normalized)) {
+    return normalized;
+  }
+  return 'medium';
+}
+
+String _aiModelSummary(String engine, String model, String reasoningEffort) {
+  switch (engine) {
+    case 'codex':
+      return '${_codexModelLabel(model)} · ${reasoningEffort.toUpperCase()}';
+    case 'claude':
+      return _claudeModelLabel(model);
+    case 'gemini':
+      return 'Gemini';
+    default:
+      return model.trim().isEmpty ? '模型' : model.trim();
+  }
+}
+
+String _claudeModelLabel(String value) {
+  switch (value.trim().toLowerCase()) {
+    case 'opus':
+      return 'Opus';
+    case 'sonnet':
+    default:
+      return 'Sonnet';
+  }
+}
+
+String _codexModelLabel(String value) {
+  switch (value.trim()) {
+    case 'gpt-5-codex':
+      return 'GPT-5-Codex';
+    case 'gpt-5':
+      return 'GPT-5';
+    default:
+      return value.trim().isEmpty ? 'Codex' : value.trim();
+  }
+}
+
+const Set<String> _codexReasoningEffortOptions = <String>{
+  'low',
+  'medium',
+  'high',
+};
