@@ -1019,7 +1019,6 @@ class SessionController extends ChangeNotifier {
       _autoSessionRequested = false;
       _autoSessionCreating = false;
       _runtimePermissionMode = '';
-      requestSessionList();
       await switchWorkingDirectory(_config.cwd);
       requestRuntimeInfo('context');
       requestSkillCatalog();

@@ -313,6 +313,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return merged
 	}
 
+	emitStoredSessionList := func(filterCWD string) []store.SessionSummary {
+		if h.SessionStore == nil {
+			logx.Warn("ws", "stored session list requested but session store unavailable: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
+			return nil
+		}
+		sessionListFilterCWD = normalizeSessionCWD(filterCWD)
+		items, err := h.SessionStore.ListSessions(ctx)
+		if err != nil {
+			logx.Error("ws", "list stored sessions failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+			emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+			return nil
+		}
+		filtered := filterStoreSessionsByCWD(items, sessionListFilterCWD)
+		emit(protocol.NewSessionListResultEvent(selectedSessionID, toProtocolSummaries(filtered)))
+		return filtered
+	}
+
 	emitEmptySessionState := func() {
 		emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "session cleared"))
 	}
@@ -379,16 +396,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.SessionStore != nil {
 		emitSkillCatalogResult(emit, h.SessionStore, ctx, selectedSessionID)
 		emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
-		items, err := h.SessionStore.ListSessions(ctx)
-		if err != nil {
-			logx.Warn("ws", "initial session list restore failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
-		} else {
-			merged, mergeErr := mergeSessionSummaries(ctx, h.SessionStore, items, sessionListFilterCWD)
-			if mergeErr != nil {
-				logx.Warn("ws", "initial session list merge failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, mergeErr)
-				merged = items
-			}
-			emit(protocol.NewSessionListResultEvent(selectedSessionID, toProtocolSummaries(merged)))
+		if emitStoredSessionList(sessionListFilterCWD) != nil {
 			if strings.TrimSpace(selectedSessionID) != "" {
 				record, err := h.SessionStore.GetSession(ctx, selectedSessionID)
 				if err != nil {
