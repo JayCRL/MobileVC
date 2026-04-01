@@ -1438,6 +1438,20 @@ void main() {
   });
 
   group('SessionController auto session binding', () {
+    test('connect 不会主动补发 session_list，避免自动混入原生 Codex 会话', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+
+      final actions = service.sentPayloads
+          .map((item) => (item['action'] ?? '').toString())
+          .toList();
+      expect(actions, isNot(contains('session_list')));
+    });
+
     test('连接后收到非空 session 列表时，会自动 create 新会话，不自动 load 历史会话', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
