@@ -15,6 +15,7 @@ class AppNotificationCoordinator {
 
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   int _lastHandledSignalId = 0;
+  int _lastHandledNotificationId = 0;
   bool _initialized = false;
 
   bool get isAppActive =>
@@ -50,6 +51,11 @@ class AppNotificationCoordinator {
   }
 
   Future<void> _drainNotificationSignal() async {
+    await _drainActionNeededSignal();
+    await _drainTimelineNotificationSignal();
+  }
+
+  Future<void> _drainActionNeededSignal() async {
     final signal = _controller.actionNeededSignal;
     if (signal == null || signal.id == _lastHandledSignalId) {
       return;
@@ -59,10 +65,35 @@ class AppNotificationCoordinator {
       return;
     }
     try {
-      await _notificationService.showActionNeededNotification(
+      await _notificationService.showNotification(
         NotificationPayload(
           title: 'MobileVC',
           body: signal.message,
+        ),
+      );
+    } catch (error, stack) {
+      debugPrint('[startup] notification drain failed: $error');
+      debugPrintStack(
+        stackTrace: stack,
+        label: '[startup] notification drain stack',
+      );
+    }
+  }
+
+  Future<void> _drainTimelineNotificationSignal() async {
+    final signal = _controller.notificationSignal;
+    if (signal == null || signal.id == _lastHandledNotificationId) {
+      return;
+    }
+    _lastHandledNotificationId = signal.id;
+    if (isAppActive || !_initialized) {
+      return;
+    }
+    try {
+      await _notificationService.showNotification(
+        NotificationPayload(
+          title: signal.title,
+          body: signal.body,
         ),
       );
     } catch (error, stack) {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -102,6 +103,95 @@ func TestFileStorePersistsSessionContext(t *testing.T) {
 	}
 	if record.Projection.SkillCatalogMeta.SyncState != CatalogSyncStateSynced {
 		t.Fatalf("expected skill catalog meta persisted, got %#v", record.Projection.SkillCatalogMeta)
+	}
+}
+
+func TestFileStoreSaveProjectionDerivesTitleAndPreviewFromMeaningfulUserInput(t *testing.T) {
+	fs, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	created, err := fs.CreateSession(context.Background(), "")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	summary, err := fs.SaveProjection(context.Background(), created.ID, ProjectionSnapshot{
+		RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+		LogEntries: []SnapshotLogEntry{
+			{Kind: "user", Message: "codex -m gpt-5-codex --config model_reasoning_effort=high"},
+			{Kind: "system", Message: "command started"},
+			{Kind: "user", Message: "帮我查看这个项目的会话回复逻辑"},
+			{Kind: "markdown", Message: "我先看下项目结构。"},
+			{Kind: "user", Message: "再看下恢复逻辑"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save projection: %v", err)
+	}
+
+	if summary.Title != "帮我查看这个项目的会话回复逻辑" {
+		t.Fatalf("expected derived title, got %q", summary.Title)
+	}
+	if summary.LastPreview != "再看下恢复逻辑" {
+		t.Fatalf("expected latest user preview, got %q", summary.LastPreview)
+	}
+}
+
+func TestFileStoreListSessionsRepairsLegacySummaryFromProjection(t *testing.T) {
+	fs, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	created, err := fs.CreateSession(context.Background(), "")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	staleRecord := SessionRecord{
+		Summary: SessionSummary{
+			ID:        created.ID,
+			Title:     "2026-04-01 20:15",
+			CreatedAt: created.CreatedAt,
+			UpdatedAt: created.UpdatedAt,
+			Runtime:   SessionRuntime{Source: "mobilevc"},
+		},
+		Projection: ProjectionSnapshot{
+			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+			LogEntries: []SnapshotLogEntry{
+				{Kind: "user", Message: "看下这个项目的会话恢复逻辑"},
+				{Kind: "user", Message: "顺便检查一下 resume"},
+			},
+			Runtime: SessionRuntime{Source: "mobilevc"},
+		},
+	}
+	data, err := json.MarshalIndent(staleRecord, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal stale record: %v", err)
+	}
+	if err := os.WriteFile(fs.sessionPath(created.ID), data, 0o644); err != nil {
+		t.Fatalf("write stale record: %v", err)
+	}
+	indexData, err := json.MarshalIndent(fileIndex{Sessions: []SessionSummary{staleRecord.Summary}}, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal stale index: %v", err)
+	}
+	if err := os.WriteFile(fs.indexPath, indexData, 0o644); err != nil {
+		t.Fatalf("write stale index: %v", err)
+	}
+
+	items, err := fs.ListSessions(context.Background())
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one session, got %#v", items)
+	}
+	if items[0].Title != "看下这个项目的会话恢复逻辑" {
+		t.Fatalf("expected repaired title, got %q", items[0].Title)
+	}
+	if items[0].LastPreview != "顺便检查一下 resume" {
+		t.Fatalf("expected repaired preview, got %q", items[0].LastPreview)
 	}
 }
 
@@ -247,7 +337,7 @@ func TestFileStoreMemoryCatalogNormalizationDefaultsDomainAndSyncState(t *testin
 		t.Fatalf("new file store: %v", err)
 	}
 	if err := fs.SaveMemoryCatalogSnapshot(context.Background(), MemoryCatalogSnapshot{
-		Meta: CatalogMetadata{},
+		Meta:  CatalogMetadata{},
 		Items: []MemoryItem{{ID: "mem-1", Title: "Memory 1", Content: "hello"}},
 	}); err != nil {
 		t.Fatalf("save memory catalog snapshot: %v", err)

@@ -28,6 +28,33 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  group('shouldPreserveAdbFailureStatus', () {
+    test('keeps detailed TURN and ICE diagnostics', () {
+      expect(
+        shouldPreserveAdbFailureStatus(
+          'TURN 未返回服务端 relay 候选，请检查 TURN 的 external-ip、3478/UDP、3478/TCP 与凭据配置',
+        ),
+        isTrue,
+      );
+      expect(
+        shouldPreserveAdbFailureStatus('服务端 ICE 状态：failed'),
+        isTrue,
+      );
+      expect(
+        shouldPreserveAdbFailureStatus(
+          '连接态 统计: relay/udp@8.162.1.176:49188 -> relay/udp@1.2.3.4:55555',
+        ),
+        isTrue,
+      );
+    });
+
+    test('does not keep generic progress text', () {
+      expect(shouldPreserveAdbFailureStatus(''), isFalse);
+      expect(shouldPreserveAdbFailureStatus('WebRTC 连接中…'), isFalse);
+      expect(shouldPreserveAdbFailureStatus('WebRTC answer 已收到，等待连接…'), isFalse);
+    });
+  });
+
   group('SessionController action needed signal', () {
     test('运行态进入普通 WAIT_INPUT 时产出继续输入信号', () async {
       final service = _FakeMobileVcWsService();
@@ -507,6 +534,7 @@ void main() {
       await controller.initialize();
       addTearDown(controller.disposeController);
 
+      await controller.saveConfig(const AppConfig(host: '192.168.0.2'));
       await controller.connect();
       service.sentPayloads.clear();
 
@@ -555,6 +583,30 @@ void main() {
       expect(service.sentPayloads[0]['cmd'], 'claude --model opus');
     });
 
+    test('Claude 启动时会忽略残留的 Codex 模型配置并回退到 sonnet', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.saveConfig(
+        const AppConfig(
+          engine: 'claude',
+          model: 'gpt-5-codex',
+          reasoningEffort: 'high',
+        ),
+      );
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('claude');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(service.sentPayloads[0]['cmd'], 'claude --model sonnet');
+      expect(controller.selectedAiModel, 'sonnet');
+    });
+
     test('sendInputText 非等待态输入 claude 后跟正文时会启动 Claude 并通过 input 发送正文',
         () async {
       final service = _FakeMobileVcWsService();
@@ -600,6 +652,59 @@ void main() {
       );
     });
 
+    test('Codex 启动时会忽略残留的 Claude 模型配置并回退到默认模型', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.saveConfig(
+        const AppConfig(
+          engine: 'codex',
+          model: 'opus',
+          reasoningEffort: 'high',
+        ),
+      );
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('codex');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(
+        service.sentPayloads[0]['cmd'],
+        'codex -m gpt-5-codex --config model_reasoning_effort=high',
+      );
+      expect(controller.selectedAiModel, 'gpt-5-codex');
+    });
+
+    test('输入 codex 后会立刻切到 Codex 模式，不再停留在 shell', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.saveConfig(
+        const AppConfig(
+          engine: 'claude',
+          model: 'sonnet',
+        ),
+      );
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('codex');
+
+      expect(controller.shouldShowClaudeMode, isTrue);
+      expect(controller.commandBarEngine, 'codex');
+      expect(service.sentPayloads, hasLength(1));
+      expect(
+        service.sentPayloads[0]['cmd'],
+        'codex -m gpt-5-codex --config model_reasoning_effort=medium',
+      );
+    });
+
     test('runtime_info /model 结果会自动回填 Claude 模型配置', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -625,7 +730,7 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.config.model, 'opus');
+      expect(controller.config.claudeModel, 'opus');
     });
 
     test('runtime_info /model 结果会自动回填 Codex 模型与强度配置', () async {
@@ -653,8 +758,95 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.config.model, 'gpt-5.4');
-      expect(controller.config.reasoningEffort, 'high');
+      expect(controller.config.codexModel, 'gpt-5.4');
+      expect(controller.config.codexReasoningEffort, 'high');
+    });
+
+    test('手动应用 Codex 配置后不会被旧运行时模型回填覆盖', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+      await controller.connect();
+
+      await controller.saveConfig(
+        controller.config.copyWith(
+          engine: 'codex',
+          codexModel: 'gpt-5-codex',
+          codexReasoningEffort: 'medium',
+        ),
+      );
+
+      await controller.updateAiModelSelection(
+        model: 'gpt-5-codex',
+        reasoningEffort: 'high',
+      );
+      expect(controller.configuredAiModel, 'gpt-5-codex');
+      expect(controller.configuredAiReasoningEffort, 'high');
+
+      service.emit(
+        RuntimeInfoResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'runtime_info_result'},
+          query: 'model',
+          items: const [
+            RuntimeInfoItem(
+              label: 'active_ai',
+              value: 'gpt-5-codex · MEDIUM',
+              available: true,
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.config.codexModel, 'gpt-5-codex');
+      expect(controller.config.codexReasoningEffort, 'high');
+      expect(controller.configuredAiReasoningEffort, 'high');
+      expect(controller.commandBarModelSummary, 'GPT-5-Codex · HIGH');
+    });
+
+    test('Claude 与 Codex 模型配置会分别保存，不互相覆盖', () async {
+      final seedController =
+          SessionController(service: _FakeMobileVcWsService());
+      await seedController.initialize();
+      addTearDown(seedController.disposeController);
+      await seedController.saveConfig(
+        const AppConfig(
+          engine: 'claude',
+          claudeModel: 'opus',
+          codexModel: 'gpt-5.4',
+          codexReasoningEffort: 'high',
+        ),
+      );
+
+      final claudeService = _FakeMobileVcWsService();
+      final claudeController = SessionController(service: claudeService);
+      await claudeController.initialize();
+      addTearDown(claudeController.disposeController);
+      await claudeController.connect();
+      claudeService.sentPayloads.clear();
+      claudeController.sendInputText('claude');
+
+      expect(claudeService.sentPayloads[0]['cmd'], 'claude --model opus');
+
+      final codexService = _FakeMobileVcWsService();
+      final codexController = SessionController(service: codexService);
+      await codexController.initialize();
+      addTearDown(codexController.disposeController);
+      await codexController.saveConfig(
+        codexController.config.copyWith(engine: 'codex'),
+      );
+      await codexController.connect();
+      codexService.sentPayloads.clear();
+      codexController.sendInputText('codex');
+
+      expect(
+        codexService.sentPayloads[0]['cmd'],
+        'codex -m gpt-5.4 --config model_reasoning_effort=high',
+      );
     });
 
     test('sendInputText 在 Claude 模式下继续普通文本时走 input 而不是新的 exec', () async {
@@ -701,6 +893,51 @@ void main() {
       expect(service.sentPayloads, hasLength(1));
       expect(service.sentPayloads[0]['action'], 'input');
       expect(service.sentPayloads[0]['data'], '继续处理这个问题\n');
+    });
+
+    test('Claude 空启动后首条正文不会被 busy guard 拦截', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('claude');
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'exec');
+
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude --model sonnet',
+            executionId: 'exec-pending',
+            claudeLifecycle: 'starting',
+          ),
+          raw: const {'type': 'agent_state'},
+          state: 'THINKING',
+          message: '思考中',
+          command: 'claude --model sonnet',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.isSessionBusy, isFalse);
+      expect(controller.activityVisible, isFalse);
+      expect(controller.activityBannerVisible, isTrue);
+      expect(controller.activityBannerAnimated, isFalse);
+      expect(controller.activityBannerShowsElapsed, isFalse);
+      expect(controller.activityBannerTitle, '待输入');
+      expect(controller.activityBannerDetail, 'Claude 已启动，请继续输入');
+
+      controller.sendInputText('继续处理');
+
+      expect(service.sentPayloads, hasLength(2));
+      expect(service.sentPayloads[1]['action'], 'input');
+      expect(service.sentPayloads[1]['data'], '继续处理\n');
     });
 
     test('发送 claude 文本会走 slash 命令启动，不发送空 input', () async {
@@ -1142,7 +1379,7 @@ void main() {
       expect(controller.selectedSessionId, 'session-new');
     });
 
-    test('仅靠恢复态 runtime meta 也能识别 Claude 模式', () async {
+    test('恢复态 runtime meta 不会直接进入活跃 Claude 模式', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1164,9 +1401,39 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.inClaudeMode, isTrue);
+      expect(controller.inClaudeMode, isFalse);
       expect(controller.effectiveCwd, '/workspace/history');
       expect(controller.currentMeta.cwd, '/workspace/history');
+    });
+
+    test('加载可恢复历史会话后，普通输入不会误走 Claude continuation', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(id: 'session-1', title: '历史会话'),
+          resumeRuntimeMeta: const RuntimeMeta(
+            command: 'claude --resume session-1',
+            cwd: '/workspace/history',
+            claudeLifecycle: 'resumable',
+          ),
+        ),
+      );
+      await _flushEvents();
+
+      service.sentPayloads.clear();
+      controller.sendInputText('hello');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'exec');
+      expect(service.sentPayloads.single['cmd'], 'hello');
     });
   });
 
@@ -1262,6 +1529,171 @@ void main() {
       expect(item.kind, 'markdown');
     });
 
+    test('恢复历史时会过滤启动命令和 command finished 噪声', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-history',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(
+            id: 'session-history',
+            title: 'codex -m gpt-5-codex --config model_reasoning_effort=high',
+          ),
+          logEntries: const [
+            HistoryLogEntry(
+              kind: 'terminal',
+              text: 'codex -m gpt-5-codex --config model_reasoning_effort=high',
+              stream: 'stdout',
+              timestamp: '2026-03-31T08:06:40Z',
+            ),
+            HistoryLogEntry(
+              kind: 'terminal',
+              text: 'command finished',
+              stream: 'stdout',
+              timestamp: '2026-03-31T08:06:41Z',
+            ),
+            HistoryLogEntry(
+              kind: 'terminal',
+              text: '这是恢复后的第一条正常回复。',
+              stream: 'stdout',
+              timestamp: '2026-03-31T08:06:42Z',
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.selectedSessionTitle, 'Codex 会话');
+      expect(
+        controller.timeline.map((item) => item.body).toList(),
+        ['这是恢复后的第一条正常回复。'],
+      );
+    });
+
+    test('外部 Codex 会话在空历史时会用最后预览兜底，避免空白', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'codex-thread:1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(
+            id: 'codex-thread:1',
+            title: '2026-04-01 20:15',
+            lastPreview: '修一下登录页按钮间距',
+            source: 'codex-native',
+            external: true,
+          ),
+          resumeRuntimeMeta: const RuntimeMeta(
+            engine: 'codex',
+            command: 'codex',
+            resumeSessionId: 'thread-1',
+          ),
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.timeline, hasLength(1));
+      expect(controller.timeline.single.kind, 'user');
+      expect(controller.timeline.single.body, '修一下登录页按钮间距');
+    });
+
+    test('外部 Codex 会话只有空白历史项时仍会补可见预览', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'codex-thread:2',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(
+            id: 'codex-thread:2',
+            title: 'Desktop Codex Session',
+            source: 'codex-native',
+            external: true,
+          ),
+          logEntries: const [
+            HistoryLogEntry(kind: 'system', message: ''),
+          ],
+          resumeRuntimeMeta: const RuntimeMeta(
+            engine: 'codex',
+            command: 'codex',
+            resumeSessionId: 'thread-2',
+          ),
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.timeline, hasLength(1));
+      expect(controller.timeline.single.body, 'Desktop Codex Session');
+    });
+
+    test('会话列表结果不会覆盖已从历史提取出的最后一句用户输入', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(
+            id: 'session-1',
+            title: 'session',
+            lastPreview: '',
+          ),
+          logEntries: const [
+            HistoryLogEntry(
+              kind: 'user',
+              text: '修一下登录页按钮间距',
+              timestamp: '2026-04-01T10:00:00Z',
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.sessions.single.lastPreview, '修一下登录页按钮间距');
+
+      service.emit(
+        SessionListResultEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_list_result'},
+          items: const [
+            SessionSummary(
+              id: 'session-1',
+              title: 'session',
+              lastPreview: 'Codex gpt-5-codex -medium',
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.sessions.single.lastPreview, '修一下登录页按钮间距');
+      expect(controller.sessions.single.title, 'session');
+    });
+
     test('连续 codex markdown 日志会合并成单条回复', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -1300,6 +1732,63 @@ void main() {
           controller.timeline.where((item) => item.kind == 'markdown').toList();
       expect(markdownItems, hasLength(1));
       expect(markdownItems.single.body, '这是第一句。这是第二句。');
+    });
+
+    test('codex 简短文本回复不会再落到 terminal', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            engine: 'codex',
+            executionId: 'exec-codex-short',
+            contextId: 'turn-short',
+          ),
+          raw: const {'type': 'log'},
+          message: '好的',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      final item =
+          controller.timeline.singleWhere((entry) => entry.body == '好的');
+      expect(item.kind, 'markdown');
+    });
+
+    test('codex 启动握手会清洗成正常招呼，不展示 reasoning effort 回显', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            engine: 'codex',
+            executionId: 'exec-codex-start-1',
+            contextId: 'turn-start-1',
+          ),
+          raw: const {'type': 'log'},
+          message: 'Reasoning effort set to medium. How can I help you?',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      final item = controller.timeline.singleWhere(
+        (entry) => entry.kind == 'markdown',
+      );
+      expect(item.body, 'How can I help you?');
     });
 
     test('英文 markdown 分片合并时会补句间空格', () async {
@@ -1535,6 +2024,159 @@ void main() {
       expect(controller.activeTerminalExecutionId, 'exec-1');
       expect(controller.activeTerminalStdout, 'exec-1 stdout');
       expect(controller.activeTerminalStderr, 'exec-1 stderr');
+    });
+
+    test('runtime_process_list 会自动选中进程并请求日志', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.requestRuntimeProcessList();
+      expect(controller.runtimeProcessListLoading, isTrue);
+      expect(
+        service.sentPayloads.last,
+        containsPair('action', 'runtime_process_list'),
+      );
+
+      service.emit(
+        RuntimeProcessListResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'runtime_process_list_result'},
+          rootPid: 101,
+          items: const [
+            RuntimeProcessItem(
+              pid: 101,
+              ppid: 1,
+              state: 'Ss',
+              elapsed: '00:12',
+              command: 'bash -lc codex',
+              cwd: '/workspace',
+              executionId: 'exec-101',
+              source: 'codex',
+              root: true,
+              logAvailable: true,
+            ),
+            RuntimeProcessItem(
+              pid: 202,
+              ppid: 101,
+              state: 'S+',
+              elapsed: '00:03',
+              command: 'ps -axo',
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.runtimeProcesses, hasLength(2));
+      expect(controller.activeRuntimeProcessPid, 101);
+      expect(controller.runtimeProcessListLoading, isFalse);
+      expect(controller.runtimeProcessLogLoading, isTrue);
+      expect(
+        service.sentPayloads.last,
+        containsPair('action', 'runtime_process_log_get'),
+      );
+      expect(service.sentPayloads.last['pid'], 101);
+
+      service.emit(
+        RuntimeProcessLogResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'runtime_process_log_result'},
+          pid: 101,
+          executionId: 'exec-101',
+          command: 'bash -lc codex',
+          cwd: '/workspace',
+          source: 'codex',
+          stdout: 'process stdout',
+          stderr: 'process stderr',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.runtimeProcessLogLoading, isFalse);
+      expect(controller.activeRuntimeProcessStdout, 'process stdout');
+      expect(controller.activeRuntimeProcessStderr, 'process stderr');
+
+      controller.setActiveRuntimeProcess(202);
+      expect(controller.activeRuntimeProcessPid, 202);
+      expect(
+        service.sentPayloads.last,
+        containsPair('action', 'runtime_process_log_get'),
+      );
+      expect(service.sentPayloads.last['pid'], 202);
+    });
+
+    test('session_history 会清空旧的 runtime process 状态', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+
+      service.emit(
+        RuntimeProcessListResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'runtime_process_list_result'},
+          rootPid: 101,
+          items: const [
+            RuntimeProcessItem(
+              pid: 101,
+              ppid: 1,
+              state: 'Ss',
+              elapsed: '00:12',
+              command: 'bash -lc codex',
+              executionId: 'exec-101',
+              root: true,
+              logAvailable: true,
+            ),
+          ],
+        ),
+      );
+      service.emit(
+        RuntimeProcessLogResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'runtime_process_log_result'},
+          pid: 101,
+          executionId: 'exec-101',
+          stdout: 'process stdout',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.runtimeProcesses, hasLength(1));
+      expect(controller.activeRuntimeProcessPid, 101);
+      expect(controller.activeRuntimeProcessLog, isNotNull);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-history',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(id: 'session-history', title: '历史会话'),
+          rawTerminalByStream: const {'stdout': '', 'stderr': ''},
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.runtimeProcesses, isEmpty);
+      expect(controller.activeRuntimeProcessPid, 0);
+      expect(controller.activeRuntimeProcessLog, isNull);
+      expect(controller.runtimeProcessListLoading, isFalse);
+      expect(controller.runtimeProcessLogLoading, isFalse);
     });
 
     test('[debug] 调试信息不会进入 timeline，但 system/error 仍保留', () async {
@@ -2673,6 +3315,161 @@ void main() {
       final payload = service.sentPayloads.single;
       expect(payload['action'], 'permission_decision');
       expect(payload['decision'], 'deny');
+    });
+
+    test('permission rule list result 会更新规则状态与摘要', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        PermissionRuleListResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'permission_rule_list_result'},
+          sessionEnabled: true,
+          persistentEnabled: true,
+          sessionRules: const [
+            PermissionRule(
+              id: 'session-rule',
+              scope: 'session',
+              enabled: true,
+              engine: 'codex',
+              kind: 'write',
+              commandHead: 'bash',
+              targetPathPrefix: '/workspace/lib',
+              summary: 'Codex · write · bash · /workspace/lib',
+            ),
+          ],
+          persistentRules: const [
+            PermissionRule(
+              id: 'persistent-rule',
+              scope: 'persistent',
+              enabled: true,
+              engine: 'codex',
+              kind: 'shell',
+              commandHead: 'python',
+              summary: 'Codex · shell · python',
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.sessionPermissionRulesEnabled, isTrue);
+      expect(controller.persistentPermissionRulesEnabled, isTrue);
+      expect(controller.sessionPermissionRules, hasLength(1));
+      expect(controller.persistentPermissionRules, hasLength(1));
+      expect(controller.permissionRuleCount, 2);
+      expect(controller.permissionRuleSummary, '2 条 · 会话 / 长期');
+    });
+
+    test('permission prompt 选择本会话允许会发送 session scope', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        PromptRequestEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            targetPath: '/workspace/lib/main.dart',
+          ),
+          raw: const {'type': 'prompt_request', 'msg': 'Allow edit main.dart?'},
+          message: 'Allow edit main.dart?',
+          options: const [PromptOption(value: 'y'), PromptOption(value: 'n')],
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      controller.submitPromptOption('approve:session');
+
+      expect(service.sentPayloads, hasLength(1));
+      final payload = service.sentPayloads.single;
+      expect(payload['action'], 'permission_decision');
+      expect(payload['decision'], 'approve');
+      expect(payload['scope'], 'session');
+    });
+
+    test('permission prompt 选择长期允许会发送 persistent scope', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        PromptRequestEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            targetPath: '/workspace/lib/main.dart',
+          ),
+          raw: const {'type': 'prompt_request', 'msg': 'Allow edit main.dart?'},
+          message: 'Allow edit main.dart?',
+          options: const [PromptOption(value: 'y'), PromptOption(value: 'n')],
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      controller.submitPromptOption('approve:persistent');
+
+      expect(service.sentPayloads, hasLength(1));
+      final payload = service.sentPayloads.single;
+      expect(payload['action'], 'permission_decision');
+      expect(payload['decision'], 'approve');
+      expect(payload['scope'], 'persistent');
+    });
+
+    test('setPermissionRuleEnabled 会发送 permission_rule_upsert', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      controller.setPermissionRuleEnabled(
+        const PermissionRule(
+          id: 'rule-1',
+          scope: 'persistent',
+          enabled: true,
+          engine: 'codex',
+          kind: 'write',
+          commandHead: 'bash',
+          targetPathPrefix: '/workspace/lib',
+          summary: 'rule',
+        ),
+        false,
+      );
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'permission_rule_upsert');
+      final rule = service.sentPayloads.single['rule'] as Map<String, dynamic>;
+      expect(rule['id'], 'rule-1');
+      expect(rule['scope'], 'persistent');
+      expect(rule['enabled'], isFalse);
+    });
+
+    test('setPermissionRulesEnabled 会发送 scope 开关请求', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      controller.setPermissionRulesEnabled('persistent', true);
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single, {
+        'action': 'permission_rules_set_enabled',
+        'scope': 'persistent',
+        'enabled': true,
+      });
     });
 
     test('仅凭 acceptEdits 不会把新 diff 标记为已自动接受', () async {

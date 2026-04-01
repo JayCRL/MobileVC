@@ -7,6 +7,13 @@ import '../../data/models/events.dart';
 import '../../data/models/session_models.dart';
 import '../diff/diff_code_view.dart';
 
+const List<PromptOption> _permissionPromptOptions = <PromptOption>[
+  PromptOption(value: 'approve', label: '允许一次'),
+  PromptOption(value: 'approve:session', label: '本会话允许'),
+  PromptOption(value: 'approve:persistent', label: '长期允许'),
+  PromptOption(value: 'deny', label: '拒绝'),
+];
+
 class FileViewerSheet extends StatefulWidget {
   const FileViewerSheet({
     super.key,
@@ -584,7 +591,8 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
       return;
     }
     final normalized = value.toLowerCase();
-    final isClaudeBootstrap = normalized == 'claude' || normalized.startsWith('claude ');
+    final isClaudeBootstrap =
+        normalized == 'claude' || normalized.startsWith('claude ');
     final prompt = widget.pendingPrompt;
     final interaction = widget.pendingInteraction;
     final shouldSubmitPrompt = !widget.shouldShowReviewChoices &&
@@ -592,7 +600,8 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
         ((interaction != null && interaction.hasVisiblePrompt) ||
             (prompt != null &&
                 prompt.hasVisiblePrompt &&
-                (prompt.looksLikePermissionPrompt || prompt.options.isNotEmpty)));
+                (prompt.looksLikePermissionPrompt ||
+                    prompt.options.isNotEmpty)));
     if (shouldSubmitPrompt) {
       widget.onSubmitPrompt(value);
     } else {
@@ -771,24 +780,7 @@ class _PermissionActionBar extends StatelessWidget {
   }
 
   List<PromptOption> _resolvedOptions() {
-    final interactionOptions = interaction?.options
-            .where((option) => option.displayText.isNotEmpty)
-            .toList(growable: false) ??
-        const <PromptOption>[];
-    if (interactionOptions.isNotEmpty) {
-      return interactionOptions;
-    }
-    final promptOptions = prompt?.options
-            .where((option) => option.displayText.isNotEmpty)
-            .toList(growable: false) ??
-        const <PromptOption>[];
-    if (promptOptions.isNotEmpty) {
-      return promptOptions;
-    }
-    return const [
-      PromptOption(value: 'y', label: '允许'),
-      PromptOption(value: 'n', label: '拒绝'),
-    ];
+    return _permissionPromptOptions;
   }
 
   String _resolvedMessage() {
@@ -808,11 +800,29 @@ class _PermissionActionBar extends StatelessWidget {
   }
 
   String _promptOptionLabel(String value, String fallback) {
-    return fallback;
+    switch (value.trim().toLowerCase()) {
+      case 'approve':
+        return '允许一次';
+      case 'approve:session':
+        return '本会话允许';
+      case 'approve:persistent':
+        return '长期允许';
+      case 'deny':
+        return '拒绝';
+      default:
+        return fallback;
+    }
   }
 
   _PromptActionStyle _promptOptionStyle(String value) {
-    return _PromptActionStyle.outlined;
+    switch (value.trim().toLowerCase()) {
+      case 'approve:session':
+        return _PromptActionStyle.tonal;
+      case 'approve:persistent':
+        return _PromptActionStyle.filled;
+      default:
+        return _PromptActionStyle.outlined;
+    }
   }
 }
 
@@ -905,11 +915,18 @@ class _PromptOptionAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton(onPressed: onPressed, child: Text(label));
+    switch (style) {
+      case _PromptActionStyle.filled:
+        return FilledButton(onPressed: onPressed, child: Text(label));
+      case _PromptActionStyle.tonal:
+        return FilledButton.tonal(onPressed: onPressed, child: Text(label));
+      case _PromptActionStyle.outlined:
+        return OutlinedButton(onPressed: onPressed, child: Text(label));
+    }
   }
 }
 
-enum _PromptActionStyle { outlined }
+enum _PromptActionStyle { filled, tonal, outlined }
 
 class _MetaChip extends StatelessWidget {
   const _MetaChip({

@@ -9,15 +9,21 @@ class ActivityRunnerBar extends StatefulWidget {
   const ActivityRunnerBar({
     super.key,
     required this.visible,
-    required this.label,
+    required this.title,
+    required this.detail,
     required this.startedAt,
     required this.elapsedSeconds,
+    required this.animated,
+    required this.showElapsed,
   });
 
   final bool visible;
-  final String label;
+  final String title;
+  final String detail;
   final DateTime? startedAt;
   final int elapsedSeconds;
+  final bool animated;
+  final bool showElapsed;
 
   @override
   State<ActivityRunnerBar> createState() => _ActivityRunnerBarState();
@@ -42,12 +48,14 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
   @override
   void didUpdateWidget(covariant ActivityRunnerBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.visible != widget.visible) {
+    if (oldWidget.visible != widget.visible ||
+        oldWidget.animated != widget.animated) {
       _syncAnimation();
     }
     if (oldWidget.visible != widget.visible ||
         oldWidget.startedAt != widget.startedAt ||
-        oldWidget.elapsedSeconds != widget.elapsedSeconds) {
+        oldWidget.elapsedSeconds != widget.elapsedSeconds ||
+        oldWidget.showElapsed != widget.showElapsed) {
       _syncTicker();
     }
   }
@@ -94,15 +102,15 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'AI 助手正在运行中',
+                  widget.title,
                   style: Theme.of(context)
                       .textTheme
                       .labelLarge
                       ?.copyWith(fontWeight: FontWeight.w700),
                 ),
-                if (widget.label.trim().isNotEmpty)
+                if (widget.detail.trim().isNotEmpty)
                   Text(
-                    '调用工具 · ${widget.label.trim()}',
+                    widget.detail.trim(),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context)
@@ -114,20 +122,19 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
             ),
           ),
           const SizedBox(width: 12),
-          Text(
-            '${_displayElapsedSeconds}s',
-            style: Theme.of(context)
-                .textTheme
-                .labelMedium
-                ?.copyWith(color: scheme.primary, fontWeight: FontWeight.w700),
-          ),
+          if (widget.showElapsed)
+            Text(
+              '${_displayElapsedSeconds}s',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: scheme.primary, fontWeight: FontWeight.w700),
+            ),
         ],
       ),
     );
   }
 
   void _syncAnimation() {
-    if (widget.visible) {
+    if (widget.visible && widget.animated) {
       if (!_controller.isAnimating) {
         _controller.repeat(reverse: true);
       }
@@ -140,7 +147,7 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
   void _syncTicker() {
     _ticker?.cancel();
     _updateElapsedSeconds();
-    if (!widget.visible || widget.startedAt == null) {
+    if (!widget.visible || !widget.showElapsed || widget.startedAt == null) {
       return;
     }
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -153,9 +160,9 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
 
   void _updateElapsedSeconds() {
     final startedAt = widget.startedAt;
-    final nextValue = widget.visible && startedAt != null
+    final nextValue = widget.visible && widget.showElapsed && startedAt != null
         ? DateTime.now().difference(startedAt).inSeconds
-        : widget.elapsedSeconds;
+        : 0;
     if (_displayElapsedSeconds == nextValue) {
       return;
     }

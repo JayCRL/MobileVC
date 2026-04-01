@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,8 @@ import (
 	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
 )
+
+const adbWebRTCGatherTimeout = 12 * time.Second
 
 type adbWebRTCBridge struct {
 	mu                  sync.Mutex
@@ -103,12 +106,25 @@ func (b *adbWebRTCBridge) HandleOffer(ctx context.Context, serial, sdpType, sdp 
 	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
 		return fmt.Errorf("register webrtc codecs failed: %w", err)
 	}
+	forceRelay := shouldForceRelay(iceServers)
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
 	peer, err := api.NewPeerConnection(webrtc.Configuration{
-		ICEServers: buildICEServers(iceServers),
+		ICEServers:         buildICEServers(iceServers),
+		ICETransportPolicy: relayPolicy(forceRelay),
 	})
 	if err != nil {
 		return fmt.Errorf("create peer connection failed: %w", err)
+	}
+	if forceRelay {
+		b.emit(protocol.NewADBWebRTCStateEvent(
+			b.sessionID(),
+			true,
+			false,
+			resolvedSerial,
+			screenSize.Width,
+			screenSize.Height,
+			"服务端 WebRTC 使用 relay-only 模式",
+		))
 	}
 
 	track, err := webrtc.NewTrackLocalStaticSample(
@@ -170,6 +186,46 @@ func (b *adbWebRTCBridge) HandleOffer(ctx context.Context, serial, sdpType, sdp 
 			b.Stop("")
 		}
 	})
+	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		message := "服务端 ICE 状态：" + state.String()
+		b.emit(protocol.NewADBWebRTCStateEvent(b.sessionID(), true, false, resolvedSerial, screenSize.Width, screenSize.Height, message))
+		logx.Info("ws", "adb webrtc ice state changed: sessionID=%s serial=%s state=%s", b.sessionID(), resolvedSerial, state.String())
+	})
+	peer.OnICEGatheringStateChange(func(state webrtc.ICEGatheringState) {
+		message := "服务端 ICE 收集：" + state.String()
+		b.emit(protocol.NewADBWebRTCStateEvent(b.sessionID(), true, false, resolvedSerial, screenSize.Width, screenSize.Height, message))
+		logx.Info("ws", "adb webrtc gathering state changed: sessionID=%s serial=%s state=%s", b.sessionID(), resolvedSerial, state.String())
+	})
+	peer.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		if candidate == nil {
+			return
+		}
+		logx.Info(
+			"ws",
+			"adb webrtc local candidate: sessionID=%s serial=%s type=%s protocol=%s address=%s port=%d",
+			b.sessionID(),
+			resolvedSerial,
+			candidate.Typ.String(),
+			candidate.Protocol.String(),
+			candidate.Address,
+			candidate.Port,
+		)
+	})
+
+	offerSummary := summarizeSDPCandidates(sdp)
+	b.emit(protocol.NewADBWebRTCStateEvent(
+		b.sessionID(),
+		true,
+		false,
+		resolvedSerial,
+		screenSize.Width,
+		screenSize.Height,
+		"客户端 Offer 候选: "+offerSummary.String(),
+	))
+	if forceRelay && offerSummary.Relay == 0 {
+		b.Stop("")
+		return fmt.Errorf("TURN 未返回客户端 relay 候选，请检查手机到 TURN 的 3478/UDP、3478/TCP 与凭据")
+	}
 
 	if err := peer.SetRemoteDescription(webrtc.SessionDescription{
 		Type: webrtc.SDPTypeOffer,
@@ -192,7 +248,8 @@ func (b *adbWebRTCBridge) HandleOffer(ctx context.Context, serial, sdpType, sdp 
 	}
 	select {
 	case <-gatherComplete:
-	case <-time.After(5 * time.Second):
+	case <-time.After(adbWebRTCGatherTimeout):
+		logx.Warn("ws", "adb webrtc answer gathering timed out; sending partial candidates: sessionID=%s serial=%s", b.sessionID(), resolvedSerial)
 	case <-ctx.Done():
 		b.Stop("")
 		return ctx.Err()
@@ -202,6 +259,20 @@ func (b *adbWebRTCBridge) HandleOffer(ctx context.Context, serial, sdpType, sdp 
 	if localDescription == nil {
 		b.Stop("")
 		return fmt.Errorf("missing local description after answer")
+	}
+	answerSummary := summarizeSDPCandidates(localDescription.SDP)
+	b.emit(protocol.NewADBWebRTCStateEvent(
+		b.sessionID(),
+		true,
+		false,
+		resolvedSerial,
+		screenSize.Width,
+		screenSize.Height,
+		"服务端 Answer 候选: "+answerSummary.String(),
+	))
+	if forceRelay && answerSummary.Relay == 0 {
+		b.Stop("")
+		return fmt.Errorf("TURN 未返回服务端 relay 候选，请检查 TURN 的 external-ip、3478/UDP、3478/TCP 与凭据配置")
 	}
 
 	b.emit(protocol.NewADBWebRTCAnswerEvent(b.sessionID(), resolvedSerial, localDescription.Type.String(), localDescription.SDP))
@@ -232,6 +303,136 @@ func buildICEServers(configs []protocol.WebRTCIceServer) []webrtc.ICEServer {
 		})
 	}
 	return servers
+}
+
+func relayPolicy(forceRelay bool) webrtc.ICETransportPolicy {
+	if forceRelay {
+		return webrtc.ICETransportPolicyRelay
+	}
+	return webrtc.ICETransportPolicyAll
+}
+
+func shouldForceRelay(configs []protocol.WebRTCIceServer) bool {
+	for _, config := range configs {
+		for _, rawURL := range config.URLs {
+			host := iceURLHost(rawURL)
+			if isLikelyPublicHost(host) && isTurnURL(rawURL) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isTurnURL(rawURL string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(rawURL))
+	return strings.HasPrefix(normalized, "turn:") || strings.HasPrefix(normalized, "turns:")
+}
+
+func iceURLHost(rawURL string) string {
+	normalized := strings.TrimSpace(rawURL)
+	lower := strings.ToLower(normalized)
+	for _, prefix := range []string{"turns:", "turn:", "stuns:", "stun:"} {
+		if !strings.HasPrefix(lower, prefix) {
+			continue
+		}
+		rest := normalized[len(prefix):]
+		if strings.HasPrefix(rest, "//") {
+			rest = rest[2:]
+		}
+		if index := strings.Index(rest, "?"); index >= 0 {
+			rest = rest[:index]
+		}
+		if strings.HasPrefix(rest, "[") {
+			if index := strings.Index(rest, "]"); index > 0 {
+				return rest[1:index]
+			}
+			return strings.Trim(rest, "[]")
+		}
+		if host, _, err := net.SplitHostPort(rest); err == nil {
+			return host
+		}
+		if index := strings.LastIndex(rest, ":"); index > 0 {
+			return rest[:index]
+		}
+		return rest
+	}
+	return ""
+}
+
+func isLikelyPublicHost(rawHost string) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(rawHost))
+	if trimmed == "" {
+		return false
+	}
+	if trimmed == "localhost" || trimmed == "127.0.0.1" || trimmed == "::1" || strings.HasSuffix(trimmed, ".local") {
+		return false
+	}
+	ip := net.ParseIP(trimmed)
+	if ip == nil {
+		return true
+	}
+	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast()
+}
+
+type sdpCandidateSummary struct {
+	Host  int
+	Srflx int
+	Prflx int
+	Relay int
+	UDP   int
+	TCP   int
+}
+
+func summarizeSDPCandidates(sdp string) sdpCandidateSummary {
+	summary := sdpCandidateSummary{}
+	for _, line := range strings.Split(sdp, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || (!strings.HasPrefix(trimmed, "a=candidate:") && !strings.HasPrefix(trimmed, "candidate:")) {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(strings.TrimPrefix(trimmed, "a="), ""))
+		if len(fields) < 8 {
+			continue
+		}
+		protocol := strings.ToLower(strings.TrimSpace(fields[2]))
+		candidateType := ""
+		for i := 6; i+1 < len(fields); i++ {
+			if strings.EqualFold(fields[i], "typ") {
+				candidateType = strings.ToLower(strings.TrimSpace(fields[i+1]))
+				break
+			}
+		}
+		switch candidateType {
+		case "host":
+			summary.Host++
+		case "srflx":
+			summary.Srflx++
+		case "prflx":
+			summary.Prflx++
+		case "relay":
+			summary.Relay++
+		}
+		switch protocol {
+		case "udp":
+			summary.UDP++
+		case "tcp", "ssltcp":
+			summary.TCP++
+		}
+	}
+	return summary
+}
+
+func (s sdpCandidateSummary) String() string {
+	return fmt.Sprintf(
+		"host=%d srflx=%d prflx=%d relay=%d udp=%d tcp=%d",
+		s.Host,
+		s.Srflx,
+		s.Prflx,
+		s.Relay,
+		s.UDP,
+		s.TCP,
+	)
 }
 
 func (b *adbWebRTCBridge) handleControlMessage(ctx context.Context, serial string, screenSize adb.Size, payload []byte) error {

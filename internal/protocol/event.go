@@ -19,6 +19,8 @@ const (
 	EventTypeStepUpdate             = "step_update"
 	EventTypeFileDiff               = "file_diff"
 	EventTypeRuntimeInfoResult      = "runtime_info_result"
+	EventTypeRuntimeProcessList     = "runtime_process_list_result"
+	EventTypeRuntimeProcessLog      = "runtime_process_log_result"
 	EventTypeSessionCreated         = "session_created"
 	EventTypeSessionListResult      = "session_list_result"
 	EventTypeSessionHistory         = "session_history"
@@ -27,6 +29,8 @@ const (
 	EventTypeMemoryListResult       = "memory_list_result"
 	EventTypeCatalogAuthoringResult = "catalog_authoring_result"
 	EventTypeSessionContextResult   = "session_context_result"
+	EventTypePermissionRuleListResult = "permission_rule_list_result"
+	EventTypePermissionAutoApplied  = "permission_auto_applied"
 	EventTypeSkillSyncResult        = "skill_sync_result"
 	EventTypeCatalogSyncStatus      = "catalog_sync_status"
 	EventTypeCatalogSyncResult      = "catalog_sync_result"
@@ -101,6 +105,7 @@ type ReviewDecisionRequestEvent struct {
 type PermissionDecisionRequestEvent struct {
 	ClientEvent
 	Decision           string `json:"decision"`
+	Scope              string `json:"scope,omitempty"`
 	PermissionMode     string `json:"permissionMode,omitempty"`
 	ResumeSessionID    string `json:"resumeSessionId,omitempty"`
 	TargetPath         string `json:"targetPath,omitempty"`
@@ -112,6 +117,27 @@ type PermissionDecisionRequestEvent struct {
 	FallbackEngine     string `json:"engine,omitempty"`
 	FallbackTarget     string `json:"target,omitempty"`
 	FallbackTargetType string `json:"targetType,omitempty"`
+}
+
+type PermissionRuleListRequestEvent struct {
+	ClientEvent
+}
+
+type PermissionRuleRequestEvent struct {
+	ClientEvent
+	Rule PermissionRule `json:"rule,omitempty"`
+}
+
+type PermissionRuleDeleteRequestEvent struct {
+	ClientEvent
+	ID    string `json:"id"`
+	Scope string `json:"scope,omitempty"`
+}
+
+type PermissionRuleToggleRequestEvent struct {
+	ClientEvent
+	Scope   string `json:"scope,omitempty"`
+	Enabled bool   `json:"enabled"`
 }
 
 type PlanDecisionRequestEvent struct {
@@ -301,6 +327,15 @@ type RuntimeInfoRequestEvent struct {
 	CWD   string `json:"cwd,omitempty"`
 }
 
+type RuntimeProcessListRequestEvent struct {
+	ClientEvent
+}
+
+type RuntimeProcessLogRequestEvent struct {
+	ClientEvent
+	PID int `json:"pid"`
+}
+
 type SlashCommandRequestEvent struct {
 	ClientEvent
 	Command        string `json:"command"`
@@ -487,6 +522,22 @@ type SessionContextResultEvent struct {
 	SessionContext SessionContext `json:"sessionContext"`
 }
 
+type PermissionRuleListResultEvent struct {
+	Event
+	SessionEnabled    bool             `json:"sessionEnabled"`
+	PersistentEnabled bool             `json:"persistentEnabled"`
+	SessionRules      []PermissionRule `json:"sessionRules,omitempty"`
+	PersistentRules   []PermissionRule `json:"persistentRules,omitempty"`
+}
+
+type PermissionAutoAppliedEvent struct {
+	Event
+	RuleID  string `json:"ruleId,omitempty"`
+	Scope   string `json:"scope,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	Message string `json:"msg,omitempty"`
+}
+
 type SkillSyncResultEvent struct {
 	Event
 	Message string `json:"msg,omitempty"`
@@ -512,6 +563,33 @@ type RuntimeInfoItem struct {
 	Status    string `json:"status,omitempty"`
 	Available bool   `json:"available"`
 	Detail    string `json:"detail,omitempty"`
+}
+
+type RuntimeProcessItem struct {
+	PID          int    `json:"pid"`
+	PPID         int    `json:"ppid,omitempty"`
+	State        string `json:"state,omitempty"`
+	Elapsed      string `json:"elapsed,omitempty"`
+	Command      string `json:"command,omitempty"`
+	CWD          string `json:"cwd,omitempty"`
+	ExecutionID  string `json:"executionId,omitempty"`
+	Source       string `json:"source,omitempty"`
+	Root         bool   `json:"root,omitempty"`
+	LogAvailable bool   `json:"logAvailable,omitempty"`
+}
+
+type PermissionRule struct {
+	ID               string `json:"id"`
+	Scope            string `json:"scope,omitempty"`
+	Enabled          bool   `json:"enabled"`
+	Engine           string `json:"engine,omitempty"`
+	Kind             string `json:"kind,omitempty"`
+	CommandHead      string `json:"commandHead,omitempty"`
+	TargetPathPrefix string `json:"targetPathPrefix,omitempty"`
+	Summary          string `json:"summary,omitempty"`
+	CreatedAt        string `json:"createdAt,omitempty"`
+	LastMatchedAt    string `json:"lastMatchedAt,omitempty"`
+	MatchCount       int    `json:"matchCount,omitempty"`
 }
 
 type LogEvent struct {
@@ -645,6 +723,25 @@ type RuntimeInfoResultEvent struct {
 	Items       []RuntimeInfoItem `json:"items,omitempty"`
 	Unavailable bool              `json:"unavailable,omitempty"`
 	Message     string            `json:"msg,omitempty"`
+}
+
+type RuntimeProcessListResultEvent struct {
+	Event
+	RootPID int                  `json:"rootPid,omitempty"`
+	Items   []RuntimeProcessItem `json:"items,omitempty"`
+	Message string               `json:"msg,omitempty"`
+}
+
+type RuntimeProcessLogResultEvent struct {
+	Event
+	PID         int    `json:"pid,omitempty"`
+	ExecutionID string `json:"executionId,omitempty"`
+	Command     string `json:"command,omitempty"`
+	CWD         string `json:"cwd,omitempty"`
+	Source      string `json:"source,omitempty"`
+	Stdout      string `json:"stdout,omitempty"`
+	Stderr      string `json:"stderr,omitempty"`
+	Message     string `json:"msg,omitempty"`
 }
 
 type ADBDevicesResultEvent struct {
@@ -877,6 +974,26 @@ func NewSessionContextResultEvent(sessionID string, sessionContext SessionContex
 	return SessionContextResultEvent{Event: NewBaseEvent(EventTypeSessionContextResult, sessionID), SessionContext: sessionContext}
 }
 
+func NewPermissionRuleListResultEvent(sessionID string, sessionEnabled, persistentEnabled bool, sessionRules, persistentRules []PermissionRule) PermissionRuleListResultEvent {
+	return PermissionRuleListResultEvent{
+		Event:             NewBaseEvent(EventTypePermissionRuleListResult, sessionID),
+		SessionEnabled:    sessionEnabled,
+		PersistentEnabled: persistentEnabled,
+		SessionRules:      sessionRules,
+		PersistentRules:   persistentRules,
+	}
+}
+
+func NewPermissionAutoAppliedEvent(sessionID, ruleID, scope, summary, message string) PermissionAutoAppliedEvent {
+	return PermissionAutoAppliedEvent{
+		Event:   NewBaseEvent(EventTypePermissionAutoApplied, sessionID),
+		RuleID:  ruleID,
+		Scope:   scope,
+		Summary: summary,
+		Message: message,
+	}
+}
+
 func NewSkillSyncResultEvent(sessionID, message string) SkillSyncResultEvent {
 	return SkillSyncResultEvent{Event: NewBaseEvent(EventTypeSkillSyncResult, sessionID), Message: message}
 }
@@ -905,6 +1022,29 @@ func NewRuntimeInfoResultEvent(sessionID, query, title, message string, unavaila
 		Message:     message,
 		Unavailable: unavailable,
 		Items:       items,
+	}
+}
+
+func NewRuntimeProcessListResultEvent(sessionID string, rootPID int, items []RuntimeProcessItem, message string) RuntimeProcessListResultEvent {
+	return RuntimeProcessListResultEvent{
+		Event:   NewBaseEvent(EventTypeRuntimeProcessList, sessionID),
+		RootPID: rootPID,
+		Items:   items,
+		Message: message,
+	}
+}
+
+func NewRuntimeProcessLogResultEvent(sessionID string, pid int, executionID, command, cwd, source, stdout, stderr, message string) RuntimeProcessLogResultEvent {
+	return RuntimeProcessLogResultEvent{
+		Event:       NewBaseEvent(EventTypeRuntimeProcessLog, sessionID),
+		PID:         pid,
+		ExecutionID: executionID,
+		Command:     command,
+		CWD:         cwd,
+		Source:      source,
+		Stdout:      stdout,
+		Stderr:      stderr,
+		Message:     message,
 	}
 }
 
@@ -1146,6 +1286,12 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 	case SessionContextResultEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
+	case PermissionRuleListResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case PermissionAutoAppliedEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
 	case SkillSyncResultEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
@@ -1156,6 +1302,12 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case RuntimeInfoResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case RuntimeProcessListResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case RuntimeProcessLogResultEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	default:

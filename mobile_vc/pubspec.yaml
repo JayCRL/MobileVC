@@ -41,7 +41,8 @@ dependencies:
   flutter_markdown: ^0.7.7+1
   flutter_local_notifications: ^19.4.2
   flutter_svg: ^2.2.0
-  flutter_webrtc: ^1.4.1
+  flutter_webrtc:
+    path: vendor/flutter_webrtc
   mobile_scanner: ^6.0.11
 
 dev_dependencies:

@@ -442,6 +442,29 @@ func (r *PtyRunner) ClaudeSessionID() string {
 	return ""
 }
 
+func (r *PtyRunner) ProcessRef() ProcessRef {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ref := ProcessRef{
+		ExecutionID: strings.TrimSpace(r.pendingReq.RuntimeMeta.ExecutionID),
+		Command:     strings.TrimSpace(r.pendingReq.Command),
+		CWD:         strings.TrimSpace(r.currentDir),
+		Source:      "pty",
+	}
+	if ref.Command == "" && r.cmd != nil {
+		ref.Command = strings.Join(r.cmd.Args, " ")
+	}
+	if shouldUseCodexAppServer(ref.Command) {
+		ref.Source = "codex"
+	} else if isClaudeCommandName(ref.Command) {
+		ref.Source = "claude"
+	}
+	if r.cmd != nil && r.cmd.Process != nil {
+		ref.RootPID = r.cmd.Process.Pid
+	}
+	return ref
+}
+
 func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string) error {
 	behavior := ""
 	textDecision := ""

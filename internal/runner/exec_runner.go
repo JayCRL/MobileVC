@@ -18,7 +18,13 @@ import (
 
 const scannerMaxTokenSize = 1024 * 1024
 
-type ExecRunner struct{}
+type ExecRunner struct {
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	executionID string
+	command     string
+	cwd         string
+}
 
 func NewExecRunner() *ExecRunner {
 	return &ExecRunner{}
@@ -68,6 +74,13 @@ func (r *ExecRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) e
 	}
 
 	sendEvent(sink, protocol.NewExecutionLogEvent(req.SessionID, executionID, req.Command, "", "started", nil))
+	r.mu.Lock()
+	r.cmd = cmd
+	r.executionID = executionID
+	r.command = req.Command
+	r.cwd = cwd
+	r.mu.Unlock()
+	defer r.clear()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -103,7 +116,28 @@ func (r *ExecRunner) Write(ctx context.Context, data []byte) error {
 }
 
 func (r *ExecRunner) Close() error {
+	r.mu.Lock()
+	cmd := r.cmd
+	r.mu.Unlock()
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
 	return nil
+}
+
+func (r *ExecRunner) ProcessRef() ProcessRef {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ref := ProcessRef{
+		ExecutionID: r.executionID,
+		Command:     r.command,
+		CWD:         r.cwd,
+		Source:      "exec",
+	}
+	if r.cmd != nil && r.cmd.Process != nil {
+		ref.RootPID = r.cmd.Process.Pid
+	}
+	return ref
 }
 
 func (r *ExecRunner) streamOutput(wg *sync.WaitGroup, reader io.Reader, sessionID string, executionID string, stream string, sink EventSink) {
@@ -143,4 +177,13 @@ func sendEvent(sink EventSink, event any) {
 	if sink != nil {
 		sink(event)
 	}
+}
+
+func (r *ExecRunner) clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cmd = nil
+	r.executionID = ""
+	r.command = ""
+	r.cwd = ""
 }

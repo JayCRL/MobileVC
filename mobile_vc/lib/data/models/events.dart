@@ -777,6 +777,78 @@ class RuntimeInfoResultEvent extends AppEvent {
       );
 }
 
+class RuntimeProcessListResultEvent extends AppEvent {
+  const RuntimeProcessListResultEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.rootPid = 0,
+    this.items = const [],
+    this.message = '',
+  }) : super(type: 'runtime_process_list_result');
+
+  final int rootPid;
+  final List<RuntimeProcessItem> items;
+  final String message;
+
+  factory RuntimeProcessListResultEvent.fromJson(Map<String, dynamic> json) =>
+      RuntimeProcessListResultEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        rootPid: (json['rootPid'] as num?)?.toInt() ?? 0,
+        message: (json['msg'] ?? '').toString(),
+        items: ((json['items'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(RuntimeProcessItem.fromJson)
+            .toList(),
+      );
+}
+
+class RuntimeProcessLogResultEvent extends AppEvent {
+  const RuntimeProcessLogResultEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.pid = 0,
+    this.executionId = '',
+    this.command = '',
+    this.cwd = '',
+    this.source = '',
+    this.stdout = '',
+    this.stderr = '',
+    this.message = '',
+  }) : super(type: 'runtime_process_log_result');
+
+  final int pid;
+  final String executionId;
+  final String command;
+  final String cwd;
+  final String source;
+  final String stdout;
+  final String stderr;
+  final String message;
+
+  factory RuntimeProcessLogResultEvent.fromJson(Map<String, dynamic> json) =>
+      RuntimeProcessLogResultEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        pid: (json['pid'] as num?)?.toInt() ?? 0,
+        executionId: (json['executionId'] ?? '').toString(),
+        command: (json['command'] ?? '').toString(),
+        cwd: (json['cwd'] ?? '').toString(),
+        source: (json['source'] ?? '').toString(),
+        stdout: (json['stdout'] ?? '').toString(),
+        stderr: (json['stderr'] ?? '').toString(),
+        message: (json['msg'] ?? '').toString(),
+      );
+}
+
 class SessionCreatedEvent extends AppEvent {
   const SessionCreatedEvent({
     required super.timestamp,
@@ -1032,6 +1104,72 @@ class SessionContextResultEvent extends AppEvent {
             ? SessionContext.fromJson(
                 json['sessionContext'] as Map<String, dynamic>)
             : const SessionContext(),
+      );
+}
+
+class PermissionRuleListResultEvent extends AppEvent {
+  const PermissionRuleListResultEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.sessionEnabled = true,
+    this.persistentEnabled = false,
+    this.sessionRules = const [],
+    this.persistentRules = const [],
+  }) : super(type: 'permission_rule_list_result');
+
+  final bool sessionEnabled;
+  final bool persistentEnabled;
+  final List<PermissionRule> sessionRules;
+  final List<PermissionRule> persistentRules;
+
+  factory PermissionRuleListResultEvent.fromJson(Map<String, dynamic> json) =>
+      PermissionRuleListResultEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        sessionEnabled: json['sessionEnabled'] != false,
+        persistentEnabled: json['persistentEnabled'] == true,
+        sessionRules: ((json['sessionRules'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(PermissionRule.fromJson)
+            .toList(),
+        persistentRules: ((json['persistentRules'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(PermissionRule.fromJson)
+            .toList(),
+      );
+}
+
+class PermissionAutoAppliedEvent extends AppEvent {
+  const PermissionAutoAppliedEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.ruleId = '',
+    this.scope = '',
+    this.summary = '',
+    this.message = '',
+  }) : super(type: 'permission_auto_applied');
+
+  final String ruleId;
+  final String scope;
+  final String summary;
+  final String message;
+
+  factory PermissionAutoAppliedEvent.fromJson(Map<String, dynamic> json) =>
+      PermissionAutoAppliedEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        ruleId: (json['ruleId'] ?? '').toString(),
+        scope: (json['scope'] ?? '').toString(),
+        summary: (json['summary'] ?? '').toString(),
+        message: (json['msg'] ?? '').toString(),
       );
 }
 

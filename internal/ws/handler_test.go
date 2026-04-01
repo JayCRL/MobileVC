@@ -39,6 +39,7 @@ type stubRunner struct {
 	permissionResponseErr     error
 	permissionResponseWriteCh chan string
 	claudeSessionID           string
+	processRef                runner.ProcessRef
 	lastReq                   runner.ExecRequest
 	closedCh                  chan struct{}
 }
@@ -167,6 +168,12 @@ func (s *stubRunner) ClaudeSessionID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.claudeSessionID
+}
+
+func (s *stubRunner) ProcessRef() runner.ProcessRef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.processRef
 }
 
 type writeOnlyStubRunner struct {
@@ -610,6 +617,64 @@ func TestHandlerSkillCatalogLifecycle(t *testing.T) {
 	}
 }
 
+func TestHandlerSkillCatalogLifecycleUsesCodexSkillsForCodexSession(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	writeTestFile(t,
+		filepath.Join(homeDir, ".codex", "skills", "mobilevc-release", "SKILL.md"),
+		"---\nname: mobilevc-release\ndescription: Publish MobileVC.\n---\n# MobileVC Release\n\nDo release work.\n",
+	)
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "codex-skill-session")
+	if _, err := tempStore.SaveProjection(context.Background(), sessionID, store.ProjectionSnapshot{
+		RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+		Runtime:             store.SessionRuntime{Engine: "codex", Command: "codex", Source: "mobilevc"},
+	}); err != nil {
+		t.Fatalf("save codex projection: %v", err)
+	}
+
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "skill_sync_pull"}); err != nil {
+		t.Fatalf("write skill_sync_pull request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSkillSyncResult)
+	_ = readUntilType(t, conn, protocol.EventTypeCatalogSyncResult)
+	syncedCatalog := readUntilType(t, conn, protocol.EventTypeSkillCatalogResult)
+	meta, ok := syncedCatalog["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected skill catalog meta, got %#v", syncedCatalog)
+	}
+	if meta["sourceOfTruth"] != string(store.CatalogSourceTruthCodex) {
+		t.Fatalf("expected codex source of truth, got %#v", meta)
+	}
+	items, ok := syncedCatalog["items"].([]any)
+	if !ok {
+		t.Fatalf("expected synced skill catalog items, got %#v", syncedCatalog)
+	}
+	foundCodexSkill := false
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["name"] == "mobilevc-release" {
+			foundCodexSkill = true
+			if item["sourceOfTruth"] != string(store.CatalogSourceTruthCodex) {
+				t.Fatalf("expected codex skill item, got %#v", item)
+			}
+		}
+		if item["name"] == "image-generation" {
+			t.Fatalf("did not expect claude skill in codex catalog: %#v", item)
+		}
+	}
+	if !foundCodexSkill {
+		t.Fatalf("expected codex synced skill, got %#v", items)
+	}
+}
+
 func TestHandlerCatalogAuthoringSkillAutoUpsertsAndEmitsCatalog(t *testing.T) {
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
@@ -866,6 +931,64 @@ func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 	}
 	if !foundLocal || !foundExternal {
 		t.Fatalf("expected both local and external memories, got %#v", items)
+	}
+}
+
+func TestHandlerMemorySyncPullUsesCodexMemoryForCodexSession(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	writeTestFile(t,
+		filepath.Join(homeDir, ".codex", "memories", "mobilevc.md"),
+		"# MobileVC\n\nRemember Codex-specific MobileVC notes.\n",
+	)
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "codex-memory-session")
+	if _, err := tempStore.SaveProjection(context.Background(), sessionID, store.ProjectionSnapshot{
+		RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+		Runtime:             store.SessionRuntime{Engine: "codex", Command: "codex", Source: "mobilevc"},
+	}); err != nil {
+		t.Fatalf("save codex projection: %v", err)
+	}
+
+	if err := conn.WriteJSON(protocol.ClientEvent{Action: "memory_sync_pull"}); err != nil {
+		t.Fatalf("write memory_sync_pull request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeCatalogSyncStatus)
+	_ = readUntilType(t, conn, protocol.EventTypeCatalogSyncResult)
+	listEvent := readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	meta, ok := listEvent["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected memory meta, got %#v", listEvent)
+	}
+	if meta["sourceOfTruth"] != string(store.CatalogSourceTruthCodex) {
+		t.Fatalf("expected codex memory source of truth, got %#v", meta)
+	}
+	items, ok := listEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected memory items, got %#v", listEvent)
+	}
+	foundCodexMemory := false
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["id"] == "mobilevc" {
+			foundCodexMemory = true
+			if item["source"] != "codex-memory" {
+				t.Fatalf("expected codex memory source, got %#v", item)
+			}
+		}
+		if item["id"] == "testing_notes" {
+			t.Fatalf("did not expect claude project memory in codex session: %#v", item)
+		}
+	}
+	if !foundCodexMemory {
+		t.Fatalf("expected codex memory item, got %#v", items)
 	}
 }
 
@@ -1362,6 +1485,147 @@ func TestHandlerExecFlow(t *testing.T) {
 		t.Fatalf("expected closed session event, got %#v", event)
 	}
 	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "IDLE", false)
+}
+
+func TestHandlerRuntimeProcessListReturnsActiveTree(t *testing.T) {
+	execRunner := newHoldingStubRunner()
+	execRunner.processRef = runner.ProcessRef{
+		RootPID:     os.Getpid(),
+		ExecutionID: "exec-live-1",
+		Command:     "codex exec",
+		CWD:         "/tmp/mobilevc",
+		Source:      "codex",
+	}
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewExecRunner = func() runner.Runner { return execRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "runtime-process-list")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "printf 'keep running'",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	execRunner.WaitStarted(t)
+
+	if err := conn.WriteJSON(protocol.RuntimeProcessListRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "runtime_process_list"},
+	}); err != nil {
+		t.Fatalf("write runtime_process_list request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeRuntimeProcessList)
+	if got := int(event["rootPid"].(float64)); got != os.Getpid() {
+		t.Fatalf("expected root pid %d, got %#v", os.Getpid(), event["rootPid"])
+	}
+	items, ok := event["items"].([]any)
+	if !ok || len(items) == 0 {
+		t.Fatalf("expected runtime process items, got %#v", event)
+	}
+	root, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first runtime process item, got %#v", items[0])
+	}
+	if got := int(root["pid"].(float64)); got != os.Getpid() {
+		t.Fatalf("expected root item pid %d, got %#v", os.Getpid(), root["pid"])
+	}
+	if root["executionId"] != "exec-live-1" {
+		t.Fatalf("expected executionId exec-live-1, got %#v", root["executionId"])
+	}
+	if root["cwd"] != "/tmp/mobilevc" {
+		t.Fatalf("expected cwd /tmp/mobilevc, got %#v", root["cwd"])
+	}
+	if root["source"] != "codex" {
+		t.Fatalf("expected source codex, got %#v", root["source"])
+	}
+	if root["root"] != true {
+		t.Fatalf("expected root marker, got %#v", root["root"])
+	}
+	if root["logAvailable"] != true {
+		t.Fatalf("expected logAvailable=true, got %#v", root["logAvailable"])
+	}
+}
+
+func TestHandlerRuntimeProcessLogReturnsCapturedExecutionOutput(t *testing.T) {
+	execRunner := newHoldingStubRunner()
+	execRunner.processRef = runner.ProcessRef{
+		RootPID:     os.Getpid(),
+		ExecutionID: "exec-live-2",
+		Command:     "codex exec",
+		CWD:         "/tmp/mobilevc",
+		Source:      "codex",
+	}
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewExecRunner = func() runner.Runner { return execRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "runtime-process-log")
+
+	snapshot := normalizeProjectionSnapshot(store.ProjectionSnapshot{
+		TerminalExecutions: []store.TerminalExecution{{
+			ExecutionID: "exec-live-2",
+			Command:     "codex exec",
+			CWD:         "/tmp/mobilevc",
+			Stdout:      "captured stdout",
+			Stderr:      "captured stderr",
+		}},
+		RawTerminalByStream: map[string]string{
+			"stdout": "fallback stdout",
+			"stderr": "fallback stderr",
+		},
+	})
+	if _, err := tempStore.SaveProjection(context.Background(), sessionID, snapshot); err != nil {
+		t.Fatalf("save projection: %v", err)
+	}
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "printf 'keep running'",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	execRunner.WaitStarted(t)
+
+	if err := conn.WriteJSON(protocol.RuntimeProcessLogRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "runtime_process_log_get"},
+		PID:         os.Getpid(),
+	}); err != nil {
+		t.Fatalf("write runtime_process_log_get request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeRuntimeProcessLog)
+	if got := int(event["pid"].(float64)); got != os.Getpid() {
+		t.Fatalf("expected pid %d, got %#v", os.Getpid(), event["pid"])
+	}
+	if event["executionId"] != "exec-live-2" {
+		t.Fatalf("expected executionId exec-live-2, got %#v", event["executionId"])
+	}
+	if event["stdout"] != "captured stdout" {
+		t.Fatalf("expected captured stdout, got %#v", event["stdout"])
+	}
+	if event["stderr"] != "captured stderr" {
+		t.Fatalf("expected captured stderr, got %#v", event["stderr"])
+	}
 }
 
 func TestProjectionBuildsReviewGroupsFromDiffs(t *testing.T) {

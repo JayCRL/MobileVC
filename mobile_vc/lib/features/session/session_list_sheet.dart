@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models/session_models.dart';
+import 'session_display_text.dart';
 
 class SessionListSheet extends StatelessWidget {
   const SessionListSheet({
@@ -60,11 +61,10 @@ class SessionListSheet extends StatelessWidget {
                   final item = sessions[index];
                   final selected = item.id == selectedSessionId;
                   final sourceLabel = _sourceLabel(item);
-                  final canResume =
-                      item.runtime.resumeSessionId.trim().isNotEmpty;
-                  final subtitle = item.lastPreview.isEmpty
-                      ? item.runtime.command
-                      : item.lastPreview;
+                  final preview = sessionDisplayPreview(item);
+                  final title =
+                      preview.isNotEmpty ? preview : sessionDisplayTitle(item);
+                  final timestampLabel = _timestampLabel(item);
                   return Card(
                     child: ListTile(
                       onTap: () => onLoad(item.id),
@@ -73,8 +73,32 @@ class SessionListSheet extends StatelessWidget {
                       title: Row(
                         children: [
                           Expanded(
-                            child:
-                                Text(item.title.isEmpty ? item.id : item.title),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                if (timestampLabel.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    timestampLabel,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
+                                          fontSize: 11,
+                                        ),
+                                  ),
+                                ],
+                              ],
+                            ),
                           ),
                           if (sourceLabel.isNotEmpty)
                             Container(
@@ -97,8 +121,8 @@ class SessionListSheet extends StatelessWidget {
                             ),
                         ],
                       ),
-                      subtitle: Text(subtitle),
-                      isThreeLine: item.external && canResume,
+                      subtitle: null,
+                      isThreeLine: false,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 8,
@@ -141,4 +165,16 @@ String _sourceLabel(SessionSummary item) {
     return 'MobileVC';
   }
   return '';
+}
+
+String _timestampLabel(SessionSummary item) {
+  final value = item.updatedAt ?? item.createdAt;
+  if (value == null) {
+    return '';
+  }
+  final month = value.month.toString().padLeft(2, '0');
+  final day = value.day.toString().padLeft(2, '0');
+  final hour = value.hour.toString().padLeft(2, '0');
+  final minute = value.minute.toString().padLeft(2, '0');
+  return '$month-$day $hour:$minute';
 }

@@ -68,12 +68,29 @@ void main() {
         _buildTestApp(
           awaitInput: true,
           showClaudeMode: true,
+          currentEngine: 'claude',
         ),
       );
 
-      expect(find.text('Claude'), findsOneWidget);
+      expect(
+          find.textContaining('Claude ·', findRichText: true), findsOneWidget);
       final field = tester.widget<TextField>(find.byType(TextField));
       expect(field.decoration?.hintText, '继续回复 Claude');
+    });
+
+    testWidgets('Codex 模式显示 Codex 状态与 hint', (tester) async {
+      await tester.pumpWidget(
+        _buildTestApp(
+          awaitInput: true,
+          showClaudeMode: true,
+          currentEngine: 'codex',
+        ),
+      );
+
+      expect(
+          find.textContaining('Codex ·', findRichText: true), findsOneWidget);
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.decoration?.hintText, '继续回复 Codex');
     });
 
     testWidgets('shell 模式显示 Shell 状态与 hint', (tester) async {
@@ -81,10 +98,12 @@ void main() {
         _buildTestApp(
           isBusy: true,
           showClaudeMode: false,
+          currentEngine: 'shell',
         ),
       );
 
-      expect(find.text('Shell'), findsOneWidget);
+      expect(
+          find.textContaining('Shell ·', findRichText: true), findsOneWidget);
       final field = tester.widget<TextField>(find.byType(TextField));
       expect(field.decoration?.hintText, '当前 shell 会话仍在运行');
     });
@@ -111,6 +130,7 @@ Widget _buildTestApp({
   bool awaitInput = false,
   bool isBusy = false,
   bool showClaudeMode = true,
+  String currentEngine = 'claude',
   bool isSessionLoading = false,
   ValueChanged<String>? onSubmit,
 }) {
@@ -130,8 +150,13 @@ Widget _buildTestApp({
         onOpenLogs: () {},
         onOpenSkills: () {},
         onOpenMemory: () {},
+        onOpenPermissions: () {},
+        onOpenModels: () {},
         onPermissionModeChanged: (_) {},
         showClaudeMode: showClaudeMode,
+        currentEngine: currentEngine,
+        modelSummary: 'Sonnet',
+        permissionRuleSummary: '默认',
         shouldShowPlanChoices: false,
         isSessionLoading: isSessionLoading,
       ),

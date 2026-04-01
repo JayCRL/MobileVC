@@ -17,6 +17,16 @@ class AdbDebugPage extends StatelessWidget {
         final immersive =
             controller.adbStreaming || controller.adbWebRtcStarting;
         final safePadding = MediaQuery.of(context).padding;
+        String targetSerial = controller.adbSelectedSerial.trim();
+        if (targetSerial.isEmpty) {
+          for (final item in controller.adbDevices) {
+            if (item.state.trim().toLowerCase() == 'device' &&
+                item.serial.trim().isNotEmpty) {
+              targetSerial = item.serial.trim();
+              break;
+            }
+          }
+        }
         return Scaffold(
           body: Stack(
             children: [
@@ -78,10 +88,11 @@ class AdbDebugPage extends StatelessWidget {
                       color: Colors.transparent,
                       child: InkWell(
                         onTap: () {
-                          if (controller.adbStreaming ||
+                          if (targetSerial.isNotEmpty ||
+                              controller.adbStreaming ||
                               controller.adbWebRtcConnected) {
                             controller.sendAdbKeyevent('KEYCODE_BACK',
-                                serial: controller.adbSelectedSerial);
+                                serial: targetSerial);
                           } else {
                             Navigator.of(context).maybePop();
                           }

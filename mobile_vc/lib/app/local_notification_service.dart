@@ -16,7 +16,7 @@ abstract class LocalNotificationService {
 
   Future<void> initialize();
 
-  Future<void> showActionNeededNotification(NotificationPayload payload);
+  Future<void> showNotification(NotificationPayload payload);
 }
 
 class FlutterLocalNotificationService implements LocalNotificationService {
@@ -44,6 +44,7 @@ class FlutterLocalNotificationService implements LocalNotificationService {
   final FlutterLocalNotificationsPlugin _plugin;
   bool _initialized = false;
   bool _available = true;
+  bool _permissionGranted = true;
 
   @override
   bool get isAvailable => _available;
@@ -61,12 +62,28 @@ class FlutterLocalNotificationService implements LocalNotificationService {
         macOS: _darwinInitializationSettings,
       );
       await _plugin.initialize(settings);
-      final androidPlugin = _plugin
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>();
+      final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
       await androidPlugin?.createNotificationChannel(_channel);
+      final iosPlugin = _plugin.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+      final macosPlugin = _plugin.resolvePlatformSpecificImplementation<
+          MacOSFlutterLocalNotificationsPlugin>();
+      final iosGranted = await iosPlugin?.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      final macosGranted = await macosPlugin?.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      _permissionGranted = (iosGranted ?? true) && (macosGranted ?? true);
       _initialized = true;
-      debugPrint('[startup] notification init end');
+      debugPrint(
+        '[startup] notification init end permissionGranted=$_permissionGranted',
+      );
     } catch (error, stack) {
       _available = false;
       debugPrint('[startup] notification init failed: $error');
@@ -78,10 +95,14 @@ class FlutterLocalNotificationService implements LocalNotificationService {
   }
 
   @override
-  Future<void> showActionNeededNotification(NotificationPayload payload) async {
+  Future<void> showNotification(NotificationPayload payload) async {
     await initialize();
     if (!_initialized || !_available) {
       debugPrint('[startup] notification skipped: service unavailable');
+      return;
+    }
+    if (!_permissionGranted) {
+      debugPrint('[startup] notification skipped: permission denied');
       return;
     }
     final details = NotificationDetails(
