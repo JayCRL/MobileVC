@@ -3649,6 +3649,38 @@ func TestHandlerSessionListMergesNativeCodexSessionsByCWD(t *testing.T) {
 	}
 }
 
+func TestHandlerInitialSessionListDoesNotMergeNativeCodexSessions(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := filepath.Join(homeDir, "workspace", "MobileVC")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	listEvent := readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	items, ok := listEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected session list items, got %#v", listEvent)
+	}
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["id"] == "codex-thread:"+threadID {
+			t.Fatalf("did not expect native Codex mirror in initial session list, got %#v", items)
+		}
+	}
+}
+
 func TestHandlerSessionLoadMirrorsNativeCodexSession(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := filepath.Join(homeDir, "workspace", "MobileVC")
