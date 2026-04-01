@@ -142,40 +142,38 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
           16,
           24 + MediaQuery.of(context).viewInsets.bottom,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (widget.showInlineHeader) ...[
-              Text(
-                'ADB 调试',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '使用 WebRTC + H264 把电脑上的 Android 模拟器实时推到手机端，点击画面会即时回传到 adb。',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 14),
-            ],
-            _buildHeroBanner(context),
-            const SizedBox(height: 14),
-            _buildDeviceSelector(context),
-            if (widget.availableAvds.isNotEmpty) ...[
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (widget.showInlineHeader) ...[
+                Text(
+                  'ADB 调试',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '使用 WebRTC + H264 把电脑上的 Android 模拟器实时推到手机端，点击画面会即时回传到 adb。',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 14),
+              ],
+              _buildDeviceSelector(context),
+              if (widget.availableAvds.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _buildAvdSelector(context),
+              ],
               const SizedBox(height: 12),
-              _buildAvdSelector(context),
-            ],
-            const SizedBox(height: 12),
-            _buildControlPanel(context),
-            if (showLivePreview) ...[
-              const SizedBox(height: 14),
-              Expanded(
-                child: Center(
+              _buildControlPanel(context),
+              if (showLivePreview) ...[
+                const SizedBox(height: 14),
+                Center(
                   child: widget.expandPreview
                       ? _buildPreview(context, previewAspectRatio)
                       : ConstrainedBox(
@@ -186,218 +184,10 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
                           child: _buildPreview(context, previewAspectRatio),
                         ),
                 ),
-              ),
-            ] else ...[
-              const SizedBox(height: 14),
-              _buildPreflightCard(context, scheme),
+              ],
             ],
-          ],
+          ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildHeroBanner(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            scheme.primaryContainer,
-            Color.alphaBlend(
-              scheme.primary.withValues(alpha: 0.08),
-              scheme.surface,
-            ),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.8)),
-        boxShadow: [
-          BoxShadow(
-            color: scheme.primary.withValues(alpha: 0.10),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            right: -18,
-            top: -28,
-            child: Container(
-              width: 112,
-              height: 112,
-              decoration: BoxDecoration(
-                color: scheme.onPrimaryContainer.withValues(alpha: 0.06),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          Positioned(
-            right: 26,
-            bottom: -30,
-            child: Container(
-              width: 76,
-              height: 76,
-              decoration: BoxDecoration(
-                color: scheme.primary.withValues(alpha: 0.10),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      color: scheme.surface.withValues(alpha: 0.72),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Icon(
-                      Icons.developer_mode_rounded,
-                      color: scheme.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Android Remote Debug',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -0.4,
-                          ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                '进入前专注设备与环境准备，连接成功后直接切换到全屏调试器。',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                      height: 1.35,
-                    ),
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _buildStatusBadge(
-                    context,
-                    icon: widget.adbAvailable
-                        ? Icons.check_circle_rounded
-                        : Icons.error_outline_rounded,
-                    label: 'ADB ${widget.adbAvailable ? "已就绪" : "未就绪"}',
-                    highlighted: widget.adbAvailable,
-                  ),
-                  _buildStatusBadge(
-                    context,
-                    icon: widget.emulatorAvailable
-                        ? Icons.memory_rounded
-                        : Icons.smart_display_outlined,
-                    label:
-                        '模拟器 ${widget.emulatorAvailable ? "可用" : "不可用"}',
-                  ),
-                  _buildStatusBadge(
-                    context,
-                    icon: widget.webRtcConnected
-                        ? Icons.wifi_tethering_rounded
-                        : Icons.video_settings_rounded,
-                    label: widget.webRtcConnected ? 'WebRTC 已连接' : 'WebRTC / H264',
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPreflightCard(BuildContext context, ColorScheme scheme) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: scheme.outlineVariant),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: scheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(
-                  Icons.developer_mode_rounded,
-                  color: scheme.onPrimaryContainer,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '点击“进入调试”后直接进入全屏调试器',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Text(
-            '进入前这里只保留设备选择和控制区，不再显示模拟手机小窗。',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _buildInfoTile(
-                  context,
-                  icon: Icons.touch_app_rounded,
-                  title: '实时触控',
-                  value: '点击和滑动直接转成 adb 输入',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildInfoTile(
-                  context,
-                  icon: Icons.fullscreen_rounded,
-                  title: '全屏进入',
-                  value: '连接后立即切到沉浸式调试视图',
-                ),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }
@@ -700,38 +490,26 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
           ),
           const SizedBox(height: 14),
           Wrap(
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              SizedBox(
-                width: 126,
-                child: _buildInfoTile(
-                  context,
-                  icon: Icons.route_rounded,
-                  title: '建议动作',
-                  value: widget.suggestedAction.trim().isEmpty
-                      ? '等待检测'
-                      : _suggestionLabel(widget.suggestedAction),
-                ),
+              _buildStatusBadge(
+                context,
+                icon: Icons.route_rounded,
+                label: widget.suggestedAction.trim().isEmpty
+                    ? '等待检测'
+                    : _suggestionLabel(widget.suggestedAction),
               ),
-              SizedBox(
-                width: 126,
-                child: _buildInfoTile(
-                  context,
-                  icon: Icons.memory_rounded,
-                  title: '传输链路',
-                  value: 'WebRTC / H264',
-                ),
+              _buildStatusBadge(
+                context,
+                icon: Icons.memory_rounded,
+                label: 'WebRTC / H264',
               ),
               if (widget.frameWidth > 0 && widget.frameHeight > 0)
-                SizedBox(
-                  width: 148,
-                  child: _buildInfoTile(
-                    context,
-                    icon: Icons.straighten_rounded,
-                    title: '映射分辨率',
-                    value: '${widget.frameWidth} x ${widget.frameHeight}',
-                  ),
+                _buildStatusBadge(
+                  context,
+                  icon: Icons.straighten_rounded,
+                  label: '${widget.frameWidth} x ${widget.frameHeight}',
                 ),
             ],
           ),
@@ -797,7 +575,8 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
       decoration: BoxDecoration(
         color: scheme.surface.withValues(alpha: 0.86),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.85)),
+        border:
+            Border.all(color: scheme.outlineVariant.withValues(alpha: 0.85)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -856,45 +635,6 @@ class _AdbDebugSheetState extends State<AdbDebugSheet> {
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                   color: highlighted ? scheme.primary : scheme.onSurface,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoTile(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.8)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 18, color: scheme.primary),
-          const SizedBox(height: 10),
-          Text(
-            title,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  height: 1.3,
                 ),
           ),
         ],

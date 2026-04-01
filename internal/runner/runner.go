@@ -39,6 +39,18 @@ type Runner interface {
 	Close() error
 }
 
+type ProcessRef struct {
+	RootPID     int
+	ExecutionID string
+	Command     string
+	CWD         string
+	Source      string
+}
+
+type ProcessProvider interface {
+	ProcessRef() ProcessRef
+}
+
 type InteractiveStateProvider interface {
 	CanAcceptInteractiveInput() bool
 }

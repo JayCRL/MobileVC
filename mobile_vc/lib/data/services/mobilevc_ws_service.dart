@@ -22,6 +22,33 @@ class MobileVcWsService {
     await disconnect();
     final channel = WebSocketChannel.connect(Uri.parse(url));
     _channel = channel;
+    var disconnectEmitted = false;
+    void emitDisconnect({
+      required String code,
+      required String message,
+      Map<String, dynamic> raw = const <String, dynamic>{},
+    }) {
+      if (disconnectEmitted) {
+        return;
+      }
+      disconnectEmitted = true;
+      _channel = null;
+      _events.add(
+        ErrorEvent(
+          timestamp: DateTime.now(),
+          sessionId: '',
+          runtimeMeta: const RuntimeMeta(),
+          raw: <String, dynamic>{
+            'type': 'error',
+            'code': code,
+            'msg': message,
+            ...raw,
+          },
+          code: code,
+          message: message,
+        ),
+      );
+    }
     _subscription = channel.stream.listen(
       (dynamic data) {
         final decoded = jsonDecode(data as String);
@@ -30,18 +57,30 @@ class MobileVcWsService {
         }
       },
       onError: (Object error, StackTrace stackTrace) {
-        _events.add(
-          ErrorEvent(
-            timestamp: DateTime.now(),
-            sessionId: '',
-            runtimeMeta: const RuntimeMeta(),
-            raw: {'type': 'error', 'msg': error.toString()},
-            message: error.toString(),
-          ),
+        emitDisconnect(
+          code: 'ws_stream_error',
+          message: 'WebSocket 连接异常：$error',
+          raw: <String, dynamic>{
+            'stack': stackTrace.toString(),
+          },
         );
       },
       onDone: () {
-        _channel = null;
+        final closeCode = channel.closeCode;
+        final closeReason = channel.closeReason;
+        final message = closeCode == null
+            ? 'WebSocket 连接已断开'
+            : closeReason == null || closeReason.isEmpty
+                ? 'WebSocket 连接已断开（$closeCode）'
+                : 'WebSocket 连接已断开（$closeCode: $closeReason）';
+        emitDisconnect(
+          code: 'ws_closed',
+          message: message,
+          raw: <String, dynamic>{
+            'closeCode': closeCode,
+            'closeReason': closeReason,
+          },
+        );
       },
       cancelOnError: false,
     );

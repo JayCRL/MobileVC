@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -20,11 +21,17 @@ type FileStore struct {
 	indexPath         string
 	skillCatalogPath  string
 	memoryCatalogPath string
+	permissionRulesPath string
 }
 
 type fileIndex struct {
 	Sessions []SessionSummary `json:"sessions"`
 }
+
+var (
+	sessionPlaceholderPattern = regexp.MustCompile(`^session(?:[-_\s][a-z0-9]+)?$`)
+	sessionTimestampPattern   = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}(?:[ t]\d{2}:\d{2}(?::\d{2})?)?$`)
+)
 
 func NewFileStore(baseDir string) (*FileStore, error) {
 	if strings.TrimSpace(baseDir) == "" {
@@ -38,6 +45,7 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 		indexPath:         filepath.Join(baseDir, "index.json"),
 		skillCatalogPath:  filepath.Join(baseDir, "skills.catalog.json"),
 		memoryCatalogPath: filepath.Join(baseDir, "memory.catalog.json"),
+		permissionRulesPath: filepath.Join(baseDir, "permissions.rules.json"),
 	}, nil
 }
 
@@ -98,9 +106,6 @@ func (s *FileStore) UpsertSession(ctx context.Context, record SessionRecord) (Se
 	if record.Summary.UpdatedAt.IsZero() {
 		record.Summary.UpdatedAt = record.Summary.CreatedAt
 	}
-	record.Summary.EntryCount = len(record.Projection.LogEntries)
-	record.Summary.LastPreview = buildPreview(record.Projection)
-
 	index, err := s.readIndexLocked()
 	if err != nil {
 		return SessionSummary{}, err
@@ -109,10 +114,14 @@ func (s *FileStore) UpsertSession(ctx context.Context, record SessionRecord) (Se
 		if record.Summary.Title == "" {
 			record.Summary.Title = existing.Summary.Title
 		}
+		if record.Summary.LastPreview == "" {
+			record.Summary.LastPreview = existing.Summary.LastPreview
+		}
 		if record.Summary.CreatedAt.IsZero() {
 			record.Summary.CreatedAt = existing.Summary.CreatedAt
 		}
 	}
+	record.Summary = deriveProjectionSummary(record.Summary, record.Projection)
 	if err := s.writeSessionLocked(record); err != nil {
 		return SessionSummary{}, err
 	}
@@ -148,6 +157,21 @@ func (s *FileStore) SaveProjection(ctx context.Context, sessionID string, projec
 	if err != nil {
 		return SessionSummary{}, err
 	}
+	if record.Summary.External || strings.EqualFold(strings.TrimSpace(record.Summary.Source), "codex-native") {
+		record.Projection.SessionContext = normalizeSessionContext(projection.SessionContext)
+		record.Projection.SkillCatalogMeta = normalizeCatalogMetadata(
+			projection.SkillCatalogMeta,
+			CatalogDomainSkill,
+		)
+		record.Projection.MemoryCatalogMeta = normalizeCatalogMetadata(
+			projection.MemoryCatalogMeta,
+			CatalogDomainMemory,
+		)
+		if err := s.writeSessionLocked(record); err != nil {
+			return SessionSummary{}, err
+		}
+		return record.Summary, nil
+	}
 	now := time.Now().UTC()
 	record.Projection = normalizeProjection(projection)
 	record.Summary.Runtime = record.Projection.Runtime
@@ -155,8 +179,7 @@ func (s *FileStore) SaveProjection(ctx context.Context, sessionID string, projec
 		record.Summary.Runtime.Source = "mobilevc"
 	}
 	record.Summary.UpdatedAt = now
-	record.Summary.EntryCount = len(record.Projection.LogEntries)
-	record.Summary.LastPreview = buildPreview(record.Projection)
+	record.Summary = deriveProjectionSummary(record.Summary, record.Projection)
 	if err := s.writeSessionLocked(record); err != nil {
 		return SessionSummary{}, err
 	}
@@ -204,6 +227,10 @@ func (s *FileStore) ListSessions(ctx context.Context) ([]SessionSummary, error) 
 	default:
 	}
 	index, err := s.readIndexLocked()
+	if err != nil {
+		return nil, err
+	}
+	index, err = s.reconcileIndexLocked(index)
 	if err != nil {
 		return nil, err
 	}
@@ -328,6 +355,29 @@ func (s *FileStore) SaveMemoryCatalogSnapshot(ctx context.Context, snapshot Memo
 	return s.writeJSONFileLocked(s.memoryCatalogPath, snapshot, "encode memory catalog")
 }
 
+func (s *FileStore) GetPermissionRuleSnapshot(ctx context.Context) (PermissionRuleSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return PermissionRuleSnapshot{}, ctx.Err()
+	default:
+	}
+	return s.readPermissionRuleSnapshotLocked()
+}
+
+func (s *FileStore) SavePermissionRuleSnapshot(ctx context.Context, snapshot PermissionRuleSnapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	snapshot = normalizePermissionRuleSnapshot(snapshot)
+	return s.writeJSONFileLocked(s.permissionRulesPath, snapshot, "encode permission rules")
+}
+
 func (s *FileStore) readIndexLocked() (fileIndex, error) {
 	var index fileIndex
 	data, err := os.ReadFile(s.indexPath)
@@ -366,12 +416,11 @@ func (s *FileStore) readSessionLocked(sessionID string) (SessionRecord, error) {
 	if err := json.Unmarshal(data, &record); err != nil {
 		return SessionRecord{}, fmt.Errorf("decode session record: %w", err)
 	}
-	record.Projection = normalizeProjection(record.Projection)
-	return record, nil
+	return normalizeSessionRecord(record), nil
 }
 
 func (s *FileStore) writeSessionLocked(record SessionRecord) error {
-	record.Projection = normalizeProjection(record.Projection)
+	record = normalizeSessionRecord(record)
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode session record: %w", err)
@@ -413,6 +462,14 @@ func (s *FileStore) readMemoryCatalogSnapshotLocked() (MemoryCatalogSnapshot, er
 		return MemoryCatalogSnapshot{}, err
 	}
 	return normalizeMemoryCatalogSnapshot(snapshot), nil
+}
+
+func (s *FileStore) readPermissionRuleSnapshotLocked() (PermissionRuleSnapshot, error) {
+	var snapshot PermissionRuleSnapshot
+	if err := s.readJSONFileLocked(s.permissionRulesPath, &snapshot, "read permission rules", "decode permission rules"); err != nil {
+		return PermissionRuleSnapshot{}, err
+	}
+	return normalizePermissionRuleSnapshot(snapshot), nil
 }
 
 func (s *FileStore) readJSONFileLocked(path string, target any, readErrLabel, decodeErrLabel string) error {
@@ -480,6 +537,10 @@ func normalizeProjection(projection ProjectionSnapshot) ProjectionSnapshot {
 	if projection.ReviewGroups == nil {
 		projection.ReviewGroups = []session.ReviewGroup{}
 	}
+	if projection.PermissionRules == nil {
+		projection.PermissionRules = []PermissionRule{}
+	}
+	projection.PermissionRules = normalizePermissionRules(projection.PermissionRules)
 	projection.SessionContext = normalizeSessionContext(projection.SessionContext)
 	projection.SkillCatalogMeta = normalizeCatalogMetadata(projection.SkillCatalogMeta, CatalogDomainSkill)
 	projection.MemoryCatalogMeta = normalizeCatalogMetadata(projection.MemoryCatalogMeta, CatalogDomainMemory)
@@ -488,6 +549,13 @@ func normalizeProjection(projection ProjectionSnapshot) ProjectionSnapshot {
 
 func normalizeSessionRecord(record SessionRecord) SessionRecord {
 	record.Projection = normalizeProjection(record.Projection)
+	if record.Summary.External || strings.EqualFold(strings.TrimSpace(record.Summary.Source), "codex-native") {
+		if record.Summary.Runtime.Source == "" {
+			record.Summary.Runtime.Source = "codex-native"
+		}
+		record.Projection.Runtime = record.Summary.Runtime
+		return record
+	}
 	if record.Projection.Runtime.Source == "" {
 		record.Projection.Runtime.Source = record.Summary.Runtime.Source
 	}
@@ -495,6 +563,7 @@ func normalizeSessionRecord(record SessionRecord) SessionRecord {
 	if record.Summary.Runtime.Source == "" {
 		record.Summary.Runtime.Source = "mobilevc"
 	}
+	record.Summary = deriveProjectionSummary(record.Summary, record.Projection)
 	return record
 }
 
@@ -513,6 +582,11 @@ func normalizeSkillCatalogSnapshot(snapshot SkillCatalogSnapshot) SkillCatalogSn
 func normalizeMemoryCatalogSnapshot(snapshot MemoryCatalogSnapshot) MemoryCatalogSnapshot {
 	snapshot.Meta = normalizeCatalogMetadata(snapshot.Meta, CatalogDomainMemory)
 	snapshot.Items = normalizeMemoryCatalog(snapshot.Items)
+	return snapshot
+}
+
+func normalizePermissionRuleSnapshot(snapshot PermissionRuleSnapshot) PermissionRuleSnapshot {
+	snapshot.Items = normalizePermissionRules(snapshot.Items)
 	return snapshot
 }
 
@@ -641,25 +715,116 @@ func normalizeStringSlice(items []string) []string {
 	return out
 }
 
+func normalizePermissionRules(items []PermissionRule) []PermissionRule {
+	if len(items) == 0 {
+		return []PermissionRule{}
+	}
+	out := make([]PermissionRule, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		item.ID = strings.TrimSpace(item.ID)
+		if item.ID == "" {
+			continue
+		}
+		if _, ok := seen[item.ID]; ok {
+			continue
+		}
+		seen[item.ID] = struct{}{}
+		item.Engine = strings.TrimSpace(strings.ToLower(item.Engine))
+		item.CommandHead = strings.TrimSpace(strings.ToLower(item.CommandHead))
+		item.TargetPathPrefix = strings.TrimSpace(item.TargetPathPrefix)
+		item.Summary = strings.TrimSpace(item.Summary)
+		if item.Scope == "" {
+			item.Scope = PermissionScopeSession
+		}
+		if item.Kind == "" {
+			item.Kind = PermissionKindGeneric
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out
+}
+
 func buildPreview(projection ProjectionSnapshot) string {
-	for i := len(projection.LogEntries) - 1; i >= 0; i-- {
-		entry := projection.LogEntries[i]
-		switch entry.Kind {
-		case "markdown", "system", "user":
-			text := strings.TrimSpace(firstNonEmptyString(entry.Message, entry.Text))
-			if text != "" {
-				return truncatePreview(text)
-			}
-		case "error":
-			if entry.Context != nil {
-				text := strings.TrimSpace(entry.Context.Message)
-				if text != "" {
-					return truncatePreview(text)
-				}
-			}
+	if text := latestMeaningfulProjectionText(projection, true); text != "" {
+		return truncatePreview(text)
+	}
+	if text := latestMeaningfulProjectionText(projection, false); text != "" {
+		return truncatePreview(text)
+	}
+	return ""
+}
+
+func deriveProjectionSummary(summary SessionSummary, projection ProjectionSnapshot) SessionSummary {
+	summary.EntryCount = len(projection.LogEntries)
+	if title := buildSummaryTitle(summary.Title, projection, summary.CreatedAt); title != "" {
+		summary.Title = title
+	}
+	summary.LastPreview = buildPreview(projection)
+	return summary
+}
+
+func buildSummaryTitle(current string, projection ProjectionSnapshot, createdAt time.Time) string {
+	normalizedCurrent := normalizeSummaryText(current)
+	if isMeaningfulSummaryTitle(normalizedCurrent) {
+		return normalizedCurrent
+	}
+	if text := firstMeaningfulProjectionText(projection, true); text != "" {
+		return truncatePreview(text)
+	}
+	if text := firstMeaningfulProjectionText(projection, false); text != "" {
+		return truncatePreview(text)
+	}
+	if normalizedCurrent != "" {
+		if looksLikeSummaryNoise(normalizedCurrent) || looksLikeBootstrapCommand(normalizedCurrent) {
+			return fallbackTitle("", nonZeroTime(createdAt, time.Now().UTC()))
+		}
+		return normalizedCurrent
+	}
+	return fallbackTitle("", nonZeroTime(createdAt, time.Now().UTC()))
+}
+
+func firstMeaningfulProjectionText(projection ProjectionSnapshot, userOnly bool) string {
+	for _, entry := range projection.LogEntries {
+		if text := meaningfulProjectionEntryText(entry, userOnly); text != "" {
+			return text
 		}
 	}
 	return ""
+}
+
+func latestMeaningfulProjectionText(projection ProjectionSnapshot, userOnly bool) string {
+	for i := len(projection.LogEntries) - 1; i >= 0; i-- {
+		if text := meaningfulProjectionEntryText(projection.LogEntries[i], userOnly); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func meaningfulProjectionEntryText(entry SnapshotLogEntry, userOnly bool) string {
+	if userOnly && entry.Kind != "user" {
+		return ""
+	}
+	var text string
+	switch entry.Kind {
+	case "markdown", "system", "user":
+		text = firstNonEmptyString(entry.Message, entry.Text)
+	case "error":
+		if entry.Context != nil {
+			text = entry.Context.Message
+		}
+	default:
+		return ""
+	}
+	text = normalizeSummaryText(text)
+	if !isMeaningfulSummaryText(text) {
+		return ""
+	}
+	return text
 }
 
 func truncatePreview(text string) string {
@@ -685,4 +850,145 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeSummaryText(text string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+}
+
+func isMeaningfulSummaryText(text string) bool {
+	if text == "" {
+		return false
+	}
+	return !looksLikeSummaryNoise(text) && !looksLikeBootstrapCommand(text)
+}
+
+func isMeaningfulSummaryTitle(text string) bool {
+	if !isMeaningfulSummaryText(text) {
+		return false
+	}
+	return !looksLikePlaceholderTitle(text)
+}
+
+func looksLikeSummaryNoise(text string) bool {
+	lower := strings.ToLower(normalizeSummaryText(text))
+	if lower == "" {
+		return true
+	}
+	switch lower {
+	case "ok", "done", "running", "thinking", "processing", "active", "ready", "idle", "is ready", "已就绪",
+		"session active", "session ready", "command started", "command finished", "status: active", "status: ready", "status: idle":
+		return true
+	}
+	return strings.HasPrefix(lower, "command started ") ||
+		strings.HasPrefix(lower, "command finished ") ||
+		strings.HasPrefix(lower, "active:") ||
+		strings.HasPrefix(lower, "ready:") ||
+		strings.HasPrefix(lower, "idle:") ||
+		strings.HasPrefix(lower, "--config model_reasoning_effort=") ||
+		strings.HasPrefix(lower, "model_reasoning_effort=") ||
+		looksLikeTimestampText(lower) ||
+		looksLikeModelSummary(lower)
+}
+
+func looksLikePlaceholderTitle(text string) bool {
+	lower := strings.ToLower(normalizeSummaryText(text))
+	if lower == "" {
+		return true
+	}
+	return lower == "session" ||
+		lower == "new session" ||
+		lower == "history" ||
+		sessionPlaceholderPattern.MatchString(lower)
+}
+
+func looksLikeTimestampText(text string) bool {
+	return sessionTimestampPattern.MatchString(strings.ToLower(normalizeSummaryText(text)))
+}
+
+func looksLikeModelSummary(text string) bool {
+	fields := strings.Fields(strings.ToLower(normalizeSummaryText(text)))
+	if len(fields) < 2 {
+		return false
+	}
+	switch fields[0] {
+	case "claude", "codex", "gemini":
+	default:
+		return false
+	}
+	for _, field := range fields[1:] {
+		if strings.Contains(field, "gpt-") ||
+			strings.Contains(field, "sonnet") ||
+			strings.Contains(field, "opus") ||
+			field == "-low" ||
+			field == "-medium" ||
+			field == "-high" ||
+			field == "low" ||
+			field == "medium" ||
+			field == "high" {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeBootstrapCommand(text string) bool {
+	normalized := normalizeSummaryText(text)
+	if normalized == "" {
+		return false
+	}
+	lower := strings.ToLower(normalized)
+	if strings.HasPrefix(lower, "--config ") ||
+		strings.HasPrefix(lower, "--model ") ||
+		strings.HasPrefix(lower, "-m ") {
+		return true
+	}
+	startsWithAICommand := lower == "claude" ||
+		strings.HasPrefix(lower, "claude ") ||
+		lower == "codex" ||
+		strings.HasPrefix(lower, "codex ") ||
+		lower == "gemini" ||
+		strings.HasPrefix(lower, "gemini ")
+	if !startsWithAICommand {
+		return false
+	}
+	if !strings.Contains(normalized, " ") {
+		return true
+	}
+	return strings.Contains(lower, " --model ") ||
+		strings.Contains(lower, " -m ") ||
+		strings.Contains(lower, " --config ") ||
+		strings.Contains(lower, " --permission-mode ") ||
+		strings.Contains(lower, " --approval-mode ") ||
+		strings.Contains(lower, " --dangerously-skip-permissions") ||
+		looksLikeModelSummary(lower)
+}
+
+func nonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Time{}
+}
+
+func (s *FileStore) reconcileIndexLocked(index fileIndex) (fileIndex, error) {
+	updated := false
+	for i := range index.Sessions {
+		record, err := s.readSessionLocked(index.Sessions[i].ID)
+		if err != nil {
+			continue
+		}
+		if index.Sessions[i] != record.Summary {
+			index.Sessions[i] = record.Summary
+			updated = true
+		}
+	}
+	if updated {
+		if err := s.writeIndexLocked(index); err != nil {
+			return fileIndex{}, err
+		}
+	}
+	return index, nil
 }

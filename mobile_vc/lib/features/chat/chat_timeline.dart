@@ -5,6 +5,13 @@ import '../../data/models/runtime_meta.dart';
 import '../../data/models/session_models.dart';
 import '../../widgets/event_card.dart';
 
+const List<PromptOption> _permissionPromptOptions = <PromptOption>[
+  PromptOption(value: 'approve', label: '允许一次'),
+  PromptOption(value: 'approve:session', label: '本会话允许'),
+  PromptOption(value: 'approve:persistent', label: '长期允许'),
+  PromptOption(value: 'deny', label: '拒绝'),
+];
+
 class ChatTimeline extends StatefulWidget {
   const ChatTimeline({
     super.key,
@@ -158,92 +165,62 @@ class _ChatTimelineState extends State<ChatTimeline> {
     if (items.isEmpty) {
       return const SizedBox.shrink();
     }
-    final displayItems = <Object>[
-      _TimelineHeaderModel(
-        totalCount: items
-            .whereType<TimelineItem>()
-            .where((item) => item.kind != 'file_diff')
-            .length,
-        hasPrompt: visiblePrompt != null,
-        hasPlan: visiblePlanQuestion != null,
-        pendingDiffCount: widget.pendingDiffCount,
-        autoAccept: widget.isAutoAcceptMode,
-      ),
-      ...items,
-    ];
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Theme.of(context).colorScheme.primary.withValues(alpha: 0.04),
-            Theme.of(context).colorScheme.surface,
-            Theme.of(context).colorScheme.surface,
-          ],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-      ),
-      child: ListView.separated(
-        controller: _scrollController,
-        reverse: false,
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 128),
-        itemBuilder: (context, index) {
-          final entry = displayItems[index];
-          if (entry is _TimelineHeaderModel) {
-            return _TimelineOverviewCard(model: entry);
-          }
-          final item = entry as TimelineItem;
-          if (item.kind == 'file_diff') {
-            return const SizedBox.shrink();
-          }
-          if (item.kind == 'review_summary') {
-            return _ReviewSummaryCard(
-              diff: item.context,
-              reviewGroup: widget.activeReviewGroup,
-              pendingDiffCount: widget.pendingDiffCount,
-              pendingReviewGroupCount: widget.pendingReviewGroupCount,
-              isManualReviewMode: widget.isManualReviewMode,
-              isAutoAcceptMode: widget.isAutoAcceptMode,
-              shouldShowReviewChoices: widget.shouldShowReviewChoices,
-              onOpenDiff: widget.onOpenDiff,
-              onReviewDecision: widget.onReviewDecision,
-              onAcceptAll: widget.onAcceptAll,
-            );
-          }
-          if ((item.kind == 'prompt_request' ||
-                  item.kind == 'interaction_request') &&
-              visiblePrompt != null) {
-            return visiblePrompt is InteractionRequestEvent
-                ? _InteractionRequestCard(
-                    interaction: visiblePrompt,
-                    onSubmit: widget.onPromptSubmit,
-                  )
-                : _PromptRequestCard(
-                    prompt: visiblePrompt as PromptRequestEvent,
-                    onSubmit: widget.onPromptSubmit,
-                  );
-          }
-          if (item.kind == 'plan_request' && visiblePlanQuestion != null) {
-            return _PlanQuestionCard(
-              question: visiblePlanQuestion,
-              progressLabel: widget.pendingPlanProgressLabel,
-              onSubmit: widget.onPromptSubmit,
-            );
-          }
-          return EventCard(
-            item: item,
-            onTap: () {
-              if (item.kind == 'runtime_info_result') {
-                widget.onOpenRuntimeInfo?.call();
-              } else if (item.kind == 'fs_read_result') {
-                widget.onOpenFile?.call();
-              }
-            },
+    return ListView.separated(
+      controller: _scrollController,
+      reverse: false,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 128),
+      itemBuilder: (context, index) {
+        final item = items[index];
+        if (item.kind == 'file_diff') {
+          return const SizedBox.shrink();
+        }
+        if (item.kind == 'review_summary') {
+          return _ReviewSummaryCard(
+            diff: item.context,
+            reviewGroup: widget.activeReviewGroup,
+            pendingDiffCount: widget.pendingDiffCount,
+            pendingReviewGroupCount: widget.pendingReviewGroupCount,
+            isManualReviewMode: widget.isManualReviewMode,
+            isAutoAcceptMode: widget.isAutoAcceptMode,
+            shouldShowReviewChoices: widget.shouldShowReviewChoices,
+            onOpenDiff: widget.onOpenDiff,
+            onReviewDecision: widget.onReviewDecision,
+            onAcceptAll: widget.onAcceptAll,
           );
-        },
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemCount: displayItems.length,
-      ),
+        }
+        if ((item.kind == 'prompt_request' ||
+                item.kind == 'interaction_request') &&
+            visiblePrompt != null) {
+          return visiblePrompt is InteractionRequestEvent
+              ? _InteractionRequestCard(
+                  interaction: visiblePrompt,
+                  onSubmit: widget.onPromptSubmit,
+                )
+              : _PromptRequestCard(
+                  prompt: visiblePrompt as PromptRequestEvent,
+                  onSubmit: widget.onPromptSubmit,
+                );
+        }
+        if (item.kind == 'plan_request' && visiblePlanQuestion != null) {
+          return _PlanQuestionCard(
+            question: visiblePlanQuestion,
+            progressLabel: widget.pendingPlanProgressLabel,
+            onSubmit: widget.onPromptSubmit,
+          );
+        }
+        return EventCard(
+          item: item,
+          onTap: () {
+            if (item.kind == 'runtime_info_result') {
+              widget.onOpenRuntimeInfo?.call();
+            } else if (item.kind == 'fs_read_result') {
+              widget.onOpenFile?.call();
+            }
+          },
+        );
+      },
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemCount: items.length,
     );
   }
 
@@ -275,120 +252,6 @@ class _ChatTimelineState extends State<ChatTimeline> {
   }
 }
 
-class _TimelineHeaderModel {
-  const _TimelineHeaderModel({
-    required this.totalCount,
-    required this.hasPrompt,
-    required this.hasPlan,
-    required this.pendingDiffCount,
-    required this.autoAccept,
-  });
-
-  final int totalCount;
-  final bool hasPrompt;
-  final bool hasPlan;
-  final int pendingDiffCount;
-  final bool autoAccept;
-}
-
-class _TimelineOverviewCard extends StatelessWidget {
-  const _TimelineOverviewCard({required this.model});
-
-  final _TimelineHeaderModel model;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            theme.colorScheme.primaryContainer,
-            Color.alphaBlend(
-              theme.colorScheme.primary.withValues(alpha: 0.08),
-              theme.colorScheme.surface,
-            ),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.7),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: theme.colorScheme.primary.withValues(alpha: 0.10),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface.withValues(alpha: 0.72),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(
-                  Icons.forum_rounded,
-                  color: theme.colorScheme.primary,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '会话时间线',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -0.3,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            '这里聚合 AI 回复、工具结果、审核步骤和交互请求，整个会话会按时间顺序持续展开。',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _OverviewChip(label: '消息', value: '${model.totalCount}'),
-              if (model.pendingDiffCount > 0)
-                _OverviewChip(
-                  label: '待审核',
-                  value: '${model.pendingDiffCount}',
-                ),
-              if (model.hasPrompt)
-                const _OverviewChip(label: '授权', value: '待确认'),
-              if (model.hasPlan) const _OverviewChip(label: '计划', value: '待选择'),
-              _OverviewChip(
-                label: '模式',
-                value: model.autoAccept ? '自动接受修改' : '标准确认',
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _InteractionRequestCard extends StatelessWidget {
   const _InteractionRequestCard({
     required this.interaction,
@@ -400,10 +263,14 @@ class _InteractionRequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final actions = interaction.actions;
-    final options = interaction.options
-        .where((option) => option.displayText.isNotEmpty)
-        .toList();
+    final isPermission = interaction.isPermission;
+    final actions =
+        isPermission ? const <InteractionAction>[] : interaction.actions;
+    final options = isPermission
+        ? _permissionPromptOptions
+        : interaction.options
+            .where((option) => option.displayText.isNotEmpty)
+            .toList();
     return _ActionCardFrame(
       icon: Icons.touch_app_rounded,
       title:
@@ -488,7 +355,9 @@ class _PromptRequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final options = _resolvedOptions();
+    final options = prompt.looksLikePermissionPrompt
+        ? _permissionPromptOptions
+        : _resolvedOptions();
     return _ActionCardFrame(
       icon: Icons.verified_user_outlined,
       title: '授权确认',
@@ -897,37 +766,6 @@ class _ActionCardFrame extends StatelessWidget {
           const SizedBox(height: 14),
           child,
         ],
-      ),
-    );
-  }
-}
-
-class _OverviewChip extends StatelessWidget {
-  const _OverviewChip({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
-        ),
-      ),
-      child: Text(
-        '$label · $value',
-        style: theme.textTheme.labelMedium?.copyWith(
-          fontWeight: FontWeight.w800,
-        ),
       ),
     );
   }

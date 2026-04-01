@@ -366,6 +366,157 @@ class TerminalExecution {
   }
 }
 
+class RuntimeProcessItem {
+  const RuntimeProcessItem({
+    this.pid = 0,
+    this.ppid = 0,
+    this.state = '',
+    this.elapsed = '',
+    this.command = '',
+    this.cwd = '',
+    this.executionId = '',
+    this.source = '',
+    this.root = false,
+    this.logAvailable = false,
+  });
+
+  final int pid;
+  final int ppid;
+  final String state;
+  final String elapsed;
+  final String command;
+  final String cwd;
+  final String executionId;
+  final String source;
+  final bool root;
+  final bool logAvailable;
+
+  String get title {
+    final trimmed = command.trim();
+    if (trimmed.isNotEmpty) {
+      return trimmed;
+    }
+    return pid > 0 ? 'PID $pid' : '未命名进程';
+  }
+
+  factory RuntimeProcessItem.fromJson(Map<String, dynamic> json) {
+    return RuntimeProcessItem(
+      pid: (json['pid'] as num?)?.toInt() ?? 0,
+      ppid: (json['ppid'] as num?)?.toInt() ?? 0,
+      state: (json['state'] ?? '').toString(),
+      elapsed: (json['elapsed'] ?? '').toString(),
+      command: (json['command'] ?? '').toString(),
+      cwd: (json['cwd'] ?? '').toString(),
+      executionId: (json['executionId'] ?? '').toString(),
+      source: (json['source'] ?? '').toString(),
+      root: json['root'] == true,
+      logAvailable: json['logAvailable'] == true,
+    );
+  }
+}
+
+class PermissionRule {
+  const PermissionRule({
+    this.id = '',
+    this.scope = '',
+    this.enabled = false,
+    this.engine = '',
+    this.kind = '',
+    this.commandHead = '',
+    this.targetPathPrefix = '',
+    this.summary = '',
+    this.createdAt,
+    this.lastMatchedAt,
+    this.matchCount = 0,
+  });
+
+  final String id;
+  final String scope;
+  final bool enabled;
+  final String engine;
+  final String kind;
+  final String commandHead;
+  final String targetPathPrefix;
+  final String summary;
+  final DateTime? createdAt;
+  final DateTime? lastMatchedAt;
+  final int matchCount;
+
+  PermissionRule copyWith({
+    String? id,
+    String? scope,
+    bool? enabled,
+    String? engine,
+    String? kind,
+    String? commandHead,
+    String? targetPathPrefix,
+    String? summary,
+    DateTime? createdAt,
+    DateTime? lastMatchedAt,
+    int? matchCount,
+  }) {
+    return PermissionRule(
+      id: id ?? this.id,
+      scope: scope ?? this.scope,
+      enabled: enabled ?? this.enabled,
+      engine: engine ?? this.engine,
+      kind: kind ?? this.kind,
+      commandHead: commandHead ?? this.commandHead,
+      targetPathPrefix: targetPathPrefix ?? this.targetPathPrefix,
+      summary: summary ?? this.summary,
+      createdAt: createdAt ?? this.createdAt,
+      lastMatchedAt: lastMatchedAt ?? this.lastMatchedAt,
+      matchCount: matchCount ?? this.matchCount,
+    );
+  }
+
+  String get displayTitle {
+    if (summary.trim().isNotEmpty) {
+      return summary.trim();
+    }
+    final parts = <String>[
+      if (engine.trim().isNotEmpty) engine.trim(),
+      if (kind.trim().isNotEmpty) kind.trim(),
+      if (commandHead.trim().isNotEmpty) commandHead.trim(),
+      if (targetPathPrefix.trim().isNotEmpty) targetPathPrefix.trim(),
+    ];
+    return parts.isEmpty ? '自动允许规则' : parts.join(' · ');
+  }
+
+  factory PermissionRule.fromJson(Map<String, dynamic> json) {
+    return PermissionRule(
+      id: (json['id'] ?? '').toString(),
+      scope: (json['scope'] ?? '').toString(),
+      enabled: json['enabled'] != false,
+      engine: (json['engine'] ?? '').toString(),
+      kind: (json['kind'] ?? '').toString(),
+      commandHead: (json['commandHead'] ?? '').toString(),
+      targetPathPrefix: (json['targetPathPrefix'] ?? '').toString(),
+      summary: (json['summary'] ?? '').toString(),
+      createdAt: _parseDate(json['createdAt']?.toString()),
+      lastMatchedAt: _parseDate(json['lastMatchedAt']?.toString()),
+      matchCount: (json['matchCount'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'scope': scope,
+      'enabled': enabled,
+      'engine': engine,
+      'kind': kind,
+      'commandHead': commandHead,
+      'targetPathPrefix': targetPathPrefix,
+      'summary': summary,
+      if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
+      if (lastMatchedAt != null)
+        'lastMatchedAt': lastMatchedAt!.toIso8601String(),
+      'matchCount': matchCount,
+    };
+  }
+}
+
 class SkillDefinition {
   const SkillDefinition({
     this.name = '',

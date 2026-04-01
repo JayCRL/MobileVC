@@ -91,11 +91,14 @@ func ListNativeThreads(ctx context.Context, cwdFilter string) ([]NativeThread, e
 		if items, ok := prompts[thread.ThreadID]; ok {
 			thread.HistoryPrompts = items
 		}
-		if strings.TrimSpace(thread.Title) == "" {
+		if !isMeaningfulPromptText(thread.Title) {
+			thread.Title = latestMeaningfulPrompt(thread.HistoryPrompts)
+		}
+		if !isMeaningfulPromptText(thread.Title) {
 			thread.Title = strings.TrimSpace(thread.FirstUserMessage)
 		}
-		if strings.TrimSpace(thread.Title) == "" {
-			thread.Title = thread.ThreadID
+		if !isMeaningfulPromptText(thread.Title) {
+			thread.Title = "Codex 会话"
 		}
 		result = append(result, thread)
 	}
@@ -127,12 +130,21 @@ func FindNativeThread(ctx context.Context, sessionID string) (NativeThread, erro
 
 func MirrorRecord(thread NativeThread) store.SessionRecord {
 	title := strings.TrimSpace(thread.Title)
-	if title == "" {
-		title = thread.ThreadID
+	if !isMeaningfulPromptText(title) {
+		title = latestMeaningfulPrompt(thread.HistoryPrompts)
 	}
-	preview := strings.TrimSpace(thread.FirstUserMessage)
-	if preview == "" && len(thread.HistoryPrompts) > 0 {
-		preview = strings.TrimSpace(thread.HistoryPrompts[len(thread.HistoryPrompts)-1].Text)
+	if !isMeaningfulPromptText(title) {
+		title = strings.TrimSpace(thread.FirstUserMessage)
+	}
+	if !isMeaningfulPromptText(title) {
+		title = "Codex 会话"
+	}
+	preview := latestMeaningfulPrompt(thread.HistoryPrompts)
+	if !isMeaningfulPromptText(preview) {
+		preview = strings.TrimSpace(thread.FirstUserMessage)
+	}
+	if !isMeaningfulPromptText(preview) {
+		preview = title
 	}
 	entries := make([]store.SnapshotLogEntry, 0, len(thread.HistoryPrompts))
 	for _, item := range thread.HistoryPrompts {
@@ -257,6 +269,44 @@ func normalizePath(value string) string {
 	}
 	cleaned := filepath.Clean(trimmed)
 	return strings.TrimSuffix(cleaned, string(filepath.Separator))
+}
+
+func latestMeaningfulPrompt(items []NativePrompt) string {
+	for i := len(items) - 1; i >= 0; i-- {
+		text := strings.TrimSpace(items[i].Text)
+		if isMeaningfulPromptText(text) {
+			return text
+		}
+	}
+	return ""
+}
+
+func isMeaningfulPromptText(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if lower == "session" ||
+		lower == "new session" ||
+		lower == "command started" ||
+		lower == "command finished" ||
+		strings.HasPrefix(lower, "command finished ") ||
+		strings.HasPrefix(lower, "--config ") ||
+		strings.HasPrefix(lower, "model_reasoning_effort=") {
+		return false
+	}
+	if strings.HasPrefix(lower, "codex ") || lower == "codex" {
+		if strings.Contains(lower, "gpt-") ||
+			strings.Contains(lower, "sonnet") ||
+			strings.Contains(lower, "opus") ||
+			strings.HasSuffix(lower, "-low") ||
+			strings.HasSuffix(lower, "-medium") ||
+			strings.HasSuffix(lower, "-high") {
+			return false
+		}
+	}
+	return true
 }
 
 func nonZeroTime(values ...time.Time) time.Time {

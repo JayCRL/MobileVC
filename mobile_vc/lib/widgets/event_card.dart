@@ -23,6 +23,32 @@ class EventCard extends StatelessWidget {
     final isUser = item.kind == 'user';
     final isMarkdown = item.kind == 'markdown';
 
+    if (isMarkdown) {
+      final bubbleColor = Color.alphaBlend(
+        scheme.primary.withValues(alpha: 0.04),
+        scheme.surfaceContainerLowest,
+      );
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: bubbleColor,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: 0.45),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: _buildMarkdownText(context, style),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
@@ -49,16 +75,12 @@ class EventCard extends StatelessWidget {
               ),
               child: Padding(
                 padding: EdgeInsets.symmetric(
-                  horizontal:
-                      isUser ? 14 : (isMarkdown ? 16 : (compact ? 12 : 14)),
-                  vertical:
-                      isUser ? 12 : (isMarkdown ? 14 : (compact ? 10 : 12)),
+                  horizontal: isUser ? 14 : (compact ? 12 : 14),
+                  vertical: isUser ? 12 : (compact ? 10 : 12),
                 ),
                 child: isUser
                     ? _buildUserBubble(context, style)
-                    : isMarkdown
-                        ? _buildMarkdownCard(style)
-                        : _buildDefaultCard(context, style),
+                    : _buildDefaultCard(context, style),
               ),
             ),
           ),
@@ -79,8 +101,17 @@ class EventCard extends StatelessWidget {
     );
   }
 
-  Widget _buildMarkdownCard(_EventCardStyle style) {
-    return _TypewriterMarkdown(item: item, style: style);
+  Widget _buildMarkdownText(BuildContext context, _EventCardStyle style) {
+    return _TypewriterMarkdown(
+      item: item,
+      style: style.copyWith(
+        background: Colors.transparent,
+        border: Colors.transparent,
+        shadow: Colors.transparent,
+        iconBackground: Colors.transparent,
+      ),
+      plain: true,
+    );
   }
 
   Widget _buildDefaultCard(BuildContext context, _EventCardStyle style) {
@@ -236,10 +267,15 @@ class EventCard extends StatelessWidget {
 }
 
 class _TypewriterMarkdown extends StatefulWidget {
-  const _TypewriterMarkdown({required this.item, required this.style});
+  const _TypewriterMarkdown({
+    required this.item,
+    required this.style,
+    this.plain = false,
+  });
 
   final TimelineItem item;
   final _EventCardStyle style;
+  final bool plain;
 
   @override
   State<_TypewriterMarkdown> createState() => _TypewriterMarkdownState();
@@ -313,6 +349,7 @@ class _TypewriterMarkdownState extends State<_TypewriterMarkdown> {
         context: widget.item.context,
       ),
       style: widget.style,
+      plain: widget.plain,
     );
   }
 
@@ -357,10 +394,15 @@ class _TypewriterMarkdownState extends State<_TypewriterMarkdown> {
 }
 
 class _BodyContent extends StatelessWidget {
-  const _BodyContent({required this.item, required this.style});
+  const _BodyContent({
+    required this.item,
+    required this.style,
+    this.plain = false,
+  });
 
   final TimelineItem item;
   final _EventCardStyle style;
+  final bool plain;
 
   @override
   Widget build(BuildContext context) {
@@ -391,17 +433,27 @@ class _BodyContent extends StatelessWidget {
               ),
           code: TextStyle(
             color: style.bodyColor,
-            backgroundColor: Theme.of(context)
-                .colorScheme
-                .surfaceContainerHighest
-                .withValues(alpha: 0.8),
+            backgroundColor: plain
+                ? Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.46)
+                : Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.8),
             fontFamily: 'monospace',
           ),
           codeblockDecoration: BoxDecoration(
-            color: Theme.of(context)
-                .colorScheme
-                .surfaceContainerHighest
-                .withValues(alpha: 0.55),
+            color: plain
+                ? Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.38)
+                : Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.55),
             borderRadius: BorderRadius.circular(14),
           ),
           blockquote: Theme.of(context)
@@ -475,4 +527,28 @@ class _EventCardStyle {
   final Color iconColor;
   final Color shadow;
   final double radius;
+
+  _EventCardStyle copyWith({
+    Color? background,
+    Color? border,
+    Color? titleColor,
+    Color? bodyColor,
+    Color? subtitleColor,
+    Color? iconBackground,
+    Color? iconColor,
+    Color? shadow,
+    double? radius,
+  }) {
+    return _EventCardStyle(
+      background: background ?? this.background,
+      border: border ?? this.border,
+      titleColor: titleColor ?? this.titleColor,
+      bodyColor: bodyColor ?? this.bodyColor,
+      subtitleColor: subtitleColor ?? this.subtitleColor,
+      iconBackground: iconBackground ?? this.iconBackground,
+      iconColor: iconColor ?? this.iconColor,
+      shadow: shadow ?? this.shadow,
+      radius: radius ?? this.radius,
+    );
+  }
 }

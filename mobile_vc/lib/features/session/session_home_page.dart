@@ -14,6 +14,7 @@ import '../../features/diff/diff_viewer_sheet.dart';
 import '../../features/files/file_browser_sheet.dart';
 import '../../features/files/file_viewer_sheet.dart';
 import '../../features/memory/memory_management_sheet.dart';
+import '../../features/permissions/permission_rule_management_sheet.dart';
 import '../../features/runtime_info/runtime_info_sheet.dart';
 import '../../features/skills/skill_management_sheet.dart';
 import '../../features/status/status_detail_sheet.dart';
@@ -139,10 +140,13 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     animation: Listenable.merge([controller]),
                     builder: (context, _) {
                       return ActivityRunnerBar(
-                        visible: controller.activityVisible,
-                        label: controller.activityToolLabel,
+                        visible: controller.activityBannerVisible,
+                        title: controller.activityBannerTitle,
+                        detail: controller.activityBannerDetail,
                         startedAt: controller.activityStartedAt,
                         elapsedSeconds: controller.activityElapsedSeconds,
+                        animated: controller.activityBannerAnimated,
+                        showElapsed: controller.activityBannerShowsElapsed,
                       );
                     },
                   ),
@@ -215,10 +219,13 @@ class _SessionHomePageState extends State<SessionHomePage> {
         onOpenLogs: () => _openLogs(context),
         onOpenSkills: () => _openSkills(context),
         onOpenMemory: () => _openMemory(context),
+        onOpenPermissions: () => _openPermissions(context),
         onOpenModels: () => _openModelSwitcher(context),
         onPermissionModeChanged: controller.updatePermissionMode,
         showClaudeMode: controller.shouldShowClaudeMode,
-        modelSummary: controller.currentAiModelSummary,
+        currentEngine: controller.commandBarEngine,
+        modelSummary: controller.commandBarModelSummary,
+        permissionRuleSummary: controller.permissionRuleSummary,
         isSessionLoading: controller.isLoadingSession,
       ),
     );
@@ -235,14 +242,24 @@ class _SessionHomePageState extends State<SessionHomePage> {
     final tokenController =
         TextEditingController(text: controller.config.token);
     final cwdController = TextEditingController(text: controller.config.cwd);
-    final engineController =
-        TextEditingController(text: controller.config.engine);
     final permissionController =
         TextEditingController(text: controller.config.permissionMode);
-    final iceServersController = TextEditingController(
-      text: controller.config.adbIceServersJson,
+    final iceHostController = TextEditingController(
+      text: controller.config.adbIceHostOverride,
+    );
+    final iceUsernameController = TextEditingController(
+      text: controller.config.adbIceUsername,
+    );
+    final iceCredentialController = TextEditingController(
+      text: controller.config.adbIceCredential,
     );
     String scanHint = '';
+    final hadLegacyIceConfig =
+        controller.config.adbIceServersJson.trim().isNotEmpty &&
+            !controller.config.hasAutoAdbIceConfig;
+    var selectedEngine = controller.config.engine.trim().isEmpty
+        ? 'claude'
+        : controller.config.engine.trim();
 
     await showModalBottomSheet<void>(
       context: context,
@@ -252,6 +269,18 @@ class _SessionHomePageState extends State<SessionHomePage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            String encodedIceConfig() => AppConfig.encodeAutoAdbIceConfig(
+                  host: iceHostController.text,
+                  username: iceUsernameController.text,
+                  credential: iceCredentialController.text,
+                );
+
+            final normalizedIceHost = iceHostController.text.trim().isNotEmpty
+                ? iceHostController.text.trim()
+                : (hostController.text.trim().isEmpty
+                    ? controller.config.host
+                    : hostController.text.trim());
+
             Future<void> handleScan() async {
               final scannedRaw = await showModalBottomSheet<String>(
                 context: context,
@@ -268,12 +297,13 @@ class _SessionHomePageState extends State<SessionHomePage> {
                   port: portController.text.trim(),
                   token: tokenController.text.trim(),
                   cwd: cwdController.text.trim(),
-                  engine: engineController.text.trim(),
-                  model: controller.config.model,
-                  reasoningEffort: controller.config.reasoningEffort,
+                  engine: selectedEngine,
+                  claudeModel: controller.config.claudeModel,
+                  codexModel: controller.config.codexModel,
+                  codexReasoningEffort: controller.config.codexReasoningEffort,
                   permissionMode: permissionController.text.trim(),
                   fastMode: controller.fastMode,
-                  adbIceServersJson: iceServersController.text.trim(),
+                  adbIceServersJson: encodedIceConfig(),
                 ),
               );
               if (scanned == null) {
@@ -285,27 +315,29 @@ class _SessionHomePageState extends State<SessionHomePage> {
               hostController.text = scanned.host;
               portController.text = scanned.port;
               tokenController.text = scanned.token;
+              iceHostController.text = scanned.adbIceHostOverride;
+              iceUsernameController.text = scanned.adbIceUsername;
+              iceCredentialController.text = scanned.adbIceCredential;
               setSheetState(() {
+                selectedEngine = scanned.engine.trim().isEmpty
+                    ? selectedEngine
+                    : scanned.engine.trim();
                 scanHint =
                     '已回填 ${scanned.host}:${scanned.port}${scanned.token.isNotEmpty ? ' 与 token' : ''}';
               });
             }
 
             Future<void> persistConfig({bool connect = false}) async {
-              await controller.saveConfig(
-                AppConfig(
-                  host: hostController.text.trim(),
-                  port: portController.text.trim(),
-                  token: tokenController.text.trim(),
-                  cwd: cwdController.text.trim(),
-                  engine: engineController.text.trim(),
-                  model: controller.config.model,
-                  reasoningEffort: controller.config.reasoningEffort,
-                  permissionMode: permissionController.text.trim(),
-                  fastMode: controller.fastMode,
-                  adbIceServersJson: iceServersController.text.trim(),
-                ),
-              );
+              await controller.saveConfig(controller.config.copyWith(
+                host: hostController.text.trim(),
+                port: portController.text.trim(),
+                token: tokenController.text.trim(),
+                cwd: cwdController.text.trim(),
+                engine: selectedEngine,
+                permissionMode: permissionController.text.trim(),
+                fastMode: controller.fastMode,
+                adbIceServersJson: encodedIceConfig(),
+              ));
               if (connect) {
                 await controller.connect();
               }
@@ -346,8 +378,10 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     ],
                     const SizedBox(height: 12),
                     TextField(
-                        controller: hostController,
-                        decoration: const InputDecoration(labelText: 'Host')),
+                      controller: hostController,
+                      decoration: const InputDecoration(labelText: 'Host'),
+                      onChanged: (_) => setSheetState(() {}),
+                    ),
                     const SizedBox(height: 10),
                     TextField(
                         controller: portController,
@@ -361,9 +395,32 @@ class _SessionHomePageState extends State<SessionHomePage> {
                         controller: cwdController,
                         decoration: const InputDecoration(labelText: 'CWD')),
                     const SizedBox(height: 10),
-                    TextField(
-                        controller: engineController,
-                        decoration: const InputDecoration(labelText: 'Engine')),
+                    DropdownButtonFormField<String>(
+                      value: selectedEngine,
+                      decoration: const InputDecoration(labelText: 'Engine'),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'claude',
+                          child: Text('Claude'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'codex',
+                          child: Text('Codex'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'gemini',
+                          child: Text('Gemini'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setSheetState(() {
+                          selectedEngine = value;
+                        });
+                      },
+                    ),
                     const SizedBox(height: 10),
                     TextField(
                         controller: permissionController,
@@ -371,21 +428,52 @@ class _SessionHomePageState extends State<SessionHomePage> {
                             labelText: 'Permission Mode')),
                     const SizedBox(height: 10),
                     TextField(
-                      controller: iceServersController,
-                      minLines: 3,
-                      maxLines: 6,
+                      controller: iceHostController,
                       decoration: const InputDecoration(
-                        labelText: 'ADB ICE Servers JSON',
-                        hintText:
-                            '[{"urls":["stun:stun.l.google.com:19302"]},{"urls":["turn:your-turn-host:3478?transport=udp"],"username":"user","credential":"pass"}]',
-                        alignLabelWithHint: true,
+                        labelText: 'ADB TURN Host Override',
+                        hintText: '留空则跟 Host 一致',
+                      ),
+                      onChanged: (_) => setSheetState(() {}),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: iceUsernameController,
+                      decoration: const InputDecoration(
+                        labelText: 'ADB TURN Username',
+                        hintText: 'mobilevc',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: iceCredentialController,
+                      decoration: const InputDecoration(
+                        labelText: 'ADB TURN Credential',
+                        hintText: 'credential',
                       ),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '公网 ADB 预览需要配置 TURN/ICE。只填 STUN 可能仍无法穿透，公网优先填 TURN。',
+                      'ADB ICE 默认使用当前 Host，也可单独指定 TURN Host。',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'STUN: stun:$normalizedIceHost:${AppConfig.adbIcePort}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    Text(
+                      'TURN: turn:$normalizedIceHost:${AppConfig.adbIcePort}?transport=udp / tcp',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    if (hadLegacyIceConfig) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        '检测到旧版自定义 ICE JSON。保存后会切换为自动 Host 模式。',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     Row(
                       children: [
@@ -436,16 +524,21 @@ class _SessionHomePageState extends State<SessionHomePage> {
       showDragHandle: true,
       builder: (context) {
         controller.requestSessionList();
-        return SessionListSheet(
-          sessions: controller.sessions,
-          selectedSessionId: controller.selectedSessionId,
-          cwd: controller.effectiveCwd,
-          onCreate: controller.createSession,
-          onLoad: (id) {
-            controller.loadSession(id);
-            Navigator.pop(context);
+        return ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) {
+            return SessionListSheet(
+              sessions: controller.sessions,
+              selectedSessionId: controller.selectedSessionId,
+              cwd: controller.effectiveCwd,
+              onCreate: controller.createSession,
+              onLoad: (id) {
+                controller.loadSession(id);
+                Navigator.pop(context);
+              },
+              onDelete: controller.deleteSession,
+            );
           },
-          onDelete: controller.deleteSession,
         );
       },
     );
@@ -666,6 +759,46 @@ class _SessionHomePageState extends State<SessionHomePage> {
     );
   }
 
+  Future<void> _openPermissions(BuildContext context) async {
+    controller.requestPermissionRuleList();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return FractionallySizedBox(
+          heightFactor: 0.92,
+          child: ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            child: Material(
+              color: Theme.of(context).colorScheme.surface,
+              child: ListenableBuilder(
+                listenable: controller,
+                builder: (context, _) {
+                  return PermissionRuleManagementSheet(
+                    sessionEnabled: controller.sessionPermissionRulesEnabled,
+                    persistentEnabled:
+                        controller.persistentPermissionRulesEnabled,
+                    sessionRules: controller.sessionPermissionRules,
+                    persistentRules: controller.persistentPermissionRules,
+                    onSetSessionEnabled: (value) =>
+                        controller.setPermissionRulesEnabled('session', value),
+                    onSetPersistentEnabled: (value) => controller
+                        .setPermissionRulesEnabled('persistent', value),
+                    onToggleRule: controller.setPermissionRuleEnabled,
+                    onDeleteRule: controller.deletePermissionRule,
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _openModelSwitcher(BuildContext context) async {
     final engine = controller.currentAiEngine;
     await showModalBottomSheet<void>(
@@ -675,14 +808,17 @@ class _SessionHomePageState extends State<SessionHomePage> {
       showDragHandle: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        var selectedModel = controller.selectedAiModel;
-        var selectedEffort = controller.selectedAiReasoningEffort;
+        var selectedModel = controller.configuredAiModel;
+        var selectedEffort = controller.configuredAiReasoningEffort;
         return StatefulBuilder(
           builder: (context, setSheetState) {
             final theme = Theme.of(context);
             final supportsModels = engine == 'claude' || engine == 'codex';
             final modelOptions =
                 engine == 'codex' ? _codexModelChoices : _claudeModelChoices;
+            final hasSelectedPreset = modelOptions.any(
+              (option) => option.value == selectedModel,
+            );
             return FractionallySizedBox(
               heightFactor: 0.7,
               child: ClipRRect(
@@ -726,6 +862,18 @@ class _SessionHomePageState extends State<SessionHomePage> {
                             spacing: 10,
                             runSpacing: 10,
                             children: [
+                              if (!hasSelectedPreset &&
+                                  selectedModel.trim().isNotEmpty)
+                                _ModelChoiceCard(
+                                  title: _aiModelSheetSummary(
+                                    engine,
+                                    selectedModel,
+                                    selectedEffort,
+                                  ),
+                                  subtitle: '当前为已保存配置的自定义模型',
+                                  selected: true,
+                                  onTap: () {},
+                                ),
                               for (final option in modelOptions)
                                 _ModelChoiceCard(
                                   title: option.title,
@@ -993,6 +1141,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
   }
 
   Future<void> _openLogs(BuildContext context) async {
+    controller.requestRuntimeProcessList();
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1014,7 +1163,18 @@ class _SessionHomePageState extends State<SessionHomePage> {
                     activeExecutionId: controller.activeTerminalExecutionId,
                     stdout: controller.activeTerminalStdout,
                     stderr: controller.activeTerminalStderr,
+                    runtimeProcesses: controller.runtimeProcesses,
+                    activeProcessPid: controller.activeRuntimeProcessPid,
+                    processStdout: controller.activeRuntimeProcessStdout,
+                    processStderr: controller.activeRuntimeProcessStderr,
+                    processMessage: controller.activeRuntimeProcessMessage,
+                    runtimeProcessListLoading:
+                        controller.runtimeProcessListLoading,
+                    runtimeProcessLogLoading:
+                        controller.runtimeProcessLogLoading,
                     onSelectExecution: controller.setActiveTerminalExecution,
+                    onSelectProcess: controller.setActiveRuntimeProcess,
+                    onRefreshProcesses: controller.requestRuntimeProcessList,
                   );
                 },
               ),
@@ -1051,6 +1211,11 @@ class _ModelChoice {
 
 const List<_ModelChoice> _claudeModelChoices = <_ModelChoice>[
   _ModelChoice(
+    value: 'default',
+    title: 'Default',
+    subtitle: '跟随 Claude Code 当前默认模型',
+  ),
+  _ModelChoice(
     value: 'sonnet',
     title: 'Sonnet',
     subtitle: '更均衡，适合作为默认工作模型',
@@ -1059,6 +1224,16 @@ const List<_ModelChoice> _claudeModelChoices = <_ModelChoice>[
     value: 'opus',
     title: 'Opus',
     subtitle: '更强推理，适合复杂任务与重审阅',
+  ),
+  _ModelChoice(
+    value: 'haiku',
+    title: 'Haiku',
+    subtitle: '更轻更快，适合轻量任务与快速往返',
+  ),
+  _ModelChoice(
+    value: 'opusplan',
+    title: 'Opus Plan',
+    subtitle: '规划优先，适合前期拆解与复杂执行计划',
   ),
 ];
 
@@ -1080,6 +1255,16 @@ const List<String> _codexReasoningEfforts = <String>[
   'medium',
   'high',
 ];
+
+String _aiModelSheetSummary(
+    String engine, String model, String reasoningEffort) {
+  switch (engine) {
+    case 'codex':
+      return '${model.toUpperCase()} · ${reasoningEffort.toUpperCase()}';
+    default:
+      return model.toUpperCase();
+  }
+}
 
 class _ModelChoiceCard extends StatelessWidget {
   const _ModelChoiceCard({
@@ -1158,100 +1343,33 @@ class _LandingBrand extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              scheme.primaryContainer,
-              Color.alphaBlend(
-                scheme.primary.withValues(alpha: 0.08),
-                scheme.surface,
-              ),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Image.asset(
+            'lib/logo-2.png',
+            width: 108,
+            height: 108,
+            fit: BoxFit.contain,
           ),
-          borderRadius: BorderRadius.circular(32),
-          border: Border.all(
-            color: scheme.outlineVariant.withValues(alpha: 0.7),
+          const SizedBox(height: 18),
+          Text(
+            'MobileVC',
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.5,
+                ),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: scheme.primary.withValues(alpha: 0.10),
-              blurRadius: 28,
-              offset: const Offset(0, 14),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.asset(
-              'lib/logo-2.png',
-              width: 108,
-              height: 108,
-              fit: BoxFit.contain,
-            ),
-            const SizedBox(height: 18),
-            Text(
-              'MobileVC',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -0.5,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '连接 AI 助手会话、文件树与 diff 审核的统一工作台',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: scheme.onSurfaceVariant, height: 1.45),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                _LandingChip(label: 'Session'),
-                _LandingChip(label: 'Diff Review'),
-                _LandingChip(label: 'Files'),
-                _LandingChip(label: 'ADB Debug'),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _LandingChip extends StatelessWidget {
-  const _LandingChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: scheme.surface.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: scheme.outlineVariant.withValues(alpha: 0.55),
-        ),
-      ),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
+          const SizedBox(height: 8),
+          Text(
+            '连接后即可开始对话、查看文件和远程调试。',
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: scheme.onSurfaceVariant, height: 1.45),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }

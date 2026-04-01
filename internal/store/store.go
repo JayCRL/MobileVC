@@ -37,6 +37,7 @@ const (
 const (
 	CatalogSourceTruthLocalMirror CatalogSourceOfTruth = "mobilevc-mirror"
 	CatalogSourceTruthClaude      CatalogSourceOfTruth = "claude"
+	CatalogSourceTruthCodex       CatalogSourceOfTruth = "codex"
 )
 
 type CatalogMetadata struct {
@@ -85,6 +86,41 @@ type SkillCatalogSnapshot struct {
 type MemoryCatalogSnapshot struct {
 	Meta  CatalogMetadata `json:"meta,omitempty"`
 	Items []MemoryItem    `json:"items,omitempty"`
+}
+
+type PermissionScope string
+
+type PermissionKind string
+
+const (
+	PermissionScopeSession    PermissionScope = "session"
+	PermissionScopePersistent PermissionScope = "persistent"
+)
+
+const (
+	PermissionKindWrite   PermissionKind = "write"
+	PermissionKindShell   PermissionKind = "shell"
+	PermissionKindNetwork PermissionKind = "network"
+	PermissionKindGeneric PermissionKind = "generic"
+)
+
+type PermissionRule struct {
+	ID               string          `json:"id"`
+	Scope            PermissionScope `json:"scope,omitempty"`
+	Enabled          bool            `json:"enabled"`
+	Engine           string          `json:"engine,omitempty"`
+	Kind             PermissionKind  `json:"kind,omitempty"`
+	CommandHead      string          `json:"commandHead,omitempty"`
+	TargetPathPrefix string          `json:"targetPathPrefix,omitempty"`
+	Summary          string          `json:"summary,omitempty"`
+	CreatedAt        time.Time       `json:"createdAt,omitempty"`
+	LastMatchedAt    time.Time       `json:"lastMatchedAt,omitempty"`
+	MatchCount       int             `json:"matchCount,omitempty"`
+}
+
+type PermissionRuleSnapshot struct {
+	Enabled bool             `json:"enabled"`
+	Items   []PermissionRule `json:"items,omitempty"`
 }
 
 type SessionContext struct {
@@ -177,6 +213,8 @@ type ProjectionSnapshot struct {
 	Controller          session.ControllerSnapshot `json:"controller,omitempty"`
 	Runtime             SessionRuntime             `json:"runtime,omitempty"`
 	SessionContext      SessionContext             `json:"sessionContext,omitempty"`
+	PermissionRulesEnabled bool                    `json:"permissionRulesEnabled,omitempty"`
+	PermissionRules      []PermissionRule          `json:"permissionRules,omitempty"`
 	SkillCatalogMeta    CatalogMetadata            `json:"skillCatalogMeta,omitempty"`
 	MemoryCatalogMeta   CatalogMetadata            `json:"memoryCatalogMeta,omitempty"`
 }
@@ -201,4 +239,6 @@ type Store interface {
 	SaveMemoryCatalog(ctx context.Context, items []MemoryItem) error
 	GetMemoryCatalogSnapshot(ctx context.Context) (MemoryCatalogSnapshot, error)
 	SaveMemoryCatalogSnapshot(ctx context.Context, snapshot MemoryCatalogSnapshot) error
+	GetPermissionRuleSnapshot(ctx context.Context) (PermissionRuleSnapshot, error)
+	SavePermissionRuleSnapshot(ctx context.Context, snapshot PermissionRuleSnapshot) error
 }

@@ -33,6 +33,10 @@ class MobileVcMapper {
         return FileDiffEvent.fromJson(json);
       case 'runtime_info_result':
         return RuntimeInfoResultEvent.fromJson(json);
+      case 'runtime_process_list_result':
+        return RuntimeProcessListResultEvent.fromJson(json);
+      case 'runtime_process_log_result':
+        return RuntimeProcessLogResultEvent.fromJson(json);
       case 'session_created':
         return SessionCreatedEvent.fromJson(json);
       case 'session_list_result':
@@ -47,6 +51,10 @@ class MobileVcMapper {
         return MemoryListResultEvent.fromJson(json);
       case 'session_context_result':
         return SessionContextResultEvent.fromJson(json);
+      case 'permission_rule_list_result':
+        return PermissionRuleListResultEvent.fromJson(json);
+      case 'permission_auto_applied':
+        return PermissionAutoAppliedEvent.fromJson(json);
       case 'skill_sync_result':
         return SkillSyncResultEvent.fromJson(json);
       case 'catalog_sync_status':

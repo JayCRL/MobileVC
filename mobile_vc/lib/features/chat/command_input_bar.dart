@@ -14,10 +14,13 @@ class CommandInputBar extends StatefulWidget {
     required this.onOpenLogs,
     required this.onOpenSkills,
     required this.onOpenMemory,
+    required this.onOpenPermissions,
     required this.onOpenModels,
     required this.onPermissionModeChanged,
     required this.showClaudeMode,
+    required this.currentEngine,
     required this.modelSummary,
+    required this.permissionRuleSummary,
     required this.shouldShowPermissionChoices,
     required this.shouldShowReviewChoices,
     required this.shouldShowPlanChoices,
@@ -35,10 +38,13 @@ class CommandInputBar extends StatefulWidget {
   final VoidCallback onOpenLogs;
   final VoidCallback onOpenSkills;
   final VoidCallback onOpenMemory;
+  final VoidCallback onOpenPermissions;
   final VoidCallback onOpenModels;
   final ValueChanged<String> onPermissionModeChanged;
   final bool showClaudeMode;
+  final String currentEngine;
   final String modelSummary;
+  final String permissionRuleSummary;
   final bool shouldShowPermissionChoices;
   final bool shouldShowReviewChoices;
   final bool shouldShowPlanChoices;
@@ -125,16 +131,24 @@ class _CommandInputBarState extends State<CommandInputBar> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final engineLabel =
+        _engineLabel(widget.currentEngine, widget.showClaudeMode);
+    final modeStateLabel = widget.awaitInput
+        ? '等待输入'
+        : widget.isBusy
+            ? '处理中'
+            : '空闲';
     final hintText = _inputLocked
         ? _lockedHintText
         : widget.awaitInput
-            ? (widget.showClaudeMode ? '继续回复 AI 助手' : '继续输入')
+            ? (widget.showClaudeMode ? '继续回复 $engineLabel' : '继续输入')
             : widget.hasPendingReview
                 ? '先处理待审核 diff，再继续'
                 : widget.isBusy
-                    ? (widget.showClaudeMode ? 'AI 助手正在处理中' : '当前 shell 会话仍在运行')
-                    : (widget.showClaudeMode ? '给 AI 助手发送消息' : '输入命令');
-    final modeLabel = widget.showClaudeMode ? 'AI' : 'Shell';
+                    ? (widget.showClaudeMode
+                        ? '$engineLabel 正在处理中'
+                        : '当前 shell 会话仍在运行')
+                    : (widget.showClaudeMode ? '给 $engineLabel 发送消息' : '输入命令');
     final modeColor = widget.showClaudeMode
         ? scheme.primary
         : scheme.onSurfaceVariant.withValues(alpha: 0.75);
@@ -171,50 +185,50 @@ class _CommandInputBarState extends State<CommandInputBar> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 1, 6, 0),
                   child: Row(
                     children: [
                       Container(
-                        width: 10,
-                        height: 10,
+                        width: 6,
+                        height: 6,
                         decoration: BoxDecoration(
                           color: modeColor,
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: modeColor.withValues(alpha: 0.28),
-                              blurRadius: 8,
-                              spreadRadius: 1,
+                              color: modeColor.withValues(alpha: 0.18),
+                              blurRadius: 5,
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '$modeLabel 工作台',
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                              fontWeight: FontWeight.w800,
-                              color: modeColor,
+                      const SizedBox(width: 7),
+                      RichText(
+                        text: TextSpan(
+                          children: [
+                            TextSpan(
+                              text: engineLabel,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: modeColor,
+                                  ),
                             ),
-                      ),
-                      const Spacer(),
-                      Text(
-                        widget.awaitInput
-                            ? '等待输入'
-                            : widget.isBusy
-                                ? '处理中'
-                                : '空闲',
-                        style:
-                            Theme.of(context).textTheme.labelMedium?.copyWith(
-                                  color: scheme.onSurfaceVariant,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                            TextSpan(
+                              text: ' · $modeStateLabel',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -248,6 +262,12 @@ class _CommandInputBarState extends State<CommandInputBar> {
                           icon: Icons.psychology_alt_outlined,
                           label: 'Memory',
                           onPressed: widget.onOpenMemory,
+                        ),
+                        const SizedBox(width: 8),
+                        _ToolChip(
+                          icon: Icons.verified_user_outlined,
+                          label: '权限 · ${widget.permissionRuleSummary}',
+                          onPressed: widget.onOpenPermissions,
                         ),
                         const SizedBox(width: 8),
                         _ToolChip(
@@ -386,6 +406,19 @@ class _CommandInputBarState extends State<CommandInputBar> {
         ),
       ),
     );
+  }
+}
+
+String _engineLabel(String currentEngine, bool showClaudeMode) {
+  switch (currentEngine.trim().toLowerCase()) {
+    case 'codex':
+      return 'Codex';
+    case 'claude':
+      return 'Claude';
+    case 'shell':
+      return 'Shell';
+    default:
+      return showClaudeMode ? 'Claude' : 'Shell';
   }
 }
 

@@ -317,8 +317,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "session cleared"))
 	}
 
-	emitAndPersistFor := func(sessionID string) func(any) {
+	var emitAndPersistFor func(sessionID string) func(any)
+	emitAndPersistFor = func(sessionID string) func(any) {
 		return func(event any) {
+			switch event.(type) {
+			case protocol.PromptRequestEvent, protocol.InteractionRequestEvent:
+				applied, err := maybeAutoApplyPermissionEvent(ctx, h.SessionStore, sessionID, event, runtimeSvc, emit, emitAndPersistFor(sessionID))
+				if err == nil && applied {
+					return
+				}
+			}
 			switch e := event.(type) {
 			case protocol.CatalogAuthoringResultEvent:
 				if e.Domain == "skill" {
@@ -557,6 +565,103 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emit(protocol.NewSessionContextResultEvent(selectedSessionID, toProtocolSessionContext(record.Projection.SessionContext)))
+		case "permission_rule_list":
+			emitPermissionRuleList(emit, h.SessionStore, ctx, selectedSessionID)
+		case "permission_rule_upsert":
+			var req protocol.PermissionRuleRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid permission_rule_upsert request: %v", err), ""))
+				continue
+			}
+			rule := fromProtocolPermissionRule(req.Rule)
+			if strings.TrimSpace(rule.ID) == "" {
+				emit(protocol.NewErrorEvent(selectedSessionID, "permission rule id is required", ""))
+				continue
+			}
+			switch rule.Scope {
+			case store.PermissionScopePersistent:
+				snapshot, err := h.SessionStore.GetPermissionRuleSnapshot(ctx)
+				if err != nil {
+					emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+					continue
+				}
+				snapshot.Items = upsertPermissionRule(snapshot.Items, rule)
+				if err := h.SessionStore.SavePermissionRuleSnapshot(ctx, snapshot); err != nil {
+					emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+					continue
+				}
+			default:
+				record, ok := loadSelectedSessionRecord(h.SessionStore, ctx, selectedSessionID, emit)
+				if !ok {
+					continue
+				}
+				record.Projection.PermissionRules = upsertPermissionRule(record.Projection.PermissionRules, rule)
+				if _, err := h.SessionStore.SaveProjection(ctx, selectedSessionID, record.Projection); err != nil {
+					emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+					continue
+				}
+			}
+			emitPermissionRuleList(emit, h.SessionStore, ctx, selectedSessionID)
+		case "permission_rule_delete":
+			var req protocol.PermissionRuleDeleteRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid permission_rule_delete request: %v", err), ""))
+				continue
+			}
+			switch store.PermissionScope(strings.TrimSpace(req.Scope)) {
+			case store.PermissionScopePersistent:
+				snapshot, err := h.SessionStore.GetPermissionRuleSnapshot(ctx)
+				if err != nil {
+					emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+					continue
+				}
+				snapshot.Items = deletePermissionRule(snapshot.Items, strings.TrimSpace(req.ID))
+				if err := h.SessionStore.SavePermissionRuleSnapshot(ctx, snapshot); err != nil {
+					emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+					continue
+				}
+			default:
+				record, ok := loadSelectedSessionRecord(h.SessionStore, ctx, selectedSessionID, emit)
+				if !ok {
+					continue
+				}
+				record.Projection.PermissionRules = deletePermissionRule(record.Projection.PermissionRules, strings.TrimSpace(req.ID))
+				if _, err := h.SessionStore.SaveProjection(ctx, selectedSessionID, record.Projection); err != nil {
+					emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+					continue
+				}
+			}
+			emitPermissionRuleList(emit, h.SessionStore, ctx, selectedSessionID)
+		case "permission_rules_set_enabled":
+			var req protocol.PermissionRuleToggleRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid permission_rules_set_enabled request: %v", err), ""))
+				continue
+			}
+			switch store.PermissionScope(strings.TrimSpace(req.Scope)) {
+			case store.PermissionScopePersistent:
+				snapshot, err := h.SessionStore.GetPermissionRuleSnapshot(ctx)
+				if err != nil {
+					emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+					continue
+				}
+				snapshot.Enabled = req.Enabled
+				if err := h.SessionStore.SavePermissionRuleSnapshot(ctx, snapshot); err != nil {
+					emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+					continue
+				}
+			default:
+				record, ok := loadSelectedSessionRecord(h.SessionStore, ctx, selectedSessionID, emit)
+				if !ok {
+					continue
+				}
+				record.Projection.PermissionRulesEnabled = req.Enabled
+				if _, err := h.SessionStore.SaveProjection(ctx, selectedSessionID, record.Projection); err != nil {
+					emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+					continue
+				}
+			}
+			emitPermissionRuleList(emit, h.SessionStore, ctx, selectedSessionID)
 		case "review_state_get":
 			emitReviewStateFromProjection(emit, selectedSessionID, buildProjectionSnapshotFor(selectedSessionID))
 		case "session_context_update":
@@ -600,12 +705,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
 			}
+			sourceOfTruth := resolveCatalogSourceOfTruth(h.SessionStore, ctx, selectedSessionID)
 			snapshot, err := h.SessionStore.GetSkillCatalogSnapshot(ctx)
 			if err != nil {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
-			snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+			snapshot.Meta.SourceOfTruth = sourceOfTruth
 			snapshot.Meta.SyncState = store.CatalogSyncStateSyncing
 			snapshot.Meta.LastError = ""
 			if err := h.SessionStore.SaveSkillCatalogSnapshot(ctx, snapshot); err != nil {
@@ -613,7 +719,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emit(protocol.NewCatalogSyncStatusEvent(selectedSessionID, string(store.CatalogDomainSkill), toProtocolCatalogMetadata(snapshot.Meta)))
-			if err := syncExternalSkills(h.SessionStore, ctx); err != nil {
+			if err := syncExternalSkills(h.SessionStore, ctx, sourceOfTruth); err != nil {
 				snapshot.Meta.SyncState = store.CatalogSyncStateFailed
 				snapshot.Meta.LastError = err.Error()
 				_ = h.SessionStore.SaveSkillCatalogSnapshot(ctx, snapshot)
@@ -637,12 +743,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
 			}
+			sourceOfTruth := resolveCatalogSourceOfTruth(h.SessionStore, ctx, selectedSessionID)
 			snapshot, err := h.SessionStore.GetMemoryCatalogSnapshot(ctx)
 			if err != nil {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
-			snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+			snapshot.Meta.SourceOfTruth = sourceOfTruth
 			snapshot.Meta.SyncState = store.CatalogSyncStateSyncing
 			snapshot.Meta.LastError = ""
 			if err := h.SessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot); err != nil {
@@ -651,7 +758,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			emit(protocol.NewCatalogSyncStatusEvent(selectedSessionID, string(store.CatalogDomainMemory), toProtocolCatalogMetadata(snapshot.Meta)))
 			syncCWD := resolveCatalogSyncCWD(h.SessionStore, ctx, selectedSessionID, sessionListFilterCWD)
-			if err := syncExternalMemories(h.SessionStore, ctx, syncCWD); err != nil {
+			if err := syncExternalMemories(h.SessionStore, ctx, syncCWD, sourceOfTruth); err != nil {
 				snapshot.Meta.SyncState = store.CatalogSyncStateFailed
 				snapshot.Meta.LastError = err.Error()
 				_ = h.SessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot)
@@ -885,91 +992,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			emitAndPersist := emitAndPersistFor(sessionID)
 			projection := buildProjectionSnapshotFor(sessionID)
 			controller := service.ControllerSnapshot()
-			effectivePermissionMode := strings.TrimSpace(permissionEvent.PermissionMode)
-			if effectivePermissionMode == "" {
-				effectivePermissionMode = strings.TrimSpace(controller.ActiveMeta.PermissionMode)
-			}
-			if effectivePermissionMode == "" {
-				effectivePermissionMode = strings.TrimSpace(projection.Runtime.PermissionMode)
-			}
-			if effectivePermissionMode != "" {
-				service.UpdatePermissionMode(effectivePermissionMode)
-			}
-			currentRunner := service.CurrentRunner()
-			inputMeta := protocol.RuntimeMeta{
-				Source:          "permission-decision",
-				ResumeSessionID: firstNonEmptyString(permissionEvent.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID),
-				ContextID:       firstNonEmptyString(permissionEvent.ContextID, controller.ActiveMeta.ContextID),
-				ContextTitle:    firstNonEmptyString(permissionEvent.ContextTitle, controller.ActiveMeta.ContextTitle),
-				TargetPath:      firstNonEmptyString(permissionEvent.TargetPath, controller.ActiveMeta.TargetPath),
-				TargetText:      decision,
-				Command:         firstNonEmptyString(permissionEvent.FallbackCommand, projection.Runtime.Command, controller.CurrentCommand, controller.ActiveMeta.Command),
-				Engine:          firstNonEmptyString(permissionEvent.FallbackEngine, controller.ActiveMeta.Engine),
-				CWD:             firstNonEmptyString(permissionEvent.FallbackCWD, controller.ActiveMeta.CWD, projection.Runtime.CWD),
-				Target:          firstNonEmptyString(permissionEvent.FallbackTarget, controller.ActiveMeta.Target),
-				TargetType:      firstNonEmptyString(permissionEvent.FallbackTargetType, controller.ActiveMeta.TargetType),
-				PermissionMode:  effectivePermissionMode,
-			}
 			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimSpace(permissionEvent.PromptMessage), "权限决策", connectionID, remoteAddr)
-			if decision == "deny" {
-				prompt, err := buildPermissionDecisionPrompt(decision, permissionEvent)
-				if err != nil {
-					logx.Warn("ws", "build permission deny prompt failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
-					emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
-					continue
-				}
-				if err := service.SendInput(ctx, sessionID, runtimepkg.InputRequest{Data: prompt, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
-					message := err.Error()
-					if errors.Is(err, runner.ErrInputNotSupported) {
-						message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
-					} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-						message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
-					} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
-						message = "当前 Claude 会话尚未进入可直接确认的交互阶段，请先等待当前会话就绪后再提交权限决策"
+			scope := strings.TrimSpace(permissionEvent.Scope)
+			if decision == "approve" && (scope == string(store.PermissionScopeSession) || scope == string(store.PermissionScopePersistent)) {
+				rule := buildPermissionRule(permissionEvent, scope, projection, controller)
+				switch store.PermissionScope(scope) {
+				case store.PermissionScopePersistent:
+					snapshot, err := h.SessionStore.GetPermissionRuleSnapshot(ctx)
+					if err == nil {
+						snapshot.Enabled = true
+						snapshot.Items = upsertPermissionRule(snapshot.Items, rule)
+						_ = h.SessionStore.SavePermissionRuleSnapshot(ctx, snapshot)
 					}
-					logx.Warn("ws", "send permission deny prompt failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
-					emit(protocol.NewErrorEvent(sessionID, message, ""))
-				}
-				continue
-			}
-			if !isClaudeCommandLike(inputMeta.Command) {
-				if err := service.SendPermissionDecision(ctx, sessionID, decision, inputMeta, emitAndPersist); err == nil {
-					continue
-				} else if !errors.Is(err, runner.ErrNoPendingControlRequest) && !errors.Is(err, runner.ErrInputNotSupported) {
-					message := err.Error()
-					if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-						message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
-					} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
-						message = "当前会话尚未进入可直接确认的交互阶段，请先等待会话就绪后再提交权限决策"
-					}
-					logx.Warn("ws", "send direct permission approve failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
-					emit(protocol.NewErrorEvent(sessionID, message, ""))
-					continue
-				}
-			}
-			replayInput := hotSwapApproveContinuation(permissionEvent)
-			req := runtimepkg.ExecuteRequest{
-				Command:        inputMeta.Command,
-				CWD:            inputMeta.CWD,
-				Mode:           runner.ModePTY,
-				PermissionMode: inputMeta.PermissionMode,
-				RuntimeMeta:    inputMeta,
-			}
-			err := func() error {
-				if currentRunner != nil {
-					if err := service.HotSwapApproveWithTemporaryElevation(ctx, sessionID, req, replayInput, emitAndPersist); err == nil || !errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-						return err
+				default:
+					record, err := h.SessionStore.GetSession(ctx, sessionID)
+					if err == nil {
+						record.Projection = normalizeProjectionSnapshot(record.Projection)
+						record.Projection.PermissionRulesEnabled = true
+						record.Projection.PermissionRules = upsertPermissionRule(record.Projection.PermissionRules, rule)
+						_, _ = h.SessionStore.SaveProjection(ctx, sessionID, record.Projection)
 					}
 				}
-				if !service.CanHotSwapClaudeSession(req) || !service.HasResumeSession(req) {
-					return runtimepkg.ErrNoActiveRunner
-				}
-				return service.HotSwapApproveFromResume(ctx, sessionID, req, replayInput, emitAndPersist)
-			}()
+				emitPermissionRuleList(emit, h.SessionStore, ctx, sessionID)
+			}
+			err := executePermissionDecision(ctx, sessionID, permissionEvent, service, projection, controller, emitAndPersist)
 			if err != nil {
 				message := err.Error()
 				if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
 					message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
+				} else if errors.Is(err, runner.ErrInputNotSupported) {
+					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
 				} else if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {
 					message = "当前没有可恢复的 Claude 会话，无法通过热重启继续此次权限批准"
 				} else if errors.Is(err, runtimepkg.ErrHotSwapUnsupportedRunner) {
@@ -979,7 +1031,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
 					message = "Claude 恢复后未进入可输入状态，无法继续刚才的操作"
 				}
-				logx.Warn("ws", "hot swap approve failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
+				logx.Warn("ws", "permission decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
 			}
 		case "review_decision":
@@ -1141,6 +1193,53 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emit(result)
+		case "runtime_process_list":
+			rootPID, items, err := runtimeSvc.ActiveProcessTree(ctx)
+			if err != nil {
+				logx.Warn("ws", "build runtime process list failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			message := ""
+			if len(items) == 0 {
+				message = "当前没有活跃的后台进程"
+			}
+			emit(protocol.NewRuntimeProcessListResultEvent(selectedSessionID, rootPID, items, message))
+		case "runtime_process_log_get":
+			var processReq protocol.RuntimeProcessLogRequestEvent
+			if err := json.Unmarshal(payload, &processReq); err != nil {
+				logx.Warn("ws", "invalid runtime_process_log_get request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid runtime_process_log_get request: %v", err), ""))
+				continue
+			}
+			if processReq.PID <= 0 {
+				emit(protocol.NewErrorEvent(selectedSessionID, "pid 必须为正整数", ""))
+				continue
+			}
+			_, items, err := runtimeSvc.ActiveProcessTree(ctx)
+			if err != nil {
+				logx.Warn("ws", "load runtime process before log failed: connectionID=%s sessionID=%s remoteAddr=%s pid=%d err=%v", connectionID, selectedSessionID, remoteAddr, processReq.PID, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			item, ok := findRuntimeProcessItem(items, processReq.PID)
+			if !ok {
+				emit(protocol.NewErrorEvent(selectedSessionID, "指定进程不存在或已退出", ""))
+				continue
+			}
+			projection := buildProjectionSnapshotFor(selectedSessionID)
+			stdout, stderr, message := resolveRuntimeProcessLogs(item, projection)
+			emit(protocol.NewRuntimeProcessLogResultEvent(
+				selectedSessionID,
+				item.PID,
+				item.ExecutionID,
+				item.Command,
+				item.CWD,
+				item.Source,
+				stdout,
+				stderr,
+				message,
+			))
 		case "adb_devices":
 			var adbReq protocol.ADBDevicesRequestEvent
 			if err := json.Unmarshal(payload, &adbReq); err != nil {
@@ -1259,11 +1358,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_webrtc_offer request: %v", err), ""))
 				continue
 			}
+			logx.Info(
+				"ws",
+				"incoming adb_webrtc_offer: connectionID=%s sessionID=%s remoteAddr=%s serial=%q sdpType=%q sdpBytes=%d iceServers=%d",
+				connectionID,
+				selectedSessionID,
+				remoteAddr,
+				adbReq.Serial,
+				adbReq.Type,
+				len(strings.TrimSpace(adbReq.SDP)),
+				len(adbReq.ICEServers),
+			)
 			stopADBStream("")
 			if err := adbRTC.HandleOffer(ctx, adbReq.Serial, adbReq.Type, adbReq.SDP, adbReq.ICEServers); err != nil {
+				logx.Warn(
+					"ws",
+					"adb_webrtc_offer failed: connectionID=%s sessionID=%s remoteAddr=%s serial=%q err=%v",
+					connectionID,
+					selectedSessionID,
+					remoteAddr,
+					adbReq.Serial,
+					err,
+				)
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
+			logx.Info(
+				"ws",
+				"adb_webrtc_offer handled: connectionID=%s sessionID=%s remoteAddr=%s serial=%q",
+				connectionID,
+				selectedSessionID,
+				remoteAddr,
+				adbReq.Serial,
+			)
 		case "adb_webrtc_stop":
 			var adbReq protocol.ADBWebRTCStopRequestEvent
 			if err := json.Unmarshal(payload, &adbReq); err != nil {
@@ -1271,6 +1398,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid adb_webrtc_stop request: %v", err), ""))
 				continue
 			}
+			logx.Info(
+				"ws",
+				"incoming adb_webrtc_stop: connectionID=%s sessionID=%s remoteAddr=%s",
+				connectionID,
+				selectedSessionID,
+				remoteAddr,
+			)
 			adbRTC.Stop("ADB WebRTC 调试已停止")
 		case "slash_command":
 			var slashReq protocol.SlashCommandRequestEvent
@@ -1634,6 +1768,38 @@ func emitMemoryListResult(emit func(any), sessionStore store.Store, ctx context.
 	emit(protocol.NewMemoryListResultEvent(sessionID, toProtocolCatalogMetadata(snapshot.Meta), toProtocolMemoryItems(snapshot.Items)))
 }
 
+func findRuntimeProcessItem(items []protocol.RuntimeProcessItem, pid int) (protocol.RuntimeProcessItem, bool) {
+	for _, item := range items {
+		if item.PID == pid {
+			return item, true
+		}
+	}
+	return protocol.RuntimeProcessItem{}, false
+}
+
+func resolveRuntimeProcessLogs(item protocol.RuntimeProcessItem, projection store.ProjectionSnapshot) (string, string, string) {
+	projection = normalizeProjectionSnapshot(projection)
+	if executionID := strings.TrimSpace(item.ExecutionID); executionID != "" {
+		for _, execution := range projection.TerminalExecutions {
+			if strings.TrimSpace(execution.ExecutionID) != executionID {
+				continue
+			}
+			message := ""
+			if strings.TrimSpace(execution.Stdout) == "" && strings.TrimSpace(execution.Stderr) == "" {
+				message = "该进程暂无已捕获的 stdout / stderr"
+			}
+			return execution.Stdout, execution.Stderr, message
+		}
+	}
+	stdout := projection.RawTerminalByStream["stdout"]
+	stderr := projection.RawTerminalByStream["stderr"]
+	message := ""
+	if strings.TrimSpace(stdout) == "" && strings.TrimSpace(stderr) == "" {
+		message = "该进程暂无可展示的捕获日志"
+	}
+	return stdout, stderr, message
+}
+
 func upsertLocalSkill(sessionStore store.Store, ctx context.Context, item protocol.SkillDefinition) error {
 	if sessionStore == nil {
 		return fmt.Errorf("session store unavailable")
@@ -1677,7 +1843,7 @@ func upsertLocalSkill(sessionStore store.Store, ctx context.Context, item protoc
 	return sessionStore.SaveSkillCatalogSnapshot(ctx, snapshot)
 }
 
-func syncExternalSkills(sessionStore store.Store, ctx context.Context) error {
+func syncExternalSkills(sessionStore store.Store, ctx context.Context, sourceOfTruth store.CatalogSourceOfTruth) error {
 	if sessionStore == nil {
 		return fmt.Errorf("session store unavailable")
 	}
@@ -1686,7 +1852,7 @@ func syncExternalSkills(sessionStore store.Store, ctx context.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
-	externalItems, err := loadClaudeSkillDefinitions(now)
+	externalItems, err := loadExternalSkillDefinitions(sourceOfTruth, now)
 	if err != nil {
 		return err
 	}
@@ -1705,7 +1871,7 @@ func syncExternalSkills(sessionStore store.Store, ctx context.Context) error {
 		filtered = append(filtered, item)
 	}
 	snapshot.Items = filtered
-	snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+	snapshot.Meta.SourceOfTruth = sourceOfTruth
 	snapshot.Meta.SyncState = store.CatalogSyncStateSynced
 	snapshot.Meta.DriftDetected = catalogHasDraftSkill(filtered)
 	snapshot.Meta.LastSyncedAt = now
@@ -1759,7 +1925,7 @@ func upsertMemoryItem(sessionStore store.Store, ctx context.Context, item protoc
 	return sessionStore.SaveMemoryCatalogSnapshot(ctx, snapshot)
 }
 
-func syncExternalMemories(sessionStore store.Store, ctx context.Context, cwd string) error {
+func syncExternalMemories(sessionStore store.Store, ctx context.Context, cwd string, sourceOfTruth store.CatalogSourceOfTruth) error {
 	if sessionStore == nil {
 		return fmt.Errorf("session store unavailable")
 	}
@@ -1768,7 +1934,7 @@ func syncExternalMemories(sessionStore store.Store, ctx context.Context, cwd str
 		return err
 	}
 	now := time.Now().UTC()
-	externalItems, err := loadClaudeProjectMemories(cwd, now)
+	externalItems, err := loadExternalMemoryItems(sourceOfTruth, cwd, now)
 	if err != nil {
 		return err
 	}
@@ -1787,7 +1953,7 @@ func syncExternalMemories(sessionStore store.Store, ctx context.Context, cwd str
 		filtered = append(filtered, item)
 	}
 	snapshot.Items = filtered
-	snapshot.Meta.SourceOfTruth = store.CatalogSourceTruthClaude
+	snapshot.Meta.SourceOfTruth = sourceOfTruth
 	snapshot.Meta.SyncState = store.CatalogSyncStateSynced
 	snapshot.Meta.DriftDetected = catalogHasDraftMemory(filtered)
 	snapshot.Meta.LastSyncedAt = now
@@ -1811,60 +1977,130 @@ func resolveCatalogSyncCWD(sessionStore store.Store, ctx context.Context, sessio
 	return normalizeSessionCWD(fallbackCWD)
 }
 
+func resolveCatalogSourceOfTruth(sessionStore store.Store, ctx context.Context, sessionID string) store.CatalogSourceOfTruth {
+	if sessionStore == nil || strings.TrimSpace(sessionID) == "" {
+		return store.CatalogSourceTruthClaude
+	}
+	record, err := sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return store.CatalogSourceTruthClaude
+	}
+	if isCodexRuntime(record.Projection.Runtime) || isCodexRuntime(record.Summary.Runtime) || strings.EqualFold(strings.TrimSpace(record.Summary.Source), "codex-native") {
+		return store.CatalogSourceTruthCodex
+	}
+	return store.CatalogSourceTruthClaude
+}
+
+func isCodexRuntime(runtime store.SessionRuntime) bool {
+	if strings.EqualFold(strings.TrimSpace(runtime.Source), "codex-native") {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(runtime.Engine), "codex") {
+		return true
+	}
+	head := strings.ToLower(strings.TrimSpace(commandHead(runtime.Command)))
+	return head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\codex`) || head == "codex.exe"
+}
+
+func commandHead(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func loadExternalSkillDefinitions(sourceOfTruth store.CatalogSourceOfTruth, now time.Time) ([]store.SkillDefinition, error) {
+	switch sourceOfTruth {
+	case store.CatalogSourceTruthCodex:
+		return loadCodexSkillDefinitions(now)
+	default:
+		return loadClaudeSkillDefinitions(now)
+	}
+}
+
+func loadExternalMemoryItems(sourceOfTruth store.CatalogSourceOfTruth, cwd string, now time.Time) ([]store.MemoryItem, error) {
+	switch sourceOfTruth {
+	case store.CatalogSourceTruthCodex:
+		return loadCodexMemories(now)
+	default:
+		return loadClaudeProjectMemories(cwd, now)
+	}
+}
+
 func loadClaudeSkillDefinitions(now time.Time) ([]store.SkillDefinition, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve home dir for skill sync: %w", err)
 	}
-	root := filepath.Join(homeDir, ".claude", "skills")
-	entries, err := os.ReadDir(root)
+	return loadSkillsFromRoot(filepath.Join(homeDir, ".claude", "skills"), now, store.CatalogSourceTruthClaude)
+}
+
+func loadCodexSkillDefinitions(now time.Time) ([]store.SkillDefinition, error) {
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read claude skills dir: %w", err)
+		return nil, fmt.Errorf("resolve home dir for codex skill sync: %w", err)
 	}
-	items := make([]store.SkillDefinition, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		skillPath := filepath.Join(root, entry.Name(), "SKILL.md")
-		content, err := os.ReadFile(skillPath)
+	return loadSkillsFromRoot(filepath.Join(homeDir, ".codex", "skills"), now, store.CatalogSourceTruthCodex)
+}
+
+func loadSkillsFromRoot(root string, now time.Time, sourceOfTruth store.CatalogSourceOfTruth) ([]store.SkillDefinition, error) {
+	entries := make([]store.SkillDefinition, 0)
+	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				continue
+				return nil
 			}
-			return nil, fmt.Errorf("read claude skill %s: %w", entry.Name(), err)
+			return err
+		}
+		if d.IsDir() || !strings.EqualFold(d.Name(), "SKILL.md") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return fmt.Errorf("read skill file %s: %w", path, err)
 		}
 		meta, body := parseMarkdownFrontMatter(string(content))
-		name := firstNonEmptyString(strings.TrimSpace(meta["name"]), strings.TrimSpace(entry.Name()))
+		name := firstNonEmptyString(strings.TrimSpace(meta["name"]), strings.TrimSpace(filepath.Base(filepath.Dir(path))))
 		if name == "" {
-			continue
+			return nil
 		}
-		info, err := os.Stat(skillPath)
+		info, err := os.Stat(path)
 		if err != nil {
-			return nil, fmt.Errorf("stat claude skill %s: %w", entry.Name(), err)
+			return fmt.Errorf("stat skill file %s: %w", path, err)
 		}
-		items = append(items, store.SkillDefinition{
+		entries = append(entries, store.SkillDefinition{
 			Name:          name,
 			Description:   strings.TrimSpace(meta["description"]),
 			Prompt:        strings.TrimSpace(body),
 			ResultView:    firstNonEmptyString(strings.TrimSpace(meta["resultview"]), "review-card"),
 			TargetType:    firstNonEmptyString(strings.TrimSpace(meta["targettype"]), "context"),
 			Source:        store.SkillSourceExternal,
-			SourceOfTruth: store.CatalogSourceTruthClaude,
+			SourceOfTruth: sourceOfTruth,
 			SyncState:     store.CatalogSyncStateSynced,
 			Editable:      false,
 			DriftDetected: false,
 			UpdatedAt:     info.ModTime().UTC(),
 			LastSyncedAt:  now,
 		})
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Name < items[j].Name
+		return nil
 	})
-	return items, nil
+	if walkErr != nil {
+		if errors.Is(walkErr, os.ErrNotExist) {
+			return nil, nil
+		}
+		if sourceOfTruth == store.CatalogSourceTruthCodex {
+			return nil, fmt.Errorf("read codex skills dir: %w", walkErr)
+		}
+		return nil, fmt.Errorf("read claude skills dir: %w", walkErr)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name < entries[j].Name
+	})
+	return entries, nil
 }
 
 func loadClaudeProjectMemories(cwd string, now time.Time) ([]store.MemoryItem, error) {
@@ -1923,6 +2159,77 @@ func loadClaudeProjectMemories(cwd string, now time.Time) ([]store.MemoryItem, e
 			UpdatedAt:     info.ModTime().UTC(),
 			LastSyncedAt:  now,
 		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ID < items[j].ID
+	})
+	return items, nil
+}
+
+func loadCodexMemories(now time.Time) ([]store.MemoryItem, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home dir for codex memory sync: %w", err)
+	}
+	root := filepath.Join(homeDir, ".codex", "memories")
+	items := make([]store.MemoryItem, 0)
+	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		lower := strings.ToLower(d.Name())
+		if !strings.HasSuffix(lower, ".md") && !strings.HasSuffix(lower, ".txt") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read codex memory %s: %w", d.Name(), err)
+		}
+		if hasBinaryContent(content) {
+			return nil
+		}
+		meta, body := parseMarkdownFrontMatter(string(content))
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			rel = d.Name()
+		}
+		id := strings.TrimSuffix(filepath.ToSlash(rel), filepath.Ext(rel))
+		id = strings.ReplaceAll(id, "/", "-")
+		title := firstNonEmptyString(
+			strings.TrimSpace(meta["title"]),
+			strings.TrimSpace(meta["name"]),
+			extractMarkdownTitle(body),
+			id,
+		)
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("stat codex memory %s: %w", d.Name(), err)
+		}
+		items = append(items, store.MemoryItem{
+			ID:            id,
+			Title:         title,
+			Content:       strings.TrimSpace(body),
+			Source:        "codex-memory",
+			SourceOfTruth: store.CatalogSourceTruthCodex,
+			SyncState:     store.CatalogSyncStateSynced,
+			Editable:      false,
+			DriftDetected: false,
+			UpdatedAt:     info.ModTime().UTC(),
+			LastSyncedAt:  now,
+		})
+		return nil
+	})
+	if walkErr != nil {
+		if errors.Is(walkErr, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read codex memory dir: %w", walkErr)
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].ID < items[j].ID
@@ -2981,18 +3288,25 @@ func loadSessionRecord(ctx context.Context, sessionStore store.Store, sessionID 
 	if sessionStore == nil {
 		return store.SessionRecord{}, fmt.Errorf("session store unavailable")
 	}
-	record, err := sessionStore.GetSession(ctx, sessionID)
-	if err == nil {
-		return record, nil
-	}
 	if !codexsync.IsMirrorSessionID(sessionID) {
+		record, err := sessionStore.GetSession(ctx, sessionID)
+		if err == nil {
+			return record, nil
+		}
 		return store.SessionRecord{}, err
 	}
+	existing, _ := sessionStore.GetSession(ctx, sessionID)
 	thread, nativeErr := codexsync.FindNativeThread(ctx, sessionID)
 	if nativeErr != nil {
-		return store.SessionRecord{}, err
+		if existing.Summary.ID != "" {
+			return existing, nil
+		}
+		return store.SessionRecord{}, nativeErr
 	}
-	record = codexsync.MirrorRecord(thread)
+	record := codexsync.MirrorRecord(thread)
+	record.Projection.SessionContext = existing.Projection.SessionContext
+	record.Projection.SkillCatalogMeta = existing.Projection.SkillCatalogMeta
+	record.Projection.MemoryCatalogMeta = existing.Projection.MemoryCatalogMeta
 	if _, upsertErr := sessionStore.UpsertSession(ctx, record); upsertErr != nil {
 		return store.SessionRecord{}, upsertErr
 	}

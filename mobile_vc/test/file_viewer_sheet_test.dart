@@ -67,13 +67,15 @@ void main() {
 
       expect(find.byKey(const ValueKey('fileViewer.permissionBar')),
           findsOneWidget);
-      expect(find.text('y'), findsOneWidget);
-      expect(find.text('n'), findsOneWidget);
+      expect(find.text('允许一次'), findsOneWidget);
+      expect(find.text('本会话允许'), findsOneWidget);
+      expect(find.text('长期允许'), findsOneWidget);
+      expect(find.text('拒绝'), findsOneWidget);
 
-      await tester.tap(find.text('y'));
+      await tester.tap(find.text('本会话允许'));
       await tester.pump();
 
-      expect(submitted, 'y');
+      expect(submitted, 'approve:session');
     });
 
     testWidgets('权限按钮点击后只透传权限值，不附带额外文本', (tester) async {
@@ -88,14 +90,15 @@ void main() {
         ),
       );
 
-      await tester.tap(find.text('n'));
+      await tester.tap(find.text('拒绝'));
       await tester.pump();
 
-      expect(submitted, 'n');
+      expect(submitted, 'deny');
       expect(filePrompt, isNull);
     });
 
-    testWidgets('runtime_phase permission_blocked + prompt-only 权限场景会显示权限栏', (tester) async {
+    testWidgets('runtime_phase permission_blocked + prompt-only 权限场景会显示权限栏',
+        (tester) async {
       await tester.pumpWidget(
         _buildTestApp(
           pendingPrompt: _permissionPrompt(),
@@ -133,7 +136,7 @@ void main() {
           find.byKey(const ValueKey('fileViewer.permissionBar')), findsNothing);
     });
 
-    testWidgets('权限 prompt 没有 options 时仍显示允许和拒绝按钮', (tester) async {
+    testWidgets('权限 prompt 没有 options 时仍显示四档授权按钮', (tester) async {
       String? submitted;
       await tester.pumpWidget(
         _buildTestApp(
@@ -143,13 +146,15 @@ void main() {
         ),
       );
 
-      expect(find.text('允许'), findsOneWidget);
+      expect(find.text('允许一次'), findsOneWidget);
+      expect(find.text('本会话允许'), findsOneWidget);
+      expect(find.text('长期允许'), findsOneWidget);
       expect(find.text('拒绝'), findsOneWidget);
 
-      await tester.tap(find.text('允许'));
+      await tester.tap(find.text('长期允许'));
       await tester.pump();
 
-      expect(submitted, 'y');
+      expect(submitted, 'approve:persistent');
     });
 
     testWidgets('pendingInteraction permission 下输入框锁定且发送按钮禁用', (tester) async {
@@ -216,7 +221,8 @@ void main() {
         ),
       );
 
-      expect(find.byKey(const ValueKey('fileViewer.permissionBar')), findsNothing);
+      expect(
+          find.byKey(const ValueKey('fileViewer.permissionBar')), findsNothing);
       expect(find.text('请选择输出格式'), findsOneWidget);
     });
 
