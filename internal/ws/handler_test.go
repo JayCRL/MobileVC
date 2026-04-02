@@ -2147,6 +2147,59 @@ func TestHandlerInputInjectsEnabledMemoryIntoAIConversation(t *testing.T) {
 	}
 }
 
+func TestHandlerInputDoesNotInjectEmptySessionContextBeforeUserConfiguresIt(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(
+		protocol.NewPromptRequestEvent("ignored", "Codex 会话已就绪，可继续输入", nil),
+	)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "codex-unconfigured-empty-session-context")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "codex",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        "正常聊一句，不问 skill 或 memory。\n",
+	}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		got := string(payload)
+		if strings.Contains(got, "[MobileVC Enabled Skills]") {
+			t.Fatalf("did not expect enabled skills prefix before configuration, got %q", got)
+		}
+		if strings.Contains(got, "[MobileVC Memory]") {
+			t.Fatalf("did not expect memory prefix before configuration, got %q", got)
+		}
+		if !strings.Contains(got, "正常聊一句，不问 skill 或 memory。") {
+			t.Fatalf("expected original user input in payload, got %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive input payload")
+	}
+}
+
 func TestHandlerInputInjectsEnabledSkillAndMemoryIntoAIConversation(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(
 		protocol.NewPromptRequestEvent("ignored", "Codex 会话已就绪，可继续输入", nil),
