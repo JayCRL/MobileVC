@@ -31,6 +31,7 @@ const MESSAGES = {
     helpTitle: '🐱 MobileVC 启动器',
     help: [
       '用法：',
+      '  mobilevc           交互式配置并启动 MobileVC 后端',
       '  mobilevc start     启动 MobileVC 后端（默认）',
       '  mobilevc restart   重启 MobileVC 后端',
       '  mobilevc stop      停止已保存的后端进程',
@@ -83,12 +84,15 @@ const MESSAGES = {
     aiCliMissing: '当前启动器未检测到可用的 Claude/Codex CLI；请确认 claude 或 codex 命令可在终端中直接执行。',
     portInUse: (port) => `端口 ${port} 已被其他进程占用`,
     startupFailed: '启动失败，请检查日志和 preflight 提示',
+    startupTimedOut: (seconds, filePath) => `后端在 ${seconds} 秒内未就绪，请检查日志：${filePath}`,
+    startupExited: (filePath, detail) => `后端启动后很快退出（${detail}），请检查日志：${filePath}`,
     statusUnavailable: '未知',
   },
   en: {
     helpTitle: '🐱 MobileVC launcher',
     help: [
       'Usage:',
+      '  mobilevc           Configure interactively and start the MobileVC backend',
       '  mobilevc start     Start the MobileVC backend (default)',
       '  mobilevc restart   Restart the MobileVC backend',
       '  mobilevc stop      Stop the saved backend process',
@@ -141,14 +145,14 @@ const MESSAGES = {
     aiCliMissing: 'The launcher could not find Claude/Codex CLI. Make sure `claude` or `codex` runs directly in your terminal.',
     portInUse: (port) => `Port ${port} is already in use`,
     startupFailed: 'Startup failed. Check the log and preflight output.',
+    startupTimedOut: (seconds, filePath) => `Backend did not become ready within ${seconds} seconds. Check the log: ${filePath}`,
+    startupExited: (filePath, detail) => `Backend exited shortly after launch (${detail}). Check the log: ${filePath}`,
     statusUnavailable: 'unknown',
   },
 };
 
 function main() {
-  const args = process.argv.slice(2);
-  const command = args[0] && !args[0].startsWith('-') ? args[0] : 'start';
-  const options = parseOptions(args.slice(args[0] && args[0].startsWith('-') ? 0 : 1));
+  const { command, options } = parseInvocation(process.argv.slice(2));
 
   if (options.help || command === 'help' || command === '--help' || command === '-h') {
     printHelp();
@@ -188,8 +192,18 @@ function main() {
   printHelp();
 }
 
+function parseInvocation(args) {
+  const hasExplicitCommand = Boolean(args[0] && !args[0].startsWith('-'));
+  const command = hasExplicitCommand ? args[0] : 'start';
+  const options = parseOptions(args.slice(hasExplicitCommand ? 1 : 0));
+  if (!hasExplicitCommand) {
+    options.guided = true;
+  }
+  return { command, options };
+}
+
 function parseOptions(args) {
-  const options = { help: false, follow: false };
+  const options = { help: false, follow: false, guided: false };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--help' || arg === '-h') options.help = true;
@@ -206,35 +220,41 @@ function printHelp() {
   console.log(bundle.help.join('\n'));
 }
 
-async function runSetup(forcePrompt) {
+async function runSetup(promptAll = true) {
   ensureDir(STATE_DIR, 0o700);
   ensureDir(LOG_DIR, 0o700);
 
-  const current = readJson(CONFIG_PATH, null);
+  const current = readJson(CONFIG_PATH, null) || null;
   const currentLanguage = current?.language || DEFAULT_LANGUAGE;
-  const language = await askLanguage(forcePrompt || !current, currentLanguage);
-  const port = await askPort(language, forcePrompt || !current);
-  const authToken = await askToken(language, forcePrompt || !current);
+  const language = promptAll || !current ? await askLanguage(currentLanguage) : currentLanguage;
+  const port = promptAll || !current ? await askPort(language, current?.port || DEFAULT_PORT) : String(current?.port || DEFAULT_PORT);
+  const authToken = promptAll || !current ? await askToken(language, current?.authToken || '') : String(current?.authToken || '').trim();
 
   writeJson(CONFIG_PATH, { language, port, authToken });
   console.log(message(language, 'savedConfig', CONFIG_PATH));
 }
 
-async function runStart(_options) {
+async function runStart(options = {}) {
   ensureDir(STATE_DIR, 0o700);
   ensureDir(LOG_DIR, 0o700);
 
   let config = readJson(CONFIG_PATH, null);
   if (!config) {
-    await runSetup(false);
+    await runSetup(true);
     config = readJson(CONFIG_PATH, null);
   }
 
   const language = config?.language || DEFAULT_LANGUAGE;
   const existingState = readJson(STATE_PATH, null);
   if (existingState?.pid && isPidAlive(existingState.pid)) {
-    console.log(message(language, 'alreadyRunning', existingState.pid, existingState.port));
-    return;
+    if (isStateConfigMatch(existingState, config)) {
+      console.log(message(language, 'alreadyRunning', existingState.pid, existingState.port));
+      if (options.guided) {
+        await printLanQr(language, existingState.port, existingState.authToken);
+      }
+      return;
+    }
+    await runStop({ silent: true, language });
   }
 
   const platformTarget = getPlatformTarget();
@@ -261,30 +281,34 @@ async function runStart(_options) {
   };
 
   fs.appendFileSync(logPath, `launcher starting binary=${binaryInfo.binaryPath} target=${platformTarget}\n`);
+  const logFd = fs.openSync(logPath, 'a');
   const child = spawn(binaryInfo.binaryPath, [], {
     detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', logFd, logFd],
     env,
   });
-
-  if (child.stdout) {
-    child.stdout.pipe(fs.createWriteStream(logPath, { flags: 'a', mode: 0o600 }));
-  }
-  if (child.stderr) {
-    child.stderr.pipe(fs.createWriteStream(logPath, { flags: 'a', mode: 0o600 }));
-  }
+  fs.closeSync(logFd);
 
   child.on('error', (err) => {
     fs.appendFileSync(logPath, `launcher error: ${err.stack || err.message}\n`);
   });
 
-  const versionInfo = await waitForServerVersion(config.port, 10000);
+  const startup = await waitForServerReady({ child, port: config.port, timeoutMs: 10000 });
+  if (!startup.ok) {
+    if (child.pid && isPidAlive(child.pid)) {
+      killProcessGroup(child.pid, 'SIGTERM');
+      await waitForExit(child.pid, 2000);
+    }
+    clearState();
+    throw new Error(formatStartupFailure(language, startup, logPath));
+  }
+
   const state = {
     ...buildStateSkeleton(config, language, binaryInfo, platformTarget, preflight, logPath),
     pid: child.pid,
     startedAt: new Date().toISOString(),
-    serverVersion: formatVersionInfo(versionInfo),
-    serverVersionRaw: versionInfo,
+    serverVersion: formatVersionInfo(startup.versionInfo),
+    serverVersionRaw: startup.versionInfo,
   };
   writeJson(STATE_PATH, state);
 
@@ -395,8 +419,15 @@ async function runLogs(options) {
 function resolveBinaryInfo(platformTarget) {
   const packageName = PLATFORM_PACKAGES[platformTarget] || null;
   const packageRoot = packageName ? resolveInstalledPackageRoot(packageName) : null;
-  const binaryPath = packageRoot ? path.join(packageRoot, 'bin', SERVER_BINARY_NAME) : null;
-  return { packageName, packageRoot, binaryPath };
+  const bundledPackageRoot = resolveBundledPackageRoot(platformTarget);
+  const resolvedPackageRoot = packageRoot || bundledPackageRoot;
+  const binaryPath = resolvedPackageRoot ? path.join(resolvedPackageRoot, 'bin', SERVER_BINARY_NAME) : null;
+  return {
+    packageName,
+    packageRoot: resolvedPackageRoot,
+    binaryPath,
+    source: packageRoot ? 'installed' : bundledPackageRoot ? 'bundled' : null,
+  };
 }
 
 function resolveInstalledPackageRoot(packageName) {
@@ -413,6 +444,21 @@ function resolveInstalledPackageRoot(packageName) {
   for (const packageJsonPath of candidatePackageJsonPaths) {
     if (fs.existsSync(packageJsonPath)) {
       return path.dirname(packageJsonPath);
+    }
+  }
+
+  return null;
+}
+
+function resolveBundledPackageRoot(platformTarget) {
+  const candidates = [
+    path.join(__dirname, '..', 'packages', `server-${platformTarget}`),
+    path.join(process.cwd(), 'packages', `server-${platformTarget}`),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'package.json'))) {
+      return candidate;
     }
   }
 
@@ -627,37 +673,65 @@ function isBinaryExecutable(filePath) {
 }
 
 function isPortOccupied(port) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', (err) => {
-      if (err && err.code === 'EADDRINUSE') {
-        resolve(true);
-        return;
-      }
-      resolve(false);
-    });
-    server.once('listening', () => {
-      server.close(() => resolve(false));
-    });
-    server.listen(Number(port), '127.0.0.1');
+  return tryListenPort({ port: Number(port) }).then((result) => {
+    if (result === true || result === false) {
+      return result;
+    }
+    return tryListenPort({ port: Number(port), host: '0.0.0.0' }).then((fallback) => fallback === true);
   });
 }
 
-function waitForServerVersion(port, timeoutMs) {
+function waitForServerReady({ child, port, timeoutMs }) {
   return new Promise((resolve) => {
+    let settled = false;
+    let polling = false;
     const started = Date.now();
-    const timer = setInterval(async () => {
-      if (Date.now() - started >= timeoutMs) {
-        clearInterval(timer);
-        resolve(null);
+
+    const finish = (result) => {
+      if (settled) {
         return;
       }
-      const info = await fetchServerVersion(port);
-      if (info) {
-        clearInterval(timer);
-        resolve(info);
+      settled = true;
+      clearInterval(timer);
+      child.removeListener('exit', onExit);
+      child.removeListener('error', onError);
+      resolve(result);
+    };
+
+    const onExit = (code, signal) => {
+      finish({ ok: false, reason: 'exit', code, signal });
+    };
+    const onError = (error) => {
+      finish({ ok: false, reason: 'error', error });
+    };
+
+    const poll = async () => {
+      if (settled || polling) {
+        return;
       }
-    }, 500);
+      polling = true;
+      try {
+        const versionInfo = await fetchServerVersion(port);
+        if (versionInfo) {
+          finish({ ok: true, versionInfo });
+          return;
+        }
+        if (Date.now() - started >= timeoutMs) {
+          finish({ ok: false, reason: 'timeout', timeoutMs });
+        }
+      } finally {
+        polling = false;
+      }
+    };
+
+    child.once('exit', onExit);
+    child.once('error', onError);
+
+    const timer = setInterval(() => {
+      poll().catch((error) => finish({ ok: false, reason: 'error', error }));
+    }, 400);
+
+    poll().catch((error) => finish({ ok: false, reason: 'error', error }));
   });
 }
 
@@ -724,34 +798,32 @@ function followFile(filePath) {
   });
 }
 
-async function askLanguage(force, currentLanguage) {
-  if (!force && currentLanguage) {
-    return currentLanguage;
-  }
+async function askLanguage(currentLanguage) {
   const selection = await promptInput(message(DEFAULT_LANGUAGE, 'selectLanguage'));
   const normalized = String(selection || '').trim().toLowerCase();
+  if (!normalized) {
+    return currentLanguage || DEFAULT_LANGUAGE;
+  }
   if (normalized === '2' || normalized === 'en' || normalized === 'english') {
     return 'en';
   }
   return 'zh';
 }
 
-async function askPort(language, force) {
-  const current = !force ? readJson(CONFIG_PATH, null)?.port : null;
-  const prompt = current ? message(language, 'backendPort', current) : message(language, 'backendPort', DEFAULT_PORT);
+async function askPort(language, currentPort) {
+  const prompt = message(language, 'backendPort', currentPort || DEFAULT_PORT);
   const value = await promptInput(prompt);
-  const port = String((value || current || DEFAULT_PORT).trim());
+  const port = String((value || currentPort || DEFAULT_PORT).trim());
   if (!/^\d+$/.test(port) || Number(port) <= 0 || Number(port) > 65535) {
     throw new Error(message(language, 'invalidPort'));
   }
   return port;
 }
 
-async function askToken(language, force) {
-  const current = !force ? readJson(CONFIG_PATH, null)?.authToken : null;
-  const prompt = current ? message(language, 'authToken', true) : message(language, 'authToken', false);
+async function askToken(language, currentToken) {
+  const prompt = currentToken ? message(language, 'authToken', true) : message(language, 'authToken', false);
   const value = await promptInput(prompt, true);
-  const token = String((value || current || '').trim());
+  const token = String((value || currentToken || '').trim());
   if (!token) {
     throw new Error(message(language, 'authRequired'));
   }
@@ -803,6 +875,50 @@ function buildLaunchUrl(host, port, authToken = '') {
     url.searchParams.set('token', authToken);
   }
   return url.toString();
+}
+
+function isStateConfigMatch(state, config) {
+  return String(state?.port || '') === String(config?.port || '') &&
+    String(state?.authToken || '') === String(config?.authToken || '');
+}
+
+function formatStartupFailure(language, startup, logPath) {
+  if (startup.reason === 'timeout') {
+    return message(language, 'startupTimedOut', Math.round((startup.timeoutMs || 10000) / 1000), logPath);
+  }
+  if (startup.reason === 'exit') {
+    const detail = startup.signal ? `signal ${startup.signal}` : `code ${startup.code ?? 'unknown'}`;
+    return message(language, 'startupExited', logPath, detail);
+  }
+  if (startup.error) {
+    return `${message(language, 'startupFailed')}: ${startup.error.message || startup.error}`;
+  }
+  return message(language, 'startupFailed');
+}
+
+function tryListenPort(options) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', (err) => {
+      if (!err) {
+        resolve(false);
+        return;
+      }
+      if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+        resolve(true);
+        return;
+      }
+      if (err.code === 'EAFNOSUPPORT') {
+        resolve(null);
+        return;
+      }
+      resolve(false);
+    });
+    server.once('listening', () => {
+      server.close(() => resolve(false));
+    });
+    server.listen(options);
+  });
 }
 
 async function detectLanHost() {
@@ -956,4 +1072,14 @@ function exitWithError(err) {
   process.exit(1);
 }
 
-main();
+if (require.main === module) {
+  main();
+} else {
+  module.exports = {
+    buildLaunchUrl,
+    isPortOccupied,
+    parseInvocation,
+    resolveBinaryInfo,
+    resolveBundledPackageRoot,
+  };
+}

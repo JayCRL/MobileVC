@@ -1,6 +1,6 @@
 {
   "name": "@justprove/mobilevc-server-darwin-arm64",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Precompiled MobileVC server binary for darwin-arm64",
   "license": "MIT",
   "os": [

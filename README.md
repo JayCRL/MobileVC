@@ -247,23 +247,29 @@ MobileVC 支持把 `Claude` 或 `codex` 作为 AI 引擎使用（例如在移动
 
 列表里标记为 `电脑 Codex` 的会话就是这类原生 Codex 会话。它们支持加载和继续，不支持在 MobileVC 内删除。
 
-### 1. 安装 Node 启动器
+### 1. 安装启动器
 
 > Smoke test：运行 `AUTH_TOKEN=test ./scripts/test_smoke_flow.sh` 可快速验证后端、WebSocket 与会话主链路。
 >
 > Codex smoke：运行 `AUTH_TOKEN=test ./scripts/smoke_codex_backend.sh` 可验证 Codex 适配后的后端启动、WS 会话与基础交互链路。
 
-在仓库根目录执行：
+直接通过 npm 安装：
+
+```bash
+npm install -g @justprove/mobilevc
+```
+
+安装后终端里直接使用 `mobilevc` 即可，启动器会自动按当前操作系统下载对应后端分包。
+
+如果你是在仓库里本地开发，也可以继续在仓库根目录执行：
 
 ```bash
 npm i
 ```
 
-安装后可以直接使用 `mobilevc` 命令。
-
 ### 2. 首次启动并配置
 
-第一次运行会提示你输入后端端口和 `AUTH_TOKEN`：
+第一次运行 `mobilevc` 会先询问后端端口和 `AUTH_TOKEN`，保存后立刻启动并输出二维码：
 
 ```bash
 mobilevc
@@ -275,7 +281,13 @@ mobilevc
 mobilevc setup
 ```
 
-### 3. 启动 Go 服务
+### 3. 后续直接启动后台
+
+```bash
+mobilevc
+```
+
+如果已经配置过，也可以显式使用：
 
 ```bash
 mobilevc start
@@ -283,7 +295,7 @@ mobilevc start
 
 ### 3.1 Flutter 扫码连接 / 手动连接
 
-执行 `mobilevc start` 后，启动器会在终端输出：
+执行 `mobilevc` 或 `mobilevc start` 后，启动器会在终端输出：
 
 - 本机访问地址
 - 局域网访问地址
