@@ -151,7 +151,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		loaded := readProjectionFromSessionStore(h.SessionStore, ctx, sessionID, connectionID, remoteAddr)
 		projection = loaded
-		projection = withRuntimeSnapshot(projection, runtimeSvc)
+		if strings.TrimSpace(sessionID) != "" && sessionID == selectedSessionID {
+			projection = withRuntimeSnapshot(projection, runtimeSvc)
+		}
 		if diff := loaded.CurrentDiff; diff != nil {
 			projection.CurrentDiff = diff
 		}
@@ -450,6 +452,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_create request: %v", err), ""))
 				continue
 			}
+			logx.Info("ws", "incoming session_create: connectionID=%s sessionID=%s remoteAddr=%s title=%q cwd=%q reason=%q", connectionID, selectedSessionID, remoteAddr, req.Title, req.CWD, req.Reason)
+			if strings.TrimSpace(req.Reason) == "auto_bind" && strings.TrimSpace(selectedSessionID) != "" {
+				logx.Info("ws", "ignore auto_bind session_create because session already selected: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
+				emitSessionList(req.CWD)
+				continue
+			}
 			if h.SessionStore == nil {
 				logx.Error("ws", "session store unavailable for session_create: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
@@ -494,6 +502,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(payload, &req); err != nil {
 				logx.Warn("ws", "invalid session_load request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_load request: %v", err), ""))
+				continue
+			}
+			logx.Info("ws", "incoming session_load: connectionID=%s sessionID=%s remoteAddr=%s requestedSessionID=%s cwd=%q reason=%q", connectionID, selectedSessionID, remoteAddr, req.SessionID, req.CWD, req.Reason)
+			if strings.TrimSpace(req.Reason) == "auto_bind" && strings.TrimSpace(selectedSessionID) != "" {
+				logx.Info("ws", "ignore auto_bind session_load because session already selected: connectionID=%s sessionID=%s requestedSessionID=%s remoteAddr=%s", connectionID, selectedSessionID, req.SessionID, remoteAddr)
+				emitSessionList(req.CWD)
 				continue
 			}
 			if h.SessionStore == nil {
@@ -868,15 +882,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			emitAndPersist := emitAndPersistFor(sessionID)
 			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
 			service.RecordUserInput(inputEvent.Data)
+			controller := service.ControllerSnapshot()
+			projection := buildProjectionSnapshotFor(sessionID)
+			snapshot := service.RuntimeSnapshot()
+			inputData := inputEvent.Data
+			if shouldInjectEnabledSkillsForInput(
+				firstNonEmptyString(snapshot.ActiveMeta.Command, controller.CurrentCommand, projection.Runtime.Command),
+				snapshot.ActiveMeta.Engine,
+				controller.ActiveMeta.Engine,
+				projection.Runtime.Engine,
+			) {
+				skillPrefix, err := skills.BuildEnabledSkillsPrefix(h.SessionStore, projection.SessionContext)
+				if err != nil {
+					logx.Warn("ws", "build enabled skills prefix failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
+				}
+				memoryPrefix, memoryErr := skills.BuildEnabledMemoryPrefix(h.SessionStore, projection.SessionContext)
+				if memoryErr != nil {
+					logx.Warn("ws", "build enabled memory prefix failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, memoryErr)
+				}
+				inputData = skills.InjectConversationPrefixes(inputData, skillPrefix, memoryPrefix)
+			}
 			inputMeta := protocol.RuntimeMeta{}
 			if pm := inputEvent.PermissionMode; pm != "" {
 				service.UpdatePermissionMode(pm)
 				inputMeta.PermissionMode = pm
 			}
-			logx.Info("ws", "dispatch input: connectionID=%s sessionID=%s remoteAddr=%s action=input permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, inputMeta.PermissionMode, wsDebugPreview(inputEvent.Data))
-			controller := service.ControllerSnapshot()
-			projection := buildProjectionSnapshotFor(sessionID)
-			snapshot := service.RuntimeSnapshot()
+			logx.Info("ws", "dispatch input: connectionID=%s sessionID=%s remoteAddr=%s action=input permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, inputMeta.PermissionMode, wsDebugPreview(inputData))
 			if snapshot.TemporaryElevated {
 				restoreReq := runtimepkg.ExecuteRequest{
 					Command:        firstNonEmptyString(snapshot.ActiveMeta.Command, controller.CurrentCommand),
@@ -891,7 +922,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						PermissionMode:  firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
 					},
 				}
-				if err := service.RestoreSafePermissionModeBeforeInput(ctx, sessionID, restoreReq, inputEvent.Data, emitAndPersist); err != nil {
+				if err := service.RestoreSafePermissionModeBeforeInput(ctx, sessionID, restoreReq, inputData, emitAndPersist); err != nil {
 					message := err.Error()
 					if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {
 						message = "当前没有可恢复的 Claude 会话，无法先恢复到安全权限模式"
@@ -965,7 +996,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					),
 				},
 			}
-			if err := service.SendInputOrResume(ctx, sessionID, resumeReq, runtimepkg.InputRequest{Data: inputEvent.Data, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
+			if err := service.SendInputOrResume(ctx, sessionID, resumeReq, runtimepkg.InputRequest{Data: inputData, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
 				message := err.Error()
 				if errors.Is(err, runner.ErrInputNotSupported) {
 					message = "input is only supported for pty sessions"
@@ -1610,20 +1641,34 @@ func withRuntimeSnapshot(snapshot store.ProjectionSnapshot, svc *runtimepkg.Serv
 		return snapshot
 	}
 	controller := svc.ControllerSnapshot()
-	runtimeMeta := controller.ActiveMeta
 	runtimeSnapshot := svc.RuntimeSnapshot()
+	runtimeMeta := protocol.MergeRuntimeMeta(runtimeSnapshot.ActiveMeta, controller.ActiveMeta)
 	currentLifecycle := normalizeProjectionLifecycle(
 		firstNonEmptyString(controller.ClaudeLifecycle, runtimeMeta.ClaudeLifecycle, runtimeSnapshot.ClaudeLifecycle),
 		firstNonEmptyString(controller.ResumeSession, runtimeMeta.ResumeSessionID, runtimeSnapshot.ResumeSessionID),
 	)
 	snapshot.Controller = controller
 	snapshot.Runtime = store.SessionRuntime{
-		ResumeSessionID: firstNonEmptyString(controller.ResumeSession, runtimeMeta.ResumeSessionID),
-		Command:         firstNonEmptyString(controller.CurrentCommand, runtimeMeta.Command),
-		Engine:          firstNonEmptyString(runtimeMeta.Engine, runtimeMeta.SkillName),
-		PermissionMode:  runtimeMeta.PermissionMode,
-		CWD:             runtimeMeta.CWD,
+		ResumeSessionID: firstNonEmptyString(
+			controller.ResumeSession,
+			runtimeMeta.ResumeSessionID,
+			runtimeSnapshot.ResumeSessionID,
+			snapshot.Runtime.ResumeSessionID,
+		),
+		Command: firstNonEmptyString(
+			controller.CurrentCommand,
+			runtimeMeta.Command,
+			snapshot.Runtime.Command,
+		),
+		Engine: firstNonEmptyString(
+			runtimeMeta.Engine,
+			runtimeMeta.SkillName,
+			snapshot.Runtime.Engine,
+		),
+		PermissionMode:  firstNonEmptyString(runtimeMeta.PermissionMode, snapshot.Runtime.PermissionMode),
+		CWD:             firstNonEmptyString(runtimeMeta.CWD, snapshot.Runtime.CWD),
 		ClaudeLifecycle: currentLifecycle,
+		Source:          firstNonEmptyString(snapshot.Runtime.Source, "mobilevc"),
 	}
 	return snapshot
 }
@@ -2490,6 +2535,39 @@ func defaultAICommandFromEngine(values ...string) string {
 	return "claude"
 }
 
+func shouldInjectEnabledSkillsForInput(command string, engines ...string) bool {
+	if isAISessionCommandLike(command) {
+		return true
+	}
+	for _, engine := range engines {
+		switch strings.TrimSpace(strings.ToLower(engine)) {
+		case "claude", "codex", "gemini":
+			return true
+		}
+	}
+	return false
+}
+
+func isAISessionCommandLike(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return false
+	}
+	head := strings.ToLower(strings.TrimSpace(fields[0]))
+	return head == "claude" ||
+		strings.HasSuffix(head, "/claude") ||
+		strings.HasSuffix(head, `\\claude`) ||
+		head == "claude.exe" ||
+		head == "codex" ||
+		strings.HasSuffix(head, "/codex") ||
+		strings.HasSuffix(head, `\\codex`) ||
+		head == "codex.exe" ||
+		head == "gemini" ||
+		strings.HasSuffix(head, "/gemini") ||
+		strings.HasSuffix(head, `\\gemini`) ||
+		head == "gemini.exe"
+}
+
 func isClaudeCommandLike(command string) bool {
 	fields := strings.Fields(strings.TrimSpace(command))
 	if len(fields) == 0 {
@@ -3250,10 +3328,122 @@ func filterStoreSessionsByCWD(items []store.SessionSummary, filterCWD string) []
 	return filtered
 }
 
+func isExternalCodexSummary(item store.SessionSummary) bool {
+	return item.External || strings.EqualFold(strings.TrimSpace(item.Source), "codex-native")
+}
+
+func summaryCodexThreadID(item store.SessionSummary) string {
+	if resumeID := strings.TrimSpace(item.Runtime.ResumeSessionID); resumeID != "" {
+		return resumeID
+	}
+	if isExternalCodexSummary(item) {
+		return codexsync.ThreadIDFromMirror(item.ID)
+	}
+	return ""
+}
+
+func resolveTrackedCodexThreadID(ctx context.Context, sessionStore store.Store, item store.SessionSummary) string {
+	if threadID := summaryCodexThreadID(item); threadID != "" {
+		return threadID
+	}
+	if sessionStore == nil || strings.TrimSpace(item.ID) == "" {
+		return ""
+	}
+	record, err := sessionStore.GetSession(ctx, item.ID)
+	if err != nil {
+		return ""
+	}
+	if resumeID := strings.TrimSpace(record.Projection.Runtime.ResumeSessionID); resumeID != "" {
+		return resumeID
+	}
+	if resumeID := strings.TrimSpace(record.Projection.Controller.ResumeSession); resumeID != "" {
+		return resumeID
+	}
+	if codexsync.IsMirrorSessionID(record.Projection.Controller.SessionID) {
+		return codexsync.ThreadIDFromMirror(record.Projection.Controller.SessionID)
+	}
+	return ""
+}
+
+func trackedMobileVCCodexThreads(ctx context.Context, sessionStore store.Store, items []store.SessionSummary) map[string]struct{} {
+	tracked := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if isExternalCodexSummary(item) || !isCodexRuntime(item.Runtime) {
+			continue
+		}
+		if threadID := resolveTrackedCodexThreadID(ctx, sessionStore, item); threadID != "" {
+			tracked[threadID] = struct{}{}
+		}
+	}
+	return tracked
+}
+
+func preferCodexThreadSummary(current, candidate store.SessionSummary) store.SessionSummary {
+	currentExternal := isExternalCodexSummary(current)
+	candidateExternal := isExternalCodexSummary(candidate)
+	if currentExternal != candidateExternal {
+		if currentExternal {
+			return candidate
+		}
+		return current
+	}
+	if candidate.UpdatedAt.After(current.UpdatedAt) {
+		return candidate
+	}
+	if candidate.UpdatedAt.Equal(current.UpdatedAt) && candidate.CreatedAt.After(current.CreatedAt) {
+		return candidate
+	}
+	return current
+}
+
+func dedupeCodexThreadSummaries(items []store.SessionSummary) []store.SessionSummary {
+	if len(items) <= 1 {
+		return items
+	}
+	selected := make(map[string]store.SessionSummary, len(items))
+	order := make([]string, 0, len(items))
+	for _, item := range items {
+		key := item.ID
+		if threadID := summaryCodexThreadID(item); threadID != "" && isCodexRuntime(item.Runtime) {
+			key = "codex-thread:" + threadID
+		}
+		if existing, ok := selected[key]; ok {
+			selected[key] = preferCodexThreadSummary(existing, item)
+			continue
+		}
+		selected[key] = item
+		order = append(order, key)
+	}
+	deduped := make([]store.SessionSummary, 0, len(selected))
+	for _, key := range order {
+		item, ok := selected[key]
+		if ok {
+			deduped = append(deduped, item)
+		}
+	}
+	sort.Slice(deduped, func(i, j int) bool {
+		return deduped[i].UpdatedAt.After(deduped[j].UpdatedAt)
+	})
+	return deduped
+}
+
 func mergeSessionSummaries(ctx context.Context, sessionStore store.Store, items []store.SessionSummary, filterCWD string) ([]store.SessionSummary, error) {
 	filteredStoreItems := filterStoreSessionsByCWD(items, filterCWD)
+	trackedThreads := trackedMobileVCCodexThreads(ctx, sessionStore, filteredStoreItems)
 	if normalizeSessionCWD(filterCWD) == "" {
-		return filteredStoreItems, nil
+		if len(trackedThreads) == 0 {
+			return dedupeCodexThreadSummaries(filteredStoreItems), nil
+		}
+		filtered := make([]store.SessionSummary, 0, len(filteredStoreItems))
+		for _, item := range filteredStoreItems {
+			if isExternalCodexSummary(item) {
+				if _, ok := trackedThreads[summaryCodexThreadID(item)]; ok {
+					continue
+				}
+			}
+			filtered = append(filtered, item)
+		}
+		return dedupeCodexThreadSummaries(filtered), nil
 	}
 	nativeThreads, err := codexsync.ListNativeThreads(ctx, filterCWD)
 	if err != nil {
@@ -3262,6 +3452,11 @@ func mergeSessionSummaries(ctx context.Context, sessionStore store.Store, items 
 	merged := make([]store.SessionSummary, 0, len(filteredStoreItems)+len(nativeThreads))
 	seen := make(map[string]struct{}, len(filteredStoreItems)+len(nativeThreads))
 	for _, item := range filteredStoreItems {
+		if isExternalCodexSummary(item) {
+			if _, ok := trackedThreads[summaryCodexThreadID(item)]; ok {
+				continue
+			}
+		}
 		if strings.TrimSpace(item.Source) == "" {
 			item.Source = item.Runtime.Source
 		}
@@ -3272,15 +3467,16 @@ func mergeSessionSummaries(ctx context.Context, sessionStore store.Store, items 
 		seen[item.ID] = struct{}{}
 	}
 	for _, thread := range nativeThreads {
+		if _, ok := trackedThreads[strings.TrimSpace(thread.ThreadID)]; ok {
+			continue
+		}
 		record := codexsync.MirrorRecord(thread)
 		if _, ok := seen[record.Summary.ID]; ok {
 			continue
 		}
 		if sessionStore != nil {
-			if _, err := sessionStore.UpsertSession(ctx, record); err == nil {
-				if stored, getErr := sessionStore.GetSession(ctx, record.Summary.ID); getErr == nil {
-					record = stored
-				}
+			if stored, getErr := sessionStore.GetSession(ctx, record.Summary.ID); getErr == nil {
+				record = stored
 			}
 		}
 		merged = append(merged, record.Summary)
@@ -3289,7 +3485,7 @@ func mergeSessionSummaries(ctx context.Context, sessionStore store.Store, items 
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].UpdatedAt.After(merged[j].UpdatedAt)
 	})
-	return merged, nil
+	return dedupeCodexThreadSummaries(merged), nil
 }
 
 func loadSessionRecord(ctx context.Context, sessionStore store.Store, sessionID string) (store.SessionRecord, error) {
@@ -3297,26 +3493,25 @@ func loadSessionRecord(ctx context.Context, sessionStore store.Store, sessionID 
 		return store.SessionRecord{}, fmt.Errorf("session store unavailable")
 	}
 	if !codexsync.IsMirrorSessionID(sessionID) {
-		record, err := sessionStore.GetSession(ctx, sessionID)
-		if err == nil {
-			return record, nil
-		}
-		return store.SessionRecord{}, err
+		return sessionStore.GetSession(ctx, sessionID)
 	}
-	existing, _ := sessionStore.GetSession(ctx, sessionID)
+	existing, existingErr := sessionStore.GetSession(ctx, sessionID)
 	thread, nativeErr := codexsync.FindNativeThread(ctx, sessionID)
-	if nativeErr != nil {
-		if existing.Summary.ID != "" {
-			return existing, nil
+	if nativeErr == nil {
+		record := codexsync.MirrorRecord(thread)
+		if existingErr == nil {
+			record.Projection.SessionContext = existing.Projection.SessionContext
+			record.Projection.SkillCatalogMeta = existing.Projection.SkillCatalogMeta
+			record.Projection.MemoryCatalogMeta = existing.Projection.MemoryCatalogMeta
 		}
-		return store.SessionRecord{}, nativeErr
+		if _, upsertErr := sessionStore.UpsertSession(ctx, record); upsertErr != nil {
+			logx.Warn("ws", "upsert codex mirror session failed: sessionID=%s err=%v", sessionID, upsertErr)
+		}
+		return sessionStore.GetSession(ctx, sessionID)
 	}
-	record := codexsync.MirrorRecord(thread)
-	record.Projection.SessionContext = existing.Projection.SessionContext
-	record.Projection.SkillCatalogMeta = existing.Projection.SkillCatalogMeta
-	record.Projection.MemoryCatalogMeta = existing.Projection.MemoryCatalogMeta
-	if _, upsertErr := sessionStore.UpsertSession(ctx, record); upsertErr != nil {
-		return store.SessionRecord{}, upsertErr
+	if existingErr == nil && existing.Summary.ID != "" {
+		logx.Warn("ws", "codex sync failed but using cached record: sessionID=%s nativeErr=%v", sessionID, nativeErr)
+		return existing, nil
 	}
-	return sessionStore.GetSession(ctx, record.Summary.ID)
+	return store.SessionRecord{}, fmt.Errorf("codex session not found and no valid cache: %w", nativeErr)
 }

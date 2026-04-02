@@ -18,8 +18,10 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"mobilevc/internal/codexsync"
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
+	runtimepkg "mobilevc/internal/runtime"
 	"mobilevc/internal/session"
 	"mobilevc/internal/store"
 )
@@ -1709,6 +1711,52 @@ func TestWithRuntimeSnapshotPrefersLiveLifecycleOverStaleStarting(t *testing.T) 
 	}
 }
 
+func TestWithRuntimeSnapshotPreservesCodexResumeMetadataAfterCommandFinishes(t *testing.T) {
+	stub := newStubRunner()
+	service := runtimepkg.NewService("session-1", runtimepkg.Dependencies{
+		NewPtyRunner: func() runner.Runner { return stub },
+	})
+	err := service.Execute(context.Background(), "session-1", runtimepkg.ExecuteRequest{
+		Command: "codex",
+		Mode:    runner.ModePTY,
+		RuntimeMeta: protocol.RuntimeMeta{
+			Command:         "codex",
+			Engine:          "codex",
+			CWD:             "/tmp/project",
+			ResumeSessionID: "thread-1",
+		},
+	}, func(any) {})
+	if err != nil {
+		t.Fatalf("execute codex session: %v", err)
+	}
+	stub.WaitStarted(t)
+	deadline := time.Now().Add(2 * time.Second)
+	for service.IsRunning() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if service.IsRunning() {
+		t.Fatal("expected runtime service to finish")
+	}
+
+	snapshot := withRuntimeSnapshot(store.ProjectionSnapshot{
+		Runtime: store.SessionRuntime{
+			Command: "codex",
+			Engine:  "codex",
+			CWD:     "/tmp/project",
+			Source:  "mobilevc",
+		},
+	}, service)
+	if snapshot.Runtime.ResumeSessionID != "thread-1" {
+		t.Fatalf("expected resume session id to be preserved, got %#v", snapshot.Runtime)
+	}
+	if snapshot.Runtime.Command != "codex" || snapshot.Runtime.Engine != "codex" || snapshot.Runtime.CWD != "/tmp/project" {
+		t.Fatalf("expected codex runtime metadata to survive cleanup, got %#v", snapshot.Runtime)
+	}
+	if snapshot.Runtime.ClaudeLifecycle != "resumable" {
+		t.Fatalf("expected resumable lifecycle after command finish, got %#v", snapshot.Runtime)
+	}
+}
+
 func TestSessionHistoryNormalizesStaleStartingToResumable(t *testing.T) {
 	history := newSessionHistoryEventFromRecord(store.SessionRecord{
 		Summary: store.SessionSummary{ID: "session-1", Title: "history"},
@@ -1960,6 +2008,145 @@ func TestHandlerClaudeSessionStartsInWaitInput(t *testing.T) {
 	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
 }
 
+func TestHandlerInputInjectsEnabledSkillsIntoAIConversation(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(
+		protocol.NewPromptRequestEvent("ignored", "Codex 会话已就绪，可继续输入", nil),
+	)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "codex-enabled-skills")
+
+	if err := conn.WriteJSON(protocol.SessionContextUpdateRequestEvent{
+		ClientEvent:       protocol.ClientEvent{Action: "session_context_update"},
+		EnabledSkillNames: []string{"review"},
+	}); err != nil {
+		t.Fatalf("write session_context_update request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "codex",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        "当前开启了哪些 skill？\n",
+	}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		got := string(payload)
+		if !strings.Contains(got, "[MobileVC Enabled Skills]") {
+			t.Fatalf("expected enabled skills prefix, got %q", got)
+		}
+		if !strings.Contains(got, "- review") {
+			t.Fatalf("expected review skill in injected payload, got %q", got)
+		}
+		if !strings.Contains(got, "当前开启了哪些 skill？") {
+			t.Fatalf("expected original user input in injected payload, got %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive input payload")
+	}
+}
+
+func TestHandlerInputInjectsEnabledMemoryIntoAIConversation(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(
+		protocol.NewPromptRequestEvent("ignored", "Codex 会话已就绪，可继续输入", nil),
+	)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	if err := tempStore.SaveMemoryCatalogSnapshot(context.Background(), store.MemoryCatalogSnapshot{
+		Meta: store.CatalogMetadata{
+			Domain:    store.CatalogDomainMemory,
+			SyncState: store.CatalogSyncStateSynced,
+		},
+		Items: []store.MemoryItem{{
+			ID:        "mem-flutter",
+			Title:     "Flutter Index",
+			Content:   "session controller manages session_context_update and current chat state",
+			SyncState: store.CatalogSyncStateSynced,
+		}},
+	}); err != nil {
+		t.Fatalf("save memory snapshot: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "codex-enabled-memory")
+
+	if err := conn.WriteJSON(protocol.SessionContextUpdateRequestEvent{
+		ClientEvent:      protocol.ClientEvent{Action: "session_context_update"},
+		EnabledMemoryIDs: []string{"mem-flutter"},
+	}); err != nil {
+		t.Fatalf("write session_context_update request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "codex",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        "当前启用了哪些 memory？\n",
+	}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		got := string(payload)
+		if !strings.Contains(got, "[MobileVC Memory]") {
+			t.Fatalf("expected memory prefix, got %q", got)
+		}
+		if !strings.Contains(got, "Flutter Index") {
+			t.Fatalf("expected memory title in injected payload, got %q", got)
+		}
+		if !strings.Contains(got, "session controller manages session_context_update") {
+			t.Fatalf("expected memory content in injected payload, got %q", got)
+		}
+		if !strings.Contains(got, "当前启用了哪些 memory？") {
+			t.Fatalf("expected original user input in injected payload, got %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive input payload")
+	}
+}
+
 func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	firstRunner := newHoldingStubRunner(protocol.ApplyRuntimeMeta(
 		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
@@ -1967,6 +2154,7 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	))
 	firstRunner.claudeSessionID = "resume-input-123"
 	secondRunner := newHoldingStubRunner()
+	thirdRunner := newHoldingStubRunner()
 	runnerIndex := 0
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
@@ -1979,7 +2167,10 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 		if runnerIndex == 1 {
 			return firstRunner
 		}
-		return secondRunner
+		if runnerIndex == 2 {
+			return secondRunner
+		}
+		return thirdRunner
 	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
@@ -2021,16 +2212,17 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "next\n"}); err != nil {
 		t.Fatalf("write input request: %v", err)
 	}
+	thirdRunner.WaitStarted(t)
 	select {
-	case payload := <-secondRunner.writeCh:
+	case payload := <-thirdRunner.writeCh:
 		if string(payload) != "next\n" {
 			t.Fatalf("unexpected restored input payload: %q", string(payload))
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("did not receive restored input payload")
 	}
-	if secondRunner.lastReq.PermissionMode != "default" {
-		t.Fatalf("expected default permission mode after restore, got %#v", secondRunner.lastReq)
+	if thirdRunner.lastReq.PermissionMode != "default" {
+		t.Fatalf("expected default permission mode after restore, got %#v", thirdRunner.lastReq)
 	}
 }
 
@@ -3545,6 +3737,38 @@ func TestHandlerSessionDeleteRemovesHistorySessionFromList(t *testing.T) {
 	}
 }
 
+func TestHandlerInitialSessionListDoesNotMergeNativeCodexSessions(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := filepath.Join(homeDir, "workspace", "MobileVC")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	listEvent := readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	items, ok := listEvent["items"].([]any)
+	if !ok {
+		t.Fatalf("expected session list items, got %#v", listEvent)
+	}
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["id"] == "codex-thread:"+threadID {
+			t.Fatalf("did not expect native Codex mirror in initial session list, got %#v", items)
+		}
+	}
+}
+
 func TestHandlerSessionListMergesNativeCodexSessionsByCWD(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := filepath.Join(homeDir, "workspace", "MobileVC")
@@ -3566,6 +3790,7 @@ func TestHandlerSessionListMergesNativeCodexSessionsByCWD(t *testing.T) {
 	h.SessionStore = tempStore
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
 
 	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "session_create"},
@@ -3649,7 +3874,7 @@ func TestHandlerSessionListMergesNativeCodexSessionsByCWD(t *testing.T) {
 	}
 }
 
-func TestHandlerInitialSessionListDoesNotMergeNativeCodexSessions(t *testing.T) {
+func TestHandlerSessionListHidesNativeCodexMirrorWhenTrackedByMobileVC(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := filepath.Join(homeDir, "workspace", "MobileVC")
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
@@ -3665,19 +3890,177 @@ func TestHandlerInitialSessionListDoesNotMergeNativeCodexSessions(t *testing.T) 
 	}
 	h.SessionStore = tempStore
 
+	now := time.Date(2026, 3, 30, 12, 0, 0, 0, time.UTC)
+	localRecord := store.SessionRecord{
+		Summary: store.SessionSummary{
+			ID:          "mobilevc-session-1",
+			Title:       "MobileVC Codex",
+			CreatedAt:   now.Add(-time.Hour),
+			UpdatedAt:   now,
+			LastPreview: "Follow up from mobile",
+			Runtime: store.SessionRuntime{
+				Source: "mobilevc",
+			},
+			Source: "mobilevc",
+		},
+		Projection: store.ProjectionSnapshot{
+			Runtime: store.SessionRuntime{
+				Command: "codex",
+				Engine:  "codex",
+				CWD:     projectDir,
+				Source:  "mobilevc",
+			},
+			Controller: session.ControllerSnapshot{
+				SessionID:       "codex-thread:" + threadID,
+				ClaudeLifecycle: "resumable",
+			},
+			LogEntries: []store.SnapshotLogEntry{
+				{Kind: "user", Message: "continue this task", Timestamp: now.Format(time.RFC3339)},
+			},
+		},
+	}
+	if _, err := h.SessionStore.UpsertSession(context.Background(), localRecord); err != nil {
+		t.Fatalf("upsert local session: %v", err)
+	}
+	thread, err := codexsync.FindNativeThread(context.Background(), threadID)
+	if err != nil {
+		t.Fatalf("find native thread: %v", err)
+	}
+	if _, err := h.SessionStore.UpsertSession(context.Background(), codexsync.MirrorRecord(thread)); err != nil {
+		t.Fatalf("upsert mirror session: %v", err)
+	}
+
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+
+	if err := conn.WriteJSON(protocol.SessionListRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_list"},
+		CWD:         projectDir,
+	}); err != nil {
+		t.Fatalf("write session list request: %v", err)
+	}
 
 	listEvent := readUntilType(t, conn, protocol.EventTypeSessionListResult)
 	items, ok := listEvent["items"].([]any)
 	if !ok {
 		t.Fatalf("expected session list items, got %#v", listEvent)
 	}
+
+	var foundLocal, foundNative bool
 	for _, raw := range items {
 		item, _ := raw.(map[string]any)
-		if item["id"] == "codex-thread:"+threadID {
-			t.Fatalf("did not expect native Codex mirror in initial session list, got %#v", items)
+		switch item["id"] {
+		case localRecord.Summary.ID:
+			foundLocal = true
+		case "codex-thread:" + threadID:
+			foundNative = true
 		}
+	}
+	if !foundLocal {
+		t.Fatalf("expected managed MobileVC Codex session in list, got %#v", items)
+	}
+	if foundNative {
+		t.Fatalf("did not expect duplicate native Codex mirror when MobileVC already tracks the thread, got %#v", items)
+	}
+}
+
+func TestHandlerIgnoresAutoBindSessionLoadWhenSessionAlreadySelected(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_create"},
+		Title:       "session-a",
+	}); err != nil {
+		t.Fatalf("write session create request A: %v", err)
+	}
+	createdA := readUntilSessionCreated(t, conn)
+	summaryA, ok := createdA["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload A, got %#v", createdA)
+	}
+	sessionA, _ := summaryA["id"].(string)
+	if sessionA == "" {
+		t.Fatalf("expected session A id, got %#v", createdA)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+
+	if err := conn.WriteJSON(protocol.SessionCreateRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_create"},
+		Title:       "session-b",
+	}); err != nil {
+		t.Fatalf("write session create request B: %v", err)
+	}
+	createdB := readUntilSessionCreated(t, conn)
+	summaryB, ok := createdB["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary payload B, got %#v", createdB)
+	}
+	sessionB, _ := summaryB["id"].(string)
+	if sessionB == "" {
+		t.Fatalf("expected session B id, got %#v", createdB)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionListResult)
+
+	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_load"},
+		SessionID:   sessionA,
+		Reason:      "auto_bind",
+	}); err != nil {
+		t.Fatalf("write auto_bind session load request: %v", err)
+	}
+
+	listEvent := readUntilType(t, conn, protocol.EventTypeSessionListResult)
+	if got, _ := listEvent["sessionId"].(string); got != sessionB {
+		t.Fatalf("expected current session %q to remain selected, got %#v", sessionB, listEvent)
+	}
+}
+
+func TestDedupeCodexThreadSummariesPrefersMobileVCSession(t *testing.T) {
+	threadID := "thread-1"
+	projectDir := "/tmp/project"
+	local := store.SessionSummary{
+		ID:        "mobilevc-session",
+		Title:     "MobileVC Codex",
+		UpdatedAt: time.Date(2026, 3, 30, 12, 0, 0, 0, time.UTC),
+		Runtime: store.SessionRuntime{
+			ResumeSessionID: threadID,
+			Command:         "codex",
+			Engine:          "codex",
+			CWD:             projectDir,
+			Source:          "mobilevc",
+		},
+		Source: "mobilevc",
+	}
+	external := store.SessionSummary{
+		ID:        "codex-thread:" + threadID,
+		Title:     "Desktop Codex",
+		UpdatedAt: time.Date(2026, 3, 30, 11, 30, 0, 0, time.UTC),
+		Runtime: store.SessionRuntime{
+			ResumeSessionID: threadID,
+			Command:         "codex",
+			Engine:          "codex",
+			CWD:             projectDir,
+			Source:          "codex-native",
+		},
+		Source:   "codex-native",
+		External: true,
+	}
+
+	items := dedupeCodexThreadSummaries([]store.SessionSummary{local, external})
+	if len(items) != 1 {
+		t.Fatalf("expected one deduped session, got %#v", items)
+	}
+	if items[0].ID != local.ID {
+		t.Fatalf("expected MobileVC summary to win dedupe, got %#v", items)
 	}
 }
 

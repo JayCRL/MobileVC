@@ -1130,17 +1130,19 @@ class SessionController extends ChangeNotifier {
       return;
     }
     if (_selectedSessionId.trim().isNotEmpty) {
-      final selectedExists = items.any((item) => item.id == _selectedSessionId);
-      if (selectedExists) {
-        return;
-      }
+      return;
     }
     if (_autoSessionCreating) {
       return;
     }
     _autoSessionRequested = true;
-    _autoSessionCreating = true;
-    createSession();
+    if (items.isEmpty) {
+      _autoSessionCreating = true;
+      _requestAutoCreateSession();
+      return;
+    }
+    _autoSessionCreating = false;
+    _requestAutoLoadSession(items.first.id);
   }
 
   void createSession([String title = '']) {
@@ -1149,6 +1151,14 @@ class SessionController extends ChangeNotifier {
       'action': 'session_create',
       'cwd': effectiveCwd,
       if (title.isNotEmpty) 'title': title,
+    });
+  }
+
+  void _requestAutoCreateSession() {
+    _service.send({
+      'action': 'session_create',
+      'cwd': effectiveCwd,
+      'reason': 'auto_bind',
     });
   }
 
@@ -1162,6 +1172,19 @@ class SessionController extends ChangeNotifier {
       'action': 'session_load',
       'sessionId': targetId,
       'cwd': effectiveCwd,
+    });
+  }
+
+  void _requestAutoLoadSession(String sessionId) {
+    final targetId = sessionId.trim();
+    if (targetId.isEmpty) {
+      return;
+    }
+    _service.send({
+      'action': 'session_load',
+      'sessionId': targetId,
+      'cwd': effectiveCwd,
+      'reason': 'auto_bind',
     });
   }
 
@@ -3348,22 +3371,30 @@ class SessionController extends ChangeNotifier {
     if (_timeline.any(_hasVisibleTimelineContent)) {
       return;
     }
-    final isExternalCodex = summary.source == 'codex-native' ||
+    final isExternal = summary.source == 'codex-native' ||
         summary.external ||
-        history.resumeRuntimeMeta.engine.trim().toLowerCase() == 'codex';
-    if (!isExternalCodex) {
+        history.resumeRuntimeMeta.engine.trim().toLowerCase() == 'codex' ||
+        history.resumeRuntimeMeta.engine.trim().toLowerCase() == 'claude';
+    if (!isExternal) {
       return;
     }
     final preview = sessionDisplayPreview(summary);
-    if (preview.isEmpty) {
-      return;
-    }
+    final explicitPreview = summary.lastPreview.trim();
+    final hasExplicitPreview = explicitPreview.isNotEmpty &&
+        !looksLikeSessionNoiseText(explicitPreview) &&
+        !looksLikeSessionBootstrapCommand(explicitPreview) &&
+        !looksLikeSessionPlaceholderTitle(explicitPreview);
+    final fallbackMessage =
+        preview.isNotEmpty ? preview : '会话已恢复，可以继续对话（历史记录暂时不可用）';
     _timeline.add(
       TimelineItem(
         id: 'history-fallback-${summary.id}',
-        kind: 'user',
+        kind: hasExplicitPreview &&
+                (summary.source == 'codex-native' || summary.external)
+            ? 'user'
+            : 'system',
         timestamp: summary.updatedAt ?? summary.createdAt ?? DateTime.now(),
-        body: preview,
+        body: fallbackMessage,
         meta: history.resumeRuntimeMeta,
       ),
     );

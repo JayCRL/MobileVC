@@ -51,7 +51,8 @@ void main() {
     test('does not keep generic progress text', () {
       expect(shouldPreserveAdbFailureStatus(''), isFalse);
       expect(shouldPreserveAdbFailureStatus('WebRTC 连接中…'), isFalse);
-      expect(shouldPreserveAdbFailureStatus('WebRTC answer 已收到，等待连接…'), isFalse);
+      expect(
+          shouldPreserveAdbFailureStatus('WebRTC answer 已收到，等待连接…'), isFalse);
     });
   });
 
@@ -1452,7 +1453,7 @@ void main() {
       expect(actions, isNot(contains('session_list')));
     });
 
-    test('连接后收到非空 session 列表时，会自动 create 新会话，不自动 load 历史会话', () async {
+    test('连接后收到非空 session 列表时，会自动 load 历史会话，不再 create 新会话', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1476,12 +1477,9 @@ void main() {
       await _flushEvents();
 
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads.single['action'], 'session_create');
-      expect(
-        service.sentPayloads
-            .any((payload) => payload['action'] == 'session_load'),
-        isFalse,
-      );
+      expect(service.sentPayloads.single['action'], 'session_load');
+      expect(service.sentPayloads.single['sessionId'], 'session-a');
+      expect(service.sentPayloads.single['reason'], 'auto_bind');
     });
 
     test('连接后收到空 session 列表时，会自动 create session', () async {
@@ -1506,6 +1504,43 @@ void main() {
 
       expect(service.sentPayloads, hasLength(1));
       expect(service.sentPayloads.single['action'], 'session_create');
+      expect(service.sentPayloads.single['reason'], 'auto_bind');
+    });
+
+    test('已有选中会话时，即使列表里没有该会话，也不会再次自动 create 或 load', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      service.emit(
+        SessionCreatedEvent(
+          timestamp: _timestamp,
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_created'},
+          summary:
+              const SessionSummary(id: 'session-current', title: 'Current'),
+        ),
+      );
+      await _flushEvents();
+
+      service.sentPayloads.clear();
+      service.emit(
+        SessionListResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_list_result'},
+          items: const [],
+        ),
+      );
+      await _flushEvents();
+
+      expect(service.sentPayloads, isEmpty);
     });
 
     test('历史 terminal entry 优先用 text，并可恢复成 markdown', () async {

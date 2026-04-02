@@ -195,28 +195,10 @@ func BuildMemoryPrefix(sessionContext store.SessionContext, items []store.Memory
 }
 
 func (l *Launcher) loadEnabledMemory(sessionContext store.SessionContext) ([]store.MemoryItem, error) {
-	if l == nil || l.store == nil || len(sessionContext.EnabledMemoryIDs) == 0 {
+	if l == nil {
 		return nil, nil
 	}
-	items, err := l.store.ListMemoryCatalog(contextBackground())
-	if err != nil {
-		return nil, err
-	}
-	enabled := make(map[string]struct{}, len(sessionContext.EnabledMemoryIDs))
-	for _, id := range sessionContext.EnabledMemoryIDs {
-		enabled[strings.TrimSpace(id)] = struct{}{}
-	}
-	result := make([]store.MemoryItem, 0, len(enabled))
-	for _, item := range items {
-		if _, ok := enabled[item.ID]; !ok {
-			continue
-		}
-		if item.SyncState != store.CatalogSyncStateSynced {
-			continue
-		}
-		result = append(result, item)
-	}
-	return result, nil
+	return loadEnabledMemoryItems(l.store, sessionContext)
 }
 
 func isSkillEnabled(sessionContext store.SessionContext, skillName string) bool {

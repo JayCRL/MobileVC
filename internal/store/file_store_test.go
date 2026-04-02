@@ -357,6 +357,151 @@ func TestFileStoreMemoryCatalogNormalizationDefaultsDomainAndSyncState(t *testin
 	}
 }
 
+func TestFileStoreListSessionsHidesUntouchedAutoSessionsWhenRealSessionExists(t *testing.T) {
+	fs, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+
+	meaningful := normalizeSessionRecord(SessionRecord{
+		Summary: SessionSummary{
+			ID:        "session-real",
+			Title:     "修复 flutter 会话列表",
+			CreatedAt: mustTime("2026-04-01T10:00:00Z"),
+			UpdatedAt: mustTime("2026-04-01T10:05:00Z"),
+			Runtime:   SessionRuntime{Source: "mobilevc"},
+		},
+		Projection: ProjectionSnapshot{
+			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+			LogEntries: []SnapshotLogEntry{
+				{Kind: "user", Message: "修复 flutter 会话列表"},
+				{Kind: "markdown", Message: "先查空会话来源"},
+			},
+			Runtime: SessionRuntime{Source: "mobilevc"},
+		},
+	})
+	autoOlder := normalizeSessionRecord(SessionRecord{
+		Summary: SessionSummary{
+			ID:        "session-auto-old",
+			Title:     "2026-04-01 17:59",
+			CreatedAt: mustTime("2026-04-01T09:59:49Z"),
+			UpdatedAt: mustTime("2026-04-01T09:59:49Z"),
+			Runtime:   SessionRuntime{Source: "mobilevc", CWD: "/Users/wust_lh/MobileVC"},
+		},
+		Projection: ProjectionSnapshot{
+			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+			Runtime:             SessionRuntime{Source: "mobilevc", CWD: "/Users/wust_lh/MobileVC"},
+		},
+	})
+	autoNewer := normalizeSessionRecord(SessionRecord{
+		Summary: SessionSummary{
+			ID:        "session-auto-new",
+			Title:     "2026-04-01 18:01",
+			CreatedAt: mustTime("2026-04-01T10:01:00Z"),
+			UpdatedAt: mustTime("2026-04-01T10:01:00Z"),
+			Runtime:   SessionRuntime{Source: "mobilevc", CWD: "/Users/wust_lh/MobileVC"},
+		},
+		Projection: ProjectionSnapshot{
+			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+			Runtime:             SessionRuntime{Source: "mobilevc", CWD: "/Users/wust_lh/MobileVC"},
+		},
+	})
+
+	writeSessionRecordFixture(t, fs, meaningful)
+	writeSessionRecordFixture(t, fs, autoOlder)
+	writeSessionRecordFixture(t, fs, autoNewer)
+	writeSessionIndexFixture(t, fs, []SessionSummary{
+		autoNewer.Summary,
+		meaningful.Summary,
+		autoOlder.Summary,
+	})
+
+	items, err := fs.ListSessions(context.Background())
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected only meaningful session, got %#v", items)
+	}
+	if items[0].ID != meaningful.Summary.ID {
+		t.Fatalf("expected meaningful session to remain, got %#v", items)
+	}
+}
+
+func TestFileStoreListSessionsKeepsNewestUntouchedAutoSessionWhenOnlyPlaceholdersExist(t *testing.T) {
+	fs, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+
+	autoOlder := normalizeSessionRecord(SessionRecord{
+		Summary: SessionSummary{
+			ID:        "session-auto-old",
+			Title:     "2026-04-01 17:59",
+			CreatedAt: mustTime("2026-04-01T09:59:49Z"),
+			UpdatedAt: mustTime("2026-04-01T09:59:49Z"),
+			Runtime:   SessionRuntime{Source: "mobilevc"},
+		},
+		Projection: ProjectionSnapshot{
+			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+			Runtime:             SessionRuntime{Source: "mobilevc"},
+		},
+	})
+	autoNewer := normalizeSessionRecord(SessionRecord{
+		Summary: SessionSummary{
+			ID:        "session-auto-new",
+			Title:     "2026-04-01 18:01",
+			CreatedAt: mustTime("2026-04-01T10:01:00Z"),
+			UpdatedAt: mustTime("2026-04-01T10:01:00Z"),
+			Runtime:   SessionRuntime{Source: "mobilevc"},
+		},
+		Projection: ProjectionSnapshot{
+			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+			Runtime:             SessionRuntime{Source: "mobilevc"},
+		},
+	})
+
+	writeSessionRecordFixture(t, fs, autoOlder)
+	writeSessionRecordFixture(t, fs, autoNewer)
+	writeSessionIndexFixture(t, fs, []SessionSummary{
+		autoOlder.Summary,
+		autoNewer.Summary,
+	})
+
+	items, err := fs.ListSessions(context.Background())
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected only newest placeholder, got %#v", items)
+	}
+	if items[0].ID != autoNewer.Summary.ID {
+		t.Fatalf("expected newest placeholder session, got %#v", items)
+	}
+}
+
+func writeSessionRecordFixture(t *testing.T, fs *FileStore, record SessionRecord) {
+	t.Helper()
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal session record: %v", err)
+	}
+	if err := os.WriteFile(fs.sessionPath(record.Summary.ID), data, 0o644); err != nil {
+		t.Fatalf("write session record: %v", err)
+	}
+}
+
+func writeSessionIndexFixture(t *testing.T, fs *FileStore, items []SessionSummary) {
+	t.Helper()
+	data, err := json.MarshalIndent(fileIndex{Sessions: items}, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal session index: %v", err)
+	}
+	if err := os.WriteFile(fs.indexPath, data, 0o644); err != nil {
+		t.Fatalf("write session index: %v", err)
+	}
+}
+
 func mustTime(value string) time.Time {
 	parsed, err := time.Parse(time.RFC3339, value)
 	if err != nil {
