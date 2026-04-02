@@ -126,6 +126,7 @@ type PermissionRuleSnapshot struct {
 type SessionContext struct {
 	EnabledSkillNames []string `json:"enabledSkillNames,omitempty"`
 	EnabledMemoryIDs  []string `json:"enabledMemoryIds,omitempty"`
+	Configured        bool     `json:"configured,omitempty"`
 }
 
 type SessionRuntime struct {

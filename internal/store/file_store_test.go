@@ -101,6 +101,9 @@ func TestFileStorePersistsSessionContext(t *testing.T) {
 	if len(record.Projection.SessionContext.EnabledMemoryIDs) != 2 || record.Projection.SessionContext.EnabledMemoryIDs[1] != "m2" {
 		t.Fatalf("unexpected enabled memories: %#v", record.Projection.SessionContext)
 	}
+	if !record.Projection.SessionContext.Configured {
+		t.Fatalf("expected configured session context, got %#v", record.Projection.SessionContext)
+	}
 	if record.Projection.SkillCatalogMeta.SyncState != CatalogSyncStateSynced {
 		t.Fatalf("expected skill catalog meta persisted, got %#v", record.Projection.SkillCatalogMeta)
 	}

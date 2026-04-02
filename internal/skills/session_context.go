@@ -12,6 +12,9 @@ const enabledMemoryPrefixHeader = "[MobileVC Memory]"
 // BuildEnabledSkillsPrefix renders the currently enabled MobileVC skills as
 // injected conversation context for normal AI chat turns.
 func BuildEnabledSkillsPrefix(skillStore store.Store, sessionContext store.SessionContext) (string, error) {
+	if !sessionContext.Configured && len(sessionContext.EnabledSkillNames) == 0 {
+		return "", nil
+	}
 	parts := []string{
 		enabledSkillsPrefixHeader,
 		"以下内容由 MobileVC 会话上下文注入，表示当前会话在 UI 中显式启用的 skills。它会覆盖当前会话里更早出现过的 MobileVC skill / memory 注入内容；如果和历史对话冲突，以这里为准。",
@@ -72,6 +75,9 @@ func BuildEnabledSkillsPrefix(skillStore store.Store, sessionContext store.Sessi
 }
 
 func BuildEnabledMemoryPrefix(memoryStore store.Store, sessionContext store.SessionContext) (string, error) {
+	if !sessionContext.Configured && len(sessionContext.EnabledMemoryIDs) == 0 {
+		return "", nil
+	}
 	if len(sessionContext.EnabledMemoryIDs) == 0 {
 		return strings.Join([]string{
 			enabledMemoryPrefixHeader,

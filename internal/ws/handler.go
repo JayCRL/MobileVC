@@ -701,7 +701,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				continue
 			}
-			record.Projection.SessionContext = store.SessionContext{EnabledSkillNames: req.EnabledSkillNames, EnabledMemoryIDs: req.EnabledMemoryIDs}
+			record.Projection.SessionContext = store.SessionContext{
+				EnabledSkillNames: req.EnabledSkillNames,
+				EnabledMemoryIDs:  req.EnabledMemoryIDs,
+				Configured:        true,
+			}
 			if _, err := h.SessionStore.SaveProjection(ctx, selectedSessionID, record.Projection); err != nil {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
@@ -2995,7 +2999,9 @@ func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.Projec
 		snapshot.Controller.ClaudeLifecycle = snapshot.Runtime.ClaudeLifecycle
 		snapshot.Controller.ActiveMeta.ClaudeLifecycle = snapshot.Runtime.ClaudeLifecycle
 	}
-	if len(snapshot.SessionContext.EnabledSkillNames) == 0 && len(snapshot.SessionContext.EnabledMemoryIDs) == 0 {
+	if !snapshot.SessionContext.Configured &&
+		len(snapshot.SessionContext.EnabledSkillNames) == 0 &&
+		len(snapshot.SessionContext.EnabledMemoryIDs) == 0 {
 		snapshot.SessionContext = store.SessionContext{}
 	}
 	if len(snapshot.Diffs) == 0 && snapshot.CurrentDiff != nil {
