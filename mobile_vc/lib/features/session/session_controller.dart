@@ -4033,6 +4033,11 @@ class SessionController extends ChangeNotifier {
         'fatal: not a git repository (or any of the parent directories): .git')) {
       return true;
     }
+    if (lower.contains('.gitmodules') &&
+        (lower.contains('no such file or directory') ||
+            lower.contains('no submodule mapping found'))) {
+      return true;
+    }
     if (lower.startsWith('wall time:')) {
       return true;
     }
