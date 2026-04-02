@@ -6,39 +6,39 @@ import (
 )
 
 const (
-	EventTypeLog                    = "log"
-	EventTypeProgress               = "progress"
-	EventTypeError                  = "error"
-	EventTypePromptRequest          = "prompt_request"
-	EventTypeInteractionRequest     = "interaction_request"
-	EventTypeSessionState           = "session_state"
-	EventTypeAgentState             = "agent_state"
-	EventTypeRuntimePhase           = "runtime_phase"
-	EventTypeFSListResult           = "fs_list_result"
-	EventTypeFSReadResult           = "fs_read_result"
-	EventTypeStepUpdate             = "step_update"
-	EventTypeFileDiff               = "file_diff"
-	EventTypeRuntimeInfoResult      = "runtime_info_result"
-	EventTypeRuntimeProcessList     = "runtime_process_list_result"
-	EventTypeRuntimeProcessLog      = "runtime_process_log_result"
-	EventTypeSessionCreated         = "session_created"
-	EventTypeSessionListResult      = "session_list_result"
-	EventTypeSessionHistory         = "session_history"
-	EventTypeReviewState            = "review_state"
-	EventTypeSkillCatalogResult     = "skill_catalog_result"
-	EventTypeMemoryListResult       = "memory_list_result"
-	EventTypeCatalogAuthoringResult = "catalog_authoring_result"
-	EventTypeSessionContextResult   = "session_context_result"
+	EventTypeLog                      = "log"
+	EventTypeProgress                 = "progress"
+	EventTypeError                    = "error"
+	EventTypePromptRequest            = "prompt_request"
+	EventTypeInteractionRequest       = "interaction_request"
+	EventTypeSessionState             = "session_state"
+	EventTypeAgentState               = "agent_state"
+	EventTypeRuntimePhase             = "runtime_phase"
+	EventTypeFSListResult             = "fs_list_result"
+	EventTypeFSReadResult             = "fs_read_result"
+	EventTypeStepUpdate               = "step_update"
+	EventTypeFileDiff                 = "file_diff"
+	EventTypeRuntimeInfoResult        = "runtime_info_result"
+	EventTypeRuntimeProcessList       = "runtime_process_list_result"
+	EventTypeRuntimeProcessLog        = "runtime_process_log_result"
+	EventTypeSessionCreated           = "session_created"
+	EventTypeSessionListResult        = "session_list_result"
+	EventTypeSessionHistory           = "session_history"
+	EventTypeReviewState              = "review_state"
+	EventTypeSkillCatalogResult       = "skill_catalog_result"
+	EventTypeMemoryListResult         = "memory_list_result"
+	EventTypeCatalogAuthoringResult   = "catalog_authoring_result"
+	EventTypeSessionContextResult     = "session_context_result"
 	EventTypePermissionRuleListResult = "permission_rule_list_result"
-	EventTypePermissionAutoApplied  = "permission_auto_applied"
-	EventTypeSkillSyncResult        = "skill_sync_result"
-	EventTypeCatalogSyncStatus      = "catalog_sync_status"
-	EventTypeCatalogSyncResult      = "catalog_sync_result"
-	EventTypeADBDevicesResult       = "adb_devices_result"
-	EventTypeADBStreamState         = "adb_stream_state"
-	EventTypeADBFrame               = "adb_frame"
-	EventTypeADBWebRTCAnswer        = "adb_webrtc_answer"
-	EventTypeADBWebRTCState         = "adb_webrtc_state"
+	EventTypePermissionAutoApplied    = "permission_auto_applied"
+	EventTypeSkillSyncResult          = "skill_sync_result"
+	EventTypeCatalogSyncStatus        = "catalog_sync_status"
+	EventTypeCatalogSyncResult        = "catalog_sync_result"
+	EventTypeADBDevicesResult         = "adb_devices_result"
+	EventTypeADBStreamState           = "adb_stream_state"
+	EventTypeADBFrame                 = "adb_frame"
+	EventTypeADBWebRTCAnswer          = "adb_webrtc_answer"
+	EventTypeADBWebRTCState           = "adb_webrtc_state"
 )
 
 type RuntimeMeta struct {
@@ -354,8 +354,9 @@ type SlashCommandRequestEvent struct {
 
 type SessionCreateRequestEvent struct {
 	ClientEvent
-	Title string `json:"title,omitempty"`
-	CWD   string `json:"cwd,omitempty"`
+	Title  string `json:"title,omitempty"`
+	CWD    string `json:"cwd,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type SessionListRequestEvent struct {
@@ -367,6 +368,7 @@ type SessionLoadRequestEvent struct {
 	ClientEvent
 	SessionID string `json:"sessionId"`
 	CWD       string `json:"cwd,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 type SessionDeleteRequestEvent struct {

@@ -16,11 +16,11 @@ import (
 )
 
 type FileStore struct {
-	mu                sync.Mutex
-	baseDir           string
-	indexPath         string
-	skillCatalogPath  string
-	memoryCatalogPath string
+	mu                  sync.Mutex
+	baseDir             string
+	indexPath           string
+	skillCatalogPath    string
+	memoryCatalogPath   string
 	permissionRulesPath string
 }
 
@@ -41,10 +41,10 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
 	return &FileStore{
-		baseDir:           baseDir,
-		indexPath:         filepath.Join(baseDir, "index.json"),
-		skillCatalogPath:  filepath.Join(baseDir, "skills.catalog.json"),
-		memoryCatalogPath: filepath.Join(baseDir, "memory.catalog.json"),
+		baseDir:             baseDir,
+		indexPath:           filepath.Join(baseDir, "index.json"),
+		skillCatalogPath:    filepath.Join(baseDir, "skills.catalog.json"),
+		memoryCatalogPath:   filepath.Join(baseDir, "memory.catalog.json"),
 		permissionRulesPath: filepath.Join(baseDir, "permissions.rules.json"),
 	}, nil
 }
@@ -973,17 +973,104 @@ func nonZeroTime(values ...time.Time) time.Time {
 	return time.Time{}
 }
 
+func isUntouchedAutoSessionRecord(record SessionRecord) bool {
+	summary := record.Summary
+	if summary.External || strings.EqualFold(strings.TrimSpace(summary.Source), "codex-native") {
+		return false
+	}
+	runtimeSource := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+		summary.Runtime.Source,
+		record.Projection.Runtime.Source,
+		summary.Source,
+	)))
+	if runtimeSource != "" && runtimeSource != "mobilevc" {
+		return false
+	}
+	if summary.EntryCount > 0 || len(record.Projection.LogEntries) > 0 {
+		return false
+	}
+	if strings.TrimSpace(summary.LastPreview) != "" {
+		return false
+	}
+	if strings.TrimSpace(firstNonEmptyString(summary.Runtime.ResumeSessionID, record.Projection.Runtime.ResumeSessionID)) != "" {
+		return false
+	}
+	if strings.TrimSpace(firstNonEmptyString(summary.Runtime.Command, record.Projection.Runtime.Command)) != "" {
+		return false
+	}
+	title := normalizeSummaryText(summary.Title)
+	if title == "" {
+		return true
+	}
+	return looksLikePlaceholderTitle(title) || looksLikeTimestampText(title)
+}
+
+func selectVisibleSessions(items []SessionSummary, untouched map[string]bool) []SessionSummary {
+	if len(items) == 0 {
+		return nil
+	}
+	visible := make([]SessionSummary, 0, len(items))
+	placeholderCount := 0
+	for _, item := range items {
+		if untouched[item.ID] {
+			placeholderCount++
+			continue
+		}
+		visible = append(visible, item)
+	}
+	if len(visible) > 0 {
+		return visible
+	}
+	if placeholderCount <= 1 {
+		return append([]SessionSummary(nil), items...)
+	}
+	newest := items[0]
+	for _, item := range items[1:] {
+		if item.UpdatedAt.After(newest.UpdatedAt) {
+			newest = item
+			continue
+		}
+		if item.UpdatedAt.Equal(newest.UpdatedAt) && item.CreatedAt.After(newest.CreatedAt) {
+			newest = item
+		}
+	}
+	return []SessionSummary{newest}
+}
+
+func sameSessionSummaryList(a, b []SessionSummary) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *FileStore) reconcileIndexLocked(index fileIndex) (fileIndex, error) {
 	updated := false
+	reconciled := make([]SessionSummary, 0, len(index.Sessions))
+	untouched := make(map[string]bool, len(index.Sessions))
 	for i := range index.Sessions {
 		record, err := s.readSessionLocked(index.Sessions[i].ID)
 		if err != nil {
+			reconciled = append(reconciled, index.Sessions[i])
 			continue
 		}
 		if index.Sessions[i] != record.Summary {
-			index.Sessions[i] = record.Summary
 			updated = true
 		}
+		reconciled = append(reconciled, record.Summary)
+		if isUntouchedAutoSessionRecord(record) {
+			untouched[record.Summary.ID] = true
+		}
+	}
+	visible := selectVisibleSessions(reconciled, untouched)
+	if !sameSessionSummaryList(index.Sessions, visible) {
+		index.Sessions = visible
+		updated = true
 	}
 	if updated {
 		if err := s.writeIndexLocked(index); err != nil {

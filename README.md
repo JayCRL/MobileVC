@@ -278,7 +278,7 @@ mobilevc
 也可以随时重新配置：
 
 ```bash
-mobilevc setup
+mobilevc config
 ```
 
 ### 3. 后续直接启动后台
