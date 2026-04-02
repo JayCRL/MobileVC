@@ -570,6 +570,9 @@ func normalizeSessionRecord(record SessionRecord) SessionRecord {
 func normalizeSessionContext(ctx SessionContext) SessionContext {
 	ctx.EnabledSkillNames = normalizeStringSlice(ctx.EnabledSkillNames)
 	ctx.EnabledMemoryIDs = normalizeStringSlice(ctx.EnabledMemoryIDs)
+	if len(ctx.EnabledSkillNames) > 0 || len(ctx.EnabledMemoryIDs) > 0 {
+		ctx.Configured = true
+	}
 	return ctx
 }
 
