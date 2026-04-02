@@ -1961,11 +1961,37 @@ void main() {
           stream: 'stderr',
         ),
       );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 240)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'log'},
+          message:
+              'Wall time: 0 seconds\nOutput:\ncat: .gitmodules: No such file or directory',
+          stream: 'stderr',
+        ),
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 360)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'log'},
+          message:
+              "Output:\nfatal: no submodule mapping found in .gitmodules for path '.claude/worktrees/agent-a0055fcc'",
+          stream: 'stderr',
+        ),
+      );
       await _flushEvents();
 
       expect(controller.terminalStderr, contains('codex_core::tools::router'));
       expect(
           controller.terminalStderr, contains('fatal: not a git repository'));
+      expect(controller.terminalStderr,
+          contains('cat: .gitmodules: No such file or directory'));
+      expect(controller.terminalStderr,
+          contains('no submodule mapping found in .gitmodules'));
       expect(
         controller.timeline
             .any((item) => item.body.contains('codex_core::tools::router')),
@@ -1978,6 +2004,10 @@ void main() {
       );
       expect(
         controller.timeline.any((item) => item.body.contains('Wall time:')),
+        isFalse,
+      );
+      expect(
+        controller.timeline.any((item) => item.body.contains('.gitmodules')),
         isFalse,
       );
     });

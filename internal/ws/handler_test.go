@@ -2147,6 +2147,180 @@ func TestHandlerInputInjectsEnabledMemoryIntoAIConversation(t *testing.T) {
 	}
 }
 
+func TestHandlerInputInjectsEnabledSkillAndMemoryIntoAIConversation(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(
+		protocol.NewPromptRequestEvent("ignored", "Codex 会话已就绪，可继续输入", nil),
+	)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	if err := tempStore.SaveMemoryCatalogSnapshot(context.Background(), store.MemoryCatalogSnapshot{
+		Meta: store.CatalogMetadata{
+			Domain:    store.CatalogDomainMemory,
+			SyncState: store.CatalogSyncStateSynced,
+		},
+		Items: []store.MemoryItem{{
+			ID:        "mem-flutter",
+			Title:     "Flutter Index",
+			Content:   "session controller manages session_context_update and current chat state",
+			SyncState: store.CatalogSyncStateSynced,
+		}},
+	}); err != nil {
+		t.Fatalf("save memory snapshot: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "codex-enabled-skill-memory")
+
+	if err := conn.WriteJSON(protocol.SessionContextUpdateRequestEvent{
+		ClientEvent:       protocol.ClientEvent{Action: "session_context_update"},
+		EnabledSkillNames: []string{"review"},
+		EnabledMemoryIDs:  []string{"mem-flutter"},
+	}); err != nil {
+		t.Fatalf("write session_context_update request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "codex",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        "当前启用了哪些 skill 和 memory？\n",
+	}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		got := string(payload)
+		if !strings.Contains(got, "[MobileVC Enabled Skills]") {
+			t.Fatalf("expected enabled skills prefix, got %q", got)
+		}
+		if !strings.Contains(got, "- review") {
+			t.Fatalf("expected review skill in injected payload, got %q", got)
+		}
+		if !strings.Contains(got, "[MobileVC Memory]") {
+			t.Fatalf("expected memory prefix, got %q", got)
+		}
+		if !strings.Contains(got, "Flutter Index") {
+			t.Fatalf("expected memory title in injected payload, got %q", got)
+		}
+		if !strings.Contains(got, "当前启用了哪些 skill 和 memory？") {
+			t.Fatalf("expected original user input in injected payload, got %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive input payload")
+	}
+}
+
+func TestHandlerInputInjectsEmptySessionContextToOverrideEarlierSkillAndMemoryState(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(
+		protocol.NewPromptRequestEvent("ignored", "Codex 会话已就绪，可继续输入", nil),
+	)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	if err := tempStore.SaveMemoryCatalogSnapshot(context.Background(), store.MemoryCatalogSnapshot{
+		Meta: store.CatalogMetadata{
+			Domain:    store.CatalogDomainMemory,
+			SyncState: store.CatalogSyncStateSynced,
+		},
+		Items: []store.MemoryItem{{
+			ID:        "mem-flutter",
+			Title:     "Flutter Index",
+			Content:   "session controller manages session_context_update and current chat state",
+			SyncState: store.CatalogSyncStateSynced,
+		}},
+	}); err != nil {
+		t.Fatalf("save memory snapshot: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "codex-cleared-skill-memory")
+
+	if err := conn.WriteJSON(protocol.SessionContextUpdateRequestEvent{
+		ClientEvent:       protocol.ClientEvent{Action: "session_context_update"},
+		EnabledSkillNames: []string{"review"},
+		EnabledMemoryIDs:  []string{"mem-flutter"},
+	}); err != nil {
+		t.Fatalf("write initial session_context_update request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "codex",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
+
+	if err := conn.WriteJSON(protocol.SessionContextUpdateRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_context_update"},
+	}); err != nil {
+		t.Fatalf("write clearing session_context_update request: %v", err)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeSessionContextResult)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        "现在启用了哪些 skill 和 memory？\n",
+	}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		got := string(payload)
+		if !strings.Contains(got, "[MobileVC Enabled Skills]") {
+			t.Fatalf("expected enabled skills prefix, got %q", got)
+		}
+		if !strings.Contains(got, "[MobileVC Memory]") {
+			t.Fatalf("expected memory prefix, got %q", got)
+		}
+		if !strings.Contains(got, "- (无)") {
+			t.Fatalf("expected explicit empty state in injected payload, got %q", got)
+		}
+		if strings.Contains(got, "- review") {
+			t.Fatalf("did not expect stale skill name in injected payload, got %q", got)
+		}
+		if strings.Contains(got, "Flutter Index") {
+			t.Fatalf("did not expect stale memory title in injected payload, got %q", got)
+		}
+		if !strings.Contains(got, "现在启用了哪些 skill 和 memory？") {
+			t.Fatalf("expected original user input in injected payload, got %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive input payload")
+	}
+}
+
 func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	firstRunner := newHoldingStubRunner(protocol.ApplyRuntimeMeta(
 		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
