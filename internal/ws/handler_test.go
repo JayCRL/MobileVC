@@ -3635,7 +3635,8 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	select {
 	case payload := <-ptyRunner.writeCh:
 		got := string(payload)
-		if got != "1\n" {
+		want := "Review decision: ACCEPT.\nTarget: internal/ws/handler.go.\nPlease land the change and continue; no further review is required.\n"
+		if got != want {
 			t.Fatalf("unexpected review decision payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):
@@ -3701,7 +3702,8 @@ func TestHandlerReviewDecisionUpdatesProjectionAndReviewState(t *testing.T) {
 
 	select {
 	case payload := <-ptyRunner.writeCh:
-		if got := string(payload); got != "1\n" {
+		want := "Review decision: ACCEPT.\nTarget: hhh.txt.\nPlease land the change and continue; no further review is required.\n"
+		if got := string(payload); got != want {
 			t.Fatalf("unexpected review decision payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):
@@ -3899,7 +3901,8 @@ func TestHandlerReviewDecisionAcceptAllowedInDefaultMode(t *testing.T) {
 
 	select {
 	case payload := <-ptyRunner.writeCh:
-		if string(payload) != "1\n" {
+		want := "Review decision: ACCEPT.\nTarget: internal/ws/handler.go.\nPlease land the change and continue; no further review is required.\n"
+		if string(payload) != want {
 			t.Fatalf("unexpected review payload: %q", string(payload))
 		}
 	case <-time.After(5 * time.Second):

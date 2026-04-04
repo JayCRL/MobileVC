@@ -544,11 +544,11 @@ func (s *Service) ReviewDecision(ctx context.Context, sessionID string, req Revi
 	if decision == "" {
 		return errors.New("review decision is required")
 	}
-	payload := reviewDecisionPayload(decision)
+	meta := req.RuntimeMeta
+	payload := reviewDecisionPayload(decision, meta)
 	if payload == "" {
 		return errors.New("review decision must be one of: accept, revert, revise")
 	}
-	meta := req.RuntimeMeta
 	meta.Source = "review-decision"
 	meta.TargetText = decision
 	return s.SendInput(ctx, sessionID, InputRequest{Data: payload, RuntimeMeta: meta}, emit)
@@ -1203,14 +1203,28 @@ func extractRuntimeMetaFromEvent(event any) protocol.RuntimeMeta {
 	return protocol.RuntimeMeta{}
 }
 
-func reviewDecisionPayload(decision string) string {
-	switch strings.TrimSpace(strings.ToLower(decision)) {
+func reviewDecisionPayload(decision string, meta protocol.RuntimeMeta) string {
+	normalized := strings.TrimSpace(strings.ToLower(decision))
+	target := strings.TrimSpace(firstNonEmptyRuntimeValue(meta.TargetPath, meta.ContextTitle, meta.Target))
+	subjectLine := ""
+	if target != "" {
+		subjectLine = fmt.Sprintf("Target: %s.", target)
+	}
+	build := func(status, instruction string) string {
+		lines := []string{fmt.Sprintf("Review decision: %s.", status)}
+		if subjectLine != "" {
+			lines = append(lines, subjectLine)
+		}
+		lines = append(lines, instruction)
+		return strings.Join(lines, "\n") + "\n"
+	}
+	switch normalized {
 	case "accept":
-		return "1\n"
+		return build("ACCEPT", "Please land the change and continue; no further review is required.")
 	case "revert":
-		return "2\n"
+		return build("REVERT", "Please drop the change and restore the previous state before proceeding.")
 	case "revise":
-		return "3\n"
+		return build("REVISE", "Please update the change according to the review feedback, then request another review.")
 	default:
 		return ""
 	}
