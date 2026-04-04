@@ -18,9 +18,11 @@ class AppNotificationCoordinator {
   int _lastHandledNotificationId = 0;
   bool _initialized = false;
 
-  bool get isAppActive =>
-      _lifecycleState == AppLifecycleState.resumed ||
-      _lifecycleState == AppLifecycleState.inactive;
+  bool get isAppForeground => _lifecycleState == AppLifecycleState.resumed;
+
+  bool get canShowBackgroundNotification =>
+      _lifecycleState != AppLifecycleState.resumed &&
+      _lifecycleState != AppLifecycleState.inactive;
 
   void handleLifecycleStateChanged(AppLifecycleState state) {
     _lifecycleState = state;
@@ -60,8 +62,11 @@ class AppNotificationCoordinator {
     if (signal == null || signal.id == _lastHandledSignalId) {
       return;
     }
-    _lastHandledSignalId = signal.id;
-    if (isAppActive || !_initialized) {
+    if (isAppForeground) {
+      _lastHandledSignalId = signal.id;
+      return;
+    }
+    if (!_initialized || !canShowBackgroundNotification) {
       return;
     }
     try {
@@ -71,6 +76,7 @@ class AppNotificationCoordinator {
           body: signal.message,
         ),
       );
+      _lastHandledSignalId = signal.id;
     } catch (error, stack) {
       debugPrint('[startup] notification drain failed: $error');
       debugPrintStack(
@@ -85,8 +91,11 @@ class AppNotificationCoordinator {
     if (signal == null || signal.id == _lastHandledNotificationId) {
       return;
     }
-    _lastHandledNotificationId = signal.id;
-    if (isAppActive || !_initialized) {
+    if (isAppForeground) {
+      _lastHandledNotificationId = signal.id;
+      return;
+    }
+    if (!_initialized || !canShowBackgroundNotification) {
       return;
     }
     try {
@@ -96,6 +105,7 @@ class AppNotificationCoordinator {
           body: signal.body,
         ),
       );
+      _lastHandledNotificationId = signal.id;
     } catch (error, stack) {
       debugPrint('[startup] notification drain failed: $error');
       debugPrintStack(

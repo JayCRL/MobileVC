@@ -2338,6 +2338,27 @@ void main() {
           stream: 'stderr',
         ),
       );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 480)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'log'},
+          message: 'Output',
+          stream: 'stderr',
+        ),
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 600)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'log'},
+          message:
+              "Output:\nfatal: Unable to create '/Users/wust_lh/MobileVC/.git/index.lock': File exists",
+          stream: 'stderr',
+        ),
+      );
       await _flushEvents();
 
       expect(controller.terminalStderr, contains('codex_core::tools::router'));
@@ -2347,6 +2368,10 @@ void main() {
           contains('cat: .gitmodules: No such file or directory'));
       expect(controller.terminalStderr,
           contains('no submodule mapping found in .gitmodules'));
+      expect(
+          controller.terminalStderr,
+          contains(
+              "fatal: Unable to create '/Users/wust_lh/MobileVC/.git/index.lock': File exists"));
       expect(
         controller.timeline
             .any((item) => item.body.contains('codex_core::tools::router')),
@@ -2364,6 +2389,20 @@ void main() {
       expect(
         controller.timeline.any((item) => item.body.contains('.gitmodules')),
         isFalse,
+      );
+      expect(
+        controller.timeline
+            .any((item) => item.body.trim().toLowerCase() == 'output'),
+        isFalse,
+      );
+      expect(
+        controller.timeline.any((item) => item.body.contains('Output:')),
+        isFalse,
+      );
+      expect(
+        controller.timeline.any((item) => item.body.contains(
+            "fatal: Unable to create '/Users/wust_lh/MobileVC/.git/index.lock': File exists")),
+        isTrue,
       );
     });
 

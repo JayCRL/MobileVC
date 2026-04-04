@@ -5,9 +5,9 @@ import (
 	"errors"
 	"strings"
 
-	runtimepkg "mobilevc/internal/runtime"
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/runner"
+	runtimepkg "mobilevc/internal/runtime"
 	"mobilevc/internal/session"
 	"mobilevc/internal/store"
 )
@@ -46,6 +46,15 @@ func executePermissionDecision(
 		TargetType:      firstNonEmptyString(permissionEvent.FallbackTargetType, controller.ActiveMeta.TargetType),
 		PermissionMode:  effectivePermissionMode,
 	}
+	if !isClaudeCommandLike(inputMeta.Command) {
+		if err := service.SendPermissionDecision(ctx, sessionID, decision, inputMeta, emitAndPersist); err == nil {
+			return nil
+		} else if errors.Is(err, runner.ErrNoPendingControlRequest) {
+			return runtimepkg.ErrPermissionRequestExpired
+		} else {
+			return err
+		}
+	}
 	if decision == "deny" {
 		prompt, err := buildPermissionDecisionPrompt(decision, permissionEvent)
 		if err != nil {
@@ -55,13 +64,6 @@ func executePermissionDecision(
 			Data:        prompt,
 			RuntimeMeta: inputMeta,
 		}, emitAndPersist)
-	}
-	if !isClaudeCommandLike(inputMeta.Command) {
-		if err := service.SendPermissionDecision(ctx, sessionID, decision, inputMeta, emitAndPersist); err == nil {
-			return nil
-		} else if !errors.Is(err, runner.ErrNoPendingControlRequest) && !errors.Is(err, runner.ErrInputNotSupported) {
-			return err
-		}
 	}
 	replayInput := hotSwapApproveContinuation(permissionEvent)
 	req := runtimepkg.ExecuteRequest{

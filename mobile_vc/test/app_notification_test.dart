@@ -121,6 +121,106 @@ void main() {
 
     await controller.disposeController();
   });
+
+  test('inactive 过渡期收到权限请求会在进入后台后补发通知', () async {
+    final service = _FakeMobileVcWsService();
+    final controller = SessionController(service: service);
+    final notifications = _FakeLocalNotificationService();
+    final coordinator = AppNotificationCoordinator(
+      controller: controller,
+      notificationService: notifications,
+    );
+    await controller.initialize();
+    await controller.connect();
+    await coordinator.initialize();
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.inactive);
+
+    service.emit(
+      RuntimePhaseEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'runtime_phase'},
+        phase: 'permission_blocked',
+        kind: 'permission',
+        message: 'Allow edit README.md?',
+      ),
+    );
+    service.emit(
+      InteractionRequestEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'codex',
+          engine: 'codex',
+          contextId: 'perm-1',
+          targetPath: '/workspace/README.md',
+        ),
+        raw: const {
+          'type': 'interaction_request',
+          'kind': 'permission',
+          'message': 'Allow edit README.md?',
+        },
+        kind: 'permission',
+        title: 'Permission required',
+        message: 'Allow edit README.md?',
+        options: const [PromptOption(value: 'approve')],
+      ),
+    );
+    await _flushEvents();
+    coordinator.handleControllerChanged();
+    await _flushEvents();
+
+    expect(notifications.payloads, isEmpty);
+
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.paused);
+    await _flushEvents();
+
+    expect(notifications.payloads, hasLength(1));
+    expect(notifications.payloads.single.body, 'AI 助手需要你确认权限');
+
+    await controller.disposeController();
+  });
+
+  test('inactive 过渡期收到回复会在进入后台后补发通知', () async {
+    final service = _FakeMobileVcWsService();
+    final controller = SessionController(service: service);
+    final notifications = _FakeLocalNotificationService();
+    final coordinator = AppNotificationCoordinator(
+      controller: controller,
+      notificationService: notifications,
+    );
+    await controller.initialize();
+    await controller.connect();
+    _bindSession(service);
+    await _flushEvents();
+    await coordinator.initialize();
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.inactive);
+
+    service.emit(
+      LogEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'log'},
+        message: '后台任务已经执行完成。',
+        stream: 'stdout',
+      ),
+    );
+    await _flushEvents();
+    coordinator.handleControllerChanged();
+    await _flushEvents();
+
+    expect(notifications.payloads, isEmpty);
+
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.paused);
+    await _flushEvents();
+
+    expect(notifications.payloads, hasLength(1));
+    expect(notifications.payloads.single.body, '后台任务已经执行完成。');
+
+    await controller.disposeController();
+  });
 }
 
 class _FakeLocalNotificationService implements LocalNotificationService {

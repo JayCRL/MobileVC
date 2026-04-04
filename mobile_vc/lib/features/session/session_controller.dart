@@ -3552,7 +3552,9 @@ class SessionController extends ChangeNotifier {
   String _restoredHistoryBody(HistoryLogEntry entry) {
     if (entry.kind == 'terminal') {
       final body = entry.text.isNotEmpty ? entry.text : entry.message;
-      return _sanitizeAiBootstrapReply(body, entry.context?.command ?? '');
+      return _sanitizeTimelineLogMessage(
+        _sanitizeAiBootstrapReply(body, entry.context?.command ?? ''),
+      );
     }
     final body = entry.message.isNotEmpty ? entry.message : entry.text;
     return _sanitizeAiBootstrapReply(body, entry.context?.command ?? '');
@@ -3892,8 +3894,9 @@ class SessionController extends ChangeNotifier {
   }
 
   void _handleLogTimeline(LogEvent log) {
-    final message =
-        _sanitizeAiBootstrapLogMessage(log.message, log.runtimeMeta);
+    final message = _sanitizeTimelineLogMessage(
+      _sanitizeAiBootstrapLogMessage(log.message, log.runtimeMeta),
+    );
     if (message.isEmpty) {
       return;
     }
@@ -3933,6 +3936,51 @@ class SessionController extends ChangeNotifier {
       message,
       _timelineAiEngine(meta),
     );
+  }
+
+  String _sanitizeTimelineLogMessage(String message) {
+    var normalized = message.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    normalized = normalized.trim();
+    if (normalized.isEmpty) {
+      return '';
+    }
+    while (normalized.isNotEmpty) {
+      final lower = normalized.toLowerCase();
+      if (lower.startsWith('wall time:')) {
+        final newlineIndex = normalized.indexOf('\n');
+        if (newlineIndex == -1) {
+          return '';
+        }
+        normalized = normalized.substring(newlineIndex + 1).trimLeft();
+        continue;
+      }
+      final stripped = _stripLeadingOutputHeader(normalized);
+      if (stripped != normalized) {
+        normalized = stripped.trimLeft();
+        continue;
+      }
+      break;
+    }
+    return normalized.trim();
+  }
+
+  String _stripLeadingOutputHeader(String message) {
+    final lower = message.toLowerCase();
+    if (lower == 'output' || lower == 'output:') {
+      return '';
+    }
+    const outputPrefixes = <String>[
+      'output:\n',
+      'output\n',
+      'output: ',
+      'output ',
+    ];
+    for (final prefix in outputPrefixes) {
+      if (lower.startsWith(prefix)) {
+        return message.substring(prefix.length);
+      }
+    }
+    return message;
   }
 
   String _sanitizeAiBootstrapReply(String message, String engineHint) {
@@ -4184,13 +4232,13 @@ class SessionController extends ChangeNotifier {
             lower.contains('no submodule mapping found'))) {
       return true;
     }
-    if (lower.startsWith('wall time:')) {
+    if (lower.startsWith('wall time:') && !lower.contains('\n')) {
+      return true;
+    }
+    if (lower == 'output' || lower == 'output:') {
       return true;
     }
     if (lower.startsWith('output fatal: not a git repository')) {
-      return true;
-    }
-    if (lower.contains('\noutput:\n') || lower.contains('\noutput\n')) {
       return true;
     }
     if (stream.trim().toLowerCase() == 'stderr' &&

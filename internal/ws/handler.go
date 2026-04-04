@@ -1069,6 +1069,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				message := err.Error()
 				if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
 					message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
+				} else if errors.Is(err, runtimepkg.ErrPermissionRequestExpired) {
+					message = "当前权限请求已失效，请等待 AI 重新发起操作后再确认"
 				} else if errors.Is(err, runner.ErrInputNotSupported) {
 					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
 				} else if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {

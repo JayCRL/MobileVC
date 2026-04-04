@@ -3132,6 +3132,69 @@ func TestHandlerPermissionDecisionApproveForCodexUsesDirectPermissionResponse(t 
 	}
 }
 
+func TestHandlerPermissionDecisionApproveForCodexWithExpiredPendingRequestReturnsError(t *testing.T) {
+	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "需要权限确认", []string{"approve", "deny"}))
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	runnerIndex := 0
+	h.NewPtyRunner = func() runner.Runner {
+		runnerIndex++
+		return firstRunner
+	}
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-approve-codex-expired")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "codex",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	firstRunner.mu.Lock()
+	firstRunner.hasPendingPermission = false
+	firstRunner.mu.Unlock()
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:     protocol.ClientEvent{Action: "permission_decision"},
+		Decision:        "approve",
+		PermissionMode:  "default",
+		PromptMessage:   "需要权限确认",
+		FallbackCommand: "codex",
+		FallbackEngine:  "codex",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "当前权限请求已失效，请等待 AI 重新发起操作后再确认" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+	if runnerIndex != 1 {
+		t.Fatalf("expected no hot swap runner restart for expired codex permission, got runner count=%d", runnerIndex)
+	}
+	select {
+	case decision := <-firstRunner.permissionResponseWriteCh:
+		t.Fatalf("unexpected direct permission response: %q", decision)
+	case <-time.After(200 * time.Millisecond):
+	}
+	select {
+	case payload := <-firstRunner.writeCh:
+		t.Fatalf("unexpected continuation payload: %q", string(payload))
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 func TestHandlerPermissionDecisionDenySendsPromptAsNormalInput(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
 	ptyRunner.claudeSessionID = "resume-deny-123"
@@ -3352,7 +3415,7 @@ func TestHandlerPermissionDecisionWithoutHotSwapSupportReturnsError(t *testing.T
 	}
 
 	event := readUntilType(t, conn, protocol.EventTypeError)
-	if event["msg"] != "当前活跃会话不是可热重启恢复的 Claude PTY 会话" {
+	if event["msg"] != "当前会话不支持交互输入，请先恢复 Claude PTY 会话" {
 		t.Fatalf("unexpected error event: %#v", event)
 	}
 	select {
