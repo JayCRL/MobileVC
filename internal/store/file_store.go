@@ -157,29 +157,10 @@ func (s *FileStore) SaveProjection(ctx context.Context, sessionID string, projec
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	if record.Summary.External || strings.EqualFold(strings.TrimSpace(record.Summary.Source), "codex-native") {
-		record.Projection.SessionContext = normalizeSessionContext(projection.SessionContext)
-		record.Projection.SkillCatalogMeta = normalizeCatalogMetadata(
-			projection.SkillCatalogMeta,
-			CatalogDomainSkill,
-		)
-		record.Projection.MemoryCatalogMeta = normalizeCatalogMetadata(
-			projection.MemoryCatalogMeta,
-			CatalogDomainMemory,
-		)
-		if err := s.writeSessionLocked(record); err != nil {
-			return SessionSummary{}, err
-		}
-		return record.Summary, nil
-	}
 	now := time.Now().UTC()
 	record.Projection = normalizeProjection(projection)
-	record.Summary.Runtime = record.Projection.Runtime
-	if record.Summary.Runtime.Source == "" {
-		record.Summary.Runtime.Source = "mobilevc"
-	}
+	record = normalizeSessionRecord(record)
 	record.Summary.UpdatedAt = now
-	record.Summary = deriveProjectionSummary(record.Summary, record.Projection)
 	if err := s.writeSessionLocked(record); err != nil {
 		return SessionSummary{}, err
 	}
@@ -549,22 +530,41 @@ func normalizeProjection(projection ProjectionSnapshot) ProjectionSnapshot {
 
 func normalizeSessionRecord(record SessionRecord) SessionRecord {
 	record.Projection = normalizeProjection(record.Projection)
-	if record.Summary.External || strings.EqualFold(strings.TrimSpace(record.Summary.Source), "codex-native") {
-		if record.Summary.Runtime.Source == "" {
-			record.Summary.Runtime.Source = "codex-native"
-		}
-		record.Projection.Runtime = record.Summary.Runtime
-		return record
+	runtimeSource := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+		record.Projection.Runtime.Source,
+		record.Summary.Runtime.Source,
+		record.Summary.Source,
+	)))
+	defaultSource := "mobilevc"
+	if record.Summary.External || runtimeSource == "codex-native" {
+		record.Summary.External = true
+		defaultSource = "codex-native"
 	}
+	record.Projection.Runtime = mergeSessionRuntime(record.Summary.Runtime, record.Projection.Runtime)
 	if record.Projection.Runtime.Source == "" {
-		record.Projection.Runtime.Source = record.Summary.Runtime.Source
+		record.Projection.Runtime.Source = defaultSource
 	}
-	record.Summary.Runtime = record.Projection.Runtime
+	record.Summary.Runtime = mergeSessionRuntime(record.Summary.Runtime, record.Projection.Runtime)
 	if record.Summary.Runtime.Source == "" {
-		record.Summary.Runtime.Source = "mobilevc"
+		record.Summary.Runtime.Source = defaultSource
+	}
+	if record.Summary.Source == "" {
+		record.Summary.Source = defaultSource
 	}
 	record.Summary = deriveProjectionSummary(record.Summary, record.Projection)
 	return record
+}
+
+func mergeSessionRuntime(base SessionRuntime, overlay SessionRuntime) SessionRuntime {
+	return SessionRuntime{
+		ResumeSessionID: firstNonEmptyString(overlay.ResumeSessionID, base.ResumeSessionID),
+		Command:         firstNonEmptyString(overlay.Command, base.Command),
+		Engine:          firstNonEmptyString(overlay.Engine, base.Engine),
+		PermissionMode:  firstNonEmptyString(overlay.PermissionMode, base.PermissionMode),
+		CWD:             firstNonEmptyString(overlay.CWD, base.CWD),
+		ClaudeLifecycle: firstNonEmptyString(overlay.ClaudeLifecycle, base.ClaudeLifecycle),
+		Source:          firstNonEmptyString(overlay.Source, base.Source),
+	}
 }
 
 func normalizeSessionContext(ctx SessionContext) SessionContext {
@@ -751,7 +751,14 @@ func normalizePermissionRules(items []PermissionRule) []PermissionRule {
 	return out
 }
 
-func buildPreview(projection ProjectionSnapshot) string {
+func buildPreview(summary SessionSummary, projection ProjectionSnapshot) string {
+	if summary.External ||
+		strings.EqualFold(strings.TrimSpace(summary.Source), "codex-native") ||
+		strings.EqualFold(strings.TrimSpace(summary.Runtime.Source), "codex-native") {
+		if text := latestMeaningfulProjectionText(projection, false); text != "" {
+			return truncatePreview(text)
+		}
+	}
 	if text := latestMeaningfulProjectionText(projection, true); text != "" {
 		return truncatePreview(text)
 	}
@@ -766,7 +773,7 @@ func deriveProjectionSummary(summary SessionSummary, projection ProjectionSnapsh
 	if title := buildSummaryTitle(summary.Title, projection, summary.CreatedAt); title != "" {
 		summary.Title = title
 	}
-	summary.LastPreview = buildPreview(projection)
+	summary.LastPreview = buildPreview(summary, projection)
 	return summary
 }
 

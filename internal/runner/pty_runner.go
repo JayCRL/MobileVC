@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,6 +35,7 @@ const (
 
 type PtyRunner struct {
 	mu                      sync.Mutex
+	runCtx                  context.Context
 	writer                  io.WriteCloser
 	closer                  io.Closer
 	cmd                     *exec.Cmd
@@ -129,6 +129,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 
 	if shouldUseClaudeResumeInteractive(req.Command) {
 		r.mu.Lock()
+		r.runCtx = ctx
 		r.permissionMode = req.PermissionMode
 		r.interactive = false
 		r.mu.Unlock()
@@ -139,6 +140,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		initialPrompt := extractCodexInitialPrompt(req.Command)
 		if initialPrompt != "" {
 			r.mu.Lock()
+			r.runCtx = ctx
 			r.permissionMode = req.PermissionMode
 			r.interactive = false
 			r.pendingReq = req
@@ -153,6 +155,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 			return r.runCodexAppServer(ctx, req, cwd, sink, initialPrompt)
 		}
 		r.mu.Lock()
+		r.runCtx = ctx
 		r.lazyStart = true
 		r.interactive = false
 		r.awaitingReadyPrompt = true
@@ -185,6 +188,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 	if shouldUseClaudeStreamJSON(req.Command) {
 		if extractResumeArg(req.Command) != "" && strings.Contains(strings.ToLower(req.Command), " --print") {
 			r.mu.Lock()
+			r.runCtx = ctx
 			r.permissionMode = req.PermissionMode
 			r.interactive = false
 			r.pendingReq = req
@@ -199,6 +203,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 			return r.runClaudeStream(ctx, req, cwd, sink)
 		}
 		r.mu.Lock()
+		r.runCtx = ctx
 		r.lazyStart = true
 		r.interactive = false
 		r.awaitingReadyPrompt = true
@@ -239,6 +244,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 	defer interactive.closer.Close()
 
 	r.mu.Lock()
+	r.runCtx = ctx
 	r.writer = interactive.writer
 	r.closer = interactive.closer
 	r.cmd = cmd
@@ -611,6 +617,7 @@ func (r *PtyRunner) currentPermissionMode() string {
 func (r *PtyRunner) clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.runCtx = nil
 	r.writer = nil
 	r.closer = nil
 	r.cmd = nil
@@ -628,6 +635,15 @@ func (r *PtyRunner) clear() {
 	r.pendingPromptOptions = nil
 	r.closed = true
 	r.suppressExitError = false
+}
+
+func (r *PtyRunner) commandContext() context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.runCtx != nil {
+		return r.runCtx
+	}
+	return context.Background()
 }
 
 func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd string, sink EventSink) error {
@@ -715,7 +731,7 @@ func (r *PtyRunner) runCodexAppServer(ctx context.Context, req ExecRequest, cwd 
 		resumeSessionID = strings.TrimSpace(req.RuntimeMeta.ResumeSessionID)
 	}
 
-	app, err := newCodexAppSession(ctx, r, req, cwd, sink, resumeSessionID)
+	app, err := newCodexAppSession(ctx, ctx, r, req, cwd, sink, resumeSessionID)
 	if err != nil {
 		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, err.Error(), ""))
 		return err
@@ -875,7 +891,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 
 	lowerCommand := strings.ToLower(strings.TrimSpace(req.Command))
 	if strings.Contains(lowerCommand, "--input-format") || strings.Contains(lowerCommand, "stream-json") || strings.Contains(lowerCommand, "--permission-prompt-tool") {
-		cmd := newClaudeStreamCommand(ctx, req.Command, resumeSessionID, permMode)
+		cmd := newClaudeStreamCommand(r.commandContext(), req.Command, resumeSessionID, permMode)
 		cmd.Dir = cwd
 
 		stdin, err := cmd.StdinPipe()
@@ -1061,7 +1077,7 @@ func (r *PtyRunner) startCodexAppServerOnFirstInput(ctx context.Context, req Exe
 	}
 	r.mu.Unlock()
 
-	app, err := newCodexAppSession(ctx, r, req, cwd, sink, resumeSessionID)
+	app, err := newCodexAppSession(r.commandContext(), ctx, r, req, cwd, sink, resumeSessionID)
 	if err != nil {
 		r.finishLazyProcess(err, sink, req.SessionID)
 		return err
@@ -1569,27 +1585,25 @@ type claudeCatalogAuthoringPayload struct {
 }
 
 func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, sessionID string, sink EventSink) {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), scannerMaxTokenSize)
-	for scanner.Scan() {
+	err := forEachLine(reader, func(rawLine []byte) error {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		default:
 		}
-		line := strings.TrimSpace(scanner.Text())
+		line := strings.TrimSpace(string(rawLine))
 		if line == "" {
-			continue
+			return nil
 		}
 		logx.Info("pty", "claude stream raw line: sessionID=%s preview=%q", sessionID, ptyDebugPreview(line))
 		var envelope claudeStreamEnvelope
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
 			logx.Warn("pty", "claude stream json parse failed: sessionID=%s reason=json_unmarshal_failed err=%v preview=%q", sessionID, err, ptyDebugPreview(line))
 			if shouldSuppressClaudeRawLine(line) {
-				continue
+				return nil
 			}
 			sendEvent(sink, protocol.NewLogEvent(sessionID, line, "stdout"))
-			continue
+			return nil
 		}
 		logx.Info("pty", "claude stream json parsed: sessionID=%s type=%s subtype=%s requestID=%q envelopeSessionID=%q contentBlocks=%d", sessionID, envelope.Type, envelope.Subtype, envelope.RequestID, envelope.SessionID, len(envelope.Message.Content))
 		if envelope.SessionID != "" {
@@ -1720,8 +1734,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				})
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		if errors.Is(err, os.ErrClosed) || errors.Is(err, io.EOF) || strings.Contains(strings.ToLower(err.Error()), "file already closed") || strings.Contains(strings.ToLower(err.Error()), "use of closed file") {
 			return
 		}

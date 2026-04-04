@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -186,8 +185,8 @@ func (w *codexAppWriter) Close() error {
 	return nil
 }
 
-func newCodexAppSession(ctx context.Context, runner *PtyRunner, req ExecRequest, cwd string, sink EventSink, resumeSessionID string) (*codexAppSession, error) {
-	cmd := newCodexAppServerCommand(ctx, req.Command)
+func newCodexAppSession(processCtx context.Context, rpcCtx context.Context, runner *PtyRunner, req ExecRequest, cwd string, sink EventSink, resumeSessionID string) (*codexAppSession, error) {
+	cmd := newCodexAppServerCommand(processCtx, req.Command)
 	cmd.Dir = cwd
 
 	stdin, err := cmd.StdinPipe()
@@ -221,15 +220,15 @@ func newCodexAppSession(ctx context.Context, runner *PtyRunner, req ExecRequest,
 		pending:   make(map[string]chan codexRPCResponse),
 	}
 
-	go app.readLoop(ctx, stdout)
-	go app.readStderr(ctx)
+	go app.readLoop(processCtx, stdout)
+	go app.readStderr(processCtx)
 
-	if err := app.initialize(ctx); err != nil {
+	if err := app.initialize(rpcCtx); err != nil {
 		_ = stdin.Close()
 		_ = cmd.Process.Kill()
 		return nil, err
 	}
-	if err := app.startOrResumeThread(ctx, resumeSessionID); err != nil {
+	if err := app.startOrResumeThread(rpcCtx, resumeSessionID); err != nil {
 		_ = stdin.Close()
 		_ = cmd.Process.Kill()
 		return nil, err
@@ -262,12 +261,12 @@ func (s *codexAppSession) startOrResumeThread(ctx context.Context, resumeSession
 	} else {
 		method = "thread/start"
 		params = map[string]any{
-			"cwd":                    s.cwd,
-			"approvalPolicy":         codexApprovalPolicy(s.runner.currentPermissionMode()),
-			"approvalsReviewer":      "user",
-			"sandbox":                "workspace-write",
-			"serviceName":            "MobileVC",
-			"experimentalRawEvents":  false,
+			"cwd":                   s.cwd,
+			"approvalPolicy":        codexApprovalPolicy(s.runner.currentPermissionMode()),
+			"approvalsReviewer":     "user",
+			"sandbox":               "workspace-write",
+			"serviceName":           "MobileVC",
+			"experimentalRawEvents": false,
 		}
 		if model := extractCodexModelFlag(s.req.Command); model != "" {
 			params["model"] = model
@@ -322,6 +321,9 @@ func (s *codexAppSession) SendUserInput(ctx context.Context, data []byte) error 
 	}
 	if model := extractCodexModelFlag(s.req.Command); model != "" {
 		params["model"] = model
+	}
+	if effort := extractCodexReasoningEffortFlag(s.req.Command); effort != "" {
+		params["effort"] = effort
 	}
 	var resp codexTurnStartResponse
 	if err := s.call(ctx, "turn/start", params, &resp); err != nil {
@@ -383,23 +385,21 @@ func (s *codexAppSession) Close() error {
 }
 
 func (s *codexAppSession) readLoop(ctx context.Context, reader io.Reader) {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), scannerMaxTokenSize)
-	for scanner.Scan() {
+	err := forEachLine(reader, func(rawLine []byte) error {
 		select {
 		case <-ctx.Done():
 			s.failPending(ctx.Err())
-			return
+			return ctx.Err()
 		default:
 		}
-		line := strings.TrimSpace(scanner.Text())
+		line := strings.TrimSpace(string(rawLine))
 		if line == "" {
-			continue
+			return nil
 		}
 		var message codexRPCMessage
 		if err := json.Unmarshal([]byte(line), &message); err != nil {
 			logx.Warn("pty", "codex app-server json parse failed: sessionID=%s err=%v preview=%q", s.sessionID, err, ptyDebugPreview(line))
-			continue
+			return nil
 		}
 		switch {
 		case len(message.ID) > 0 && message.Method == "":
@@ -409,8 +409,9 @@ func (s *codexAppSession) readLoop(ctx context.Context, reader io.Reader) {
 		case message.Method != "":
 			s.handleNotification(message)
 		}
-	}
-	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
+		return nil
+	})
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
 		s.failPending(err)
 		return
 	}
@@ -421,23 +422,22 @@ func (s *codexAppSession) readStderr(ctx context.Context) {
 	if s.stderr == nil {
 		return
 	}
-	scanner := bufio.NewScanner(s.stderr)
-	scanner.Buffer(make([]byte, 0, 16*1024), scannerMaxTokenSize)
-	for scanner.Scan() {
+	_ = forEachLine(s.stderr, func(rawLine []byte) error {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		default:
 		}
-		text := strings.TrimSpace(adapter.StripANSI(scanner.Text()))
+		text := strings.TrimSpace(adapter.StripANSI(string(rawLine)))
 		if codexShouldIgnoreStderr(text) || text == "" {
-			continue
+			return nil
 		}
 		sendEvent(s.sink, protocol.ApplyRuntimeMeta(
 			protocol.NewLogEvent(s.sessionID, text, "stderr"),
 			s.runtimeMeta("active"),
 		))
-	}
+		return nil
+	})
 }
 
 func (s *codexAppSession) handleNotification(message codexRPCMessage) {
@@ -763,9 +763,11 @@ func (s *codexAppSession) setThreadID(threadID string) {
 	s.threadID = threadID
 	s.mu.Unlock()
 
-	s.runner.mu.Lock()
-	s.runner.claudeSessionID = threadID
-	s.runner.mu.Unlock()
+	if s.runner != nil {
+		s.runner.mu.Lock()
+		s.runner.claudeSessionID = threadID
+		s.runner.mu.Unlock()
+	}
 }
 
 func (s *codexAppSession) setActiveTurnID(turnID string) {

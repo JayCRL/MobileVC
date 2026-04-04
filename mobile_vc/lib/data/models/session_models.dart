@@ -733,6 +733,7 @@ class RuntimeInfoItem {
     this.status = '',
     this.available = false,
     this.detail = '',
+    this.meta = const <String, dynamic>{},
   });
 
   final String label;
@@ -740,6 +741,7 @@ class RuntimeInfoItem {
   final String status;
   final bool available;
   final String detail;
+  final Map<String, dynamic> meta;
 
   factory RuntimeInfoItem.fromJson(Map<String, dynamic> json) {
     return RuntimeInfoItem(
@@ -748,6 +750,93 @@ class RuntimeInfoItem {
       status: (json['status'] ?? '').toString(),
       available: json['available'] == true,
       detail: (json['detail'] ?? '').toString(),
+      meta: json['meta'] is Map
+          ? Map<String, dynamic>.from(json['meta'] as Map)
+          : const <String, dynamic>{},
+    );
+  }
+}
+
+class CodexReasoningEffortOption {
+  const CodexReasoningEffortOption({
+    required this.reasoningEffort,
+    this.description = '',
+  });
+
+  final String reasoningEffort;
+  final String description;
+
+  factory CodexReasoningEffortOption.fromJson(Map<String, dynamic> json) {
+    return CodexReasoningEffortOption(
+      reasoningEffort:
+          (json['reasoningEffort'] ?? '').toString().trim().toLowerCase(),
+      description: (json['description'] ?? '').toString().trim(),
+    );
+  }
+}
+
+class CodexModelCatalogEntry {
+  const CodexModelCatalogEntry({
+    required this.model,
+    this.id = '',
+    this.displayName = '',
+    this.description = '',
+    this.defaultReasoningEffort = '',
+    this.supportedReasoningEfforts = const <String>[],
+    this.reasoningEffortOptions = const <CodexReasoningEffortOption>[],
+    this.isDefault = false,
+    this.hidden = false,
+  });
+
+  final String id;
+  final String model;
+  final String displayName;
+  final String description;
+  final String defaultReasoningEffort;
+  final List<String> supportedReasoningEfforts;
+  final List<CodexReasoningEffortOption> reasoningEffortOptions;
+  final bool isDefault;
+  final bool hidden;
+
+  factory CodexModelCatalogEntry.fromRuntimeInfoItem(RuntimeInfoItem item) {
+    final meta = item.meta;
+    final supported = <String>[
+      for (final value in ((meta['supportedReasoningEfforts'] as List?) ??
+          const <dynamic>[]))
+        if (value.toString().trim().isNotEmpty)
+          value.toString().trim().toLowerCase(),
+    ];
+    final options = <CodexReasoningEffortOption>[
+      for (final value
+          in ((meta['reasoningEffortOptions'] as List?) ?? const <dynamic>[]))
+        if (value is Map<String, dynamic>)
+          CodexReasoningEffortOption.fromJson(value)
+        else if (value is Map)
+          CodexReasoningEffortOption.fromJson(Map<String, dynamic>.from(value)),
+    ].where((option) => option.reasoningEffort.isNotEmpty).toList();
+    final mergedSupported = supported.isNotEmpty
+        ? supported
+        : options.map((option) => option.reasoningEffort).toList();
+    final mergedOptions = options.isNotEmpty
+        ? options
+        : mergedSupported
+            .map(
+                (effort) => CodexReasoningEffortOption(reasoningEffort: effort))
+            .toList();
+    final defaultReasoningEffort =
+        (meta['defaultReasoningEffort'] ?? '').toString().trim().toLowerCase();
+    return CodexModelCatalogEntry(
+      id: (meta['id'] ?? '').toString().trim(),
+      model: (meta['model'] ?? item.label).toString().trim(),
+      displayName: (meta['displayName'] ?? item.value).toString().trim(),
+      description: (meta['description'] ?? item.detail).toString().trim(),
+      defaultReasoningEffort: defaultReasoningEffort.isNotEmpty
+          ? defaultReasoningEffort
+          : (mergedSupported.isNotEmpty ? mergedSupported.first : ''),
+      supportedReasoningEfforts: mergedSupported,
+      reasoningEffortOptions: mergedOptions,
+      isDefault: meta['isDefault'] == true || item.status == 'default',
+      hidden: meta['hidden'] == true,
     );
   }
 }

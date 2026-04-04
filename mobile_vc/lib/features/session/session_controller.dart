@@ -137,6 +137,10 @@ class SessionController extends ChangeNotifier {
   RuntimePhaseEvent? _runtimePhase;
   SessionStateEvent? _sessionState;
   RuntimeInfoResultEvent? _runtimeInfo;
+  final List<CodexModelCatalogEntry> _codexModelCatalog = [];
+  bool _codexModelCatalogLoading = false;
+  String _codexModelCatalogMessage = '';
+  bool _codexModelCatalogUnavailable = false;
   FileDiffEvent? _currentDiff;
   PromptRequestEvent? _pendingPrompt;
   InteractionRequestEvent? _pendingInteraction;
@@ -253,11 +257,11 @@ class SessionController extends ChangeNotifier {
       );
   bool get supportsAiModelSwitch =>
       currentAiEngine == 'claude' || currentAiEngine == 'codex';
-  String get currentAiModelSummary => _aiModelSummary(
+  String get currentAiModelSummary => _displayAiModelSummary(
       currentAiEngine, selectedAiModel, selectedAiReasoningEffort);
   String get commandBarEngine =>
       shouldShowClaudeMode ? displayAiEngine : 'shell';
-  String get commandBarModelSummary => _aiModelSummary(
+  String get commandBarModelSummary => _displayAiModelSummary(
         displayAiEngine,
         _resolvedAiModel(
           displayAiEngine,
@@ -324,6 +328,11 @@ class SessionController extends ChangeNotifier {
   AgentStateEvent? get agentState => _agentState;
   SessionStateEvent? get sessionState => _sessionState;
   RuntimeInfoResultEvent? get runtimeInfo => _runtimeInfo;
+  List<CodexModelCatalogEntry> get codexModelCatalog =>
+      List.unmodifiable(_codexModelCatalog);
+  bool get codexModelCatalogLoading => _codexModelCatalogLoading;
+  String get codexModelCatalogMessage => _codexModelCatalogMessage;
+  bool get codexModelCatalogUnavailable => _codexModelCatalogUnavailable;
   FileDiffEvent? get currentDiff => _currentDiff;
   PromptRequestEvent? get pendingPrompt {
     final prompt = _pendingPrompt;
@@ -734,20 +743,23 @@ class SessionController extends ChangeNotifier {
 
   String get activityToolLabel => _activityToolLabel;
   String get currentStepSummary => _currentStepSummary;
+  RuntimeMeta get _liveRuntimeMeta =>
+      (_agentState?.runtimeMeta ?? const RuntimeMeta())
+          .merge(_sessionState?.runtimeMeta ?? const RuntimeMeta())
+          .merge(_runtimeInfo?.runtimeMeta ?? const RuntimeMeta())
+          .merge(_resumeRuntimeMeta);
+
   bool get inClaudeMode {
     if (_isLoadingSession) {
       return false;
     }
-    final liveRuntimeMeta = (_agentState?.runtimeMeta ?? const RuntimeMeta())
-        .merge(_sessionState?.runtimeMeta ?? const RuntimeMeta())
-        .merge(_runtimeInfo?.runtimeMeta ?? const RuntimeMeta());
     const claudeStates = <String>{
       'starting',
       'active',
       'waiting_input',
       'resumable',
     };
-    return claudeStates.contains(liveRuntimeMeta.claudeLifecycle.trim());
+    return claudeStates.contains(_liveRuntimeMeta.claudeLifecycle.trim());
   }
 
   bool get shouldShowClaudeMode =>
@@ -1019,6 +1031,10 @@ class SessionController extends ChangeNotifier {
       _autoSessionRequested = false;
       _autoSessionCreating = false;
       _runtimePermissionMode = '';
+      _codexModelCatalogLoading = false;
+      _codexModelCatalogMessage = '';
+      _codexModelCatalogUnavailable = false;
+      _codexModelCatalog.clear();
       await switchWorkingDirectory(_config.cwd);
       requestRuntimeInfo('context');
       requestSkillCatalog();
@@ -1065,6 +1081,10 @@ class SessionController extends ChangeNotifier {
     _memoryCatalogMeta = const CatalogMetadata(domain: 'memory');
     _skillSyncStatus = '';
     _memorySyncStatus = '';
+    _codexModelCatalogLoading = false;
+    _codexModelCatalogMessage = '';
+    _codexModelCatalogUnavailable = false;
+    _codexModelCatalog.clear();
     _skills.clear();
     _memoryItems.clear();
     _sessionPermissionRules.clear();
@@ -1228,6 +1248,49 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _resetNewSessionState() {
+    _clearPendingAiLaunch();
+    _canResumeCurrentSession = false;
+    _resumeRuntimeMeta = const RuntimeMeta();
+    _runtimePermissionMode = '';
+    _runtimeInfo = null;
+    _agentState = null;
+    _runtimePhase = null;
+    _sessionState = null;
+    _pendingPrompt = null;
+    _pendingInteraction = null;
+    _clearPlanInteractionState();
+    _currentStep = null;
+    _currentStepSummary = '';
+    _lastStepMessage = '';
+    _lastStepStatus = '';
+    _activityToolLabel = '';
+    _activityStartedAt = null;
+    _activityVisible = false;
+    _currentDiff = null;
+    _latestError = null;
+    _recentDiffs.clear();
+    _reviewGroups.clear();
+    _activeReviewGroupId = '';
+    _activeReviewDiffId = '';
+    _timeline.clear();
+    _terminalStdout = '';
+    _terminalStderr = '';
+    _activeTerminalExecutionId = '';
+    _terminalExecutions.clear();
+    _resetRuntimeProcessState();
+    _sessionContext = const SessionContext();
+    _pendingSessionContextTarget = null;
+    _pendingSessionContextRollback = null;
+    _pendingToggleSkillNames.clear();
+    _pendingToggleMemoryIds.clear();
+    _lastLogMessage = '';
+    _lastLogStream = '';
+    _lastLogAt = null;
+    _lastSessionTimelineKey = '';
+    _resetActionNeededTracking(suppressNextSignal: true);
+  }
+
   bool _matchesPendingSessionTarget(String sessionId) {
     final normalized = sessionId.trim();
     if (normalized.isEmpty) {
@@ -1291,7 +1354,7 @@ class SessionController extends ChangeNotifier {
     _pushSystem(
       'session',
       engine == 'codex'
-          ? 'Codex 模型已切换为 ${_codexModelLabel(normalizedModel)} · ${normalizedEffort.toUpperCase()}，将对下一次 Codex 启动生效'
+          ? 'Codex 模型已切换为 ${_codexModelDisplayLabel(normalizedModel)} · ${normalizedEffort.toUpperCase()}，将对下一次 Codex 启动生效'
           : 'Claude 模型已切换为 ${_claudeModelLabel(normalizedModel)}，将对下一次 Claude 启动生效',
     );
   }
@@ -2501,6 +2564,59 @@ class SessionController extends ChangeNotifier {
         .send({'action': 'runtime_info', 'query': query, 'cwd': effectiveCwd});
   }
 
+  void requestCodexModelCatalog({bool force = false}) {
+    if (!_connected) {
+      return;
+    }
+    if (_codexModelCatalogLoading && !force) {
+      return;
+    }
+    _codexModelCatalogLoading = true;
+    _codexModelCatalogMessage = 'Codex 原生模型目录同步中...';
+    _codexModelCatalogUnavailable = false;
+    _service.send({
+      'action': 'runtime_info',
+      'query': 'codex_models',
+      'cwd': effectiveCwd,
+    });
+    notifyListeners();
+  }
+
+  CodexModelCatalogEntry? codexModelCatalogEntry(String model) {
+    return _findCodexModelCatalogEntry(model);
+  }
+
+  List<CodexReasoningEffortOption> codexReasoningEffortOptionsForModel(
+      String model) {
+    final entry = _findCodexModelCatalogEntry(model);
+    if (entry == null) {
+      return const <CodexReasoningEffortOption>[];
+    }
+    return List.unmodifiable(entry.reasoningEffortOptions);
+  }
+
+  String codexModelDisplayLabel(String model) {
+    return _codexModelDisplayLabel(model);
+  }
+
+  String aiModelSheetSummary(
+    String engine,
+    String model,
+    String reasoningEffort,
+  ) {
+    return _displayAiModelSummary(engine, model, reasoningEffort);
+  }
+
+  String preferredCodexReasoningEffortForModel(
+    String model, {
+    String fallback = '',
+  }) {
+    return _preferredCodexReasoningEffortForModel(
+      model,
+      fallback: fallback,
+    );
+  }
+
   void requestRuntimeProcessList() {
     _requestRuntimeProcessList();
   }
@@ -2606,8 +2722,9 @@ class SessionController extends ChangeNotifier {
         _autoSessionCreating = false;
         _selectedSessionId = created.summary.id;
         _selectedSessionTitle = sessionDisplayTitle(created.summary);
-        _resetRuntimeProcessState();
+        _resetNewSessionState();
         _upsertSession(created.summary);
+        requestSessionContext();
         requestPermissionRuleList();
         _finishSessionLoading(sessionId: created.summary.id);
         break;
@@ -2621,6 +2738,18 @@ class SessionController extends ChangeNotifier {
                   item,
                 ))
             .toList();
+        final selectedSessionId = _selectedSessionId.trim();
+        if (selectedSessionId.isNotEmpty &&
+            !mergedItems.any((item) => item.id == selectedSessionId)) {
+          final preservedSelected =
+              _sessions.cast<SessionSummary?>().firstWhere(
+                    (existing) => existing?.id == selectedSessionId,
+                    orElse: () => null,
+                  );
+          if (preservedSelected != null) {
+            mergedItems.insert(0, preservedSelected);
+          }
+        }
         _sessions
           ..clear()
           ..addAll(mergedItems);
@@ -2965,6 +3094,20 @@ class SessionController extends ChangeNotifier {
         );
         break;
       case RuntimeInfoResultEvent runtimeInfo:
+        if (runtimeInfo.query.trim().toLowerCase() == 'codex_models') {
+          _codexModelCatalogLoading = false;
+          _codexModelCatalogMessage = runtimeInfo.message.trim();
+          _codexModelCatalogUnavailable = runtimeInfo.unavailable;
+          final nextCatalog = runtimeInfo.items
+              .where((item) => item.meta.isNotEmpty)
+              .map(CodexModelCatalogEntry.fromRuntimeInfoItem)
+              .where((item) => item.model.trim().isNotEmpty && !item.hidden)
+              .toList();
+          _codexModelCatalog
+            ..clear()
+            ..addAll(nextCatalog);
+          break;
+        }
         _runtimeInfo = runtimeInfo;
         _maybeAutoSyncAiModel(
           runtimeInfo.runtimeMeta,
@@ -3361,6 +3504,7 @@ class SessionController extends ChangeNotifier {
       body: restoredBody,
       stream: entry.stream,
       context: entry.context,
+      animateBody: false,
     );
   }
 
@@ -3396,6 +3540,7 @@ class SessionController extends ChangeNotifier {
         timestamp: summary.updatedAt ?? summary.createdAt ?? DateTime.now(),
         body: fallbackMessage,
         meta: history.resumeRuntimeMeta,
+        animateBody: false,
       ),
     );
   }
@@ -3592,6 +3737,7 @@ class SessionController extends ChangeNotifier {
           status: item.status.isNotEmpty ? item.status : previous.status,
           meta: item.meta,
           context: item.context ?? previous.context,
+          animateBody: previous.animateBody || item.animateBody,
         ),
       );
       return;
@@ -5187,6 +5333,71 @@ class SessionController extends ChangeNotifier {
     return _config.reasoningEffortForEngine(engine);
   }
 
+  CodexModelCatalogEntry? _findCodexModelCatalogEntry(String model) {
+    final normalized = _normalizeCodexModel(model);
+    if (normalized.isEmpty) {
+      return null;
+    }
+    for (final entry in _codexModelCatalog) {
+      if (_normalizeCodexModel(entry.model) == normalized) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  String _codexModelDisplayLabel(String model) {
+    final entry = _findCodexModelCatalogEntry(model);
+    final displayName = entry?.displayName.trim() ?? '';
+    if (displayName.isNotEmpty) {
+      return displayName;
+    }
+    return _codexModelLabel(model);
+  }
+
+  String _displayAiModelSummary(
+    String engine,
+    String model,
+    String reasoningEffort,
+  ) {
+    switch (engine) {
+      case 'codex':
+        return '${_codexModelDisplayLabel(model)} · ${_resolvedAiReasoningEffort('codex', reasoningEffort).toUpperCase()}';
+      case 'claude':
+        return _claudeModelLabel(model);
+      case 'gemini':
+        return 'Gemini';
+      default:
+        return model.trim().isEmpty ? '模型' : model.trim();
+    }
+  }
+
+  String _preferredCodexReasoningEffortForModel(
+    String model, {
+    String fallback = '',
+  }) {
+    final normalizedFallback = _resolvedAiReasoningEffort('codex', fallback);
+    final entry = _findCodexModelCatalogEntry(model);
+    if (entry == null) {
+      return normalizedFallback;
+    }
+    final supported = entry.reasoningEffortOptions
+        .map((option) => option.reasoningEffort.trim().toLowerCase())
+        .where((effort) => effort.isNotEmpty)
+        .toList();
+    if (supported.contains(normalizedFallback)) {
+      return normalizedFallback;
+    }
+    final defaultEffort = entry.defaultReasoningEffort.trim().toLowerCase();
+    if (supported.contains(defaultEffort)) {
+      return defaultEffort;
+    }
+    if (supported.isNotEmpty) {
+      return supported.first;
+    }
+    return normalizedFallback;
+  }
+
   String _parentDirectory(String path) {
     final normalized = path.replaceAll('\\', '/').trim();
     if (normalized.isEmpty || normalized == '.' || normalized == '/') {
@@ -5226,11 +5437,12 @@ class SessionController extends ChangeNotifier {
     model = 'gpt-5-codex';
   }
   String effort = '';
-  for (final candidate in _codexReasoningEffortOptions) {
-    if (lower.contains(candidate)) {
-      effort = candidate;
-      break;
-    }
+  final effortMatch = RegExp(
+    r'\b(xhigh|high|medium|low|minimal|none)\b',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (effortMatch != null) {
+    effort = (effortMatch.group(1) ?? '').toLowerCase();
   }
   return (model, effort);
 }
@@ -5278,19 +5490,6 @@ String _resolvedAiReasoningEffort(String engine, String configured) {
   return 'medium';
 }
 
-String _aiModelSummary(String engine, String model, String reasoningEffort) {
-  switch (engine) {
-    case 'codex':
-      return '${_codexModelLabel(model)} · ${reasoningEffort.toUpperCase()}';
-    case 'claude':
-      return _claudeModelLabel(model);
-    case 'gemini':
-      return 'Gemini';
-    default:
-      return model.trim().isEmpty ? '模型' : model.trim();
-  }
-}
-
 String _claudeModelLabel(String value) {
   return claudeModelDisplayLabel(value);
 }
@@ -5323,6 +5522,8 @@ String _normalizeCodexModel(String value) {
 
 String _codexModelLabel(String value) {
   switch (value.trim()) {
+    case 'gpt-5.4':
+      return 'GPT-5.4';
     case 'gpt-5-codex':
       return 'GPT-5-Codex';
     case 'gpt-5':
@@ -5333,7 +5534,10 @@ String _codexModelLabel(String value) {
 }
 
 const Set<String> _codexReasoningEffortOptions = <String>{
+  'none',
+  'minimal',
   'low',
   'medium',
   'high',
+  'xhigh',
 };
