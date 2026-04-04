@@ -2166,6 +2166,34 @@ void main() {
       expect(item.kind, 'markdown');
     });
 
+    test('带时间戳的 ws 结构化日志会保留为 terminal 输出', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            engine: 'codex',
+            executionId: 'exec-codex-ws-log',
+            contextId: 'turn-ws-log',
+          ),
+          raw: const {'type': 'log'},
+          message:
+              '2026/04/04 15:12:25 [INFO][ws] incoming session_create: connectionID=conn-1 sessionID= remoteAddr=127.0.0.1:49396 title="review-session"',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.timeline, hasLength(1));
+      expect(controller.timeline.single.kind, 'terminal');
+    });
+
     test('codex 启动握手会清洗成正常招呼，不展示 reasoning effort 回显', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -4216,6 +4244,68 @@ void main() {
       final payload = service.sentPayloads.single;
       expect(payload['action'], 'review_decision');
       expect(payload['decision'], 'accept');
+    });
+
+    test('diff 后收到空 prompt_request 仍进入可审核状态', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        FileDiffEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            engine: 'codex',
+            contextId: 'diff-blank-prompt',
+            contextTitle: 'README diff',
+            targetPath: '/workspace/README.md',
+          ),
+          raw: const {'type': 'file_diff'},
+          path: '/workspace/README.md',
+          title: 'README diff',
+          diff: '@@ -1 +1 @@',
+          lang: 'markdown',
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            engine: 'codex',
+            contextId: 'diff-blank-prompt',
+          ),
+          raw: const {'type': 'agent_state'},
+          state: 'WAIT_INPUT',
+          message: '等待审核',
+          awaitInput: true,
+          command: 'codex',
+        ),
+      );
+      service.emit(
+        PromptRequestEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            engine: 'codex',
+            contextId: 'diff-blank-prompt',
+            targetPath: '/workspace/README.md',
+          ),
+          raw: const {'type': 'prompt_request'},
+          message: '',
+          options: const [],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.awaitInput, isTrue);
+      expect(controller.shouldShowReviewChoices, isTrue);
+      expect(controller.currentReviewDiff?.path, '/workspace/README.md');
     });
 
     test('plan prompt 会进入计划阻塞态并显示首个问题', () async {

@@ -513,8 +513,8 @@ class SessionController extends ChangeNotifier {
       return false;
     }
     return _agentState?.awaitInput == true ||
-        pendingPrompt != null ||
-        pendingInteraction != null;
+        _pendingPrompt != null ||
+        _pendingInteraction != null;
   }
 
   ActionNeededSignal? get actionNeededSignal => _actionNeededSignal;
@@ -547,17 +547,16 @@ class SessionController extends ChangeNotifier {
   }
 
   bool get shouldShowReviewChoices {
-    final state = (_agentState?.state ?? '').trim().toUpperCase();
-    final interaction = pendingInteraction;
-    final prompt = pendingPrompt;
+    final interaction = _pendingInteraction;
+    final prompt = _pendingPrompt;
+    final waitingForReviewInput = interaction?.isReview == true ||
+        prompt?.looksLikeReviewPrompt == true ||
+        (hasPendingReview && awaitInput);
     return currentReviewDiff != null &&
-        state == 'WAIT_INPUT' &&
+        waitingForReviewInput &&
         !hasPendingPermissionPrompt &&
         !hasPendingPlanPrompt &&
-        !hasPendingPlanQuestions &&
-        (interaction?.isReview == true ||
-            prompt?.looksLikeReviewPrompt == true ||
-            hasPendingReview);
+        !hasPendingPlanQuestions;
   }
 
   String _debugReviewStateSummary() {
@@ -4201,6 +4200,12 @@ class SessionController extends ChangeNotifier {
     }
     final lower = trimmed.toLowerCase();
     if (lower.startsWith(r'') || trimmed.contains('[')) {
+      return true;
+    }
+    if (RegExp(
+      r'^\d{4}[/-]\d{2}[/-]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+\[(TRACE|DEBUG|INFO|WARN|ERROR)\]',
+      multiLine: true,
+    ).hasMatch(trimmed)) {
       return true;
     }
     if (trimmed.contains(RegExp(r'^[\$#>]\s', multiLine: true))) {
