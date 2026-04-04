@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/config/app_config.dart';
+import '../../data/models/session_models.dart';
 import '../../features/adb/adb_debug_page.dart';
 import '../../features/chat/chat_timeline.dart';
 import '../../features/chat/command_input_bar.dart';
@@ -801,6 +802,9 @@ class _SessionHomePageState extends State<SessionHomePage> {
 
   Future<void> _openModelSwitcher(BuildContext context) async {
     final engine = controller.currentAiEngine;
+    if (engine == 'codex') {
+      controller.requestCodexModelCatalog(force: true);
+    }
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -810,142 +814,501 @@ class _SessionHomePageState extends State<SessionHomePage> {
       builder: (context) {
         var selectedModel = controller.configuredAiModel;
         var selectedEffort = controller.configuredAiReasoningEffort;
+        var sheetStep = _ModelSwitcherStep.model;
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            final theme = Theme.of(context);
-            final supportsModels = engine == 'claude' || engine == 'codex';
-            final modelOptions =
-                engine == 'codex' ? _codexModelChoices : _claudeModelChoices;
-            final hasSelectedPreset = modelOptions.any(
-              (option) => option.value == selectedModel,
-            );
-            return FractionallySizedBox(
-              heightFactor: 0.7,
-              child: ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(28)),
-                child: Material(
-                  color: theme.colorScheme.surface,
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      16,
-                      8,
-                      16,
-                      24 + MediaQuery.of(context).viewInsets.bottom,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '模型切换',
-                          style: theme.textTheme.titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w900),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          supportsModels
-                              ? '当前为 ${engine == 'codex' ? 'Codex' : 'Claude'} 模式，切换后的配置会用于下一次 AI 启动。'
-                              : '当前模式暂不支持快捷切换模型。',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        if (supportsModels) ...[
-                          Text(
-                            '模型',
-                            style: theme.textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: [
-                              if (!hasSelectedPreset &&
-                                  selectedModel.trim().isNotEmpty)
-                                _ModelChoiceCard(
-                                  title: _aiModelSheetSummary(
-                                    engine,
-                                    selectedModel,
-                                    selectedEffort,
-                                  ),
-                                  subtitle: '当前为已保存配置的自定义模型',
-                                  selected: true,
-                                  onTap: () {},
-                                ),
-                              for (final option in modelOptions)
-                                _ModelChoiceCard(
-                                  title: option.title,
-                                  subtitle: option.subtitle,
-                                  selected: selectedModel == option.value,
-                                  onTap: () => setSheetState(() {
-                                    selectedModel = option.value;
-                                  }),
-                                ),
-                            ],
-                          ),
-                          if (engine == 'codex') ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              '推理强度',
-                              style: theme.textTheme.titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.w800),
+            return ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) {
+                final theme = Theme.of(context);
+                final isCodex = engine == 'codex';
+                final supportsModels = engine == 'claude' || isCodex;
+                final modelOptions = isCodex
+                    ? controller.codexModelCatalog
+                        .map(
+                          (entry) => _ModelChoice(
+                            value: entry.model,
+                            title: controller.codexModelDisplayLabel(
+                              entry.model,
                             ),
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
+                            subtitle: entry.description.isNotEmpty
+                                ? entry.description
+                                : (entry.isDefault
+                                    ? 'Codex 当前默认模型'
+                                    : 'Codex 原生模型'),
+                          ),
+                        )
+                        .toList()
+                    : _claudeModelChoices;
+                final hasSelectedPreset = modelOptions.any(
+                  (option) => option.value == selectedModel,
+                );
+                final selectedCatalogEntry = isCodex
+                    ? controller.codexModelCatalogEntry(selectedModel)
+                    : null;
+                final effortOptions = isCodex
+                    ? controller.codexReasoningEffortOptionsForModel(
+                        selectedModel,
+                      )
+                    : const <CodexReasoningEffortOption>[];
+                if (isCodex && effortOptions.isNotEmpty) {
+                  selectedEffort =
+                      controller.preferredCodexReasoningEffortForModel(
+                    selectedModel,
+                    fallback: selectedEffort,
+                  );
+                }
+                final showEffortStep =
+                    isCodex && sheetStep == _ModelSwitcherStep.effort;
+                return FractionallySizedBox(
+                  heightFactor: 0.7,
+                  child: ClipRRect(
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(28)),
+                    child: Material(
+                      color: theme.colorScheme.surface,
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          16,
+                          8,
+                          16,
+                          24 + MediaQuery.of(context).viewInsets.bottom,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
                               children: [
-                                for (final effort in _codexReasoningEfforts)
-                                  ChoiceChip(
-                                    label: Text(effort.toUpperCase()),
-                                    selected: selectedEffort == effort,
-                                    onSelected: (_) => setSheetState(() {
-                                      selectedEffort = effort;
+                                if (showEffortStep)
+                                  IconButton(
+                                    onPressed: () => setSheetState(() {
+                                      sheetStep = _ModelSwitcherStep.model;
                                     }),
+                                    tooltip: '返回模型列表',
+                                    icon: const Icon(Icons.arrow_back_ios_new),
+                                  )
+                                else
+                                  const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    showEffortStep ? '选择推理强度' : '选择模型',
+                                    style: theme.textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                                if (isCodex)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: theme
+                                          .colorScheme.surfaceContainerHigh,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      showEffortStep ? '2 / 2' : '1 / 2',
+                                      style:
+                                          theme.textTheme.labelMedium?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
                                   ),
                               ],
                             ),
-                          ],
-                        ] else ...[
-                          Expanded(
-                            child: Center(
-                              child: Text(
-                                '当前引擎暂不支持模型快捷切换。',
-                                style: theme.textTheme.bodyMedium,
+                            const SizedBox(height: 6),
+                            Text(
+                              supportsModels
+                                  ? showEffortStep
+                                      ? '当前模型为 ${controller.codexModelDisplayLabel(selectedModel)}，选择后将用于下一次 Codex 启动。'
+                                      : '当前为 ${isCodex ? 'Codex' : 'Claude'} 模式，切换后的配置会用于下一次 AI 启动。'
+                                  : '当前模式暂不支持快捷切换模型。',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
                               ),
                             ),
-                          ),
-                        ],
-                        const Spacer(),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: !supportsModels
-                                ? null
-                                : () async {
-                                    await controller.updateAiModelSelection(
-                                      model: selectedModel,
-                                      reasoningEffort: selectedEffort,
-                                    );
-                                    if (context.mounted) {
-                                      Navigator.of(context).pop();
-                                    }
-                                  },
-                            icon: const Icon(Icons.model_training_outlined),
-                            label: Text(
-                              engine == 'codex'
-                                  ? '应用 ${selectedModel.toUpperCase()} · ${selectedEffort.toUpperCase()}'
-                                  : '应用 ${selectedModel.toUpperCase()}',
+                            const SizedBox(height: 14),
+                            Expanded(
+                              child: supportsModels
+                                  ? AnimatedSwitcher(
+                                      duration:
+                                          const Duration(milliseconds: 220),
+                                      transitionBuilder: (child, animation) =>
+                                          FadeTransition(
+                                        opacity: animation,
+                                        child: SlideTransition(
+                                          position: Tween<Offset>(
+                                            begin: const Offset(0.08, 0),
+                                            end: Offset.zero,
+                                          ).animate(animation),
+                                          child: child,
+                                        ),
+                                      ),
+                                      child: showEffortStep
+                                          ? SingleChildScrollView(
+                                              key: const ValueKey(
+                                                'model-switcher-effort',
+                                              ),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Container(
+                                                    width: double.infinity,
+                                                    padding:
+                                                        const EdgeInsets.all(
+                                                      14,
+                                                    ),
+                                                    decoration: BoxDecoration(
+                                                      color: theme.colorScheme
+                                                          .surfaceContainerLow,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                        16,
+                                                      ),
+                                                    ),
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        Text(
+                                                          controller
+                                                              .codexModelDisplayLabel(
+                                                            selectedModel,
+                                                          ),
+                                                          style: theme.textTheme
+                                                              .titleMedium
+                                                              ?.copyWith(
+                                                            fontWeight:
+                                                                FontWeight.w800,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                          height: 6,
+                                                        ),
+                                                        Text(
+                                                          selectedCatalogEntry
+                                                                      ?.description
+                                                                      .trim()
+                                                                      .isNotEmpty ==
+                                                                  true
+                                                              ? selectedCatalogEntry!
+                                                                  .description
+                                                              : '当前选择的 Codex 模型',
+                                                          style: theme.textTheme
+                                                              .bodySmall
+                                                              ?.copyWith(
+                                                            color: theme
+                                                                .colorScheme
+                                                                .onSurfaceVariant,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 18),
+                                                  Text(
+                                                    '推理强度',
+                                                    style: theme
+                                                        .textTheme.titleSmall
+                                                        ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 10),
+                                                  if (selectedCatalogEntry !=
+                                                          null &&
+                                                      effortOptions.isNotEmpty)
+                                                    Wrap(
+                                                      spacing: 8,
+                                                      runSpacing: 8,
+                                                      children: [
+                                                        for (final option
+                                                            in effortOptions)
+                                                          ChoiceChip(
+                                                            label: Text(
+                                                              option
+                                                                  .reasoningEffort
+                                                                  .toUpperCase(),
+                                                            ),
+                                                            selected:
+                                                                selectedEffort ==
+                                                                    option
+                                                                        .reasoningEffort,
+                                                            onSelected: (_) =>
+                                                                setSheetState(
+                                                              () {
+                                                                selectedEffort =
+                                                                    option
+                                                                        .reasoningEffort;
+                                                              },
+                                                            ),
+                                                          ),
+                                                      ],
+                                                    )
+                                                  else ...[
+                                                    Text(
+                                                      selectedModel
+                                                              .trim()
+                                                              .isEmpty
+                                                          ? '先选择一个 Codex 模型。'
+                                                          : '当前保存的模型不在 Codex 原生目录中，因此这里只保留已保存强度，不展示额外原生选项。',
+                                                      style: theme
+                                                          .textTheme.bodySmall
+                                                          ?.copyWith(
+                                                        color: theme.colorScheme
+                                                            .onSurfaceVariant,
+                                                      ),
+                                                    ),
+                                                    if (selectedEffort
+                                                        .trim()
+                                                        .isNotEmpty) ...[
+                                                      const SizedBox(height: 8),
+                                                      ChoiceChip(
+                                                        label: Text(
+                                                          selectedEffort
+                                                              .toUpperCase(),
+                                                        ),
+                                                        selected: true,
+                                                        onSelected: null,
+                                                      ),
+                                                    ],
+                                                  ],
+                                                ],
+                                              ),
+                                            )
+                                          : SingleChildScrollView(
+                                              key: const ValueKey(
+                                                'model-switcher-model',
+                                              ),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  if (isCodex &&
+                                                      controller
+                                                          .codexModelCatalogLoading) ...[
+                                                    Row(
+                                                      children: [
+                                                        SizedBox(
+                                                          width: 16,
+                                                          height: 16,
+                                                          child:
+                                                              CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            color: theme
+                                                                .colorScheme
+                                                                .primary,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 10,
+                                                        ),
+                                                        Expanded(
+                                                          child: Text(
+                                                            controller
+                                                                    .codexModelCatalogMessage
+                                                                    .trim()
+                                                                    .isNotEmpty
+                                                                ? controller
+                                                                    .codexModelCatalogMessage
+                                                                : 'Codex 原生模型目录同步中...',
+                                                            style: theme
+                                                                .textTheme
+                                                                .bodySmall
+                                                                ?.copyWith(
+                                                              color: theme
+                                                                  .colorScheme
+                                                                  .onSurfaceVariant,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(height: 14),
+                                                  ],
+                                                  Text(
+                                                    '模型',
+                                                    style: theme
+                                                        .textTheme.titleSmall
+                                                        ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 10),
+                                                  if (isCodex &&
+                                                      !controller
+                                                          .codexModelCatalogLoading &&
+                                                      modelOptions.isEmpty) ...[
+                                                    Container(
+                                                      width: double.infinity,
+                                                      padding:
+                                                          const EdgeInsets.all(
+                                                        14,
+                                                      ),
+                                                      decoration: BoxDecoration(
+                                                        color: theme.colorScheme
+                                                            .surfaceContainerLow,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(16),
+                                                      ),
+                                                      child: Text(
+                                                        controller
+                                                                .codexModelCatalogMessage
+                                                                .trim()
+                                                                .isNotEmpty
+                                                            ? controller
+                                                                .codexModelCatalogMessage
+                                                            : '暂未拿到 Codex 原生模型目录。',
+                                                        style: theme
+                                                            .textTheme.bodySmall
+                                                            ?.copyWith(
+                                                          color: theme
+                                                              .colorScheme
+                                                              .onSurfaceVariant,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 10),
+                                                  ],
+                                                  Wrap(
+                                                    spacing: 10,
+                                                    runSpacing: 10,
+                                                    children: [
+                                                      if (!hasSelectedPreset &&
+                                                          selectedModel
+                                                              .trim()
+                                                              .isNotEmpty)
+                                                        _ModelChoiceCard(
+                                                          title: controller
+                                                              .aiModelSheetSummary(
+                                                            engine,
+                                                            selectedModel,
+                                                            selectedEffort,
+                                                          ),
+                                                          subtitle: isCodex
+                                                              ? '当前为已保存配置；未出现在 Codex 原生目录中'
+                                                              : '当前为已保存配置的自定义模型',
+                                                          selected: true,
+                                                          onTap: () =>
+                                                              setSheetState(
+                                                            () {
+                                                              if (isCodex) {
+                                                                sheetStep =
+                                                                    _ModelSwitcherStep
+                                                                        .effort;
+                                                              }
+                                                            },
+                                                          ),
+                                                        ),
+                                                      for (final option
+                                                          in modelOptions)
+                                                        _ModelChoiceCard(
+                                                          title: option.title,
+                                                          subtitle:
+                                                              option.subtitle,
+                                                          selected:
+                                                              selectedModel ==
+                                                                  option.value,
+                                                          onTap: () =>
+                                                              setSheetState(
+                                                            () {
+                                                              selectedModel =
+                                                                  option.value;
+                                                              if (isCodex) {
+                                                                selectedEffort =
+                                                                    controller
+                                                                        .preferredCodexReasoningEffortForModel(
+                                                                  option.value,
+                                                                  fallback:
+                                                                      selectedEffort,
+                                                                );
+                                                                sheetStep =
+                                                                    _ModelSwitcherStep
+                                                                        .effort;
+                                                              }
+                                                            },
+                                                          ),
+                                                        ),
+                                                    ],
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                    )
+                                  : Center(
+                                      child: Text(
+                                        '当前引擎暂不支持模型快捷切换。',
+                                        style: theme.textTheme.bodyMedium,
+                                      ),
+                                    ),
                             ),
-                          ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: !supportsModels ||
+                                        selectedModel.trim().isEmpty
+                                    ? null
+                                    : showEffortStep
+                                        ? () async {
+                                            await controller
+                                                .updateAiModelSelection(
+                                              model: selectedModel,
+                                              reasoningEffort: selectedEffort,
+                                            );
+                                            if (context.mounted) {
+                                              Navigator.of(context).pop();
+                                            }
+                                          }
+                                        : isCodex
+                                            ? () => setSheetState(() {
+                                                  selectedEffort = controller
+                                                      .preferredCodexReasoningEffortForModel(
+                                                    selectedModel,
+                                                    fallback: selectedEffort,
+                                                  );
+                                                  sheetStep =
+                                                      _ModelSwitcherStep.effort;
+                                                })
+                                            : () async {
+                                                await controller
+                                                    .updateAiModelSelection(
+                                                  model: selectedModel,
+                                                  reasoningEffort:
+                                                      selectedEffort,
+                                                );
+                                                if (context.mounted) {
+                                                  Navigator.of(context).pop();
+                                                }
+                                              },
+                                icon: Icon(
+                                  showEffortStep
+                                      ? Icons.model_training_outlined
+                                      : Icons.arrow_forward_rounded,
+                                ),
+                                label: Text(
+                                  showEffortStep
+                                      ? '应用 ${controller.aiModelSheetSummary(engine, selectedModel, selectedEffort)}'
+                                      : isCodex
+                                          ? '继续选择强度'
+                                          : '应用 ${selectedModel.toUpperCase()}',
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ),
+                );
+              },
             );
           },
         );
@@ -1197,6 +1560,11 @@ class _ContextSelectionBar extends StatelessWidget {
   }
 }
 
+enum _ModelSwitcherStep {
+  model,
+  effort,
+}
+
 class _ModelChoice {
   const _ModelChoice({
     required this.value,
@@ -1236,35 +1604,6 @@ const List<_ModelChoice> _claudeModelChoices = <_ModelChoice>[
     subtitle: '规划优先，适合前期拆解与复杂执行计划',
   ),
 ];
-
-const List<_ModelChoice> _codexModelChoices = <_ModelChoice>[
-  _ModelChoice(
-    value: 'gpt-5-codex',
-    title: 'GPT-5-Codex',
-    subtitle: '当前默认的 Codex 工作模型',
-  ),
-  _ModelChoice(
-    value: 'gpt-5',
-    title: 'GPT-5',
-    subtitle: '通用型 GPT-5，适合更广泛的文本任务',
-  ),
-];
-
-const List<String> _codexReasoningEfforts = <String>[
-  'low',
-  'medium',
-  'high',
-];
-
-String _aiModelSheetSummary(
-    String engine, String model, String reasoningEffort) {
-  switch (engine) {
-    case 'codex':
-      return '${model.toUpperCase()} · ${reasoningEffort.toUpperCase()}';
-    default:
-      return model.toUpperCase();
-  }
-}
 
 class _ModelChoiceCard extends StatelessWidget {
   const _ModelChoiceCard({

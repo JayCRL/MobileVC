@@ -565,6 +565,7 @@ type RuntimeInfoItem struct {
 	Status    string `json:"status,omitempty"`
 	Available bool   `json:"available"`
 	Detail    string `json:"detail,omitempty"`
+	Meta      any    `json:"meta,omitempty"`
 }
 
 type RuntimeProcessItem struct {

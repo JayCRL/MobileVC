@@ -763,6 +763,159 @@ void main() {
       expect(controller.config.codexReasoningEffort, 'high');
     });
 
+    test('runtime_info /model 会保留 Codex xhigh 推理强度', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+      await controller.connect();
+
+      service.emit(
+        RuntimeInfoResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'runtime_info_result'},
+          query: 'model',
+          items: const [
+            RuntimeInfoItem(
+              label: 'active_ai',
+              value: 'gpt-5.4 · XHIGH',
+              available: true,
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.config.codexModel, 'gpt-5.4');
+      expect(controller.config.codexReasoningEffort, 'xhigh');
+      expect(controller.commandBarModelSummary, 'GPT-5.4 · XHIGH');
+    });
+
+    test('请求 Codex 原生模型目录会发送 codex_models 查询', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.requestCodexModelCatalog();
+
+      expect(controller.codexModelCatalogLoading, isTrue);
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.first['action'], 'runtime_info');
+      expect(service.sentPayloads.first['query'], 'codex_models');
+    });
+
+    test('codex_models 结果会填充动态 Codex 模型目录且不覆盖普通 runtime info', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+      await controller.connect();
+
+      service.emit(
+        RuntimeInfoResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'runtime_info_result'},
+          query: 'context',
+          items: const [
+            RuntimeInfoItem(
+              label: 'cwd',
+              value: '.',
+              available: true,
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+      expect(controller.runtimeInfo?.query, 'context');
+
+      service.emit(
+        RuntimeInfoResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'runtime_info_result'},
+          query: 'codex_models',
+          message: '已同步 1 个 Codex 原生模型，可用于 Flutter 侧动态选择。',
+          items: const [
+            RuntimeInfoItem(
+              label: 'gpt-5.4',
+              value: 'GPT-5.4',
+              status: 'default',
+              available: true,
+              detail: '旗舰推理模型',
+              meta: {
+                'id': 'model-1',
+                'model': 'gpt-5.4',
+                'displayName': 'GPT-5.4',
+                'description': '旗舰推理模型',
+                'defaultReasoningEffort': 'high',
+                'supportedReasoningEfforts': [
+                  'minimal',
+                  'low',
+                  'medium',
+                  'high',
+                  'xhigh',
+                ],
+                'reasoningEffortOptions': [
+                  {
+                    'reasoningEffort': 'minimal',
+                    'description': '最轻',
+                  },
+                  {
+                    'reasoningEffort': 'low',
+                    'description': '较快',
+                  },
+                  {
+                    'reasoningEffort': 'medium',
+                    'description': '平衡',
+                  },
+                  {
+                    'reasoningEffort': 'high',
+                    'description': '深入',
+                  },
+                  {
+                    'reasoningEffort': 'xhigh',
+                    'description': '最强',
+                  },
+                ],
+                'isDefault': true,
+                'hidden': false,
+              },
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.runtimeInfo?.query, 'context');
+      expect(controller.codexModelCatalogLoading, isFalse);
+      expect(controller.codexModelCatalogMessage, contains('已同步 1 个'));
+      expect(controller.codexModelCatalog, hasLength(1));
+      expect(controller.codexModelCatalog.first.model, 'gpt-5.4');
+      expect(controller.codexModelDisplayLabel('gpt-5.4'), 'GPT-5.4');
+      expect(
+        controller
+            .codexReasoningEffortOptionsForModel('gpt-5.4')
+            .map((item) => item.reasoningEffort)
+            .toList(),
+        <String>['minimal', 'low', 'medium', 'high', 'xhigh'],
+      );
+      expect(
+        controller.preferredCodexReasoningEffortForModel(
+          'gpt-5.4',
+          fallback: 'xhigh',
+        ),
+        'xhigh',
+      );
+    });
+
     test('手动应用 Codex 配置后不会被旧运行时模型回填覆盖', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -848,6 +1001,30 @@ void main() {
         codexService.sentPayloads[0]['cmd'],
         'codex -m gpt-5.4 --config model_reasoning_effort=high',
       );
+    });
+
+    test('Codex xhigh 配置会带入启动命令', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+      await controller.saveConfig(
+        controller.config.copyWith(
+          engine: 'codex',
+          codexModel: 'gpt-5.4',
+          codexReasoningEffort: 'xhigh',
+        ),
+      );
+
+      await controller.connect();
+      service.sentPayloads.clear();
+      controller.sendInputText('codex');
+
+      expect(
+        service.sentPayloads[0]['cmd'],
+        'codex -m gpt-5.4 --config model_reasoning_effort=xhigh',
+      );
+      expect(controller.commandBarModelSummary, 'GPT-5.4 · XHIGH');
     });
 
     test('sendInputText 在 Claude 模式下继续普通文本时走 input 而不是新的 exec', () async {
@@ -1380,7 +1557,37 @@ void main() {
       expect(controller.selectedSessionId, 'session-new');
     });
 
-    test('恢复态 runtime meta 不会直接进入活跃 Claude 模式', () async {
+    test('恢复历史会话时，历史 markdown 卡片默认关闭打字机动画', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-new',
+          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(id: 'session-new', title: '新会话'),
+          logEntries: const [
+            HistoryLogEntry(
+              kind: 'markdown',
+              message: '这是恢复出来的历史回复',
+              timestamp: '2026-01-01T00:00:00Z',
+            ),
+          ],
+          resumeRuntimeMeta: const RuntimeMeta(command: 'claude'),
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.timeline, hasLength(1));
+      expect(controller.timeline.single.kind, 'markdown');
+      expect(controller.timeline.single.animateBody, isFalse);
+    });
+
+    test('恢复态 runtime meta 会直接恢复 AI continuation 模式', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1402,12 +1609,13 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.inClaudeMode, isFalse);
+      expect(controller.inClaudeMode, isTrue);
+      expect(controller.shouldShowClaudeMode, isTrue);
       expect(controller.effectiveCwd, '/workspace/history');
       expect(controller.currentMeta.cwd, '/workspace/history');
     });
 
-    test('加载可恢复历史会话后，普通输入不会误走 Claude continuation', () async {
+    test('加载可恢复历史会话后，普通输入会直接走 Claude continuation', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1433,8 +1641,115 @@ void main() {
       controller.sendInputText('hello');
 
       expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'input');
+      expect(service.sentPayloads.single['data'], 'hello\n');
+    });
+
+    test('新建会话会清空旧 continuation 状态，首条 codex 输入重新走 exec', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-old',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(id: 'session-old', title: '旧会话'),
+          logEntries: const [
+            HistoryLogEntry(
+              kind: 'user',
+              text: '继续处理旧问题',
+              timestamp: '2026-04-01T10:00:00Z',
+            ),
+          ],
+          rawTerminalByStream: const {'stdout': 'old stdout'},
+          terminalExecutions: const [
+            TerminalExecution(
+              executionId: 'exec-old',
+              command: 'claude',
+              stdout: 'old stdout',
+            ),
+          ],
+          sessionContext: const SessionContext(enabledSkillNames: ['ios']),
+          canResume: true,
+          resumeRuntimeMeta: const RuntimeMeta(
+            engine: 'claude',
+            command: 'claude --resume session-old',
+            claudeLifecycle: 'resumable',
+          ),
+        ),
+      );
+      service.emit(
+        RuntimeInfoResultEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 1)),
+          sessionId: 'session-old',
+          runtimeMeta: const RuntimeMeta(
+            engine: 'claude',
+            command: 'claude --resume session-old',
+            claudeLifecycle: 'resumable',
+          ),
+          raw: const {'type': 'runtime_info_result'},
+          query: 'context',
+        ),
+      );
+      service.emit(
+        PromptRequestEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 2)),
+          sessionId: 'session-old',
+          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'prompt_request'},
+          message: '请输入补充说明',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.shouldShowClaudeMode, isTrue);
+      expect(controller.awaitInput, isTrue);
+      expect(controller.timeline, isNotEmpty);
+      expect(controller.terminalStdout, 'old stdout');
+      expect(controller.runtimeInfo, isNotNull);
+      expect(controller.sessionContext.enabledSkillNames, contains('ios'));
+
+      service.sentPayloads.clear();
+      service.emit(
+        SessionCreatedEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_created'},
+          summary: const SessionSummary(id: 'session-new', title: '新会话'),
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.selectedSessionId, 'session-new');
+      expect(controller.timeline, isEmpty);
+      expect(controller.awaitInput, isFalse);
+      expect(controller.shouldShowClaudeMode, isFalse);
+      expect(controller.canResumeCurrentSession, isFalse);
+      expect(controller.runtimeInfo, isNull);
+      expect(controller.terminalStdout, isEmpty);
+      expect(controller.terminalExecutions, isEmpty);
+      expect(controller.sessionContext.enabledSkillNames, isEmpty);
+
+      final refreshActions = service.sentPayloads
+          .map((item) => (item['action'] ?? '').toString())
+          .toList();
+      expect(refreshActions, contains('session_context_get'));
+      expect(refreshActions, contains('permission_rule_list'));
+
+      service.sentPayloads.clear();
+      controller.sendInputText('codex');
+
+      expect(service.sentPayloads, hasLength(1));
       expect(service.sentPayloads.single['action'], 'exec');
-      expect(service.sentPayloads.single['cmd'], 'hello');
+      expect(
+        (service.sentPayloads.single['cmd'] ?? '').toString(),
+        startsWith('codex'),
+      );
     });
   });
 
@@ -1541,6 +1856,46 @@ void main() {
       await _flushEvents();
 
       expect(service.sentPayloads, isEmpty);
+      expect(controller.sessions, hasLength(1));
+      expect(controller.sessions.single.id, 'session-current');
+    });
+
+    test('session_list_result 缺少当前新建会话时，仍保留本地选中项', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionCreatedEvent(
+          timestamp: _timestamp,
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_created'},
+          summary:
+              const SessionSummary(id: 'session-current', title: 'Current'),
+        ),
+      );
+      await _flushEvents();
+
+      service.emit(
+        SessionListResultEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_list_result'},
+          items: const [
+            SessionSummary(id: 'session-other', title: 'Other'),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(
+        controller.sessions.map((item) => item.id).toList(),
+        ['session-current', 'session-other'],
+      );
+      expect(controller.selectedSessionId, 'session-current');
     });
 
     test('历史 terminal entry 优先用 text，并可恢复成 markdown', () async {

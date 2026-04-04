@@ -524,6 +524,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			switchRuntimeSession(record.Summary.ID)
 			emit(newSessionHistoryEventFromRecord(record))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
+			if restored := restoredAgentStateEventFromRecord(record); restored != nil {
+				emit(*restored)
+			}
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
 		case "session_delete":
 			var req protocol.SessionDeleteRequestEvent
@@ -576,6 +579,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emit(newSessionHistoryEventFromRecord(record))
+			if restored := restoredAgentStateEventFromRecord(record); restored != nil {
+				emit(*restored)
+			}
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
 		case "session_context_get":
 			if strings.TrimSpace(selectedSessionID) == "" {
@@ -1632,6 +1638,11 @@ func readProjectionFromSessionStore(sessionStore store.Store, ctx context.Contex
 		return store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
 	}
 	record, err := sessionStore.GetSession(ctx, sessionID)
+	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		fallbackCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		record, err = sessionStore.GetSession(fallbackCtx, sessionID)
+	}
 	if err != nil {
 		logx.Warn("ws", "read projection from session store failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 		return store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
@@ -2834,6 +2845,95 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 	)
 }
 
+func restoredAgentStateEventFromRecord(record store.SessionRecord) *protocol.AgentStateEvent {
+	projection := normalizeProjectionSnapshot(record.Projection)
+	runtimeMeta := protocol.MergeRuntimeMeta(projection.Controller.ActiveMeta, protocol.RuntimeMeta{
+		ResumeSessionID: firstNonEmptyString(
+			projection.Controller.ResumeSession,
+			projection.Controller.ActiveMeta.ResumeSessionID,
+			projection.Runtime.ResumeSessionID,
+		),
+		Command: firstNonEmptyString(
+			projection.Controller.CurrentCommand,
+			projection.Controller.ActiveMeta.Command,
+			projection.Runtime.Command,
+		),
+		Engine: firstNonEmptyString(
+			projection.Controller.ActiveMeta.Engine,
+			projection.Runtime.Engine,
+		),
+		CWD: firstNonEmptyString(
+			projection.Controller.ActiveMeta.CWD,
+			projection.Runtime.CWD,
+		),
+		PermissionMode: firstNonEmptyString(
+			projection.Controller.ActiveMeta.PermissionMode,
+			projection.Runtime.PermissionMode,
+		),
+		ClaudeLifecycle: normalizeProjectionLifecycle(
+			firstNonEmptyString(
+				projection.Controller.ClaudeLifecycle,
+				projection.Controller.ActiveMeta.ClaudeLifecycle,
+				projection.Runtime.ClaudeLifecycle,
+			),
+			firstNonEmptyString(
+				projection.Controller.ResumeSession,
+				projection.Controller.ActiveMeta.ResumeSessionID,
+				projection.Runtime.ResumeSessionID,
+			),
+		),
+	})
+	state := projection.Controller.State
+	if state == "" {
+		switch strings.TrimSpace(runtimeMeta.ClaudeLifecycle) {
+		case "waiting_input":
+			state = session.ControllerStateWaitInput
+		case "starting", "active":
+			state = session.ControllerStateThinking
+		case "resumable":
+			state = session.ControllerStateIdle
+		}
+	}
+	if state == "" {
+		return nil
+	}
+	awaitInput := state == session.ControllerStateWaitInput
+	currentStepMessage := ""
+	if projection.CurrentStep != nil {
+		currentStepMessage = projection.CurrentStep.Message
+	}
+	message := firstNonEmptyString(projection.Controller.LastStep, currentStepMessage)
+	switch state {
+	case session.ControllerStateWaitInput:
+		message = firstNonEmptyString(message, "等待输入")
+	case session.ControllerStateThinking:
+		message = firstNonEmptyString(message, "思考中")
+	case session.ControllerStateRunningTool:
+		message = firstNonEmptyString(message, "执行工具中")
+	case session.ControllerStateIdle:
+		if strings.TrimSpace(runtimeMeta.ResumeSessionID) == "" &&
+			strings.TrimSpace(runtimeMeta.ClaudeLifecycle) == "" {
+			return nil
+		}
+		message = firstNonEmptyString(message, "会话已暂停，可继续对话")
+	default:
+		if strings.TrimSpace(message) == "" {
+			return nil
+		}
+	}
+	event := protocol.NewAgentStateEvent(
+		record.Summary.ID,
+		string(state),
+		message,
+		awaitInput,
+		runtimeMeta.Command,
+		projection.Controller.LastStep,
+		projection.Controller.LastTool,
+	)
+	event.RuntimeMeta = runtimeMeta
+	return &event
+}
+
 func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store.ProjectionSnapshot, bool) {
 	snapshot = normalizeProjectionSnapshot(snapshot)
 	switch e := event.(type) {
@@ -3506,9 +3606,7 @@ func loadSessionRecord(ctx context.Context, sessionStore store.Store, sessionID 
 	if nativeErr == nil {
 		record := codexsync.MirrorRecord(thread)
 		if existingErr == nil {
-			record.Projection.SessionContext = existing.Projection.SessionContext
-			record.Projection.SkillCatalogMeta = existing.Projection.SkillCatalogMeta
-			record.Projection.MemoryCatalogMeta = existing.Projection.MemoryCatalogMeta
+			record = mergeCodexMirrorRecord(record, existing)
 		}
 		if _, upsertErr := sessionStore.UpsertSession(ctx, record); upsertErr != nil {
 			logx.Warn("ws", "upsert codex mirror session failed: sessionID=%s err=%v", sessionID, upsertErr)
@@ -3520,4 +3618,211 @@ func loadSessionRecord(ctx context.Context, sessionStore store.Store, sessionID 
 		return existing, nil
 	}
 	return store.SessionRecord{}, fmt.Errorf("codex session not found and no valid cache: %w", nativeErr)
+}
+
+func mergeCodexMirrorRecord(fresh store.SessionRecord, existing store.SessionRecord) store.SessionRecord {
+	fresh.Projection = mergeCodexMirrorProjection(fresh.Projection, existing.Projection)
+	fresh.Summary.CreatedAt = laterNonZeroTime(fresh.Summary.CreatedAt, existing.Summary.CreatedAt)
+	fresh.Summary.UpdatedAt = laterNonZeroTime(fresh.Summary.UpdatedAt, existing.Summary.UpdatedAt)
+	fresh.Summary.Runtime = mergeStoreSessionRuntime(fresh.Summary.Runtime, fresh.Projection.Runtime)
+	if fresh.Summary.Runtime.Source == "" {
+		fresh.Summary.Runtime.Source = "codex-native"
+	}
+	fresh.Summary.Source = firstNonEmptyString(fresh.Summary.Source, existing.Summary.Source, "codex-native")
+	fresh.Summary.External = true
+	return fresh
+}
+
+func mergeCodexMirrorProjection(fresh store.ProjectionSnapshot, existing store.ProjectionSnapshot) store.ProjectionSnapshot {
+	fresh = normalizeProjectionSnapshot(fresh)
+	existing = normalizeProjectionSnapshot(existing)
+
+	fresh.LogEntries = mergeSnapshotLogEntries(fresh.LogEntries, existing.LogEntries)
+	fresh.RawTerminalByStream = mergeRawTerminalByStream(fresh.RawTerminalByStream, existing.RawTerminalByStream)
+	fresh.TerminalExecutions = mergeTerminalExecutions(fresh.TerminalExecutions, existing.TerminalExecutions)
+	fresh.Controller = mergeControllerSnapshot(fresh.Controller, existing.Controller)
+	fresh.Runtime = mergeStoreSessionRuntime(fresh.Runtime, existing.Runtime)
+	if fresh.Runtime.Source == "" {
+		fresh.Runtime.Source = "codex-native"
+	}
+
+	if len(existing.Diffs) > 0 {
+		fresh.Diffs = existing.Diffs
+	}
+	if existing.CurrentDiff != nil {
+		fresh.CurrentDiff = existing.CurrentDiff
+	}
+	if len(existing.ReviewGroups) > 0 {
+		fresh.ReviewGroups = existing.ReviewGroups
+	}
+	if existing.ActiveReviewGroup != nil {
+		fresh.ActiveReviewGroup = existing.ActiveReviewGroup
+	}
+	if existing.CurrentStep != nil {
+		fresh.CurrentStep = existing.CurrentStep
+	}
+	if existing.LatestError != nil {
+		fresh.LatestError = existing.LatestError
+	}
+	fresh.SessionContext = existing.SessionContext
+	fresh.PermissionRulesEnabled = existing.PermissionRulesEnabled
+	if len(existing.PermissionRules) > 0 {
+		fresh.PermissionRules = existing.PermissionRules
+	}
+	fresh.SkillCatalogMeta = existing.SkillCatalogMeta
+	fresh.MemoryCatalogMeta = existing.MemoryCatalogMeta
+
+	return normalizeProjectionSnapshot(fresh)
+}
+
+func mergeStoreSessionRuntime(base store.SessionRuntime, overlay store.SessionRuntime) store.SessionRuntime {
+	return store.SessionRuntime{
+		ResumeSessionID: firstNonEmptyString(overlay.ResumeSessionID, base.ResumeSessionID),
+		Command:         firstNonEmptyString(overlay.Command, base.Command),
+		Engine:          firstNonEmptyString(overlay.Engine, base.Engine),
+		PermissionMode:  firstNonEmptyString(overlay.PermissionMode, base.PermissionMode),
+		CWD:             firstNonEmptyString(overlay.CWD, base.CWD),
+		ClaudeLifecycle: firstNonEmptyString(overlay.ClaudeLifecycle, base.ClaudeLifecycle),
+		Source:          firstNonEmptyString(overlay.Source, base.Source),
+	}
+}
+
+func mergeControllerSnapshot(base session.ControllerSnapshot, overlay session.ControllerSnapshot) session.ControllerSnapshot {
+	merged := base
+	merged.SessionID = firstNonEmptyString(overlay.SessionID, base.SessionID)
+	if overlay.State != "" {
+		merged.State = overlay.State
+	}
+	merged.CurrentCommand = firstNonEmptyString(overlay.CurrentCommand, base.CurrentCommand)
+	merged.LastStep = firstNonEmptyString(overlay.LastStep, base.LastStep)
+	merged.LastTool = firstNonEmptyString(overlay.LastTool, base.LastTool)
+	merged.ResumeSession = firstNonEmptyString(overlay.ResumeSession, base.ResumeSession)
+	merged.ClaudeLifecycle = firstNonEmptyString(overlay.ClaudeLifecycle, base.ClaudeLifecycle)
+	merged.LastUserInput = firstNonEmptyString(overlay.LastUserInput, base.LastUserInput)
+	merged.ActiveMeta = protocol.MergeRuntimeMeta(base.ActiveMeta, overlay.ActiveMeta)
+	if len(overlay.RecentDiffs) > 0 {
+		merged.RecentDiffs = overlay.RecentDiffs
+	}
+	if overlay.RecentDiff.ContextID != "" || overlay.RecentDiff.Path != "" || overlay.RecentDiff.Title != "" {
+		merged.RecentDiff = overlay.RecentDiff
+	}
+	if len(overlay.ReviewGroups) > 0 {
+		merged.ReviewGroups = overlay.ReviewGroups
+	}
+	merged.ActiveReviewID = firstNonEmptyString(overlay.ActiveReviewID, base.ActiveReviewID)
+	return merged
+}
+
+func mergeSnapshotLogEntries(base []store.SnapshotLogEntry, overlay []store.SnapshotLogEntry) []store.SnapshotLogEntry {
+	if len(base) == 0 {
+		return append([]store.SnapshotLogEntry(nil), overlay...)
+	}
+	merged := append([]store.SnapshotLogEntry(nil), base...)
+	seen := make(map[string]struct{}, len(base)+len(overlay))
+	for _, entry := range base {
+		seen[snapshotLogEntryKey(entry)] = struct{}{}
+	}
+	for _, entry := range overlay {
+		key := snapshotLogEntryKey(entry)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		merged = append(merged, entry)
+		seen[key] = struct{}{}
+	}
+	return merged
+}
+
+func snapshotLogEntryKey(entry store.SnapshotLogEntry) string {
+	contextKey := ""
+	if entry.Context != nil {
+		contextKey = strings.Join([]string{
+			entry.Context.ID,
+			entry.Context.Type,
+			entry.Context.Message,
+			entry.Context.Path,
+			entry.Context.Title,
+			entry.Context.Timestamp,
+		}, "\x1f")
+	}
+	exitCode := ""
+	if entry.ExitCode != nil {
+		exitCode = fmt.Sprintf("%d", *entry.ExitCode)
+	}
+	return strings.Join([]string{
+		entry.Kind,
+		entry.Message,
+		entry.Label,
+		entry.Timestamp,
+		entry.Stream,
+		entry.Text,
+		entry.ExecutionID,
+		entry.Phase,
+		exitCode,
+		contextKey,
+	}, "\x1f")
+}
+
+func mergeRawTerminalByStream(base map[string]string, overlay map[string]string) map[string]string {
+	merged := map[string]string{"stdout": "", "stderr": ""}
+	for _, stream := range []string{"stdout", "stderr"} {
+		merged[stream] = firstNonEmptyString(overlay[stream], base[stream])
+	}
+	return merged
+}
+
+func mergeTerminalExecutions(base []store.TerminalExecution, overlay []store.TerminalExecution) []store.TerminalExecution {
+	if len(base) == 0 {
+		return append([]store.TerminalExecution(nil), overlay...)
+	}
+	merged := append([]store.TerminalExecution(nil), base...)
+	indexByID := make(map[string]int, len(merged))
+	for i, item := range merged {
+		if strings.TrimSpace(item.ExecutionID) != "" {
+			indexByID[item.ExecutionID] = i
+		}
+	}
+	for _, item := range overlay {
+		if id := strings.TrimSpace(item.ExecutionID); id != "" {
+			if index, ok := indexByID[id]; ok {
+				current := merged[index]
+				merged[index] = store.TerminalExecution{
+					ExecutionID: id,
+					Command:     firstNonEmptyString(item.Command, current.Command),
+					CWD:         firstNonEmptyString(item.CWD, current.CWD),
+					StartedAt:   firstNonEmptyString(item.StartedAt, current.StartedAt),
+					FinishedAt:  firstNonEmptyString(item.FinishedAt, current.FinishedAt),
+					ExitCode:    firstNonNilInt(item.ExitCode, current.ExitCode),
+					Stdout:      firstNonEmptyString(item.Stdout, current.Stdout),
+					Stderr:      firstNonEmptyString(item.Stderr, current.Stderr),
+				}
+				continue
+			}
+			indexByID[id] = len(merged)
+		}
+		merged = append(merged, item)
+	}
+	return merged
+}
+
+func firstNonNilInt(values ...*int) *int {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func laterNonZeroTime(values ...time.Time) time.Time {
+	var latest time.Time
+	for _, value := range values {
+		if value.IsZero() {
+			continue
+		}
+		if latest.IsZero() || value.After(latest) {
+			latest = value
+		}
+	}
+	return latest
 }

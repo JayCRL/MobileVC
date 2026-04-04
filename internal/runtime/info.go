@@ -7,9 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	adbpkg "mobilevc/internal/adb"
 	"mobilevc/internal/protocol"
+	"mobilevc/internal/runner"
 )
 
 type Snapshot struct {
@@ -24,12 +26,15 @@ type Snapshot struct {
 }
 
 var runtimeInfoQueries = map[string]string{
-	"help":    "命令帮助",
-	"model":   "模型信息",
-	"cost":    "成本信息",
-	"context": "运行上下文",
-	"doctor":  "环境诊断",
+	"help":         "命令帮助",
+	"model":        "模型信息",
+	"codex_models": "Codex 模型目录",
+	"cost":         "成本信息",
+	"context":      "运行上下文",
+	"doctor":       "环境诊断",
 }
+
+var fetchCodexModelCatalog = runner.FetchCodexModelCatalog
 
 func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protocol.RuntimeInfoResultEvent, error) {
 	key := strings.TrimSpace(strings.ToLower(query))
@@ -51,6 +56,7 @@ func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protoco
 		return protocol.NewRuntimeInfoResultEvent(sessionID, key, title, "当前支持的 runtime info 查询与 slash command 概览。", false, []protocol.RuntimeInfoItem{
 			{Label: "help", Value: "列出 runtime_info 查询能力", Available: true, Status: "ready"},
 			{Label: "model", Value: "查看当前模型识别状态", Available: true, Status: "ready"},
+			{Label: "codex_models", Value: "查看 Codex 原生模型与推理强度目录", Available: true, Status: "ready"},
 			{Label: "cost", Value: "查看成本遥测接入状态", Available: true, Status: "ready"},
 			{Label: "context", Value: "查看当前 cwd / 会话 / 运行状态", Available: true, Status: "ready"},
 			{Label: "doctor", Value: "查看环境与连接诊断", Available: true, Status: "ready"},
@@ -65,6 +71,43 @@ func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protoco
 			Detail:    "当前项目尚未从 Claude / Gemini 流中稳定提取精确模型名，此处仅展示已知 AI CLI 上下文。",
 		}}
 		return protocol.NewRuntimeInfoResultEvent(sessionID, key, title, "模型信息为有限可见状态。", false, items), nil
+	case "codex_models":
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+
+		entries, err := fetchCodexModelCatalog(ctx, codexCatalogCommand(snapshot), cwd)
+		if err != nil {
+			return protocol.NewRuntimeInfoResultEvent(sessionID, key, title, fmt.Sprintf("Codex 原生模型目录拉取失败：%v", err), true, []protocol.RuntimeInfoItem{{
+				Label:     "codex_model_catalog",
+				Value:     "unavailable",
+				Available: false,
+				Status:    "missing",
+				Detail:    err.Error(),
+			}}), nil
+		}
+
+		items := make([]protocol.RuntimeInfoItem, 0, len(entries))
+		for _, entry := range entries {
+			if strings.TrimSpace(entry.Model) == "" {
+				continue
+			}
+			items = append(items, protocol.RuntimeInfoItem{
+				Label:     entry.Model,
+				Value:     fallbackValue(strings.TrimSpace(entry.DisplayName), entry.Model),
+				Available: true,
+				Status:    ternary(entry.IsDefault, "default", "ready"),
+				Detail:    strings.TrimSpace(entry.Description),
+				Meta:      entry,
+			})
+		}
+		return protocol.NewRuntimeInfoResultEvent(
+			sessionID,
+			key,
+			title,
+			fmt.Sprintf("已同步 %d 个 Codex 原生模型，可用于 Flutter 侧动态选择。", len(items)),
+			false,
+			items,
+		), nil
 	case "cost":
 		items := []protocol.RuntimeInfoItem{{
 			Label:     "telemetry",
@@ -123,6 +166,22 @@ func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protoco
 	default:
 		return protocol.RuntimeInfoResultEvent{}, fmt.Errorf("unsupported runtime_info query: %s", query)
 	}
+}
+
+func codexCatalogCommand(snapshot Snapshot) string {
+	command := strings.TrimSpace(snapshot.ActiveMeta.Command)
+	if command == "" {
+		return "codex"
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return "codex"
+	}
+	head := strings.ToLower(strings.TrimSpace(fields[0]))
+	if head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\\codex`) || head == "codex.exe" || head == "codex.cmd" || head == "codex.ps1" {
+		return command
+	}
+	return "codex"
 }
 
 func detectModelValue(meta protocol.RuntimeMeta) string {

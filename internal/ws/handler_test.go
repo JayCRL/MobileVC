@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -451,11 +452,22 @@ func seedNativeCodexSessionFixture(t *testing.T, homeDir, cwd string) string {
 	threadID := "019d3c6b-c538-7420-8028-345f7dd70d63"
 	createdAt := time.Date(2026, 3, 29, 10, 0, 0, 0, time.UTC).Unix()
 	updatedAt := time.Date(2026, 3, 30, 11, 30, 0, 0, time.UTC).Unix()
+	rolloutPath := filepath.Join(
+		codexDir,
+		"sessions",
+		"2026",
+		"03",
+		"30",
+		"rollout-2026-03-30T11-30-00-"+threadID+".jsonl",
+	)
+	if err := os.MkdirAll(filepath.Dir(rolloutPath), 0o755); err != nil {
+		t.Fatalf("mkdir rollout dir: %v", err)
+	}
 	dbPath := filepath.Join(codexDir, "state_5.sqlite")
 	sql := strings.Join([]string{
-		"create table if not exists threads (id text primary key, cwd text, title text, model text, source text, model_provider text, created_at integer, updated_at integer, first_user_message text, archived integer default 0);",
+		"create table if not exists threads (id text primary key, cwd text, title text, model text, source text, model_provider text, created_at integer, updated_at integer, first_user_message text, rollout_path text, archived integer default 0);",
 		"delete from threads;",
-		"insert into threads (id, cwd, title, model, source, model_provider, created_at, updated_at, first_user_message, archived) values ('019d3c6b-c538-7420-8028-345f7dd70d63', '" + strings.ReplaceAll(cwd, "'", "''") + "', 'Desktop Codex Session', 'gpt-5-codex', 'codex', 'openai', " + int64String(createdAt) + ", " + int64String(updatedAt) + ", 'Fix the README wording', 0);",
+		"insert into threads (id, cwd, title, model, source, model_provider, created_at, updated_at, first_user_message, rollout_path, archived) values ('019d3c6b-c538-7420-8028-345f7dd70d63', '" + strings.ReplaceAll(cwd, "'", "''") + "', 'Desktop Codex Session', 'gpt-5-codex', 'codex', 'openai', " + int64String(createdAt) + ", " + int64String(updatedAt) + ", 'Fix the README wording', '" + strings.ReplaceAll(rolloutPath, "'", "''") + "', 0);",
 	}, " ")
 	cmd := exec.Command("sqlite3", dbPath, sql)
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -476,6 +488,54 @@ func seedNativeCodexSessionFixture(t *testing.T, homeDir, cwd string) string {
 	for _, line := range historyLines {
 		if err := encoder.Encode(line); err != nil {
 			t.Fatalf("write history fixture: %v", err)
+		}
+	}
+
+	rolloutFile, err := os.Create(rolloutPath)
+	if err != nil {
+		t.Fatalf("create rollout fixture: %v", err)
+	}
+	defer rolloutFile.Close()
+	rolloutEncoder := json.NewEncoder(rolloutFile)
+	rolloutLines := []map[string]any{
+		{
+			"timestamp": time.Unix(createdAt, 0).UTC().Format(time.RFC3339),
+			"type":      "event_msg",
+			"payload": map[string]any{
+				"type":    "task_started",
+				"turn_id": "turn-1",
+			},
+		},
+		{
+			"timestamp": time.Unix(createdAt, 0).UTC().Add(time.Second).Format(time.RFC3339),
+			"type":      "event_msg",
+			"payload": map[string]any{
+				"type":    "user_message",
+				"message": "Fix the README wording",
+			},
+		},
+		{
+			"timestamp": time.Unix(updatedAt, 0).UTC().Add(-time.Second).Format(time.RFC3339),
+			"type":      "event_msg",
+			"payload": map[string]any{
+				"type":    "agent_message",
+				"message": "README wording updated. Mobile labels aligned too.",
+				"phase":   "final_answer",
+			},
+		},
+		{
+			"timestamp": time.Unix(updatedAt, 0).UTC().Format(time.RFC3339),
+			"type":      "event_msg",
+			"payload": map[string]any{
+				"type":               "task_complete",
+				"turn_id":            "turn-1",
+				"last_agent_message": "README wording updated. Mobile labels aligned too.",
+			},
+		},
+	}
+	for _, line := range rolloutLines {
+		if err := rolloutEncoder.Encode(line); err != nil {
+			t.Fatalf("write rollout fixture: %v", err)
 		}
 	}
 	return threadID
@@ -1398,6 +1458,76 @@ func TestHandlerSessionContextUpdateAndRestore(t *testing.T) {
 	reviewState := readUntilType(t, conn, protocol.EventTypeReviewState)
 	if reviewState["type"] != protocol.EventTypeReviewState {
 		t.Fatalf("expected review_state after session_load, got %#v", reviewState)
+	}
+}
+
+func TestHandlerSessionLoadRestoresAgentStateFromProjection(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "restore-agent-session")
+
+	record, err := h.SessionStore.GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	record.Projection = normalizeProjectionSnapshot(store.ProjectionSnapshot{
+		CurrentStep: &store.SnapshotContext{
+			Message: "继续处理中",
+		},
+		Controller: session.ControllerSnapshot{
+			SessionID:       sessionID,
+			State:           session.ControllerStateThinking,
+			CurrentCommand:  "codex",
+			LastStep:        "继续处理中",
+			ResumeSession:   "thread-restore",
+			ClaudeLifecycle: "active",
+			ActiveMeta: protocol.RuntimeMeta{
+				Command:         "codex",
+				Engine:          "codex",
+				CWD:             "/tmp/project",
+				ResumeSessionID: "thread-restore",
+				ClaudeLifecycle: "active",
+			},
+		},
+		Runtime: store.SessionRuntime{
+			ResumeSessionID: "thread-restore",
+			Command:         "codex",
+			Engine:          "codex",
+			CWD:             "/tmp/project",
+			ClaudeLifecycle: "active",
+			Source:          "mobilevc",
+		},
+		RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+	})
+	if _, err := h.SessionStore.SaveProjection(context.Background(), sessionID, record.Projection); err != nil {
+		t.Fatalf("save projection: %v", err)
+	}
+
+	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_load"},
+		SessionID:   sessionID,
+	}); err != nil {
+		t.Fatalf("write session_load request: %v", err)
+	}
+
+	history := readUntilSessionHistory(t, conn)
+	if history["sessionId"] != sessionID {
+		t.Fatalf("expected session history for %q, got %#v", sessionID, history)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeReviewState)
+	agentState := readUntilType(t, conn, protocol.EventTypeAgentState)
+	requireAgentState(t, agentState, "THINKING", false)
+	if agentState["resumeSessionId"] != "thread-restore" {
+		t.Fatalf("expected restored resumeSessionId, got %#v", agentState)
+	}
+	if agentState["claudeLifecycle"] != "active" {
+		t.Fatalf("expected restored claudeLifecycle, got %#v", agentState)
 	}
 }
 
@@ -4333,6 +4463,31 @@ func TestHandlerSessionLoadMirrorsNativeCodexSession(t *testing.T) {
 	if resumeMeta["engine"] != "codex" || resumeMeta["resumeSessionId"] != threadID {
 		t.Fatalf("expected codex resume runtime meta, got %#v", resumeMeta)
 	}
+	entries, ok := history["logEntries"].([]any)
+	if !ok || len(entries) == 0 {
+		t.Fatalf("expected mirrored native history log entries, got %#v", history)
+	}
+	foundAssistant := false
+	for _, raw := range entries {
+		entry, _ := raw.(map[string]any)
+		if entry["kind"] == "markdown" &&
+			strings.Contains(
+				fmt.Sprint(entry["message"], entry["text"]),
+				"Mobile labels aligned",
+			) {
+			foundAssistant = true
+			break
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected assistant markdown entry mirrored from rollout, got %#v", entries)
+	}
+	_ = readUntilType(t, conn, protocol.EventTypeReviewState)
+	agentState := readUntilType(t, conn, protocol.EventTypeAgentState)
+	requireAgentState(t, agentState, "IDLE", false)
+	if agentState["claudeLifecycle"] != "resumable" {
+		t.Fatalf("expected native mirrored session to restore resumable lifecycle, got %#v", agentState)
+	}
 
 	record, err := h.SessionStore.GetSession(context.Background(), mirrorID)
 	if err != nil {
@@ -4340,6 +4495,118 @@ func TestHandlerSessionLoadMirrorsNativeCodexSession(t *testing.T) {
 	}
 	if record.Summary.Source != "codex-native" || !record.Summary.External {
 		t.Fatalf("expected mirrored native summary flags, got %#v", record.Summary)
+	}
+	if !strings.Contains(record.Summary.LastPreview, "Mobile labels aligned") {
+		t.Fatalf("expected mirrored preview to include assistant reply, got %#v", record.Summary)
+	}
+}
+
+func TestHandlerSessionLoadPreservesCachedCodexMirrorRuntimeState(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := filepath.Join(homeDir, "workspace", "MobileVC")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+
+	thread, err := codexsync.FindNativeThread(context.Background(), threadID)
+	if err != nil {
+		t.Fatalf("find native thread: %v", err)
+	}
+	record := codexsync.MirrorRecord(thread)
+	if _, err := h.SessionStore.UpsertSession(context.Background(), record); err != nil {
+		t.Fatalf("upsert mirror session: %v", err)
+	}
+	if _, err := h.SessionStore.SaveProjection(context.Background(), record.Summary.ID, store.ProjectionSnapshot{
+		RawTerminalByStream: map[string]string{"stdout": "cached assistant output", "stderr": ""},
+		LogEntries: append(record.Projection.LogEntries, store.SnapshotLogEntry{
+			Kind:      "markdown",
+			Message:   "Cached MobileVC follow-up",
+			Timestamp: "2026-04-04T02:05:00Z",
+		}),
+		Runtime: store.SessionRuntime{
+			ResumeSessionID: threadID,
+			Command:         "codex resume " + threadID,
+			Engine:          "codex",
+			CWD:             projectDir,
+			PermissionMode:  "default",
+			ClaudeLifecycle: "waiting_input",
+			Source:          "codex-native",
+		},
+		Controller: session.ControllerSnapshot{
+			SessionID:       record.Summary.ID,
+			State:           session.ControllerStateWaitInput,
+			CurrentCommand:  "codex resume " + threadID,
+			ResumeSession:   threadID,
+			ClaudeLifecycle: "waiting_input",
+			ActiveMeta: protocol.RuntimeMeta{
+				ResumeSessionID: threadID,
+				Command:         "codex resume " + threadID,
+				Engine:          "codex",
+				CWD:             projectDir,
+				PermissionMode:  "default",
+				ClaudeLifecycle: "waiting_input",
+			},
+		},
+		CurrentStep: &store.SnapshotContext{
+			ID:      "step-cached",
+			Type:    "step",
+			Message: "等待输入",
+			Status:  "WAIT_INPUT",
+			Title:   "等待输入",
+		},
+	}); err != nil {
+		t.Fatalf("save cached mirror projection: %v", err)
+	}
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	mirrorID := "codex-thread:" + threadID
+	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_load"},
+		SessionID:   mirrorID,
+		CWD:         projectDir,
+	}); err != nil {
+		t.Fatalf("write session load request: %v", err)
+	}
+
+	history := readUntilSessionHistory(t, conn)
+	logEntries, ok := history["logEntries"].([]any)
+	if !ok {
+		t.Fatalf("expected history log entries, got %#v", history)
+	}
+	foundCachedLog := false
+	for _, raw := range logEntries {
+		entry, _ := raw.(map[string]any)
+		if entry["message"] == "Cached MobileVC follow-up" {
+			foundCachedLog = true
+			break
+		}
+	}
+	if !foundCachedLog {
+		t.Fatalf("expected cached MobileVC log entry to survive native mirror reload, got %#v", logEntries)
+	}
+	resumeMeta, _ := history["resumeRuntimeMeta"].(map[string]any)
+	if resumeMeta["claudeLifecycle"] != "waiting_input" {
+		t.Fatalf("expected cached waiting_input lifecycle on history, got %#v", resumeMeta)
+	}
+
+	_ = readUntilType(t, conn, protocol.EventTypeReviewState)
+	agentState := readUntilType(t, conn, protocol.EventTypeAgentState)
+	if agentState["state"] != "WAIT_INPUT" {
+		t.Fatalf("expected restored WAIT_INPUT state, got %#v", agentState)
+	}
+	if agentState["msg"] != "等待输入" {
+		t.Fatalf("expected restored waiting message, got %#v", agentState)
 	}
 }
 

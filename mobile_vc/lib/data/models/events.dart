@@ -1446,6 +1446,7 @@ class TimelineItem {
     this.status = '',
     this.meta = const RuntimeMeta(),
     this.context,
+    this.animateBody = true,
   });
 
   final String id;
@@ -1457,4 +1458,5 @@ class TimelineItem {
   final String status;
   final RuntimeMeta meta;
   final HistoryContext? context;
+  final bool animateBody;
 }

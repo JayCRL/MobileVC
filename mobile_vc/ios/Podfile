@@ -26,6 +26,48 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 
 flutter_ios_podfile_setup
 
+# Flutter 3.27 still includes some dev-only plugins in the generated iOS plugin
+# list. Exclude test plugins from app pods so release archives don't embed them.
+def flutter_install_plugin_pods(application_path = nil, relative_symlink_dir, platform)
+  application_path ||= File.dirname(defined_in_file.realpath) if respond_to?(:defined_in_file)
+  raise 'Could not find application path' unless application_path
+
+  symlink_dir = File.expand_path(relative_symlink_dir, application_path)
+  system('rm', '-rf', symlink_dir)
+
+  symlink_plugins_dir = File.expand_path('plugins', symlink_dir)
+  system('mkdir', '-p', symlink_plugins_dir)
+
+  plugins_file = File.join(application_path, '..', '.flutter-plugins-dependencies')
+  dependencies_hash = flutter_parse_plugins_file(plugins_file)
+  plugin_pods = flutter_get_plugins_list(dependencies_hash, platform)
+  swift_package_manager_enabled = flutter_get_swift_package_manager_enabled(dependencies_hash)
+
+  if platform == 'ios'
+    excluded_plugin_names = %w[integration_test patrol]
+    plugin_pods = plugin_pods.reject { |plugin_hash| excluded_plugin_names.include?(plugin_hash['name']) }
+  end
+
+  plugin_pods.each do |plugin_hash|
+    plugin_name = plugin_hash['name']
+    plugin_path = plugin_hash['path']
+    has_native_build = plugin_hash.fetch('native_build', true)
+    shared_darwin_source = plugin_hash.fetch('shared_darwin_source', false)
+    platform_directory = shared_darwin_source ? 'darwin' : platform
+    next unless plugin_name && plugin_path && has_native_build
+
+    symlink = File.join(symlink_plugins_dir, plugin_name)
+    File.symlink(plugin_path, symlink)
+
+    relative = flutter_relative_path_from_podfile(symlink)
+    swift_package_exists = File.exist?(File.join(relative, platform_directory, plugin_name, 'Package.swift'))
+    next if swift_package_manager_enabled && swift_package_exists
+    next if swift_package_exists && !File.exist?(File.join(relative, platform_directory, plugin_name + '.podspec'))
+
+    pod plugin_name, path: File.join(relative, platform_directory)
+  end
+end
+
 target 'Runner' do
   use_frameworks!
   use_modular_headers!
