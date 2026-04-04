@@ -6,6 +6,9 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"mobilevc/internal/protocol"
+	"mobilevc/internal/session"
 )
 
 func TestFileStoreDeleteSessionRemovesRecordAndIndex(t *testing.T) {
@@ -106,6 +109,108 @@ func TestFileStorePersistsSessionContext(t *testing.T) {
 	}
 	if record.Projection.SkillCatalogMeta.SyncState != CatalogSyncStateSynced {
 		t.Fatalf("expected skill catalog meta persisted, got %#v", record.Projection.SkillCatalogMeta)
+	}
+}
+
+func TestFileStoreSaveProjectionPersistsExternalCodexSessionState(t *testing.T) {
+	fs, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	createdAt := mustTime("2026-04-04T02:00:00Z")
+	record := SessionRecord{
+		Summary: SessionSummary{
+			ID:        "codex-thread:thread-1",
+			Title:     "Codex 会话",
+			CreatedAt: createdAt,
+			UpdatedAt: createdAt,
+			Runtime: SessionRuntime{
+				ResumeSessionID: "thread-1",
+				Command:         "codex",
+				Engine:          "codex",
+				CWD:             "/tmp/project",
+				ClaudeLifecycle: "resumable",
+				Source:          "codex-native",
+			},
+			Source:   "codex-native",
+			External: true,
+		},
+		Projection: ProjectionSnapshot{
+			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+			Runtime: SessionRuntime{
+				ResumeSessionID: "thread-1",
+				Command:         "codex",
+				Engine:          "codex",
+				CWD:             "/tmp/project",
+				ClaudeLifecycle: "resumable",
+				Source:          "codex-native",
+			},
+			Controller: session.ControllerSnapshot{
+				SessionID:      "codex-thread:thread-1",
+				ResumeSession:  "thread-1",
+				CurrentCommand: "codex",
+			},
+		},
+	}
+	if _, err := fs.UpsertSession(context.Background(), record); err != nil {
+		t.Fatalf("upsert external session: %v", err)
+	}
+
+	summary, err := fs.SaveProjection(context.Background(), record.Summary.ID, ProjectionSnapshot{
+		RawTerminalByStream: map[string]string{"stdout": "assistant output", "stderr": ""},
+		LogEntries: []SnapshotLogEntry{
+			{Kind: "user", Message: "继续这个会话", Timestamp: "2026-04-04T02:01:00Z"},
+			{Kind: "markdown", Message: "等待你的确认", Timestamp: "2026-04-04T02:01:01Z"},
+		},
+		Runtime: SessionRuntime{
+			ResumeSessionID: "thread-1",
+			Command:         "codex resume thread-1",
+			Engine:          "codex",
+			CWD:             "/tmp/project",
+			PermissionMode:  "default",
+			ClaudeLifecycle: "waiting_input",
+		},
+		Controller: session.ControllerSnapshot{
+			SessionID:       "codex-thread:thread-1",
+			State:           session.ControllerStateWaitInput,
+			CurrentCommand:  "codex resume thread-1",
+			ResumeSession:   "thread-1",
+			ClaudeLifecycle: "waiting_input",
+			ActiveMeta: protocol.RuntimeMeta{
+				ResumeSessionID: "thread-1",
+				Command:         "codex resume thread-1",
+				Engine:          "codex",
+				CWD:             "/tmp/project",
+				PermissionMode:  "default",
+				ClaudeLifecycle: "waiting_input",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save external projection: %v", err)
+	}
+
+	if summary.EntryCount != 2 {
+		t.Fatalf("expected external entry count to update, got %#v", summary)
+	}
+	if summary.Runtime.ClaudeLifecycle != "waiting_input" {
+		t.Fatalf("expected external runtime lifecycle to persist, got %#v", summary.Runtime)
+	}
+	record, err = fs.GetSession(context.Background(), record.Summary.ID)
+	if err != nil {
+		t.Fatalf("get external session: %v", err)
+	}
+	if len(record.Projection.LogEntries) != 2 {
+		t.Fatalf("expected external log entries persisted, got %#v", record.Projection.LogEntries)
+	}
+	if record.Projection.Controller.State != session.ControllerStateWaitInput {
+		t.Fatalf("expected external controller state persisted, got %#v", record.Projection.Controller)
+	}
+	if record.Projection.Runtime.Command != "codex resume thread-1" {
+		t.Fatalf("expected external runtime command persisted, got %#v", record.Projection.Runtime)
+	}
+	if record.Projection.RawTerminalByStream["stdout"] != "assistant output" {
+		t.Fatalf("expected external raw terminal output persisted, got %#v", record.Projection.RawTerminalByStream)
 	}
 }
 

@@ -301,6 +301,43 @@ func extractCodexModelFlag(command string) string {
 	return ""
 }
 
+func extractCodexReasoningEffortFlag(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "-c", "--config":
+			if i+1 < len(fields) {
+				if value, ok := extractCodexConfigOverride(fields[i+1], "model_reasoning_effort"); ok {
+					return value
+				}
+				i++
+			}
+		default:
+			if value, ok := extractCodexConfigOverride(fields[i], "model_reasoning_effort"); ok {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func extractCodexConfigOverride(token string, key string) (string, bool) {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return "", false
+	}
+	prefix := strings.ToLower(strings.TrimSpace(key)) + "="
+	if !strings.HasPrefix(strings.ToLower(trimmed), prefix) {
+		return "", false
+	}
+	value := strings.TrimSpace(trimmed[len(prefix):])
+	value = strings.Trim(value, `"'`)
+	if value == "" {
+		return "", false
+	}
+	return value, true
+}
+
 func extractCodexInitialPrompt(command string) string {
 	fields := strings.Fields(strings.TrimSpace(command))
 	if len(fields) <= 1 || !isCodexCommandName(fields[0]) {

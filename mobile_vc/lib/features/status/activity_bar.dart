@@ -4,6 +4,8 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../core/format/time_formatters.dart';
+
 class ActivityBar extends StatefulWidget {
   const ActivityBar({
     super.key,
@@ -20,7 +22,8 @@ class ActivityBar extends StatefulWidget {
   State<ActivityBar> createState() => _ActivityBarState();
 }
 
-class _ActivityBarState extends State<ActivityBar> with SingleTickerProviderStateMixin {
+class _ActivityBarState extends State<ActivityBar>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1800),
@@ -62,16 +65,20 @@ class _ActivityBarState extends State<ActivityBar> with SingleTickerProviderStat
           const SizedBox(width: 4),
           Expanded(
             child: Text(
-              widget.toolLabel.isEmpty ? widget.phaseLabel : '${widget.phaseLabel} · ${widget.toolLabel}',
+              widget.toolLabel.isEmpty
+                  ? widget.phaseLabel
+                  : '${widget.phaseLabel} · ${widget.toolLabel}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
             ),
           ),
           const SizedBox(width: 10),
           Text(
-            '${widget.elapsedSeconds}s',
-            style: theme.textTheme.labelMedium?.copyWith(color: scheme.primary, fontWeight: FontWeight.w700),
+            formatElapsedClock(widget.elapsedSeconds),
+            style: theme.textTheme.labelMedium
+                ?.copyWith(color: scheme.primary, fontWeight: FontWeight.w700),
           ),
         ],
       ),

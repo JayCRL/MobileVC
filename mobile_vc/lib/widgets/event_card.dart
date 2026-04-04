@@ -102,6 +102,18 @@ class EventCard extends StatelessWidget {
   }
 
   Widget _buildMarkdownText(BuildContext context, _EventCardStyle style) {
+    if (!item.animateBody) {
+      return _BodyContent(
+        item: item,
+        style: style.copyWith(
+          background: Colors.transparent,
+          border: Colors.transparent,
+          shadow: Colors.transparent,
+          iconBackground: Colors.transparent,
+        ),
+        plain: true,
+      );
+    }
     return _TypewriterMarkdown(
       item: item,
       style: style.copyWith(

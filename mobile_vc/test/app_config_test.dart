@@ -117,5 +117,16 @@ void main() {
       expect(config.modelForEngine('codex'), 'gpt-5.4');
       expect(config.reasoningEffortForEngine('codex'), 'high');
     });
+
+    test('codex xhigh reasoning effort is preserved', () {
+      const config = AppConfig(
+        engine: 'codex',
+        codexModel: 'gpt-5.4',
+        codexReasoningEffort: 'xhigh',
+      );
+
+      expect(config.modelForEngine('codex'), 'gpt-5.4');
+      expect(config.reasoningEffortForEngine('codex'), 'xhigh');
+    });
   });
 }

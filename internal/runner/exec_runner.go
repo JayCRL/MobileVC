@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -15,8 +14,6 @@ import (
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/session"
 )
-
-const scannerMaxTokenSize = 1024 * 1024
 
 type ExecRunner struct {
 	mu          sync.Mutex
@@ -144,20 +141,18 @@ func (r *ExecRunner) streamOutput(wg *sync.WaitGroup, reader io.Reader, sessionI
 	defer wg.Done()
 
 	parser := adapter.NewGenericParser()
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), scannerMaxTokenSize)
-
-	for scanner.Scan() {
-		for _, event := range parser.ParseLine(scanner.Text(), sessionID, stream) {
+	err := forEachLine(reader, func(line []byte) error {
+		for _, event := range parser.ParseLine(string(line), sessionID, stream) {
 			sendEvent(sink, attachExecutionMeta(event, executionID, stream))
 		}
-	}
+		return nil
+	})
 
 	for _, event := range parser.Flush(sessionID, stream) {
 		sendEvent(sink, attachExecutionMeta(event, executionID, stream))
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err != nil {
 		sendEvent(sink, protocol.ApplyRuntimeMeta(protocol.NewErrorEvent(sessionID, fmt.Sprintf("read %s: %v", stream, err), ""), protocol.RuntimeMeta{ExecutionID: executionID}))
 	}
 }

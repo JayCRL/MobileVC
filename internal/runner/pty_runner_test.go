@@ -1302,6 +1302,80 @@ func TestExtractCodexInitialPromptStripsResumeAndModelFlags(t *testing.T) {
 	}
 }
 
+func TestExtractCodexReasoningEffortFlagSupportsConfigOverride(t *testing.T) {
+	got := extractCodexReasoningEffortFlag(
+		`codex -m gpt-5.4 --config model_reasoning_effort="xhigh"`,
+	)
+	if got != "xhigh" {
+		t.Fatalf("expected xhigh reasoning effort, got %q", got)
+	}
+}
+
+func resolveNextPendingRPC(t *testing.T, app *codexAppSession, result any) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		app.mu.Lock()
+		var id string
+		for key := range app.pending {
+			id = key
+			break
+		}
+		app.mu.Unlock()
+		if id != "" {
+			resultRaw, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal pending rpc result: %v", err)
+			}
+			app.resolvePending(codexRPCMessage{
+				ID:     json.RawMessage(id),
+				Result: resultRaw,
+			})
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("timed out waiting for pending codex rpc call")
+}
+
+func TestCodexAppSessionTurnStartPassesReasoningEffort(t *testing.T) {
+	buf := &nopWriteCloser{}
+	app := &codexAppSession{
+		runner: NewPtyRunner(),
+		req: ExecRequest{
+			Command: "codex -m gpt-5.4 --config model_reasoning_effort=xhigh",
+		},
+		stdin: buf,
+	}
+	app.setThreadID("thread-123")
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- app.SendUserInput(context.Background(), []byte("hello\n"))
+	}()
+
+	resolveNextPendingRPC(t, app, map[string]any{
+		"turn": map[string]any{
+			"id": "turn-1",
+		},
+	})
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("send user input: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `"method":"turn/start"`) {
+		t.Fatalf("expected turn/start rpc call, got %q", output)
+	}
+	if !strings.Contains(output, `"model":"gpt-5.4"`) {
+		t.Fatalf("expected model override in turn/start payload, got %q", output)
+	}
+	if !strings.Contains(output, `"effort":"xhigh"`) {
+		t.Fatalf("expected reasoning effort override in turn/start payload, got %q", output)
+	}
+}
+
 func TestCodexAppSessionCoalescesAssistantDeltasBeforePrompt(t *testing.T) {
 	runner := NewPtyRunner()
 	var events []any
@@ -1400,6 +1474,48 @@ func TestCodexShouldIgnoreStderrKeepsPlainUserFacingErrors(t *testing.T) {
 	text := "tool execution failed: exit status 1"
 	if codexShouldIgnoreStderr(text) {
 		t.Fatalf("expected plain stderr to remain visible: %q", text)
+	}
+}
+
+func TestCodexAppSessionReadLoopHandlesLongJSONLines(t *testing.T) {
+	hugeDelta := strings.Repeat("x", 2*1024*1024)
+	params, err := json.Marshal(map[string]any{
+		"threadId": "thread-123",
+		"turnId":   "turn-1",
+		"itemId":   "item-1",
+		"delta":    hugeDelta,
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	message, err := json.Marshal(codexRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "item/agentMessage/delta",
+		Params:  params,
+	})
+	if err != nil {
+		t.Fatalf("marshal rpc message: %v", err)
+	}
+
+	var logs []protocol.LogEvent
+	app := &codexAppSession{
+		runner:    NewPtyRunner(),
+		sessionID: "s-codex-long-line",
+		sink: func(event any) {
+			if log, ok := event.(protocol.LogEvent); ok {
+				logs = append(logs, log)
+			}
+		},
+		pending: make(map[string]chan codexRPCResponse),
+	}
+
+	app.readLoop(context.Background(), strings.NewReader(string(message)+"\n"))
+
+	if len(logs) != 1 {
+		t.Fatalf("expected a single log event, got %d", len(logs))
+	}
+	if logs[0].Message != hugeDelta {
+		t.Fatalf("unexpected log size=%d want=%d", len(logs[0].Message), len(hugeDelta))
 	}
 }
 

@@ -5,6 +5,8 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../core/format/time_formatters.dart';
+
 class ActivityRunnerBar extends StatefulWidget {
   const ActivityRunnerBar({
     super.key,
@@ -124,7 +126,7 @@ class _ActivityRunnerBarState extends State<ActivityRunnerBar>
           const SizedBox(width: 12),
           if (widget.showElapsed)
             Text(
-              '${_displayElapsedSeconds}s',
+              formatElapsedClock(_displayElapsedSeconds),
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
                   color: scheme.primary, fontWeight: FontWeight.w700),
             ),
