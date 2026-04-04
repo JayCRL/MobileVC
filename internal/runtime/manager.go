@@ -21,6 +21,7 @@ var ErrRunnerNotInteractive = errors.New("runner is not ready for interactive in
 var ErrHotSwapUnsupportedRunner = errors.New("active runner cannot be hot-swapped")
 var ErrResumeSessionUnavailable = errors.New("resume session id is unavailable")
 var ErrResumeConversationNotFound = errors.New("resume conversation not found")
+var ErrPermissionRequestExpired = errors.New("permission request expired")
 
 const claudeSessionIDFlag = "--session-id"
 
