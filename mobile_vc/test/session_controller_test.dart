@@ -2238,6 +2238,62 @@ void main() {
       );
     });
 
+    test('codex 混合 stdout 分片会合并成单条回复并刷新通知预览', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      const meta = RuntimeMeta(
+        command: 'codex',
+        engine: 'codex',
+        executionId: 'exec-codex-mixed-1',
+        contextId: 'turn-mixed-1',
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: meta,
+          raw: const {'type': 'log'},
+          message: '**Code Updates**',
+          stream: 'stdout',
+        ),
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 120)),
+          sessionId: 'session-1',
+          runtimeMeta: meta,
+          raw: const {'type': 'log'},
+          message: '- Added permission fix.',
+          stream: 'stdout',
+        ),
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(milliseconds: 240)),
+          sessionId: 'session-1',
+          runtimeMeta: meta,
+          raw: const {'type': 'log'},
+          message: 'Push completed successfully.',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.timeline, hasLength(1));
+      expect(controller.timeline.single.kind, 'markdown');
+      expect(
+        controller.timeline.single.body,
+        '**Code Updates**\n- Added permission fix. Push completed successfully.',
+      );
+      expect(
+        controller.notificationSignal?.body,
+        '**Code Updates** - Added permission fix. Push completed successfully.',
+      );
+    });
+
     test('权限交接中的 signal killed 噪声不会进入 timeline', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);

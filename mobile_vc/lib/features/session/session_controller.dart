@@ -3728,19 +3728,22 @@ class SessionController extends ChangeNotifier {
     }
     if (_shouldMergeIntoPreviousTimelineItem(item)) {
       final previous = _timeline.removeLast();
-      _timeline.add(
-        TimelineItem(
-          id: previous.id,
-          kind: previous.kind,
-          timestamp: item.timestamp,
-          title: previous.title,
-          body: _mergeTimelineBodies(previous.body, item.body),
-          stream: previous.stream,
-          status: item.status.isNotEmpty ? item.status : previous.status,
-          meta: item.meta,
-          context: item.context ?? previous.context,
-          animateBody: previous.animateBody || item.animateBody,
-        ),
+      final mergedItem = TimelineItem(
+        id: previous.id,
+        kind: _mergedTimelineKind(previous, item),
+        timestamp: item.timestamp,
+        title: previous.title,
+        body: _mergeTimelineBodies(previous.body, item.body),
+        stream: previous.stream,
+        status: item.status.isNotEmpty ? item.status : previous.status,
+        meta: item.meta,
+        context: item.context ?? previous.context,
+        animateBody: previous.animateBody || item.animateBody,
+      );
+      _timeline.add(mergedItem);
+      _emitTimelineNotification(
+        mergedItem,
+        preserveExistingAssistantReply: true,
       );
       return;
     }
@@ -3748,20 +3751,44 @@ class SessionController extends ChangeNotifier {
     _emitTimelineNotification(item);
   }
 
-  bool _shouldMergeIntoPreviousTimelineItem(TimelineItem item) {
-    if (_timeline.isEmpty || item.kind != 'markdown') {
+  String _mergedTimelineKind(TimelineItem previous, TimelineItem next) {
+    if (_isAssistantReplyTimelineItem(previous) &&
+        _isAssistantReplyTimelineItem(next)) {
+      return 'markdown';
+    }
+    if (previous.kind == next.kind) {
+      return previous.kind;
+    }
+    return next.kind.isNotEmpty ? next.kind : previous.kind;
+  }
+
+  bool _isAssistantReplyTimelineItem(TimelineItem item) {
+    final body = item.body.trim();
+    if (body.isEmpty) {
       return false;
     }
-    final previous = _timeline.last;
-    if (previous.kind != 'markdown') {
+    if (item.stream.trim().toLowerCase() == 'stderr') {
       return false;
     }
+    if (item.kind == 'markdown') {
+      return true;
+    }
+    return _shouldPreferAssistantText(item.meta, body);
+  }
+
+  bool _shouldMergeTimelineBodies(TimelineItem previous, TimelineItem item) {
     if (previous.stream != item.stream) {
       return false;
     }
-    if (previous.title.isNotEmpty || item.title.isNotEmpty) {
-      return false;
+    final previousAssistant = _isAssistantReplyTimelineItem(previous);
+    final nextAssistant = _isAssistantReplyTimelineItem(item);
+    if (previous.kind == 'markdown' && item.kind == 'markdown') {
+      return true;
     }
+    return previousAssistant && nextAssistant;
+  }
+
+  bool _hasSameTimelineSource(TimelineItem previous, TimelineItem item) {
     final sameExecution =
         previous.meta.executionId.trim() == item.meta.executionId.trim();
     final sameContext =
@@ -3770,11 +3797,29 @@ class SessionController extends ChangeNotifier {
             item.meta.command.trim().toLowerCase() &&
         previous.meta.engine.trim().toLowerCase() ==
             item.meta.engine.trim().toLowerCase();
-    if (!(sameExecution || sameContext || sameCommand)) {
-      return false;
-    }
+    return sameExecution || sameContext || sameCommand;
+  }
+
+  bool _isMergeGapAcceptable(TimelineItem previous, TimelineItem item) {
     final gap = item.timestamp.difference(previous.timestamp).inMilliseconds;
     return gap >= 0 && gap <= 5000;
+  }
+
+  bool _shouldMergeIntoPreviousTimelineItem(TimelineItem item) {
+    if (_timeline.isEmpty) {
+      return false;
+    }
+    final previous = _timeline.last;
+    if (!_shouldMergeTimelineBodies(previous, item)) {
+      return false;
+    }
+    if (previous.title.isNotEmpty || item.title.isNotEmpty) {
+      return false;
+    }
+    if (!_hasSameTimelineSource(previous, item)) {
+      return false;
+    }
+    return _isMergeGapAcceptable(previous, item);
   }
 
   String _mergeTimelineBodies(String previous, String next) {
@@ -3787,14 +3832,12 @@ class SessionController extends ChangeNotifier {
     if (_endsWithWhitespace(previous) || _startsWithWhitespace(next)) {
       return '$previous$next';
     }
-    if (_endsWithSentencePunctuation(previous)) {
-      if (_startsWithBlockLikeMarkdown(next)) {
-        return '$previous\n\n$next';
-      }
-      if (!_startsWithClosingPunctuation(next) &&
-          !_boundaryHasCjk(previous, next)) {
-        return '$previous $next';
-      }
+    if (_startsWithBlockLikeMarkdown(next)) {
+      return previous.endsWith('\n') ? '$previous$next' : '$previous\n$next';
+    }
+    if (!_startsWithClosingPunctuation(next) &&
+        !_boundaryHasCjk(previous, next)) {
+      return '$previous $next';
     }
     return '$previous$next';
   }
@@ -3802,10 +3845,6 @@ class SessionController extends ChangeNotifier {
   bool _endsWithWhitespace(String value) => RegExp(r'\s$').hasMatch(value);
 
   bool _startsWithWhitespace(String value) => RegExp(r'^\s').hasMatch(value);
-
-  bool _endsWithSentencePunctuation(String value) {
-    return RegExp(r'[.!?。！？:：;；]$').hasMatch(value);
-  }
 
   bool _startsWithBlockLikeMarkdown(String value) {
     return RegExp(r'^(#{1,6}\s|[-*+]\s|>\s|```|\d+\.\s)').hasMatch(value);
@@ -5075,7 +5114,10 @@ class SessionController extends ChangeNotifier {
     _shouldSuppressNextActionNeededSignal = suppressNextSignal;
   }
 
-  void _emitTimelineNotification(TimelineItem item) {
+  void _emitTimelineNotification(
+    TimelineItem item, {
+    bool preserveExistingAssistantReply = false,
+  }) {
     final body = item.body.trim();
     if (body.isEmpty) {
       return;
@@ -5086,6 +5128,19 @@ class SessionController extends ChangeNotifier {
       _ => null,
     };
     if (type == null) {
+      return;
+    }
+    if (preserveExistingAssistantReply &&
+        type == AppNotificationType.assistantReply &&
+        _notificationSignal?.type == AppNotificationType.assistantReply) {
+      final current = _notificationSignal!;
+      _notificationSignal = AppNotificationSignal(
+        id: current.id,
+        type: current.type,
+        title: current.title,
+        body: _notificationPreview(body),
+        createdAt: current.createdAt,
+      );
       return;
     }
     _notificationSignal = AppNotificationSignal(

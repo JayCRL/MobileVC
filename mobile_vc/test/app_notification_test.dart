@@ -221,6 +221,75 @@ void main() {
 
     await controller.disposeController();
   });
+
+  test('inactive 过渡期收到分片回复会合并后再补发一条通知', () async {
+    final service = _FakeMobileVcWsService();
+    final controller = SessionController(service: service);
+    final notifications = _FakeLocalNotificationService();
+    final coordinator = AppNotificationCoordinator(
+      controller: controller,
+      notificationService: notifications,
+    );
+    await controller.initialize();
+    await controller.connect();
+    _bindSession(service);
+    await _flushEvents();
+    await coordinator.initialize();
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.inactive);
+
+    const meta = RuntimeMeta(
+      command: 'codex',
+      engine: 'codex',
+      executionId: 'exec-notify-1',
+      contextId: 'turn-notify-1',
+    );
+    service.emit(
+      LogEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: meta,
+        raw: const {'type': 'log'},
+        message: '**Code Updates**',
+        stream: 'stdout',
+      ),
+    );
+    service.emit(
+      LogEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 120)),
+        sessionId: 'session-1',
+        runtimeMeta: meta,
+        raw: const {'type': 'log'},
+        message: '- Added permission fix.',
+        stream: 'stdout',
+      ),
+    );
+    service.emit(
+      LogEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 240)),
+        sessionId: 'session-1',
+        runtimeMeta: meta,
+        raw: const {'type': 'log'},
+        message: 'Push completed successfully.',
+        stream: 'stdout',
+      ),
+    );
+    await _flushEvents();
+    coordinator.handleControllerChanged();
+    await _flushEvents();
+
+    expect(notifications.payloads, isEmpty);
+
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.paused);
+    await _flushEvents();
+
+    expect(notifications.payloads, hasLength(1));
+    expect(
+      notifications.payloads.single.body,
+      '**Code Updates** - Added permission fix. Push completed successfully.',
+    );
+
+    await controller.disposeController();
+  });
 }
 
 class _FakeLocalNotificationService implements LocalNotificationService {
