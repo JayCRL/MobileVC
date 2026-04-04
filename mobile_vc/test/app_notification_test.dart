@@ -222,6 +222,68 @@ void main() {
     await controller.disposeController();
   });
 
+  test('回复首段在前台、后续分片在后台时会对新增内容发通知', () async {
+    final service = _FakeMobileVcWsService();
+    final controller = SessionController(service: service);
+    final notifications = _FakeLocalNotificationService();
+    final coordinator = AppNotificationCoordinator(
+      controller: controller,
+      notificationService: notifications,
+    );
+    await controller.initialize();
+    await controller.connect();
+    _bindSession(service);
+    await _flushEvents();
+    await coordinator.initialize();
+
+    const meta = RuntimeMeta(
+      command: 'codex',
+      engine: 'codex',
+      executionId: 'exec-foreground-then-background',
+      contextId: 'turn-foreground-then-background',
+    );
+    service.emit(
+      LogEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: meta,
+        raw: const {'type': 'log'},
+        message: '我来帮你修复。',
+        stream: 'stdout',
+      ),
+    );
+    await _flushEvents();
+    coordinator.handleControllerChanged();
+    await _flushEvents();
+
+    expect(notifications.payloads, isEmpty);
+
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.paused);
+    await _flushEvents();
+
+    service.emit(
+      LogEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 120)),
+        sessionId: 'session-1',
+        runtimeMeta: meta,
+        raw: const {'type': 'log'},
+        message: '我已经定位到根因并开始修改。',
+        stream: 'stdout',
+      ),
+    );
+    await _flushEvents();
+    coordinator.handleControllerChanged();
+    await _flushEvents();
+
+    expect(notifications.payloads, hasLength(1));
+    expect(
+      notifications.payloads.single.body,
+      '我来帮你修复。我已经定位到根因并开始修改。',
+    );
+
+    await controller.disposeController();
+  });
+
   test('inactive 过渡期收到分片回复会合并后再补发一条通知', () async {
     final service = _FakeMobileVcWsService();
     final controller = SessionController(service: service);

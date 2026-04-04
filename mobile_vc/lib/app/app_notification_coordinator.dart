@@ -15,7 +15,7 @@ class AppNotificationCoordinator {
 
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   int _lastHandledSignalId = 0;
-  int _lastHandledNotificationId = 0;
+  String _lastHandledNotificationFingerprint = '';
   bool _initialized = false;
 
   bool get isAppForeground => _lifecycleState == AppLifecycleState.resumed;
@@ -88,11 +88,15 @@ class AppNotificationCoordinator {
 
   Future<void> _drainTimelineNotificationSignal() async {
     final signal = _controller.notificationSignal;
-    if (signal == null || signal.id == _lastHandledNotificationId) {
+    if (signal == null) {
+      return;
+    }
+    final fingerprint = _notificationFingerprint(signal);
+    if (fingerprint == _lastHandledNotificationFingerprint) {
       return;
     }
     if (isAppForeground) {
-      _lastHandledNotificationId = signal.id;
+      _lastHandledNotificationFingerprint = fingerprint;
       return;
     }
     if (!_initialized || !canShowBackgroundNotification) {
@@ -105,7 +109,7 @@ class AppNotificationCoordinator {
           body: signal.body,
         ),
       );
-      _lastHandledNotificationId = signal.id;
+      _lastHandledNotificationFingerprint = fingerprint;
     } catch (error, stack) {
       debugPrint('[startup] notification drain failed: $error');
       debugPrintStack(
@@ -113,5 +117,9 @@ class AppNotificationCoordinator {
         label: '[startup] notification drain stack',
       );
     }
+  }
+
+  String _notificationFingerprint(AppNotificationSignal signal) {
+    return '${signal.id}::${signal.type.name}::${signal.body}';
   }
 }
