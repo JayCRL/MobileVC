@@ -266,6 +266,7 @@ class HistoryLogEntry {
     this.timestamp = '',
     this.stream = '',
     this.text = '',
+    this.executionId = '',
     this.context,
   });
 
@@ -275,6 +276,7 @@ class HistoryLogEntry {
   final String timestamp;
   final String stream;
   final String text;
+  final String executionId;
   final HistoryContext? context;
 
   factory HistoryLogEntry.fromJson(Map<String, dynamic> json) {
@@ -285,6 +287,7 @@ class HistoryLogEntry {
       timestamp: (json['timestamp'] ?? '').toString(),
       stream: (json['stream'] ?? '').toString(),
       text: (json['text'] ?? '').toString(),
+      executionId: (json['executionId'] ?? '').toString(),
       context: json['context'] is Map<String, dynamic>
           ? HistoryContext.fromJson(json['context'] as Map<String, dynamic>)
           : null,
