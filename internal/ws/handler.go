@@ -3418,6 +3418,9 @@ func normalizeSessionCWD(raw string) string {
 	if err == nil {
 		trimmed = absPath
 	}
+	if resolved, err := filepath.EvalSymlinks(trimmed); err == nil && strings.TrimSpace(resolved) != "" {
+		trimmed = resolved
+	}
 	return filepath.Clean(trimmed)
 }
 
