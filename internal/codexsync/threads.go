@@ -430,6 +430,13 @@ func normalizePath(value string) string {
 	if trimmed == "" {
 		return ""
 	}
+	absPath, err := filepath.Abs(trimmed)
+	if err == nil {
+		trimmed = absPath
+	}
+	if resolved, err := filepath.EvalSymlinks(trimmed); err == nil && strings.TrimSpace(resolved) != "" {
+		trimmed = resolved
+	}
 	cleaned := filepath.Clean(trimmed)
 	return strings.TrimSuffix(cleaned, string(filepath.Separator))
 }
