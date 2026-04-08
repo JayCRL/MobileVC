@@ -222,6 +222,46 @@ void main() {
     await controller.disposeController();
   });
 
+  test('inactive 过渡期收到回复后直接恢复前台也会补发一条通知', () async {
+    final service = _FakeMobileVcWsService();
+    final controller = SessionController(service: service);
+    final notifications = _FakeLocalNotificationService();
+    final coordinator = AppNotificationCoordinator(
+      controller: controller,
+      notificationService: notifications,
+    );
+    await controller.initialize();
+    await controller.connect();
+    _bindSession(service);
+    await _flushEvents();
+    await coordinator.initialize();
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.inactive);
+
+    service.emit(
+      LogEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'log'},
+        message: '我已经在后台把任务处理完成了。',
+        stream: 'stdout',
+      ),
+    );
+    await _flushEvents();
+    coordinator.handleControllerChanged();
+    await _flushEvents();
+
+    expect(notifications.payloads, isEmpty);
+
+    coordinator.handleLifecycleStateChanged(AppLifecycleState.resumed);
+    await _flushEvents();
+
+    expect(notifications.payloads, hasLength(1));
+    expect(notifications.payloads.single.body, '我已经在后台把任务处理完成了。');
+
+    await controller.disposeController();
+  });
+
   test('回复首段在前台、后续分片在后台时会对新增内容发通知', () async {
     final service = _FakeMobileVcWsService();
     final controller = SessionController(service: service);

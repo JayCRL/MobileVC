@@ -482,7 +482,7 @@
       session: { id: '', claudeInteractiveActive: false, activeAI: 'claude', fastMode: storageGet(STORAGE_KEYS.fastMode, '') === '1', summaries: [], activeSessionId: storageGet(STORAGE_KEYS.activeSessionId, ''), canResumeCurrent: false },
       view: { current: 'auth', drawerOpen: false },
       workspace: { cwd: '.', items: [], highlightedFilePath: '' },
-      prompt: { awaitingInput: false, options: [], message: '' },
+      prompt: { awaitingInput: false, options: [], message: '', pendingPrompt: null, pendingInteraction: null, planQuestions: [], planAnswers: {}, planQuestionIndex: 0 },
       file: { activePath: '', requestedPath: '', content: '', loading: false, pendingReview: false, lang: '', encoding: 'utf-8', isText: true, error: '', viewMode: 'content' },
       ui: {
         terminalDrawerOpen: false,
@@ -496,7 +496,8 @@
     };
 
     const runtimeState = {
-      meta: { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') },
+      meta: { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), executionId: '', groupId: '', groupTitle: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits'), claudeLifecycle: '' },
+      phase: { phase: '', kind: '', message: '' },
       agentState: 'IDLE',
       agentStateMessage: ''
     };
@@ -558,6 +559,9 @@
     }
     function pendingDiffCount() {
       return projectionState.diffs.filter((item) => item?.pendingReview).length;
+    }
+    function hasPendingReview() {
+      return pendingDiffCount() > 0;
     }
     function joinPath(base, name) {
       if (!base || base === '.' || base === '/') return `${base === '/' ? '/' : ''}${name}`;
@@ -634,21 +638,27 @@
       return true;
     }
     function updateRuntimeMeta(payload = {}) {
+      const hasKey = (key) => Object.prototype.hasOwnProperty.call(payload, key);
+      const read = (key, fallback = '') => hasKey(key) ? String(payload[key] || '') : (runtimeState.meta[key] || fallback);
       runtimeState.meta = {
-        source: payload.source || runtimeState.meta.source || '',
-        skillName: payload.skillName || runtimeState.meta.skillName || '',
-        target: payload.target || runtimeState.meta.target || '',
-        targetType: payload.targetType || runtimeState.meta.targetType || '',
-        targetPath: payload.targetPath || runtimeState.meta.targetPath || '',
-        resultView: payload.resultView || runtimeState.meta.resultView || '',
-        resumeSessionId: payload.resumeSessionId || runtimeState.meta.resumeSessionId || '',
-        contextId: payload.contextId || runtimeState.meta.contextId || '',
-        contextTitle: payload.contextTitle || runtimeState.meta.contextTitle || '',
-        targetText: payload.targetText || runtimeState.meta.targetText || '',
-        command: payload.command || runtimeState.meta.command || '',
-        engine: payload.engine || runtimeState.meta.engine || '',
-        cwd: payload.cwd || runtimeState.meta.cwd || '',
-        permissionMode: payload.permissionMode || runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits')
+        source: read('source'),
+        skillName: read('skillName'),
+        target: read('target'),
+        targetType: read('targetType'),
+        targetPath: read('targetPath'),
+        resultView: read('resultView'),
+        resumeSessionId: read('resumeSessionId'),
+        executionId: read('executionId'),
+        groupId: read('groupId'),
+        groupTitle: read('groupTitle'),
+        contextId: read('contextId'),
+        contextTitle: read('contextTitle'),
+        targetText: read('targetText'),
+        command: read('command'),
+        engine: read('engine'),
+        cwd: read('cwd'),
+        permissionMode: read('permissionMode', storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits')),
+        claudeLifecycle: read('claudeLifecycle')
       };
     }
     function requestFSList(path) { return sendJson({ action: 'fs_list', path }); }
@@ -690,6 +700,8 @@
       projectionState.terminalExecutions = [];
       projectionState.selectedExecutionId = '';
       projectionState.review = { activeId: '', autoHandledId: '', pendingAutoAcceptId: '' };
+      appState.prompt = { awaitingInput: false, options: [], message: '', pendingPrompt: null, pendingInteraction: null, planQuestions: [], planAnswers: {}, planQuestionIndex: 0 };
+      runtimeState.phase = { phase: '', kind: '', message: '' };
       sessionContextState.enabledSkillNames = [];
       sessionContextState.enabledMemoryIds = [];
       dedupState.lastLogMsg = '';
@@ -725,10 +737,9 @@
         appState.session.activeSessionId = '';
         appState.session.canResumeCurrent = false;
         appState.session.claudeInteractiveActive = false;
-        appState.prompt = { awaitingInput: false, options: [], message: '' };
         runtimeState.agentState = 'IDLE';
         runtimeState.agentStateMessage = '';
-        updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') });
+        updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', executionId: '', groupId: '', groupTitle: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits'), claudeLifecycle: '' });
         storageSet(STORAGE_KEYS.activeSessionId, null);
         storageSet(STORAGE_KEYS.resumeSessionId, null);
       }
@@ -908,8 +919,125 @@
     function selectedPermissionMode() {
       return runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') || 'acceptEdits';
     }
+    function currentDecisionPermissionMode() {
+      const interactionMode = String(appState.prompt.pendingInteraction?.permissionMode || '').trim();
+      if (interactionMode) return interactionMode;
+      const promptMode = String(appState.prompt.pendingPrompt?.permissionMode || '').trim();
+      if (promptMode) return promptMode;
+      return selectedPermissionMode();
+    }
     function isAutoAcceptMode() {
       return selectedPermissionMode() === 'acceptEdits';
+    }
+    function isAiCommand(value) {
+      const normalized = String(value || '').trim().toLowerCase();
+      return normalized === 'claude'
+        || normalized.startsWith('claude ')
+        || normalized === 'codex'
+        || normalized.startsWith('codex ')
+        || normalized === 'gemini'
+        || normalized.startsWith('gemini ');
+    }
+    function normalizeAiEngine(value, fallback = '') {
+      const raw = String(value || '').trim().toLowerCase();
+      if (raw === 'claude' || raw.startsWith('claude ')) return 'claude';
+      if (raw === 'codex' || raw.startsWith('codex ')) return 'codex';
+      if (raw === 'gemini' || raw.startsWith('gemini ')) return 'gemini';
+      const nextFallback = String(fallback || '').trim().toLowerCase();
+      if (nextFallback === 'claude' || nextFallback === 'codex' || nextFallback === 'gemini') return nextFallback;
+      return '';
+    }
+    function preferredAiCommandForEngine(engine) {
+      const normalized = normalizeAiEngine(engine, runtimeState.meta.engine || appState.session.activeAI || '');
+      return normalized || 'claude';
+    }
+    function splitAiCommandInput(value) {
+      const trimmed = String(value || '').trim();
+      if (!trimmed) return { engine: '', prompt: '', command: '' };
+      const parts = trimmed.split(/\s+/);
+      const engine = normalizeAiEngine(parts[0], '');
+      if (!engine) return { engine: '', prompt: '', command: trimmed };
+      const prompt = parts.length > 1 ? trimmed.slice(parts[0].length).trim() : '';
+      return { engine, prompt, command: preferredAiCommandForEngine(engine) };
+    }
+    function inClaudeMode() {
+      const lifecycle = String(runtimeState.meta.claudeLifecycle || '').trim().toLowerCase();
+      return ['starting', 'active', 'waiting_input', 'resumable'].includes(lifecycle);
+    }
+    function shouldShowClaudeMode() {
+      return inClaudeMode()
+        || (!!String(runtimeState.meta.resumeSessionId || '').trim()
+          && !!normalizeAiEngine(runtimeState.meta.engine || runtimeState.meta.command || '', ''));
+    }
+    function normalizedPromptOptionValues(options = []) {
+      return new Set(
+        (Array.isArray(options) ? options : [])
+          .map((option) => String(typeof option === 'string' ? option : (option?.value || '')).trim().toLowerCase())
+          .filter(Boolean)
+      );
+    }
+    function looksLikeReviewPromptOptions(options = []) {
+      const values = normalizedPromptOptionValues(options);
+      return values.has('accept') && values.has('revert') && values.has('revise');
+    }
+    function promptLooksLikePermission(prompt = null) {
+      if (!prompt || looksLikeReviewPromptOptions(prompt.options || [])) return false;
+      const optionValues = normalizedPromptOptionValues(prompt.options || []);
+      const binaryPermissionValues = new Set(['y', 'n', 'yes', 'no', 'allow', 'deny', 'approve', 'reject', '允许', '拒绝', '同意', '取消']);
+      const hasBinaryPermissionOptions = optionValues.size > 0 && Array.from(optionValues).every((value) => binaryPermissionValues.has(value));
+      const normalizedMessage = String(prompt.message || '').trim().toLowerCase();
+      const looksLikePermissionMessage = normalizedMessage.includes('permission')
+        || normalizedMessage.includes('authorize')
+        || normalizedMessage.includes('allow ')
+        || normalizedMessage.includes('allow\n')
+        || normalizedMessage.includes('confirm permission')
+        || normalizedMessage.includes('confirm access')
+        || normalizedMessage.includes('confirm authorization')
+        || normalizedMessage.includes('请求授权')
+        || normalizedMessage.includes('需要授权')
+        || normalizedMessage.includes('确认授权')
+        || normalizedMessage.includes('是否允许')
+        || normalizedMessage.includes('允许')
+        || normalizedMessage.includes('授权');
+      return hasBinaryPermissionOptions || looksLikePermissionMessage;
+    }
+    function promptLooksLikeReview(prompt = null) {
+      return !!prompt && looksLikeReviewPromptOptions(prompt.options || []);
+    }
+    function hasPendingPermissionPrompt() {
+      return (appState.prompt.pendingInteraction?.kind || '').trim().toLowerCase() === 'permission'
+        || promptLooksLikePermission(appState.prompt.pendingPrompt)
+        || String(runtimeState.phase.phase || '').trim().toLowerCase() === 'permission_blocked';
+    }
+    function hasPendingPlanPrompt() {
+      return (appState.prompt.pendingInteraction?.kind || '').trim().toLowerCase() === 'plan';
+    }
+    function hasPendingPlanQuestions() {
+      return Array.isArray(appState.prompt.planQuestions) && appState.prompt.planQuestions.length > 0;
+    }
+    function pendingPlanQuestion() {
+      if (!hasPendingPlanQuestions()) return null;
+      const index = Number(appState.prompt.planQuestionIndex || 0);
+      if (index < 0 || index >= appState.prompt.planQuestions.length) return null;
+      return appState.prompt.planQuestions[index] || null;
+    }
+    function pendingPlanProgressLabel() {
+      if (!hasPendingPlanQuestions()) return '';
+      const total = appState.prompt.planQuestions.length;
+      const current = Number(appState.prompt.planQuestionIndex || 0) + 1;
+      return `${Math.min(current, total)}/${total}`;
+    }
+    function hasVisiblePrompt() {
+      return !!appState.prompt.pendingInteraction || !!appState.prompt.pendingPrompt;
+    }
+    function awaitInput() {
+      return !!(appState.prompt.awaitingInput || appState.prompt.pendingPrompt || appState.prompt.pendingInteraction);
+    }
+    function isSessionBusy() {
+      if (!appState.connection.connected) return false;
+      if (awaitInput()) return false;
+      if (runtimeState.agentState === 'THINKING' || runtimeState.agentState === 'RUNNING_TOOL') return true;
+      return projectionState.terminalExecutions.some((item) => item && !item.finishedAt);
     }
     function currentReviewContext() {
       const diff = projectionState.diffs.find((item) => item?.pendingReview && (item.id || item.path || '') === projectionState.review.activeId) || projectionState.contexts.diff;
@@ -921,7 +1049,71 @@
       return !!(appState.session.claudeInteractiveActive && runtimeState.agentState === 'WAIT_INPUT');
     }
     function shouldShowReviewChoices() {
-      return !!(currentReviewContext() && appState.prompt.awaitingInput && runtimeState.agentState === 'WAIT_INPUT');
+      const interaction = appState.prompt.pendingInteraction;
+      const waitingForReviewInput = (interaction?.kind || '').trim().toLowerCase() === 'review'
+        || promptLooksLikeReview(appState.prompt.pendingPrompt)
+        || !!(currentReviewContext() && awaitInput());
+      return !!(currentReviewContext() && waitingForReviewInput && !hasPendingPermissionPrompt() && !hasPendingPlanPrompt() && !hasPendingPlanQuestions());
+    }
+    function shouldShowPermissionChoices() {
+      return hasPendingPermissionPrompt() && !shouldShowReviewChoices();
+    }
+    function shouldShowPlanChoices() {
+      return (hasPendingPlanPrompt() || hasPendingPlanQuestions()) && !shouldShowReviewChoices();
+    }
+    function shouldKeepExistingBlockingPrompt(incoming = {}) {
+      const message = String(incoming.message || incoming.msg || '').trim();
+      const interaction = appState.prompt.pendingInteraction;
+      const prompt = appState.prompt.pendingPrompt;
+      if (!message) {
+        return (interaction?.kind || '').trim().toLowerCase() === 'permission'
+          || (interaction?.kind || '').trim().toLowerCase() === 'review'
+          || (interaction?.kind || '').trim().toLowerCase() === 'plan'
+          || !!prompt
+          || String(runtimeState.phase.phase || '').trim().toLowerCase() === 'permission_blocked';
+      }
+      if (!looksLikeGenericReadyPrompt(incoming)) return false;
+      return (interaction?.kind || '').trim().toLowerCase() === 'permission'
+        || (interaction?.kind || '').trim().toLowerCase() === 'review'
+        || (interaction?.kind || '').trim().toLowerCase() === 'plan'
+        || promptLooksLikePermission(prompt)
+        || promptLooksLikeReview(prompt)
+        || String(runtimeState.phase.phase || '').trim().toLowerCase() === 'permission_blocked'
+        || hasPendingPlanQuestions();
+    }
+    function looksLikeGenericReadyPrompt(prompt = {}) {
+      const options = Array.isArray(prompt.options) ? prompt.options : [];
+      if (options.length) return false;
+      const message = String(prompt.message || prompt.msg || '').trim().toLowerCase();
+      if (!message) return false;
+      return message.includes('会话已就绪')
+        || message.includes('可继续输入')
+        || message.includes('waiting for input')
+        || message.includes('continue input')
+        || message.includes('ready for input')
+        || message === 'ready';
+    }
+    function shouldPreserveBlockingPrompt() {
+      return (appState.prompt.pendingInteraction?.kind || '').trim().toLowerCase() === 'permission'
+        || (appState.prompt.pendingInteraction?.kind || '').trim().toLowerCase() === 'review'
+        || shouldShowReviewChoices()
+        || (appState.prompt.pendingInteraction?.kind || '').trim().toLowerCase() === 'plan'
+        || hasPendingPlanQuestions()
+        || !!appState.prompt.pendingPrompt
+        || String(runtimeState.phase.phase || '').trim().toLowerCase() === 'permission_blocked';
+    }
+    function clearPlanInteractionState() {
+      appState.prompt.planQuestions = [];
+      appState.prompt.planAnswers = {};
+      appState.prompt.planQuestionIndex = 0;
+    }
+    function clearPromptState({ preserveMessage = false } = {}) {
+      appState.prompt.awaitingInput = false;
+      appState.prompt.options = [];
+      if (!preserveMessage) appState.prompt.message = '';
+      appState.prompt.pendingPrompt = null;
+      appState.prompt.pendingInteraction = null;
+      clearPlanInteractionState();
     }
     function syncPermissionMode(mode, { silent = false } = {}) {
       const next = mode || 'acceptEdits';
@@ -1018,10 +1210,11 @@
         const wasConnected = appState.connection.connected;
         appState.connection.connected = false;
         appState.connection.running = false;
-        appState.prompt = { awaitingInput: false, options: [], message: '' };
+        clearPromptState();
         runtimeState.agentState = 'IDLE';
         runtimeState.agentStateMessage = '';
-        runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') };
+        runtimeState.phase = { phase: '', kind: '', message: '' };
+        runtimeState.meta = { source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: storageGet(STORAGE_KEYS.resumeSessionId, ''), executionId: '', groupId: '', groupTitle: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits'), claudeLifecycle: '' };
         if (wasConnected) appendErrorMessage('连接已关闭，请检查 token 或服务状态。');
         if (!appState.auth.token) {
           setView('auth');
@@ -1233,13 +1426,27 @@
       const resumeId = currentRuntime.resumeSessionId || runtimeState.meta.resumeSessionId || storageGet(STORAGE_KEYS.resumeSessionId, '');
       resumeSessionBtn.textContent = appState.session.canResumeCurrent ? '恢复当前会话' : '继续当前';
       resumeSessionBtn.classList.toggle('hidden', !(resumeId && appState.connection.connected && runtimeState.agentState === 'IDLE'));
-      const replyMode = appState.prompt.awaitingInput || runtimeState.agentState === 'WAIT_INPUT';
-      chatInput.placeholder = replyMode ? '继续回复当前会话' : '输入命令，如 claude、/build、pwd';
+      const replyMode = awaitInput() || runtimeState.agentState === 'WAIT_INPUT';
+      const lockedInput = !appState.connection.connected || shouldShowPermissionChoices() || shouldShowReviewChoices() || shouldShowPlanChoices();
+      const activeEngine = normalizeAiEngine(runtimeState.meta.engine || runtimeState.meta.command || appState.session.activeAI || '', 'claude') || 'claude';
+      chatInput.placeholder = lockedInput
+        ? (shouldShowPermissionChoices() ? '请先确认权限' : shouldShowReviewChoices() ? '请先完成审核' : shouldShowPlanChoices() ? '请先完成计划选择' : '')
+        : replyMode ? '继续回复当前会话' : shouldShowClaudeMode() ? `给 ${activeEngine} 发送消息` : '输入命令，如 claude、/build、pwd';
       chatSendBtn.textContent = replyMode ? '回复' : '发送';
-      chatInput.disabled = !appState.connection.connected;
-      chatSendBtn.disabled = !appState.connection.connected;
-      if (replyMode) {
-        chatInputHint.textContent = shouldShowReviewChoices() ? (isAutoAcceptMode() ? '自动同意修改模式已开启，新 diff 只会自动确认一次。' : '等待审核或继续输入') : 'AI 会话已就绪，可继续输入';
+      chatInput.disabled = lockedInput;
+      chatSendBtn.disabled = lockedInput;
+      if (shouldShowPermissionChoices()) {
+        chatInputHint.textContent = appState.prompt.message || runtimeState.phase.message || 'AI 助手需要你先确认权限。';
+        chatInputHint.classList.remove('hidden');
+      } else if (shouldShowPlanChoices()) {
+        const question = pendingPlanQuestion();
+        chatInputHint.textContent = question?.message || appState.prompt.message || 'AI 助手需要你先完成计划选择。';
+        chatInputHint.classList.remove('hidden');
+      } else if (shouldShowReviewChoices()) {
+        chatInputHint.textContent = isAutoAcceptMode() ? '自动同意修改模式已开启，新 diff 只会自动确认一次。' : (appState.prompt.message || '等待审核或继续输入');
+        chatInputHint.classList.remove('hidden');
+      } else if (replyMode) {
+        chatInputHint.textContent = appState.prompt.message || 'AI 会话已就绪，可继续输入';
         chatInputHint.classList.remove('hidden');
       } else if (!appState.session.id) {
         chatInputHint.textContent = '可先打开会话列表选择历史会话，或直接创建新会话。';
@@ -1359,6 +1566,96 @@
         fileList.appendChild(row);
       });
     }
+    function permissionPromptOptions() {
+      return [
+        { value: 'approve', label: '允许一次' },
+        { value: 'approve:session', label: '本会话允许' },
+        { value: 'approve:persistent', label: '长期允许' },
+        { value: 'deny', label: '拒绝' }
+      ];
+    }
+    function buildPromptChoiceButtons(container, options = []) {
+      const wrap = document.createElement('div');
+      wrap.className = 'mt-3 flex flex-wrap gap-2';
+      (Array.isArray(options) ? options : []).forEach((option) => {
+        const value = String(typeof option === 'string' ? option : (option?.value || option?.decision || option?.id || '')).trim();
+        const label = String(typeof option === 'string' ? option : (option?.label || option?.displayText || option?.value || option?.decision || option?.id || '')).trim();
+        if (!value || !label) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'rounded-2xl border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800';
+        button.textContent = label;
+        button.addEventListener('click', () => submitPromptOption(value));
+        wrap.appendChild(button);
+      });
+      if (wrap.childElementCount) container.appendChild(wrap);
+    }
+    function buildPendingPromptCards() {
+      const cards = [];
+      const interaction = appState.prompt.pendingInteraction;
+      const prompt = appState.prompt.pendingPrompt;
+      const planQuestion = pendingPlanQuestion();
+      if (interaction && (String(interaction.title || '').trim() || String(interaction.message || '').trim() || (Array.isArray(interaction.actions) && interaction.actions.length) || (Array.isArray(interaction.options) && interaction.options.length))) {
+        const row = document.createElement('div');
+        row.className = 'rounded-[1.4rem] border border-blue-900/70 bg-blue-950/20 px-4 py-4';
+        const kind = String(interaction.kind || '').trim().toLowerCase();
+        const title = String(interaction.title || '').trim() || (kind === 'permission' ? '授权确认' : kind === 'plan' ? '计划选择' : '交互确认');
+        row.innerHTML = `
+          <div class="text-[11px] uppercase tracking-wide text-blue-300">${escapeHtml(kind || 'interaction')}</div>
+          <div class="mt-2 text-sm font-semibold text-zinc-100">${escapeHtml(title)}</div>
+          <div class="mt-2 whitespace-pre-wrap break-words text-sm text-blue-100">${escapeHtml(String(interaction.message || '').trim())}</div>`;
+        if (kind === 'permission') {
+          buildPromptChoiceButtons(row, permissionPromptOptions());
+        } else if (Array.isArray(interaction.actions) && interaction.actions.length) {
+          buildPromptChoiceButtons(row, interaction.actions.map((action) => ({
+            value: action.decision || action.value || action.id || '',
+            label: action.label || action.value || action.id || ''
+          })));
+        } else if (Array.isArray(interaction.options) && interaction.options.length) {
+          buildPromptChoiceButtons(row, interaction.options.map((option) => ({
+            value: option.value || '',
+            label: option.label || option.value || ''
+          })));
+        }
+        cards.push(row);
+      } else if (prompt && (String(prompt.message || '').trim() || (Array.isArray(prompt.options) && prompt.options.length))) {
+        const row = document.createElement('div');
+        row.className = 'rounded-[1.4rem] border border-blue-900/70 bg-blue-950/20 px-4 py-4';
+        const title = promptLooksLikePermission(prompt) ? '授权确认' : '等待输入';
+        row.innerHTML = `
+          <div class="text-[11px] uppercase tracking-wide text-blue-300">prompt</div>
+          <div class="mt-2 text-sm font-semibold text-zinc-100">${escapeHtml(title)}</div>
+          <div class="mt-2 whitespace-pre-wrap break-words text-sm text-blue-100">${escapeHtml(String(prompt.message || '').trim())}</div>`;
+        if (promptLooksLikePermission(prompt)) {
+          buildPromptChoiceButtons(row, permissionPromptOptions());
+        } else if (Array.isArray(prompt.options) && prompt.options.length) {
+          buildPromptChoiceButtons(row, prompt.options.map((option) => ({
+            value: option.value || '',
+            label: option.label || option.value || ''
+          })));
+        }
+        cards.push(row);
+      }
+      if (planQuestion) {
+        const row = document.createElement('div');
+        row.className = 'rounded-[1.4rem] border border-amber-900/70 bg-amber-950/20 px-4 py-4';
+        row.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-[11px] uppercase tracking-wide text-amber-300">plan</div>
+              <div class="mt-2 text-sm font-semibold text-zinc-100">${escapeHtml(String(planQuestion.title || planQuestion.message || planQuestion.id || '计划选择').trim())}</div>
+              <div class="mt-2 whitespace-pre-wrap break-words text-sm text-amber-100">${escapeHtml(String(planQuestion.message || '').trim())}</div>
+            </div>
+            <div class="text-xs font-semibold text-amber-200">${escapeHtml(pendingPlanProgressLabel())}</div>
+          </div>`;
+        buildPromptChoiceButtons(row, (Array.isArray(planQuestion.options) ? planQuestion.options : []).map((option) => ({
+          value: option.value || '',
+          label: option.label || option.value || ''
+        })));
+        cards.push(row);
+      }
+      return cards;
+    }
 
     function renderChatStream() {
       if (appState.view.current !== 'chat') return;
@@ -1418,7 +1715,8 @@
         }
         if (entry.kind === 'diff') {
           const diff = entry.context;
-          const isActiveReview = !!(diff?.pendingReview && projectionState.review.activeId && projectionState.review.activeId === diff.id);
+          const diffKey = diff?.id || diff?.path || '';
+          const isActiveReview = !!(diff?.pendingReview && projectionState.review.activeId && projectionState.review.activeId === diffKey);
           const row = document.createElement('div');
           row.className = 'rounded-[1.4rem] border border-violet-900/70 bg-violet-950/20 px-4 py-4';
           const preview = String(diff.diff || '').split('\n').slice(0, 12).map(highlightDiffLine).join('');
@@ -1459,6 +1757,7 @@
           chatContainer.appendChild(row);
         }
       });
+      buildPendingPromptCards().forEach((card) => chatContainer.appendChild(card));
       requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }));
     }
 
@@ -1677,7 +1976,13 @@
     }
 
     function effectivePromptOptions(message, options) {
-      if (shouldShowReviewChoices()) return ['accept', 'revert', 'revise'];
+      if (shouldShowReviewChoices()) {
+        return [
+          { value: 'accept', label: '同意' },
+          { value: 'revert', label: '撤销' },
+          { value: 'revise', label: '继续调整' }
+        ];
+      }
       return Array.isArray(options) ? options : [];
     }
     function parseSlashCommand(command) {
@@ -1709,7 +2014,7 @@
     function sendSlashCommand(command) {
       const contextPayload = resolveSlashContext(command);
       updateRuntimeMeta({ source: 'slash-command', targetType: contextPayload.targetType || '', targetPath: contextPayload.targetPath || '', contextId: contextPayload.contextId || '', contextTitle: contextPayload.contextTitle || '' });
-      return sendJson({ action: 'slash_command', command, cwd: appState.workspace.cwd || '.', engine: appState.session.activeAI, permissionMode: effectivePermissionMode(), ...contextPayload });
+      return sendJson({ action: 'slash_command', command, cwd: appState.workspace.cwd || '.', engine: normalizeAiEngine(runtimeState.meta.engine || runtimeState.meta.command || appState.session.activeAI || 'claude', 'claude') || 'claude', permissionMode: effectivePermissionMode(), ...contextPayload });
     }
     function isGlobalSessionEvent(payload) {
       return payload?.type === 'session_created' || payload?.type === 'session_list_result';
@@ -1723,20 +2028,172 @@
     function runCommand(command) {
       const cmd = String(command || '').trim();
       if (!cmd) return;
-      appState.prompt.awaitingInput = false;
-      appState.prompt.options = [];
-      appState.prompt.message = '';
+      clearPromptState();
       appState.session.claudeInteractiveActive = false;
       runtimeState.agentState = 'IDLE';
-      updateRuntimeMeta({ source: 'command', skillName: '', resultView: '', targetType: '', targetPath: '', contextId: '', contextTitle: '', targetText: '', resumeSessionId: '', command: cmd });
+      updateRuntimeMeta({ source: 'command', skillName: '', resultView: '', targetType: '', targetPath: '', executionId: '', groupId: '', groupTitle: '', contextId: '', contextTitle: '', targetText: '', resumeSessionId: '', command: cmd, claudeLifecycle: '' });
       storageSet(STORAGE_KEYS.resumeSessionId, null);
       if (!sendJson({ action: 'exec', mode: 'pty', cmd, cwd: appState.workspace.cwd || '.', source: 'command', permissionMode: effectivePermissionMode(), resumeSessionId: '' })) return;
       appendUserMessage(`${cmd}\n@ ${appState.workspace.cwd || '.'}`, '命令');
     }
     function sendInputRaw(raw, label = '回复') {
       if (!raw) return;
-      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n`, permissionMode: effectivePermissionMode() })) return;
+      if (!sendJson({ action: 'input', data: raw.endsWith('\n') ? raw : `${raw}\n`, permissionMode: currentDecisionPermissionMode() })) return;
       appendUserMessage(raw.replace(/\n$/, ''), label);
+    }
+    function startAiTurn(engine, prompt = '', label = '命令') {
+      const normalizedEngine = normalizeAiEngine(engine, runtimeState.meta.engine || appState.session.activeAI || 'claude') || 'claude';
+      const command = preferredAiCommandForEngine(normalizedEngine);
+      updateRuntimeMeta({
+        source: 'command',
+        command,
+        engine: normalizedEngine,
+        cwd: appState.workspace.cwd || '.',
+        permissionMode: effectivePermissionMode(),
+        claudeLifecycle: 'starting',
+        resumeSessionId: ''
+      });
+      storageSet(STORAGE_KEYS.resumeSessionId, null);
+      appState.session.activeAI = normalizedEngine;
+      appState.session.claudeInteractiveActive = true;
+      if (!sendJson({ action: 'exec', mode: 'pty', cmd: command, cwd: appState.workspace.cwd || '.', source: 'command', engine: normalizedEngine, permissionMode: effectivePermissionMode(), resumeSessionId: '' })) return;
+      if (!prompt) {
+        appendUserMessage(command, '命令');
+        return;
+      }
+      submitClaudeContinuation(prompt, { label });
+    }
+    function submitClaudeContinuation(prompt, { label = '回复' } = {}) {
+      const value = String(prompt || '').trim();
+      if (!value) return;
+      const engine = normalizeAiEngine(runtimeState.meta.engine || runtimeState.meta.command || appState.session.activeAI || '', 'claude') || 'claude';
+      updateRuntimeMeta({
+        engine,
+        command: preferredAiCommandForEngine(engine),
+        cwd: appState.workspace.cwd || '.',
+        permissionMode: effectivePermissionMode(),
+        claudeLifecycle: 'active'
+      });
+      sendInputRaw(value, label);
+    }
+    function parsePermissionDecisionSelection(value) {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (!normalized) return null;
+      const parts = normalized.split(':');
+      const decisionPart = parts[0]?.trim() || '';
+      const scopePart = parts.length > 1 ? (parts[1] || '').trim() : '';
+      const approveValues = new Set(['y', 'yes', 'allow', 'approve', 'allowed', 'approved', 'ok', '允许', '同意']);
+      const denyValues = new Set(['n', 'no', 'deny', 'denied', 'reject', 'rejected', '拒绝', '取消']);
+      const normalizedScope = scopePart === 'session' || scopePart === 'persistent' ? scopePart : '';
+      if (approveValues.has(decisionPart)) return { decision: 'approve', scope: normalizedScope };
+      if (denyValues.has(decisionPart)) return { decision: 'deny', scope: '' };
+      if (decisionPart === 'approve' || decisionPart === 'deny') {
+        return { decision: decisionPart, scope: decisionPart === 'approve' ? normalizedScope : '' };
+      }
+      return null;
+    }
+    function resolvePlanAnswerLabel(question, value) {
+      const normalized = String(value || '').trim();
+      if (!normalized) return normalized;
+      const options = Array.isArray(question?.options) ? question.options : [];
+      const matched = options.find((option) => {
+        const optionValue = String(option?.value || '').trim();
+        const optionLabel = String(option?.label || option?.displayText || option?.value || '').trim();
+        return optionValue === normalized || optionLabel === normalized;
+      });
+      return String(matched?.label || matched?.displayText || matched?.value || normalized).trim();
+    }
+    function buildPlanDecisionPayload(interaction, lastDecision) {
+      const questions = hasPendingPlanQuestions() ? [...appState.prompt.planQuestions] : (Array.isArray(interaction?.planQuestions) ? [...interaction.planQuestions] : []);
+      if (!questions.length) return String(lastDecision || '').trim();
+      const answers = {};
+      questions.forEach((question, index) => {
+        const key = String(question?.id || '').trim() || `question-${index + 1}`;
+        answers[key] = appState.prompt.planAnswers[key] || resolvePlanAnswerLabel(question, lastDecision);
+      });
+      return JSON.stringify({
+        kind: 'plan',
+        sessionId: interaction?.sessionId || '',
+        resumeSessionId: interaction?.resumeSessionId || '',
+        executionId: interaction?.executionId || '',
+        groupId: interaction?.groupId || '',
+        groupTitle: interaction?.groupTitle || '',
+        contextId: interaction?.contextId || '',
+        contextTitle: interaction?.contextTitle || '',
+        targetPath: interaction?.targetPath || '',
+        answers
+      });
+    }
+    function submitPlanDecision(interaction, decision, { promptLabel = '回复' } = {}) {
+      const normalized = String(decision || '').trim();
+      if (!normalized) return;
+      const questions = hasPendingPlanQuestions() ? [...appState.prompt.planQuestions] : (Array.isArray(interaction?.planQuestions) ? [...interaction.planQuestions] : []);
+      const index = Number(appState.prompt.planQuestionIndex || 0);
+      if (questions.length && index < questions.length) {
+        const currentQuestion = questions[index];
+        const currentId = String(currentQuestion?.id || '').trim() || `question-${index + 1}`;
+        appState.prompt.planAnswers = { ...appState.prompt.planAnswers, [currentId]: resolvePlanAnswerLabel(currentQuestion, normalized) };
+        const nextIndex = index + 1;
+        if (nextIndex < questions.length) {
+          appState.prompt.planQuestionIndex = nextIndex;
+          appState.prompt.pendingInteraction = interaction;
+          appendUserMessage(normalized, promptLabel);
+          renderApp();
+          return;
+        }
+      }
+      const payload = buildPlanDecisionPayload(interaction, normalized);
+      const decisionPermissionMode = currentDecisionPermissionMode();
+      const promptMessage = interaction?.message || appState.prompt.message || '';
+      clearPromptState();
+      if (!sendJson({
+        action: 'plan_decision',
+        decision: payload,
+        permissionMode: decisionPermissionMode,
+        resumeSessionId: interaction?.resumeSessionId || runtimeState.meta.resumeSessionId || '',
+        executionId: interaction?.executionId || runtimeState.meta.executionId || '',
+        groupId: interaction?.groupId || runtimeState.meta.groupId || '',
+        groupTitle: interaction?.groupTitle || runtimeState.meta.groupTitle || '',
+        contextId: interaction?.contextId || runtimeState.meta.contextId || '',
+        contextTitle: interaction?.contextTitle || runtimeState.meta.contextTitle || '',
+        promptMessage,
+        command: runtimeState.meta.command || '',
+        cwd: appState.workspace.cwd || runtimeState.meta.cwd || '.',
+        engine: normalizeAiEngine(runtimeState.meta.engine || runtimeState.meta.command || appState.session.activeAI || 'claude', 'claude') || 'claude',
+        target: runtimeState.meta.target || '',
+        targetType: runtimeState.meta.targetType || '',
+        targetPath: interaction?.targetPath || runtimeState.meta.targetPath || '',
+        targetText: runtimeState.meta.targetText || ''
+      })) return;
+      appendUserMessage(normalized, promptLabel);
+    }
+    function sendPermissionDecision(selection, { promptLabel = '回复' } = {}) {
+      if (!selection?.decision) return;
+      const interaction = appState.prompt.pendingInteraction;
+      const prompt = appState.prompt.pendingPrompt;
+      const targetPath = appState.file.activePath || interaction?.targetPath || prompt?.targetPath || runtimeState.meta.targetPath || '';
+      const contextTitle = interaction?.contextTitle || prompt?.contextTitle || runtimeState.meta.contextTitle || basename(targetPath) || '当前上下文';
+      const promptMessage = interaction?.message || prompt?.message || runtimeState.phase.message || appState.prompt.message || '';
+      const decisionPermissionMode = currentDecisionPermissionMode();
+      clearPromptState();
+      runtimeState.phase = { phase: '', kind: '', message: '' };
+      if (!sendJson({
+        action: 'permission_decision',
+        decision: selection.decision,
+        ...(selection.scope ? { scope: selection.scope } : {}),
+        permissionMode: decisionPermissionMode,
+        resumeSessionId: interaction?.resumeSessionId || prompt?.resumeSessionId || runtimeState.meta.resumeSessionId || '',
+        targetPath,
+        contextId: interaction?.contextId || prompt?.contextId || runtimeState.meta.contextId || '',
+        contextTitle,
+        promptMessage,
+        command: runtimeState.meta.command || '',
+        cwd: appState.workspace.cwd || runtimeState.meta.cwd || '.',
+        engine: normalizeAiEngine(runtimeState.meta.engine || runtimeState.meta.command || appState.session.activeAI || 'claude', 'claude') || 'claude',
+        target: runtimeState.meta.target || '',
+        targetType: runtimeState.meta.targetType || ''
+      })) return;
+      appendUserMessage(`Permission: ${selection.decision}${selection.scope ? ` (${selection.scope})` : ''}`, promptLabel);
     }
     function sendReviewDecision(decision, options = {}) {
       const diff = currentReviewContext() || projectionState.contexts.diff;
@@ -1746,7 +2203,17 @@
         appendErrorMessage('当前 permission mode 不是 acceptEdits，不能直接 accept diff。');
         return;
       }
-      if (!sendJson({ action: 'review_decision', decision, contextId: diff.id || runtimeState.meta.contextId || '', contextTitle: diff.title || runtimeState.meta.contextTitle || '', targetPath: diff.path || runtimeState.meta.targetPath || '', permissionMode })) return;
+      if (!sendJson({
+        action: 'review_decision',
+        decision,
+        executionId: diff.executionId || runtimeState.meta.executionId || '',
+        groupId: diff.groupId || runtimeState.meta.groupId || diff.id || '',
+        groupTitle: diff.groupTitle || runtimeState.meta.groupTitle || diff.title || '',
+        contextId: diff.id || runtimeState.meta.contextId || '',
+        contextTitle: diff.title || runtimeState.meta.contextTitle || '',
+        targetPath: diff.path || runtimeState.meta.targetPath || '',
+        permissionMode
+      })) return;
       if (!options.silent) appendUserMessage(`${decision}\n@ ${diff.path || diff.title || '当前 Diff'}`, options.autoTriggered ? '自动审核' : 'Diff 决策');
       diff.pendingReview = decision === 'revise';
       projectionState.diffs = projectionState.diffs.map((item) => {
@@ -1772,15 +2239,81 @@
       requestSessionLoad(sessionId);
       appendSystemMessage(`已请求加载会话 ${sessionId}`);
     }
+    function submitAwaitingInput(value, { promptLabel = '回复' } = {}) {
+      clearPromptState();
+      sendInputRaw(value, promptLabel);
+    }
+    function submitInteractionActionValue(interaction, value, { promptLabel = '回复' } = {}) {
+      const normalized = String(value || '').trim();
+      if (!normalized) return;
+      const kind = String(interaction?.kind || '').trim().toLowerCase();
+      if (kind === 'review') {
+        sendReviewDecision(normalized);
+        return;
+      }
+      if (kind === 'permission') {
+        const selection = parsePermissionDecisionSelection(normalized);
+        if (!selection) return;
+        sendPermissionDecision(selection, { promptLabel });
+        return;
+      }
+      if (kind === 'plan') {
+        submitPlanDecision(interaction, normalized, { promptLabel });
+        return;
+      }
+      submitAwaitingInput(normalized, { promptLabel });
+    }
+    function submitAwaitingPrompt(value, { promptLabel = '回复', fallbackToInput = false } = {}) {
+      const normalized = String(value || '').trim();
+      if (!normalized) return;
+      const interaction = appState.prompt.pendingInteraction;
+      if (interaction) {
+        submitInteractionActionValue(interaction, normalized, { promptLabel });
+        return;
+      }
+      if (hasPendingPermissionPrompt()) return;
+      if (!fallbackToInput && !awaitInput()) return;
+      submitAwaitingInput(normalized, { promptLabel });
+    }
+    function submitPromptOption(value) {
+      const normalized = String(value || '').trim();
+      if (!normalized) return;
+      const interaction = appState.prompt.pendingInteraction;
+      if (interaction) {
+        submitInteractionActionValue(interaction, normalized);
+        return;
+      }
+      const prompt = appState.prompt.pendingPrompt;
+      if (promptLooksLikeReview(prompt)) {
+        sendReviewDecision(normalized);
+        return;
+      }
+      if (promptLooksLikePermission(prompt) || hasPendingPermissionPrompt()) {
+        const selection = parsePermissionDecisionSelection(normalized);
+        if (!selection) return;
+        sendPermissionDecision(selection);
+        return;
+      }
+      if (hasPendingPlanQuestions() || hasPendingPlanPrompt()) return;
+      submitAwaitingPrompt(normalized);
+    }
     function handlePrimarySubmit(rawValue) {
       const value = String(rawValue || '').trim();
       if (!value) return;
-      if (hasActiveInteractiveAI() || shouldShowReviewChoices()) {
+      if (shouldShowPermissionChoices()) {
+        appendSystemMessage('请先在上方完成授权');
+        return;
+      }
+      if (shouldShowPlanChoices() || hasPendingPlanQuestions()) {
+        appendSystemMessage('请先在上方完成计划选择');
+        return;
+      }
+      if (hasActiveInteractiveAI() || shouldShowReviewChoices() || awaitInput()) {
         if (['accept', 'revert', 'revise'].includes(value.toLowerCase()) && shouldShowReviewChoices()) {
           sendReviewDecision(value.toLowerCase());
           return;
         }
-        sendInputRaw(value, '回复');
+        submitAwaitingPrompt(value, { promptLabel: '回复', fallbackToInput: true });
         return;
       }
       const slash = parseSlashCommand(value);
@@ -1809,11 +2342,29 @@
         sendSlashCommand(value);
         return;
       }
+      if (shouldShowClaudeMode()) {
+        if (isSessionBusy()) {
+          appendSystemMessage(hasPendingReview() ? '当前会话仍在运行，请先完成待审核 diff，再继续处理。' : '当前 AI 助手会话仍在处理中，请稍后再试。');
+          return;
+        }
+        submitClaudeContinuation(value, { label: '回复' });
+        return;
+      }
+      if (isAiCommand(value)) {
+        if (isSessionBusy()) {
+          appendSystemMessage(hasPendingReview() ? '当前会话仍在运行，请先完成待审核 diff，再继续处理。' : '当前会话仍在运行，暂时不能发起新的命令。');
+          return;
+        }
+        const next = splitAiCommandInput(value);
+        startAiTurn(next.engine, next.prompt, '命令');
+        return;
+      }
       runCommand(value);
     }
     function buildFileScopedPrompt(text) {
       const path = appState.file.activePath || runtimeState.meta.targetPath || '';
-      const title = basename(path) || '当前文件';
+      const title = basename(path) || runtimeState.meta.contextTitle || '当前文件';
+      if (!path && !title) return '';
       return [`请只围绕当前文件继续处理。`, `TargetPath: ${path}`, `ContextTitle: ${title}`, `UserIntent: ${text}`].join('\n');
     }
 
@@ -1835,6 +2386,7 @@
             appState.session.id = payload.summary.id;
             appState.ui.sessionAutoLoadAttempted = true;
             resetProjectionState();
+            updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', executionId: '', groupId: '', groupTitle: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: appState.workspace.cwd || '.', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits'), claudeLifecycle: '' });
             toggleSessionPanel(false);
             requestSessionList();
             appendSystemMessage('已创建新会话');
@@ -1852,10 +2404,9 @@
             appState.session.activeSessionId = '';
             appState.session.canResumeCurrent = false;
             appState.session.claudeInteractiveActive = false;
-            appState.prompt = { awaitingInput: false, options: [], message: '' };
             runtimeState.agentState = 'IDLE';
             runtimeState.agentStateMessage = '';
-            updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits') });
+            updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', executionId: '', groupId: '', groupTitle: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: '', permissionMode: runtimeState.meta.permissionMode || storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits'), claudeLifecycle: '' });
             storageSet(STORAGE_KEYS.activeSessionId, null);
             storageSet(STORAGE_KEYS.resumeSessionId, null);
           }
@@ -1899,7 +2450,11 @@
           sessionContextState.enabledSkillNames = Array.isArray(payload.sessionContext?.enabledSkillNames) ? [...payload.sessionContext.enabledSkillNames] : [];
           sessionContextState.enabledMemoryIds = Array.isArray(payload.sessionContext?.enabledMemoryIds) ? [...payload.sessionContext.enabledMemoryIds] : [];
           appState.session.canResumeCurrent = !!payload.canResume;
+          clearPromptState();
+          runtimeState.phase = { phase: '', kind: '', message: '' };
+          updateRuntimeMeta({ source: '', skillName: '', target: '', targetType: '', targetPath: '', resultView: '', resumeSessionId: '', executionId: '', groupId: '', groupTitle: '', contextId: '', contextTitle: '', targetText: '', command: '', engine: '', cwd: appState.workspace.cwd || '.', permissionMode: storageGet(STORAGE_KEYS.permissionMode, 'acceptEdits'), claudeLifecycle: '' });
           if (payload.resumeRuntimeMeta) updateRuntimeMeta(payload.resumeRuntimeMeta);
+          appState.session.activeAI = normalizeAiEngine(payload.resumeRuntimeMeta?.engine || payload.resumeRuntimeMeta?.command || appState.session.activeAI || '', appState.session.activeAI) || appState.session.activeAI;
           requestFSList(appState.workspace.cwd || '.');
           appendSystemMessage(`已加载历史会话${summary.title ? ` · ${summary.title}` : ''}`);
           break;
@@ -1928,9 +2483,10 @@
           runtimeState.agentStateMessage = payload.msg || '';
           appState.connection.running = runtimeState.agentState !== 'IDLE';
           const cmd = payload.command || '';
-          const isAI = cmd === 'claude' || cmd === 'gemini' || cmd.startsWith('claude ') || cmd.startsWith('gemini ');
+          const aiEngine = normalizeAiEngine(cmd, payload.engine || runtimeState.meta.engine || appState.session.activeAI || '');
+          const isAI = !!aiEngine;
           appState.session.claudeInteractiveActive = isAI && payload.state === 'WAIT_INPUT';
-          if (isAI) appState.session.activeAI = cmd;
+          if (isAI) appState.session.activeAI = aiEngine;
           if (payload.resumeSessionId) storageSet(STORAGE_KEYS.resumeSessionId, payload.resumeSessionId);
           else if (payload.state === 'IDLE') storageSet(STORAGE_KEYS.resumeSessionId, null);
           if (payload.permissionMode) {
@@ -1953,6 +2509,14 @@
           }
           break;
         }
+        case 'runtime_phase':
+          if (!activeSessionEvent) break;
+          runtimeState.phase = {
+            phase: payload.phase || '',
+            kind: payload.kind || '',
+            message: payload.msg || payload.message || ''
+          };
+          break;
         case 'log': {
           if (!activeSessionEvent) break;
           const now = Date.now();
@@ -1983,10 +2547,43 @@
         }
         case 'prompt_request':
           if (!activeSessionEvent) break;
+          if (shouldKeepExistingBlockingPrompt(payload)) break;
           if (runtimeState.agentState === 'WAIT_INPUT' && !currentReviewContext()) projectionState.review.activeId = '';
+          appState.prompt.pendingInteraction = null;
+          clearPlanInteractionState();
           appState.prompt.awaitingInput = true;
           appState.prompt.message = payload.msg || '等待输入';
           appState.prompt.options = effectivePromptOptions(payload.msg || '', payload.options || []);
+          appState.prompt.pendingPrompt = { ...payload, message: payload.msg || payload.message || '等待输入', options: effectivePromptOptions(payload.msg || '', payload.options || []) };
+          break;
+        case 'interaction_request': {
+          if (!activeSessionEvent) break;
+          const interaction = {
+            ...payload,
+            message: payload.msg || payload.message || '',
+            title: payload.title || '',
+            kind: payload.kind || '',
+            options: Array.isArray(payload.options) ? payload.options : [],
+            actions: Array.isArray(payload.actions) ? payload.actions : [],
+            planQuestions: Array.isArray(payload.planQuestions) ? payload.planQuestions : []
+          };
+          appState.prompt.awaitingInput = true;
+          appState.prompt.message = interaction.message || interaction.title || '等待输入';
+          appState.prompt.options = [];
+          appState.prompt.pendingPrompt = null;
+          appState.prompt.pendingInteraction = interaction;
+          if (String(interaction.kind || '').trim().toLowerCase() === 'plan') {
+            appState.prompt.planQuestions = [...interaction.planQuestions];
+            appState.prompt.planAnswers = {};
+            appState.prompt.planQuestionIndex = 0;
+          } else {
+            clearPlanInteractionState();
+          }
+          break;
+        }
+        case 'permission_auto_applied':
+          if (!activeSessionEvent) break;
+          appendSystemMessage(payload.msg || payload.summary || '权限规则已自动应用', payload.timestamp);
           break;
         case 'step_update': {
           if (!activeSessionEvent) break;
@@ -2052,11 +2649,10 @@
           appendSystemMessage(`收到未处理事件 ${payload.type || 'unknown'}`, payload.timestamp);
           break;
       }
-      if (activeSessionEvent && runtimeState.agentState !== 'WAIT_INPUT') {
-        appState.prompt.awaitingInput = false;
-        appState.prompt.options = [];
+      if (activeSessionEvent && runtimeState.agentState !== 'WAIT_INPUT' && !shouldPreserveBlockingPrompt()) {
+        clearPromptState({ preserveMessage: payload.type === 'prompt_request' || payload.type === 'interaction_request' });
+        runtimeState.phase = { phase: '', kind: '', message: '' };
         projectionState.review.activeId = '';
-        if (payload.type !== 'prompt_request') appState.prompt.message = '';
       }
       if (activeSessionEvent && runtimeState.agentState === 'IDLE') {
         appState.session.claudeInteractiveActive = false;

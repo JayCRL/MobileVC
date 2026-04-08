@@ -68,6 +68,7 @@ func deriveClaudeLifecycleLocked(activeRunner runner.Runner, meta protocol.Runti
 type manager struct {
 	mu                 sync.Mutex
 	activeRunner       runner.Runner
+	activeCancel       context.CancelFunc
 	activeMeta         protocol.RuntimeMeta
 	activeSession      string
 	resumeSessionID    string
@@ -80,13 +81,14 @@ func newManager() *manager {
 	return &manager{claudeLifecycle: "inactive"}
 }
 
-func (m *manager) start(sessionID string, run runner.Runner, meta protocol.RuntimeMeta) error {
+func (m *manager) start(sessionID string, run runner.Runner, cancel context.CancelFunc, meta protocol.RuntimeMeta) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.activeRunner != nil {
 		return errors.New("another command is already running")
 	}
 	m.activeRunner = run
+	m.activeCancel = cancel
 	m.activeMeta = meta
 	m.activeSession = sessionID
 	if resumeSessionID := strings.TrimSpace(meta.ResumeSessionID); resumeSessionID != "" {
@@ -119,6 +121,7 @@ func (m *manager) finishIfCurrent(run runner.Runner) bool {
 		return false
 	}
 	m.activeRunner = nil
+	m.activeCancel = nil
 	m.activeMeta = protocol.RuntimeMeta{}
 	m.activeSession = ""
 	if strings.TrimSpace(m.resumeSessionID) != "" {
@@ -175,7 +178,9 @@ func (m *manager) setTemporaryElevation(enabled bool, safePermissionMode string)
 func (m *manager) closeActive() {
 	m.mu.Lock()
 	current := m.activeRunner
+	cancel := m.activeCancel
 	m.activeRunner = nil
+	m.activeCancel = nil
 	m.activeMeta = protocol.RuntimeMeta{}
 	m.activeSession = ""
 	if strings.TrimSpace(m.resumeSessionID) != "" {
@@ -184,6 +189,9 @@ func (m *manager) closeActive() {
 		m.claudeLifecycle = "inactive"
 	}
 	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if current != nil {
 		_ = current.Close()
 	}
@@ -219,6 +227,8 @@ type Service struct {
 	controller *session.Controller
 	manager    *manager
 	deps       Dependencies
+	execMu     sync.Mutex
+	execWG     sync.WaitGroup
 }
 
 func NewService(sessionID string, deps Dependencies) *Service {
@@ -240,19 +250,44 @@ func (s *Service) InitialEvent() protocol.AgentStateEvent {
 }
 
 func (s *Service) Cleanup() {
+	s.execMu.Lock()
 	s.manager.closeActive()
+	s.execMu.Unlock()
+	s.execWG.Wait()
+}
+
+func (s *Service) StopActive(sessionID string, emit func(any)) error {
+	currentRunner, activeMeta, currentSessionID := s.manager.current()
+	if currentRunner == nil || currentSessionID == "" {
+		return ErrNoActiveRunner
+	}
+	s.manager.closeActive()
+	emit(protocol.ApplyRuntimeMeta(
+		protocol.NewSessionStateEvent(sessionID, "stopped", "已停止当前运行"),
+		activeMeta,
+	))
+	for _, event := range s.controller.OnCommandFinished(activeMeta) {
+		emit(event)
+	}
+	return nil
 }
 
 func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequest, emit func(any)) error {
 	selected := s.newRunner(req.Mode)
 	preparedReq := s.prepareExecuteRequest(req)
-	if err := s.manager.start(sessionID, selected, preparedReq.RuntimeMeta); err != nil {
+	runCtx, runCancel := context.WithCancel(context.Background())
+	s.execMu.Lock()
+	defer s.execMu.Unlock()
+	if err := s.manager.start(sessionID, selected, runCancel, preparedReq.RuntimeMeta); err != nil {
+		runCancel()
 		return err
 	}
+	s.execWG.Add(1)
 	for _, event := range s.controller.OnExecStart(preparedReq.Command, preparedReq.RuntimeMeta) {
 		emit(event)
 	}
 	go func() {
+		defer s.execWG.Done()
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				stack := logx.StackTrace()
@@ -266,7 +301,7 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 				}
 			}
 		}()
-		err := selected.Run(ctx, runner.ExecRequest{
+		err := selected.Run(runCtx, runner.ExecRequest{
 			SessionID:      sessionID,
 			Command:        preparedReq.Command,
 			CWD:            preparedReq.CWD,

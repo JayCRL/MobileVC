@@ -13,6 +13,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ios-url")
     parser.add_argument("--ios-version")
     parser.add_argument("--ios-bundle-id")
+    parser.add_argument("--testflight-url")
+    parser.add_argument("--testflight-version")
+    parser.add_argument("--testflight-bundle-id")
     parser.add_argument("--android-url")
     parser.add_argument("--android-version")
     parser.add_argument("--android-package-id")
@@ -48,6 +51,22 @@ def render_ios(url: str, version: str, bundle_id: str) -> str:
     """
 
 
+def render_testflight(url: str, version: str, bundle_id: str) -> str:
+    return f"""
+        <article class="platform-card" data-platform="testflight" data-url="{escape(url)}" data-version="{escape(version)}" data-package="{escape(bundle_id)}">
+          <div class="platform-head">
+            <span class="platform-tag testflight">TestFlight</span>
+            <span class="platform-version">{escape(version)}</span>
+          </div>
+          <h2>iPhone Beta</h2>
+          <p>适合不方便提供 UDID 的成员。先安装 Apple TestFlight，再通过邀请链接加入测试版本。</p>
+          <a class="button secondary" href="{escape(url)}">加入 TestFlight</a>
+          <p class="meta-line">应用标识：<code>{escape(bundle_id)}</code></p>
+{render_link_line("邀请链接", url)}
+        </article>
+    """
+
+
 def render_android(url: str, version: str, package_id: str) -> str:
     return f"""
         <article class="platform-card" data-platform="android" data-url="{escape(url)}" data-version="{escape(version)}" data-package="{escape(package_id)}">
@@ -68,9 +87,23 @@ def main() -> None:
     args = parse_args()
     cards: list[str] = []
     if args.ios_url and args.ios_version and args.ios_bundle_id:
-      cards.append(render_ios(args.ios_url, args.ios_version, args.ios_bundle_id))
+        cards.append(render_ios(args.ios_url, args.ios_version, args.ios_bundle_id))
+    if args.testflight_url and args.testflight_version and args.testflight_bundle_id:
+        cards.append(
+            render_testflight(
+                args.testflight_url,
+                args.testflight_version,
+                args.testflight_bundle_id,
+            )
+        )
     if args.android_url and args.android_version and args.android_package_id:
-      cards.append(render_android(args.android_url, args.android_version, args.android_package_id))
+        cards.append(
+            render_android(
+                args.android_url,
+                args.android_version,
+                args.android_package_id,
+            )
+        )
     if not cards:
         raise SystemExit("at least one platform must be provided")
 
@@ -203,6 +236,11 @@ def main() -> None:
         letter-spacing: 0.18em;
         text-transform: uppercase;
       }}
+      .platform-tag.testflight {{
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.12);
+        color: #ffffff;
+      }}
       .platform-version {{
         color: var(--soft);
         font-size: 13px;
@@ -284,7 +322,7 @@ def main() -> None:
         <div class="body">
           <div class="eyebrow">MobileVC</div>
           <h1>选择安装方式</h1>
-          <p class="lead">iPhone 请用 Safari 安装，Android 可直接下载 APK。建议安装前先删除旧的下载占位或旧包，避免系统缓存干扰。</p>
+          <p class="lead">iPhone 请用 Safari 安装，Android 可直接下载 APK。安装完成后，再回到电脑端 `mobilevc start` 输出的连接信息中进行扫码或手动连接。</p>
           <div class="grid">
 {body}
           </div>

@@ -1,17 +1,21 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 
 import '../models/events.dart';
 import '../models/runtime_meta.dart';
 import 'mobilevc_mapper.dart';
 
 class MobileVcWsService {
-  MobileVcWsService({MobileVcMapper? mapper}) : _mapper = mapper ?? const MobileVcMapper();
+  MobileVcWsService({MobileVcMapper? mapper})
+      : _mapper = mapper ?? const MobileVcMapper();
 
   final MobileVcMapper _mapper;
-  final StreamController<AppEvent> _events = StreamController<AppEvent>.broadcast();
+  final StreamController<AppEvent> _events =
+      StreamController<AppEvent>.broadcast();
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
 
@@ -20,7 +24,14 @@ class MobileVcWsService {
 
   Future<void> connect(String url) async {
     await disconnect();
-    final channel = WebSocketChannel.connect(Uri.parse(url));
+    final uri = Uri.parse(url);
+    final channel = kIsWeb
+        ? WebSocketChannel.connect(uri)
+        : IOWebSocketChannel.connect(
+            uri,
+            pingInterval: const Duration(seconds: 15),
+            connectTimeout: const Duration(seconds: 15),
+          );
     _channel = channel;
     var disconnectEmitted = false;
     void emitDisconnect({
@@ -49,6 +60,7 @@ class MobileVcWsService {
         ),
       );
     }
+
     _subscription = channel.stream.listen(
       (dynamic data) {
         final decoded = jsonDecode(data as String);

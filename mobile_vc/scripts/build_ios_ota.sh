@@ -17,6 +17,9 @@ SERVER_DIR="$SERVER_DIR_DEFAULT"
 SITE_URL="$SITE_URL_DEFAULT"
 OUTPUT_ROOT=""
 DEPLOY=0
+TESTFLIGHT_URL=""
+TESTFLIGHT_VERSION=""
+TESTFLIGHT_BUNDLE_ID=""
 
 usage() {
   cat <<'EOF'
@@ -37,12 +40,21 @@ Options:
   --server USER@HOST    SSH target for deploy. Default: root@8.162.1.176.
   --server-dir DIR      Remote install directory. Default: /var/www/mobilevc-7899/install.
   --site-url URL        Public install base URL. Default: https://mobilevc.top/install.
+  --testflight-url URL  Optional TestFlight invite link to show on the install page.
+  --testflight-version V
+                        Optional TestFlight version label shown on the install page.
+  --testflight-bundle-id ID
+                        Optional TestFlight bundle identifier shown on the install page.
   --help                Show this message.
 
 Examples:
   scripts/build_ios_ota.sh
   scripts/build_ios_ota.sh --build-number 11
   scripts/build_ios_ota.sh --build-number 12 --deploy
+  scripts/build_ios_ota.sh --build-number 13 --deploy \
+    --testflight-url https://testflight.apple.com/join/XXXXXX \
+    --testflight-version "1.0.0 (TestFlight)" \
+    --testflight-bundle-id com.wustlh.mobilevc.codex20260403
 EOF
 }
 
@@ -120,6 +132,21 @@ while [[ $# -gt 0 ]]; do
       SITE_URL="$2"
       shift 2
       ;;
+    --testflight-url)
+      [[ $# -ge 2 ]] || die "--testflight-url requires a value"
+      TESTFLIGHT_URL="$2"
+      shift 2
+      ;;
+    --testflight-version)
+      [[ $# -ge 2 ]] || die "--testflight-version requires a value"
+      TESTFLIGHT_VERSION="$2"
+      shift 2
+      ;;
+    --testflight-bundle-id)
+      [[ $# -ge 2 ]] || die "--testflight-bundle-id requires a value"
+      TESTFLIGHT_BUNDLE_ID="$2"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -132,6 +159,12 @@ done
 
 [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || die "build number must be digits only"
 SITE_URL="$(normalize_site_url "$SITE_URL")"
+
+if [[ -n "$TESTFLIGHT_URL$TESTFLIGHT_VERSION$TESTFLIGHT_BUNDLE_ID" ]]; then
+  [[ -n "$TESTFLIGHT_URL" ]] || die "--testflight-url is required when setting TestFlight install page fields"
+  [[ -n "$TESTFLIGHT_VERSION" ]] || die "--testflight-version is required when setting TestFlight install page fields"
+  [[ -n "$TESTFLIGHT_BUNDLE_ID" ]] || die "--testflight-bundle-id is required when setting TestFlight install page fields"
+fi
 
 [[ -d "$PROJECT_ROOT/ios" ]] || die "expected Flutter project root at $PROJECT_ROOT"
 [[ -f "$PROJECT_ROOT/pubspec.yaml" ]] || die "missing pubspec.yaml at $PROJECT_ROOT"
@@ -295,6 +328,12 @@ if [[ "$DEPLOY" -eq 1 ]]; then
   PRESERVE_ANDROID_URL=""
   PRESERVE_ANDROID_VERSION=""
   PRESERVE_ANDROID_PACKAGE=""
+  PRESERVE_TESTFLIGHT_URL=""
+  PRESERVE_TESTFLIGHT_VERSION=""
+  PRESERVE_TESTFLIGHT_BUNDLE_ID=""
+  FINAL_TESTFLIGHT_URL="$TESTFLIGHT_URL"
+  FINAL_TESTFLIGHT_VERSION="$TESTFLIGHT_VERSION"
+  FINAL_TESTFLIGHT_BUNDLE_ID="$TESTFLIGHT_BUNDLE_ID"
 
   cp "$IPA_PATH" "$DEPLOYED_IPA_PATH"
 
@@ -355,6 +394,19 @@ EOF
   PRESERVE_ANDROID_URL="$(extract_card_attr "$REMOTE_INDEX_CACHE" android url)"
   PRESERVE_ANDROID_VERSION="$(extract_card_attr "$REMOTE_INDEX_CACHE" android version)"
   PRESERVE_ANDROID_PACKAGE="$(extract_card_attr "$REMOTE_INDEX_CACHE" android package)"
+  PRESERVE_TESTFLIGHT_URL="$(extract_card_attr "$REMOTE_INDEX_CACHE" testflight url)"
+  PRESERVE_TESTFLIGHT_VERSION="$(extract_card_attr "$REMOTE_INDEX_CACHE" testflight version)"
+  PRESERVE_TESTFLIGHT_BUNDLE_ID="$(extract_card_attr "$REMOTE_INDEX_CACHE" testflight package)"
+
+  if [[ -z "$FINAL_TESTFLIGHT_URL" ]]; then
+    FINAL_TESTFLIGHT_URL="$PRESERVE_TESTFLIGHT_URL"
+  fi
+  if [[ -z "$FINAL_TESTFLIGHT_VERSION" ]]; then
+    FINAL_TESTFLIGHT_VERSION="$PRESERVE_TESTFLIGHT_VERSION"
+  fi
+  if [[ -z "$FINAL_TESTFLIGHT_BUNDLE_ID" ]]; then
+    FINAL_TESTFLIGHT_BUNDLE_ID="$PRESERVE_TESTFLIGHT_BUNDLE_ID"
+  fi
 
   RENDER_ARGS=(
     --output "$INDEX_PATH"
@@ -362,6 +414,16 @@ EOF
     --ios-version "${SHORT_VERSION} (${BUILD_NUMBER})"
     --ios-bundle-id "$APP_BUNDLE_ID"
   )
+  if [[ -n "$FINAL_TESTFLIGHT_URL" || -n "$FINAL_TESTFLIGHT_VERSION" || -n "$FINAL_TESTFLIGHT_BUNDLE_ID" ]]; then
+    [[ -n "$FINAL_TESTFLIGHT_URL" ]] || die "missing TestFlight url while rendering install page"
+    [[ -n "$FINAL_TESTFLIGHT_VERSION" ]] || die "missing TestFlight version while rendering install page"
+    [[ -n "$FINAL_TESTFLIGHT_BUNDLE_ID" ]] || die "missing TestFlight bundle id while rendering install page"
+    RENDER_ARGS+=(
+      --testflight-url "$FINAL_TESTFLIGHT_URL"
+      --testflight-version "$FINAL_TESTFLIGHT_VERSION"
+      --testflight-bundle-id "$FINAL_TESTFLIGHT_BUNDLE_ID"
+    )
+  fi
   if [[ -n "$PRESERVE_ANDROID_URL" && -n "$PRESERVE_ANDROID_VERSION" && -n "$PRESERVE_ANDROID_PACKAGE" ]]; then
     RENDER_ARGS+=(
       --android-url "$PRESERVE_ANDROID_URL"

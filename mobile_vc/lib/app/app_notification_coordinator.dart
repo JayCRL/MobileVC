@@ -25,8 +25,12 @@ class AppNotificationCoordinator {
       _lifecycleState != AppLifecycleState.inactive;
 
   void handleLifecycleStateChanged(AppLifecycleState state) {
+    final previousState = _lifecycleState;
     _lifecycleState = state;
-    _drainNotificationSignal();
+    _drainNotificationSignal(
+      forceForegroundCatchUp: state == AppLifecycleState.resumed &&
+          previousState != AppLifecycleState.resumed,
+    );
   }
 
   Future<void> initialize() async {
@@ -52,21 +56,30 @@ class AppNotificationCoordinator {
     _drainNotificationSignal();
   }
 
-  Future<void> _drainNotificationSignal() async {
-    await _drainActionNeededSignal();
-    await _drainTimelineNotificationSignal();
+  Future<void> _drainNotificationSignal({
+    bool forceForegroundCatchUp = false,
+  }) async {
+    await _drainActionNeededSignal(
+      forceForegroundCatchUp: forceForegroundCatchUp,
+    );
+    await _drainTimelineNotificationSignal(
+      forceForegroundCatchUp: forceForegroundCatchUp,
+    );
   }
 
-  Future<void> _drainActionNeededSignal() async {
+  Future<void> _drainActionNeededSignal({
+    bool forceForegroundCatchUp = false,
+  }) async {
     final signal = _controller.actionNeededSignal;
     if (signal == null || signal.id == _lastHandledSignalId) {
       return;
     }
-    if (isAppForeground) {
+    if (isAppForeground && !forceForegroundCatchUp) {
       _lastHandledSignalId = signal.id;
       return;
     }
-    if (!_initialized || !canShowBackgroundNotification) {
+    if (!_initialized ||
+        (!forceForegroundCatchUp && !canShowBackgroundNotification)) {
       return;
     }
     try {
@@ -86,7 +99,9 @@ class AppNotificationCoordinator {
     }
   }
 
-  Future<void> _drainTimelineNotificationSignal() async {
+  Future<void> _drainTimelineNotificationSignal({
+    bool forceForegroundCatchUp = false,
+  }) async {
     final signal = _controller.notificationSignal;
     if (signal == null) {
       return;
@@ -95,11 +110,12 @@ class AppNotificationCoordinator {
     if (fingerprint == _lastHandledNotificationFingerprint) {
       return;
     }
-    if (isAppForeground) {
+    if (isAppForeground && !forceForegroundCatchUp) {
       _lastHandledNotificationFingerprint = fingerprint;
       return;
     }
-    if (!_initialized || !canShowBackgroundNotification) {
+    if (!_initialized ||
+        (!forceForegroundCatchUp && !canShowBackgroundNotification)) {
       return;
     }
     try {

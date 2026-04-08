@@ -30,16 +30,17 @@ import (
 const wsDebugPreviewLimit = 240
 
 type Handler struct {
-	AuthToken     string
-	NewExecRunner func() runner.Runner
-	NewPtyRunner  func() runner.Runner
-	Upgrader      websocket.Upgrader
-	SkillLauncher *skills.Launcher
-	SessionStore  store.Store
+	AuthToken       string
+	NewExecRunner   func() runner.Runner
+	NewPtyRunner    func() runner.Runner
+	Upgrader        websocket.Upgrader
+	SkillLauncher   *skills.Launcher
+	SessionStore    store.Store
+	runtimeSessions *runtimeSessionRegistry
 }
 
 func NewHandler(authToken string, sessionStore store.Store) *Handler {
-	return &Handler{
+	handler := &Handler{
 		AuthToken: authToken,
 		NewExecRunner: func() runner.Runner {
 			return runner.NewExecRunner()
@@ -57,6 +58,13 @@ func NewHandler(authToken string, sessionStore store.Store) *Handler {
 			},
 		},
 	}
+	handler.runtimeSessions = newRuntimeSessionRegistry(func(sessionID string) *runtimepkg.Service {
+		return runtimepkg.NewService(sessionID, runtimepkg.Dependencies{
+			NewExecRunner: handler.NewExecRunner,
+			NewPtyRunner:  handler.NewPtyRunner,
+		})
+	}, defaultRuntimeSessionReleaseAfter)
+	return handler
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -103,10 +111,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	runtimeSvc := runtimepkg.NewService(selectedSessionID, runtimepkg.Dependencies{
-		NewExecRunner: h.NewExecRunner,
-		NewPtyRunner:  h.NewPtyRunner,
-	})
+	newDetachedRuntimeService := func() *runtimepkg.Service {
+		return runtimepkg.NewService("", runtimepkg.Dependencies{
+			NewExecRunner: h.NewExecRunner,
+			NewPtyRunner:  h.NewPtyRunner,
+		})
+	}
+	runtimeSvc := newDetachedRuntimeService()
 	writeCh := make(chan any, 128)
 	writeErrCh := make(chan error, 1)
 	var writerWG sync.WaitGroup
@@ -145,14 +156,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	logx.Info("ws", "connection established: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 
-	buildProjectionSnapshotFor := func(sessionID string) store.ProjectionSnapshot {
+	sessionProjectionContext := func() (context.Context, context.CancelFunc) {
+		return context.WithTimeout(context.Background(), 2*time.Second)
+	}
+
+	buildProjectionSnapshotForService := func(sessionID string, service *runtimepkg.Service) store.ProjectionSnapshot {
 		projection := store.ProjectionSnapshot{
 			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
 		}
-		loaded := readProjectionFromSessionStore(h.SessionStore, ctx, sessionID, connectionID, remoteAddr)
+		storeCtx, storeCancel := sessionProjectionContext()
+		defer storeCancel()
+		loaded := readProjectionFromSessionStore(h.SessionStore, storeCtx, sessionID, connectionID, remoteAddr)
 		projection = loaded
-		if strings.TrimSpace(sessionID) != "" && sessionID == selectedSessionID {
-			projection = withRuntimeSnapshot(projection, runtimeSvc)
+		if strings.TrimSpace(sessionID) != "" && service != nil {
+			projection = withRuntimeSnapshot(projection, service)
 		}
 		if diff := loaded.CurrentDiff; diff != nil {
 			projection.CurrentDiff = diff
@@ -161,6 +178,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			projection.Diffs = []session.DiffContext{*projection.CurrentDiff}
 		}
 		return projection
+	}
+
+	buildProjectionSnapshotFor := func(sessionID string) store.ProjectionSnapshot {
+		service := runtimeSvc
+		if strings.TrimSpace(sessionID) == "" || sessionID != selectedSessionID {
+			service = nil
+		}
+		return buildProjectionSnapshotForService(sessionID, service)
 	}
 
 	persistProjectionFor := func(sessionID string, snapshot store.ProjectionSnapshot) {
@@ -289,9 +314,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switchRuntimeSession := func(sessionID string) {
 		logx.Info("ws", "switch runtime session: connectionID=%s previousSessionID=%s nextSessionID=%s remoteAddr=%s", connectionID, selectedSessionID, sessionID, remoteAddr)
-		runtimeSvc.Cleanup()
-		selectedSessionID = sessionID
-		runtimeSvc = runtimepkg.NewService(selectedSessionID, runtimepkg.Dependencies{NewExecRunner: h.NewExecRunner, NewPtyRunner: h.NewPtyRunner})
+		nextSessionID := strings.TrimSpace(sessionID)
+		previousSessionID := strings.TrimSpace(selectedSessionID)
+		previousRuntimeSvc := runtimeSvc
+		if previousSessionID == nextSessionID && nextSessionID != "" {
+			if entry := h.runtimeSessions.Attach(nextSessionID, connectionID, emit); entry != nil {
+				runtimeSvc = entry.service
+			}
+			selectedSessionID = nextSessionID
+			return
+		}
+		if previousSessionID != "" {
+			h.runtimeSessions.Release(previousSessionID, connectionID, true)
+		} else if previousRuntimeSvc != nil {
+			previousRuntimeSvc.Cleanup()
+		}
+		selectedSessionID = nextSessionID
+		if nextSessionID == "" {
+			runtimeSvc = newDetachedRuntimeService()
+			return
+		}
+		if entry := h.runtimeSessions.Attach(nextSessionID, connectionID, emit); entry != nil {
+			runtimeSvc = entry.service
+			return
+		}
+		runtimeSvc = newDetachedRuntimeService()
 	}
 
 	emitSessionList := func(filterCWD string) []store.SessionSummary {
@@ -338,10 +385,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var emitAndPersistFor func(sessionID string) func(any)
 	emitAndPersistFor = func(sessionID string) func(any) {
+		runtimeSessionID := strings.TrimSpace(sessionID)
+		sessionRuntime := h.runtimeSessions.Ensure(runtimeSessionID)
+		sessionRuntimeSvc := runtimeSvc
+		if sessionRuntime != nil {
+			sessionRuntimeSvc = sessionRuntime.service
+		}
+		emitSessionEvent := func(event any) {
+			if sessionRuntime != nil {
+				sessionRuntime.emit(event)
+				return
+			}
+			emit(event)
+		}
 		return func(event any) {
 			switch event.(type) {
 			case protocol.PromptRequestEvent, protocol.InteractionRequestEvent:
-				applied, err := maybeAutoApplyPermissionEvent(ctx, h.SessionStore, sessionID, event, runtimeSvc, emit, emitAndPersistFor(sessionID))
+				autoApplyCtx, autoApplyCancel := sessionProjectionContext()
+				applied, err := maybeAutoApplyPermissionEvent(autoApplyCtx, h.SessionStore, runtimeSessionID, event, sessionRuntimeSvc, emitSessionEvent, emitAndPersistFor(runtimeSessionID))
+				autoApplyCancel()
 				if err == nil && applied {
 					return
 				}
@@ -350,36 +412,47 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case protocol.CatalogAuthoringResultEvent:
 				if e.Domain == "skill" {
 					if e.Skill == nil {
-						emit(protocol.NewErrorEvent(sessionID, "catalog authoring 缺少 skill payload", ""))
+						emitSessionEvent(protocol.NewErrorEvent(runtimeSessionID, "catalog authoring 缺少 skill payload", ""))
 						return
 					}
-					if err := upsertLocalSkill(h.SessionStore, ctx, *e.Skill); err != nil {
-						emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+					eventCtx, eventCancel := sessionProjectionContext()
+					err := upsertLocalSkill(h.SessionStore, eventCtx, *e.Skill)
+					eventCancel()
+					if err != nil {
+						emitSessionEvent(protocol.NewErrorEvent(runtimeSessionID, err.Error(), ""))
 						return
 					}
 					h.SkillLauncher = skills.NewLauncher(h.SessionStore)
-					emitSkillCatalogResult(emit, h.SessionStore, ctx, sessionID)
+					eventCtx, eventCancel = sessionProjectionContext()
+					emitSkillCatalogResult(emitSessionEvent, h.SessionStore, eventCtx, runtimeSessionID)
+					eventCancel()
 					return
 				}
 				if e.Domain == "memory" {
 					if e.Memory == nil {
-						emit(protocol.NewErrorEvent(sessionID, "catalog authoring 缺少 memory payload", ""))
+						emitSessionEvent(protocol.NewErrorEvent(runtimeSessionID, "catalog authoring 缺少 memory payload", ""))
 						return
 					}
-					if err := upsertMemoryItem(h.SessionStore, ctx, *e.Memory); err != nil {
-						emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+					eventCtx, eventCancel := sessionProjectionContext()
+					err := upsertMemoryItem(h.SessionStore, eventCtx, *e.Memory)
+					eventCancel()
+					if err != nil {
+						emitSessionEvent(protocol.NewErrorEvent(runtimeSessionID, err.Error(), ""))
 						return
 					}
-					emitMemoryListResult(emit, h.SessionStore, ctx, sessionID)
+					eventCtx, eventCancel = sessionProjectionContext()
+					emitMemoryListResult(emitSessionEvent, h.SessionStore, eventCtx, runtimeSessionID)
+					eventCancel()
 					return
 				}
-				emit(protocol.NewErrorEvent(sessionID, "未知 catalog authoring domain", ""))
+				emitSessionEvent(protocol.NewErrorEvent(runtimeSessionID, "未知 catalog authoring domain", ""))
 				return
 			default:
-				emit(event)
-				snapshot, ok := applyEventToProjection(buildProjectionSnapshotFor(sessionID), event)
+				event = prepareSessionEventForResume(sessionRuntime, runtimeSessionID, event)
+				emitSessionEvent(event)
+				snapshot, ok := applyEventToProjection(buildProjectionSnapshotForService(runtimeSessionID, sessionRuntimeSvc), event)
 				if ok {
-					persistProjectionFor(sessionID, snapshot)
+					persistProjectionFor(runtimeSessionID, snapshot)
 				}
 			}
 		}
@@ -388,7 +461,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		stopADBStream("")
 		cancel()
-		runtimeSvc.Cleanup()
+		if strings.TrimSpace(selectedSessionID) != "" {
+			h.runtimeSessions.Release(selectedSessionID, connectionID, false)
+		} else if runtimeSvc != nil {
+			runtimeSvc.Cleanup()
+		}
 		writerWG.Wait()
 		logx.Info("ws", "connection closed: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
 	}()
@@ -522,12 +599,67 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			switchRuntimeSession(record.Summary.ID)
+			record.Projection = buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+			record.Summary.Runtime = record.Projection.Runtime
 			emit(newSessionHistoryEventFromRecord(record))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
-			if restored := restoredAgentStateEventFromRecord(record); restored != nil {
+			if restored := restoredAgentStateEventFromRecord(record, runtimeSvc.IsRunning()); restored != nil {
 				emit(*restored)
 			}
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
+		case "session_resume":
+			var req protocol.SessionResumeRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid session_resume request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_resume request: %v", err), ""))
+				continue
+			}
+			logx.Info("ws", "incoming session_resume: connectionID=%s sessionID=%s remoteAddr=%s requestedSessionID=%s cwd=%q reason=%q lastSeenEventCursor=%d lastKnownRuntimeState=%q", connectionID, selectedSessionID, remoteAddr, req.SessionID, req.CWD, req.Reason, req.LastSeenEventCursor, req.LastKnownRuntimeState)
+			if h.SessionStore == nil {
+				logx.Error("ws", "session store unavailable for session_resume: connectionID=%s sessionID=%s remoteAddr=%s requestedSessionID=%s", connectionID, selectedSessionID, remoteAddr, req.SessionID)
+				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
+				continue
+			}
+			record, err := loadSessionRecord(ctx, h.SessionStore, req.SessionID)
+			if err != nil {
+				logx.Warn("ws", "resume session failed: connectionID=%s sessionID=%s requestedSessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, req.SessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			switchRuntimeSession(record.Summary.ID)
+			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
+			projection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+			record.Projection = projection
+			record.Summary.Runtime = projection.Runtime
+			runtimeAlive := runtimeSvc != nil && runtimeSvc.IsRunning()
+			if runtimeAlive {
+				emit(buildResumeRecoveryStateEvent(record.Summary.ID, runtimeSvc, projection, req.LastKnownRuntimeState))
+			}
+			emit(newSessionHistoryEventFromRecord(record))
+			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
+			restoredState := ""
+			if restored := restoredAgentStateEventFromRecord(record, runtimeAlive); restored != nil {
+				restoredState = restored.State
+				emit(*restored)
+			}
+			replayedCount := 0
+			latestCursor := int64(0)
+			if sessionRuntime != nil {
+				for _, pendingEvent := range sessionRuntime.pendingSince(req.LastSeenEventCursor) {
+					replayedCount++
+					emit(pendingEvent)
+				}
+				latestCursor = sessionRuntime.latestCursor()
+			}
+			emit(protocol.NewSessionResumeResultEvent(
+				record.Summary.ID,
+				latestCursor,
+				runtimeAlive,
+				resolvedResumeRuntimeState(restoredState, record, runtimeSvc),
+				runtimeAlive,
+				replayedCount,
+				"session resumed",
+			))
 		case "session_delete":
 			var req protocol.SessionDeleteRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {
@@ -578,8 +710,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
+			record.Projection = buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+			record.Summary.Runtime = record.Projection.Runtime
 			emit(newSessionHistoryEventFromRecord(record))
-			if restored := restoredAgentStateEventFromRecord(record); restored != nil {
+			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
+			if restored := restoredAgentStateEventFromRecord(record, runtimeSvc.IsRunning()); restored != nil {
 				emit(*restored)
 			}
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
@@ -1006,6 +1141,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					),
 				},
 			}
+			if shouldEmitTransientResumeThinkingEvent(service, resumeReq) {
+				emit(protocol.ApplyRuntimeMeta(
+					protocol.NewAgentStateEvent(
+						sessionID,
+						string(session.ControllerStateThinking),
+						"恢复会话中",
+						false,
+						resumeReq.Command,
+						projection.Controller.LastStep,
+						projection.Controller.LastTool,
+					),
+					protocol.MergeRuntimeMeta(projection.Controller.ActiveMeta, protocol.RuntimeMeta{
+						Source:          "input",
+						ResumeSessionID: resumeReq.RuntimeMeta.ResumeSessionID,
+						Command:         resumeReq.Command,
+						Engine:          firstNonEmptyString(resumeReq.RuntimeMeta.Engine, projection.Runtime.Engine),
+						CWD:             resumeReq.CWD,
+						PermissionMode:  resumeReq.PermissionMode,
+						ClaudeLifecycle: "active",
+					}),
+				))
+			}
 			if err := service.SendInputOrResume(ctx, sessionID, resumeReq, runtimepkg.InputRequest{Data: inputData, RuntimeMeta: inputMeta}, emitAndPersist); err != nil {
 				message := err.Error()
 				if errors.Is(err, runner.ErrInputNotSupported) {
@@ -1021,6 +1178,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				logx.Warn("ws", "service send input failed: connectionID=%s sessionID=%s remoteAddr=%s action=input err=%v", connectionID, sessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
+			}
+		case "stop":
+			if strings.TrimSpace(selectedSessionID) == "" || selectedSessionID == connectionID {
+				continue
+			}
+			if err := runtimeSvc.StopActive(selectedSessionID, emitAndPersistFor(selectedSessionID)); err != nil && !errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+				logx.Warn("ws", "stop active runner failed: connectionID=%s sessionID=%s remoteAddr=%s action=stop err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 			}
 		case "permission_decision":
 			var permissionEvent protocol.PermissionDecisionRequestEvent
@@ -1659,6 +1824,20 @@ func withRuntimeSnapshot(snapshot store.ProjectionSnapshot, svc *runtimepkg.Serv
 	}
 	controller := svc.ControllerSnapshot()
 	runtimeSnapshot := svc.RuntimeSnapshot()
+	hasLiveRuntimeState := runtimeSnapshot.Running ||
+		strings.TrimSpace(runtimeSnapshot.ResumeSessionID) != "" ||
+		strings.TrimSpace(runtimeSnapshot.ActiveMeta.ResumeSessionID) != "" ||
+		strings.TrimSpace(runtimeSnapshot.ActiveMeta.Command) != "" ||
+		strings.TrimSpace(runtimeSnapshot.ActiveMeta.Engine) != "" ||
+		(strings.TrimSpace(string(controller.State)) != "" && controller.State != session.ControllerStateIdle) ||
+		strings.TrimSpace(controller.ResumeSession) != "" ||
+		strings.TrimSpace(controller.CurrentCommand) != "" ||
+		strings.TrimSpace(controller.ActiveMeta.Command) != "" ||
+		strings.TrimSpace(controller.ActiveMeta.Engine) != "" ||
+		strings.TrimSpace(controller.ClaudeLifecycle) != ""
+	if !hasLiveRuntimeState {
+		return snapshot
+	}
 	runtimeMeta := protocol.MergeRuntimeMeta(runtimeSnapshot.ActiveMeta, controller.ActiveMeta)
 	currentLifecycle := normalizeProjectionLifecycle(
 		firstNonEmptyString(controller.ClaudeLifecycle, runtimeMeta.ClaudeLifecycle, runtimeSnapshot.ClaudeLifecycle),
@@ -2308,35 +2487,114 @@ func loadCodexMemories(now time.Time) ([]store.MemoryItem, error) {
 }
 
 func findClaudeProjectMemoryDir(cwd string) (string, error) {
-	normalized := normalizeSessionCWD(cwd)
-	if normalized == "" {
+	startVariants := pathLookupVariants(cwd)
+	if len(startVariants) == 0 {
 		return "", nil
 	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir for memory sync: %w", err)
 	}
-	current := normalized
-	for {
-		if sameFilePath(current, homeDir) {
-			break
+	stopVariants := pathLookupVariants(homeDir)
+	checked := make(map[string]struct{})
+	for _, start := range startVariants {
+		current := start
+		for {
+			if sameAnyPath(current, stopVariants) {
+				break
+			}
+			candidate := filepath.Join(homeDir, ".claude", "projects", encodeClaudeProjectPath(current), "memory")
+			if _, seen := checked[candidate]; !seen {
+				checked[candidate] = struct{}{}
+				info, err := os.Stat(candidate)
+				if err == nil && info.IsDir() {
+					return candidate, nil
+				}
+			}
+			parent := filepath.Dir(current)
+			if parent == current {
+				break
+			}
+			current = parent
 		}
-		candidate := filepath.Join(homeDir, ".claude", "projects", encodeClaudeProjectPath(current), "memory")
-		info, err := os.Stat(candidate)
-		if err == nil && info.IsDir() {
-			return candidate, nil
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-		current = parent
 	}
 	return "", nil
 }
 
 func sameFilePath(left, right string) bool {
 	return filepath.Clean(strings.TrimSpace(left)) == filepath.Clean(strings.TrimSpace(right))
+}
+
+func sameAnyPath(path string, candidates []string) bool {
+	cleaned := filepath.Clean(strings.TrimSpace(path))
+	if cleaned == "" || cleaned == "." {
+		return false
+	}
+	for _, candidate := range candidates {
+		if sameFilePath(cleaned, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathLookupVariants(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	if absPath, err := filepath.Abs(trimmed); err == nil {
+		trimmed = absPath
+	}
+	addVariant := func(items *[]string, seen map[string]struct{}, value string) {
+		cleaned := filepath.Clean(strings.TrimSpace(value))
+		if cleaned == "" || cleaned == "." {
+			return
+		}
+		if _, ok := seen[cleaned]; ok {
+			return
+		}
+		seen[cleaned] = struct{}{}
+		*items = append(*items, cleaned)
+	}
+	variants := make([]string, 0, 2)
+	seen := make(map[string]struct{}, 2)
+	addVariant(&variants, seen, trimmed)
+	addPrivatePathAliasVariants(&variants, seen, trimmed)
+	if resolved, err := filepath.EvalSymlinks(trimmed); err == nil && strings.TrimSpace(resolved) != "" {
+		addVariant(&variants, seen, resolved)
+		addPrivatePathAliasVariants(&variants, seen, resolved)
+	}
+	return variants
+}
+
+func addPrivatePathAliasVariants(items *[]string, seen map[string]struct{}, value string) {
+	cleaned := filepath.Clean(strings.TrimSpace(value))
+	if cleaned == "" || cleaned == "." {
+		return
+	}
+	if strings.HasPrefix(cleaned, "/private/") {
+		alias := strings.TrimPrefix(cleaned, "/private")
+		if alias == "" {
+			alias = string(os.PathSeparator)
+		}
+		if _, err := os.Stat(alias); err == nil {
+			cleanedAlias := filepath.Clean(alias)
+			if _, ok := seen[cleanedAlias]; !ok {
+				seen[cleanedAlias] = struct{}{}
+				*items = append(*items, cleanedAlias)
+			}
+		}
+		return
+	}
+	alias := filepath.Join(string(os.PathSeparator), "private", strings.TrimPrefix(cleaned, string(os.PathSeparator)))
+	if _, err := os.Stat(alias); err == nil {
+		cleanedAlias := filepath.Clean(alias)
+		if _, ok := seen[cleanedAlias]; !ok {
+			seen[cleanedAlias] = struct{}{}
+			*items = append(*items, cleanedAlias)
+		}
+	}
 }
 
 func encodeClaudeProjectPath(path string) string {
@@ -2847,7 +3105,7 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 	)
 }
 
-func restoredAgentStateEventFromRecord(record store.SessionRecord) *protocol.AgentStateEvent {
+func restoredAgentStateEventFromRecord(record store.SessionRecord, hasActiveRunner bool) *protocol.AgentStateEvent {
 	projection := normalizeProjectionSnapshot(record.Projection)
 	runtimeMeta := protocol.MergeRuntimeMeta(projection.Controller.ActiveMeta, protocol.RuntimeMeta{
 		ResumeSessionID: firstNonEmptyString(
@@ -2886,6 +3144,7 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord) *protocol.Age
 		),
 	})
 	state := projection.Controller.State
+	downgradedStaleRunning := false
 	if state == "" {
 		switch strings.TrimSpace(runtimeMeta.ClaudeLifecycle) {
 		case "waiting_input":
@@ -2894,6 +3153,19 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord) *protocol.Age
 			state = session.ControllerStateThinking
 		case "resumable":
 			state = session.ControllerStateIdle
+		}
+	}
+	if !hasActiveRunner {
+		switch state {
+		case session.ControllerStateThinking, session.ControllerStateRunningTool:
+			if strings.TrimSpace(runtimeMeta.ResumeSessionID) != "" {
+				state = session.ControllerStateWaitInput
+				runtimeMeta.ClaudeLifecycle = "waiting_input"
+			} else {
+				state = session.ControllerStateIdle
+				runtimeMeta.ClaudeLifecycle = ""
+			}
+			downgradedStaleRunning = true
 		}
 	}
 	if state == "" {
@@ -2905,6 +3177,9 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord) *protocol.Age
 		currentStepMessage = projection.CurrentStep.Message
 	}
 	message := firstNonEmptyString(projection.Controller.LastStep, currentStepMessage)
+	if downgradedStaleRunning {
+		message = ""
+	}
 	switch state {
 	case session.ControllerStateWaitInput:
 		message = firstNonEmptyString(message, "等待输入")
@@ -2936,6 +3211,246 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord) *protocol.Age
 	return &event
 }
 
+func shouldEmitTransientResumeThinkingEvent(service *runtimepkg.Service, req runtimepkg.ExecuteRequest) bool {
+	if service == nil || service.IsRunning() {
+		return false
+	}
+	if req.Mode != runner.ModePTY {
+		return false
+	}
+	if !service.CanHotSwapClaudeSession(req) {
+		return false
+	}
+	if !service.HasResumeSession(req) {
+		return false
+	}
+	return true
+}
+
+func prepareSessionEventForResume(sessionRuntime *runtimeSession, sessionID string, event any) any {
+	event = markSystemBootstrapEvent(event)
+	if sessionRuntime == nil || strings.TrimSpace(sessionID) == "" {
+		return event
+	}
+	switch event.(type) {
+	case protocol.PromptRequestEvent, protocol.InteractionRequestEvent:
+		event = sessionRuntime.appendPending(event)
+	}
+	if sessionRuntime.listenerCount() == 0 {
+		if notice := detachedResumeNoticeEvent(sessionID, event); notice != nil {
+			sessionRuntime.appendPending(*notice)
+		}
+	}
+	return event
+}
+
+func markSystemBootstrapEvent(event any) any {
+	logEvent, ok := event.(protocol.LogEvent)
+	if !ok {
+		return event
+	}
+	if !isSystemBootstrapLog(logEvent) {
+		return event
+	}
+	logEvent.RuntimeMeta = protocol.MergeRuntimeMeta(logEvent.RuntimeMeta, protocol.RuntimeMeta{
+		Source: "system/bootstrap",
+	})
+	return logEvent
+}
+
+func isSystemBootstrapLog(event protocol.LogEvent) bool {
+	if runtimeEngineFromMeta(event.RuntimeMeta) != "codex" {
+		return false
+	}
+	message := strings.TrimSpace(strings.ToLower(event.Message))
+	if message == "" {
+		return false
+	}
+	if strings.HasPrefix(message, "using ") && strings.Contains(message, " mode") {
+		return true
+	}
+	return strings.Contains(message, "reasoning effort") ||
+		strings.Contains(message, "model set to") ||
+		strings.Contains(message, "how can i help you") ||
+		strings.Contains(message, "what would you like to work on next")
+}
+
+func detachedResumeNoticeEvent(sessionID string, event any) *protocol.SessionResumeNoticeEvent {
+	switch e := event.(type) {
+	case protocol.LogEvent:
+		if strings.TrimSpace(e.Source) == "system/bootstrap" {
+			return nil
+		}
+		if !looksLikeAssistantResumeNotice(e) {
+			return nil
+		}
+		notice := protocol.NewSessionResumeNoticeEvent(sessionID, "assistant_reply", "info", "MobileVC", strings.TrimSpace(e.Message))
+		notice.RuntimeMeta = protocol.MergeRuntimeMeta(notice.RuntimeMeta, e.RuntimeMeta)
+		return &notice
+	case protocol.ErrorEvent:
+		if strings.TrimSpace(e.Message) == "" {
+			return nil
+		}
+		if e.Code == "ws_closed" || e.Code == "ws_stream_error" {
+			return nil
+		}
+		notice := protocol.NewSessionResumeNoticeEvent(sessionID, "error", "error", "MobileVC", strings.TrimSpace(e.Message))
+		notice.RuntimeMeta = protocol.MergeRuntimeMeta(notice.RuntimeMeta, e.RuntimeMeta)
+		return &notice
+	default:
+		return nil
+	}
+}
+
+func looksLikeAssistantResumeNotice(event protocol.LogEvent) bool {
+	if strings.EqualFold(strings.TrimSpace(event.Stream), "stderr") {
+		return false
+	}
+	message := strings.TrimSpace(event.Message)
+	if message == "" {
+		return false
+	}
+	engine := runtimeEngineFromMeta(event.RuntimeMeta)
+	if engine != "claude" && engine != "codex" {
+		return false
+	}
+	lower := strings.ToLower(message)
+	if strings.HasPrefix(lower, "output") || strings.HasPrefix(lower, "wall time:") {
+		return false
+	}
+	if looksLikeMarkdownMessage(message) {
+		return true
+	}
+	if strings.Contains(message, "\n") {
+		return true
+	}
+	if len([]rune(message)) < 48 {
+		return false
+	}
+	return !looksLikeTerminalLikeLogLine(message)
+}
+
+func looksLikeTerminalLikeLogLine(message string) bool {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "$ ") ||
+		strings.HasPrefix(lower, "# ") ||
+		strings.HasPrefix(lower, "> ") ||
+		strings.HasPrefix(lower, "at ") ||
+		strings.Contains(lower, "fatal:") ||
+		strings.Contains(lower, "error:") ||
+		strings.Contains(lower, "traceback") ||
+		strings.Contains(lower, "[info]") ||
+		strings.Contains(lower, "[error]") ||
+		strings.Contains(lower, "task :")
+}
+
+func runtimeEngineFromMeta(meta protocol.RuntimeMeta) string {
+	engine := strings.TrimSpace(strings.ToLower(meta.Engine))
+	if engine == "claude" || engine == "codex" {
+		return engine
+	}
+	command := strings.TrimSpace(strings.ToLower(meta.Command))
+	switch {
+	case command == "claude", strings.HasPrefix(command, "claude "):
+		return "claude"
+	case command == "codex", strings.HasPrefix(command, "codex "):
+		return "codex"
+	default:
+		return ""
+	}
+}
+
+func buildResumeRecoveryStateEvent(sessionID string, svc *runtimepkg.Service, projection store.ProjectionSnapshot, lastKnownRuntimeState string) protocol.AgentStateEvent {
+	projection = normalizeProjectionSnapshot(projection)
+	controller := projection.Controller
+	runtimeMeta := projection.Runtime
+	if svc != nil {
+		snapshot := svc.RuntimeSnapshot()
+		runtimeMeta = mergeStoreSessionRuntime(runtimeMeta, store.SessionRuntime{
+			ResumeSessionID: snapshot.ResumeSessionID,
+			Command:         snapshot.ActiveMeta.Command,
+			Engine:          snapshot.ActiveMeta.Engine,
+			PermissionMode:  snapshot.ActiveMeta.PermissionMode,
+			CWD:             snapshot.ActiveMeta.CWD,
+			ClaudeLifecycle: snapshot.ClaudeLifecycle,
+			Source:          "mobilevc",
+		})
+		controller = svc.ControllerSnapshot()
+	}
+	meta := protocol.MergeRuntimeMeta(controller.ActiveMeta, protocol.RuntimeMeta{
+		Source:          firstNonEmptyString(runtimeMeta.Source, "mobilevc"),
+		ResumeSessionID: runtimeMeta.ResumeSessionID,
+		Command:         firstNonEmptyString(runtimeMeta.Command, controller.CurrentCommand),
+		Engine:          runtimeMeta.Engine,
+		CWD:             runtimeMeta.CWD,
+		PermissionMode:  runtimeMeta.PermissionMode,
+		ClaudeLifecycle: firstNonEmptyString(runtimeMeta.ClaudeLifecycle, "active"),
+	})
+	message := "恢复会话中"
+	if isBusyRuntimeState(lastKnownRuntimeState) {
+		message = "恢复执行中"
+	}
+	event := protocol.NewAgentStateEvent(
+		sessionID,
+		"RECOVERING",
+		message,
+		false,
+		meta.Command,
+		controller.LastStep,
+		controller.LastTool,
+	)
+	event.RuntimeMeta = meta
+	return event
+}
+
+func resolvedResumeRuntimeState(restoredState string, record store.SessionRecord, svc *runtimepkg.Service) string {
+	if strings.TrimSpace(restoredState) != "" {
+		return restoredState
+	}
+	projection := normalizeProjectionSnapshot(record.Projection)
+	if svc != nil {
+		projection = withRuntimeSnapshot(projection, svc)
+	}
+	if state := strings.TrimSpace(string(projection.Controller.State)); state != "" {
+		return state
+	}
+	if svc != nil && svc.IsRunning() {
+		return "RECOVERING"
+	}
+	return ""
+}
+
+func isBusyRuntimeState(state string) bool {
+	switch strings.TrimSpace(strings.ToUpper(state)) {
+	case "RUNNING", "THINKING", "RUNNING_TOOL", "RECOVERING":
+		return true
+	default:
+		return false
+	}
+}
+
+func logSnapshotContextFromEvent(event protocol.LogEvent) *store.SnapshotContext {
+	command := firstNonEmptyString(event.Command, event.RuntimeMeta.Command)
+	source := strings.TrimSpace(event.Source)
+	skillName := strings.TrimSpace(event.SkillName)
+	if command == "" && source == "" && skillName == "" && strings.TrimSpace(event.ExecutionID) == "" {
+		return nil
+	}
+	return &store.SnapshotContext{
+		ID:          firstNonEmptyString(event.ContextID, fmt.Sprintf("log:%s", event.Timestamp.Format(time.RFC3339Nano))),
+		Command:     command,
+		Title:       firstNonEmptyString(event.ContextTitle, event.Message),
+		Timestamp:   event.Timestamp.Format(time.RFC3339),
+		Source:      source,
+		SkillName:   skillName,
+		ExecutionID: event.ExecutionID,
+	}
+}
+
 func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store.ProjectionSnapshot, bool) {
 	snapshot = normalizeProjectionSnapshot(snapshot)
 	switch e := event.(type) {
@@ -2947,6 +3462,7 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 	case protocol.LogEvent:
 		phase := strings.TrimSpace(e.Phase)
 		msg := strings.TrimSpace(e.Message)
+		context := logSnapshotContextFromEvent(e)
 		entry := store.SnapshotLogEntry{
 			Kind:        "terminal",
 			Message:     e.Message,
@@ -2956,6 +3472,7 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 			ExecutionID: e.ExecutionID,
 			Phase:       phase,
 			ExitCode:    e.ExitCode,
+			Context:     context,
 		}
 		if phase == "started" {
 			snapshot.TerminalExecutions = upsertTerminalExecution(snapshot.TerminalExecutions, store.TerminalExecution{
@@ -2981,8 +3498,8 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 		if msg == "" {
 			return snapshot, false
 		}
-		if e.Stream != "stderr" && looksLikeMarkdownMessage(msg) {
-			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "markdown", Message: e.Message, Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream, ExecutionID: e.ExecutionID, Phase: phase, ExitCode: e.ExitCode})
+		if e.Stream != "stderr" && e.Source != "system/bootstrap" && looksLikeMarkdownMessage(msg) {
+			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "markdown", Message: e.Message, Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream, ExecutionID: e.ExecutionID, Phase: phase, ExitCode: e.ExitCode, Context: context})
 		} else {
 			previousIndex := len(snapshot.LogEntries) - 1
 			if previousIndex >= 0 && snapshot.LogEntries[previousIndex].Kind == "terminal" && snapshot.LogEntries[previousIndex].Stream == e.Stream && snapshot.LogEntries[previousIndex].ExecutionID == e.ExecutionID && snapshot.LogEntries[previousIndex].Phase == phase {
@@ -2992,6 +3509,9 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 				}
 				prev.Text += strings.TrimLeft(e.Message, "\r")
 				prev.Timestamp = e.Timestamp.Format(time.RFC3339)
+				if prev.Context == nil && context != nil {
+					prev.Context = context
+				}
 				snapshot.LogEntries[previousIndex] = prev
 			} else {
 				snapshot.LogEntries = append(snapshot.LogEntries, entry)

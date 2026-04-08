@@ -82,11 +82,11 @@ func TestManagerFinishIfCurrentIgnoresSupersededRunner(t *testing.T) {
 	first := newHotSwapStubRunner("resume-old", true)
 	second := newHotSwapStubRunner("resume-new", true)
 	mgr := newManager()
-	if err := mgr.start("s1", first, protocol.RuntimeMeta{Command: "claude", PermissionMode: "default"}); err != nil {
+	if err := mgr.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", PermissionMode: "default"}); err != nil {
 		t.Fatalf("start first runner: %v", err)
 	}
 	mgr.closeActive()
-	if err := mgr.start("s1", second, protocol.RuntimeMeta{Command: "claude --resume resume-new", PermissionMode: "acceptEdits", ResumeSessionID: "resume-new"}); err != nil {
+	if err := mgr.start("s1", second, nil, protocol.RuntimeMeta{Command: "claude --resume resume-new", PermissionMode: "acceptEdits", ResumeSessionID: "resume-new"}); err != nil {
 		t.Fatalf("start second runner: %v", err)
 	}
 
@@ -332,7 +332,7 @@ func TestHotSwapApproveWithTemporaryElevationRestartsWithResumeAndContinuation(t
 			return newHotSwapStubRunner("resume-123", true)
 		},
 	})
-	if err := svc.manager.start("s1", first, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default"}); err != nil {
+	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default"}); err != nil {
 		t.Fatalf("start manager: %v", err)
 	}
 
@@ -392,7 +392,7 @@ func TestRestoreSafePermissionModeBeforeInputRestartsAndSendsUserInput(t *testin
 			return newHotSwapStubRunner("resume-234", true)
 		},
 	})
-	if err := svc.manager.start("s1", first, protocol.RuntimeMeta{Command: "claude --resume resume-234", CWD: "/tmp", PermissionMode: "acceptEdits", ResumeSessionID: "resume-234"}); err != nil {
+	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude --resume resume-234", CWD: "/tmp", PermissionMode: "acceptEdits", ResumeSessionID: "resume-234"}); err != nil {
 		t.Fatalf("start manager: %v", err)
 	}
 	svc.manager.updateResumeSessionID("resume-234")
@@ -480,7 +480,7 @@ func TestSendInputOrResumeWritesActiveRunnerWithoutRestart(t *testing.T) {
 		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
 		NewPtyRunner:  func() runner.Runner { t.Fatal("did not expect resume runner to start"); return nil },
 	})
-	if err := svc.manager.start("s1", active, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default", ResumeSessionID: "resume-active"}); err != nil {
+	if err := svc.manager.start("s1", active, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default", ResumeSessionID: "resume-active"}); err != nil {
 		t.Fatalf("start manager: %v", err)
 	}
 
@@ -543,7 +543,7 @@ func TestSendInputOrResumeReturnsNoActiveRunnerWithoutResumeSession(t *testing.T
 func TestHotSwapApproveWithTemporaryElevationRequiresResumeSession(t *testing.T) {
 	first := newHotSwapStubRunner("", true)
 	svc := NewService("s1", Dependencies{})
-	if err := svc.manager.start("s1", first, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default"}); err != nil {
+	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default"}); err != nil {
 		t.Fatalf("start manager: %v", err)
 	}
 	continuation := hotSwapContinuationInput("README.md", "写 README 需要你的授权")
@@ -566,7 +566,7 @@ func TestHotSwapApproveWithTemporaryElevationDoesNotRequireInteractiveRunner(t *
 		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
 		NewPtyRunner:  func() runner.Runner { return second },
 	})
-	if err := svc.manager.start("s1", first, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default", ResumeSessionID: "resume-345"}); err != nil {
+	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default", ResumeSessionID: "resume-345"}); err != nil {
 		t.Fatalf("start manager: %v", err)
 	}
 	continuation := hotSwapContinuationInput("README.md", "写 README 需要你的授权")
@@ -673,7 +673,7 @@ func TestRestoreSafePermissionModeBeforeInputPropagatesWriteFailure(t *testing.T
 		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
 		NewPtyRunner:  func() runner.Runner { return second },
 	})
-	if err := svc.manager.start("s1", first, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "acceptEdits", ResumeSessionID: "resume-456"}); err != nil {
+	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "acceptEdits", ResumeSessionID: "resume-456"}); err != nil {
 		t.Fatalf("start manager: %v", err)
 	}
 	svc.manager.updateResumeSessionID("resume-456")

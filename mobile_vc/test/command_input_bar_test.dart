@@ -108,6 +108,25 @@ void main() {
       expect(field.decoration?.hintText, '当前 shell 会话仍在运行');
     });
 
+    testWidgets('busy 且非等待输入时发送按钮切为停止按钮', (tester) async {
+      var stopped = false;
+      await tester.pumpWidget(
+        _buildTestApp(
+          isBusy: true,
+          showClaudeMode: true,
+          currentEngine: 'codex',
+          onStop: () => stopped = true,
+        ),
+      );
+
+      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+
+      expect(stopped, isTrue);
+    });
+
     testWidgets('loading 期间显示会话切换中 hint 并禁用输入', (tester) async {
       await tester.pumpWidget(
         _buildTestApp(
@@ -133,6 +152,7 @@ Widget _buildTestApp({
   String currentEngine = 'claude',
   bool isSessionLoading = false,
   ValueChanged<String>? onSubmit,
+  VoidCallback? onStop,
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -145,6 +165,7 @@ Widget _buildTestApp({
         shouldShowPermissionChoices: shouldShowPermissionChoices,
         shouldShowReviewChoices: shouldShowReviewChoices,
         onSubmit: onSubmit ?? (_) {},
+        onStop: onStop ?? () {},
         onOpenSessions: () {},
         onOpenRuntimeInfo: () {},
         onOpenLogs: () {},
