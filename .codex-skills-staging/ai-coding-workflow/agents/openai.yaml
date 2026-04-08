@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Coding Workflow"
+  short_description: "约束 AI 编程协作边界，减少后期变慢和发散"
+  default_prompt: "Use $ai-coding-workflow to turn this coding task into a bounded AI workflow with clear scope, non-goals, validation, and a compact handoff format."
