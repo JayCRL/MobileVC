@@ -65,6 +65,9 @@ class FlutterLocalNotificationService implements LocalNotificationService {
       final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       await androidPlugin?.createNotificationChannel(_channel);
+      final androidGranted =
+          await androidPlugin?.requestNotificationsPermission();
+      final androidEnabled = await androidPlugin?.areNotificationsEnabled();
       final iosPlugin = _plugin.resolvePlatformSpecificImplementation<
           IOSFlutterLocalNotificationsPlugin>();
       final macosPlugin = _plugin.resolvePlatformSpecificImplementation<
@@ -79,7 +82,9 @@ class FlutterLocalNotificationService implements LocalNotificationService {
         badge: true,
         sound: true,
       );
-      _permissionGranted = (iosGranted ?? true) && (macosGranted ?? true);
+      _permissionGranted = (androidGranted ?? androidEnabled ?? true) &&
+          (iosGranted ?? true) &&
+          (macosGranted ?? true);
       _initialized = true;
       debugPrint(
         '[startup] notification init end permissionGranted=$_permissionGranted',
@@ -113,8 +118,16 @@ class FlutterLocalNotificationService implements LocalNotificationService {
         importance: Importance.high,
         priority: Priority.high,
       ),
-      iOS: const DarwinNotificationDetails(),
-      macOS: const DarwinNotificationDetails(),
+      iOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+      macOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
     );
     try {
       await _plugin.show(

@@ -9,6 +9,7 @@ class CommandInputBar extends StatefulWidget {
     required this.fastMode,
     required this.permissionMode,
     required this.onSubmit,
+    required this.onStop,
     required this.onOpenSessions,
     required this.onOpenRuntimeInfo,
     required this.onOpenLogs,
@@ -33,6 +34,7 @@ class CommandInputBar extends StatefulWidget {
   final bool fastMode;
   final String permissionMode;
   final ValueChanged<String> onSubmit;
+  final VoidCallback onStop;
   final VoidCallback onOpenSessions;
   final VoidCallback onOpenRuntimeInfo;
   final VoidCallback onOpenLogs;
@@ -63,6 +65,8 @@ class _CommandInputBarState extends State<CommandInputBar> {
       widget.shouldShowPermissionChoices ||
       widget.shouldShowReviewChoices ||
       widget.shouldShowPlanChoices;
+
+  bool get _showStopAction => !_inputLocked && widget.isBusy && !widget.awaitInput;
 
   String get _lockedHintText {
     if (widget.isSessionLoading) {
@@ -378,14 +382,20 @@ class _CommandInputBarState extends State<CommandInputBar> {
                           width: 42,
                           height: 42,
                           child: FilledButton(
-                            onPressed: _inputLocked ? null : _submit,
+                            onPressed: _inputLocked
+                                ? null
+                                : (_showStopAction ? widget.onStop : _submit),
                             style: FilledButton.styleFrom(
                               elevation: 0,
                               backgroundColor: _inputLocked
                                   ? scheme.surfaceContainerHighest
+                                  : _showStopAction
+                                      ? scheme.error
                                   : scheme.primary,
                               foregroundColor: _inputLocked
                                   ? scheme.onSurfaceVariant
+                                  : _showStopAction
+                                      ? scheme.onError
                                   : scheme.onPrimary,
                               padding: EdgeInsets.zero,
                               minimumSize: const Size(42, 42),
@@ -393,7 +403,12 @@ class _CommandInputBarState extends State<CommandInputBar> {
                                 borderRadius: BorderRadius.circular(999),
                               ),
                             ),
-                            child: const Icon(Icons.arrow_upward, size: 18),
+                            child: Icon(
+                              _showStopAction
+                                  ? Icons.stop_rounded
+                                  : Icons.arrow_upward,
+                              size: 18,
+                            ),
                           ),
                         ),
                       ),

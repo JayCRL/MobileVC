@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -211,10 +211,51 @@ func newTestHandler() *Handler {
 	return NewHandler("test", nil)
 }
 
+type localTestServer struct {
+	URL      string
+	server   *http.Server
+	listener net.Listener
+}
+
+func (s *localTestServer) Close() {
+	if s == nil {
+		return
+	}
+	if s.server != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = s.server.Shutdown(ctx)
+		cancel()
+	}
+	_ = s.listener.Close()
+}
+
+func newLocalHTTPServer(t *testing.T, handler http.Handler) *localTestServer {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen test server: %v", err)
+	}
+	server := &http.Server{Handler: handler}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	testServer := &localTestServer{
+		URL:      "http://" + listener.Addr().String(),
+		server:   server,
+		listener: listener,
+	}
+	t.Cleanup(testServer.Close)
+	return testServer
+}
+
 func newTestConn(t *testing.T, h *Handler) *websocket.Conn {
 	t.Helper()
-	server := httptest.NewServer(h)
-	t.Cleanup(server.Close)
+	server := newLocalHTTPServer(t, h)
+	if h != nil && h.runtimeSessions != nil {
+		t.Cleanup(func() {
+			h.runtimeSessions.CleanupAll()
+		})
+	}
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/?token=test"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -574,6 +615,79 @@ func TestApplyEventToProjectionPersistsAgentAndPromptState(t *testing.T) {
 	}
 	if updated.Runtime.ResumeSessionID != "resume-1" {
 		t.Fatalf("unexpected resume session id: %q", updated.Runtime.ResumeSessionID)
+	}
+}
+
+func TestApplyEventToProjectionKeepsBootstrapLogsOutOfMarkdownHistory(t *testing.T) {
+	snapshot := store.ProjectionSnapshot{}
+	logEvent := protocol.NewLogEvent("s1", "Using codex medium mode", "stdout")
+	logEvent.RuntimeMeta = protocol.RuntimeMeta{
+		Command: "codex",
+		Engine:  "codex",
+	}
+	marked, ok := markSystemBootstrapEvent(logEvent).(protocol.LogEvent)
+	if !ok {
+		t.Fatal("expected marked bootstrap log event")
+	}
+	updated, applied := applyEventToProjection(snapshot, marked)
+	if !applied {
+		t.Fatal("expected bootstrap log to be persisted")
+	}
+	if len(updated.LogEntries) != 1 {
+		t.Fatalf("expected one log entry, got %d", len(updated.LogEntries))
+	}
+	entry := updated.LogEntries[0]
+	if entry.Kind != "terminal" {
+		t.Fatalf("expected bootstrap log to stay terminal, got %q", entry.Kind)
+	}
+	if entry.Context == nil || entry.Context.Source != "system/bootstrap" {
+		t.Fatalf("expected bootstrap source metadata, got %#v", entry.Context)
+	}
+}
+
+func TestSessionResumeReplaysPendingEvents(t *testing.T) {
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	h := NewHandler("test", tempStore)
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "resume-session")
+	runtimeSession := h.runtimeSessions.Ensure(sessionID)
+	if runtimeSession == nil {
+		t.Fatal("expected runtime session")
+	}
+	runtimeSession.appendPending(protocol.NewPromptRequestEvent(sessionID, "继续输入", nil))
+	runtimeSession.appendPending(protocol.NewSessionResumeNoticeEvent(sessionID, "assistant_reply", "info", "MobileVC", "后台期间有新的回复"))
+
+	if err := conn.WriteJSON(protocol.SessionResumeRequestEvent{
+		ClientEvent:         protocol.ClientEvent{Action: "session_resume"},
+		SessionID:           sessionID,
+		LastSeenEventCursor: 0,
+	}); err != nil {
+		t.Fatalf("write session_resume request: %v", err)
+	}
+
+	_ = readUntilType(t, conn, protocol.EventTypeSessionHistory)
+	promptEvent := readUntilType(t, conn, protocol.EventTypePromptRequest)
+	if got, _ := promptEvent["eventCursor"].(float64); got != 1 {
+		t.Fatalf("expected prompt replay cursor 1, got %#v", promptEvent)
+	}
+	noticeEvent := readUntilType(t, conn, protocol.EventTypeSessionResumeNotice)
+	if got, _ := noticeEvent["eventCursor"].(float64); got != 2 {
+		t.Fatalf("expected notice replay cursor 2, got %#v", noticeEvent)
+	}
+	resultEvent := readUntilType(t, conn, protocol.EventTypeSessionResumeResult)
+	if resultEvent["latestCursor"] != float64(2) {
+		t.Fatalf("expected latest cursor 2, got %#v", resultEvent)
+	}
+	if resultEvent["replayedCount"] != float64(2) {
+		t.Fatalf("expected replayedCount 2, got %#v", resultEvent)
+	}
+	if resultEvent["runtimeAlive"] != false {
+		t.Fatalf("expected runtimeAlive false, got %#v", resultEvent)
 	}
 }
 
@@ -939,6 +1053,28 @@ func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save projection: %v", err)
 	}
+	record, err := tempStore.GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get saved session: %v", err)
+	}
+	if got := normalizeSessionCWD(record.Projection.Runtime.CWD); got != normalizeSessionCWD(projectChild) {
+		t.Fatalf("expected saved projection cwd %q, got %q", normalizeSessionCWD(projectChild), got)
+	}
+	if got := resolveCatalogSyncCWD(tempStore, context.Background(), sessionID, ""); got != normalizeSessionCWD(projectChild) {
+		t.Fatalf("expected sync cwd %q, got %q", normalizeSessionCWD(projectChild), got)
+	}
+	if got, err := findClaudeProjectMemoryDir(projectChild); err != nil {
+		t.Fatalf("find claude project memory dir: %v", err)
+	} else if normalizeSessionCWD(got) != normalizeSessionCWD(memoryDir) {
+		t.Fatalf("expected memory dir %q, got %q", normalizeSessionCWD(memoryDir), normalizeSessionCWD(got))
+	}
+	externalMemories, err := loadClaudeProjectMemories(projectChild, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("load claude project memories: %v", err)
+	}
+	if len(externalMemories) != 1 || externalMemories[0].ID != "testing_notes" {
+		t.Fatalf("expected direct external memory lookup to find testing_notes, got %#v", externalMemories)
+	}
 
 	if err := conn.WriteJSON(protocol.MemoryRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "memory_upsert"},
@@ -955,11 +1091,20 @@ func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 	if statusEvent["domain"] != "memory" {
 		t.Fatalf("unexpected memory sync status: %#v", statusEvent)
 	}
+	if statusEvent["sessionId"] != sessionID {
+		t.Fatalf("expected memory sync status session %q, got %#v", sessionID, statusEvent)
+	}
 	resultEvent := readUntilType(t, conn, protocol.EventTypeCatalogSyncResult)
 	if resultEvent["domain"] != "memory" || resultEvent["success"] != true {
 		t.Fatalf("unexpected memory sync result: %#v", resultEvent)
 	}
+	if resultEvent["sessionId"] != sessionID {
+		t.Fatalf("expected memory sync result session %q, got %#v", sessionID, resultEvent)
+	}
 	listEvent := readUntilType(t, conn, protocol.EventTypeMemoryListResult)
+	if listEvent["sessionId"] != sessionID {
+		t.Fatalf("expected memory list session %q, got %#v", sessionID, listEvent)
+	}
 	meta, ok := listEvent["meta"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected memory meta, got %#v", listEvent)
@@ -1522,12 +1667,135 @@ func TestHandlerSessionLoadRestoresAgentStateFromProjection(t *testing.T) {
 	}
 	_ = readUntilType(t, conn, protocol.EventTypeReviewState)
 	agentState := readUntilType(t, conn, protocol.EventTypeAgentState)
-	requireAgentState(t, agentState, "THINKING", false)
+	requireAgentState(t, agentState, "WAIT_INPUT", true)
 	if agentState["resumeSessionId"] != "thread-restore" {
 		t.Fatalf("expected restored resumeSessionId, got %#v", agentState)
 	}
-	if agentState["claudeLifecycle"] != "active" {
+	if agentState["claudeLifecycle"] != "waiting_input" {
 		t.Fatalf("expected restored claudeLifecycle, got %#v", agentState)
+	}
+}
+
+func TestHandlerSessionLoadDoesNotReplayRunningStateWithoutResume(t *testing.T) {
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "restore-idle-session")
+
+	record, err := h.SessionStore.GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	record.Projection = normalizeProjectionSnapshot(store.ProjectionSnapshot{
+		CurrentStep: &store.SnapshotContext{
+			Message: "旧运行态",
+		},
+		Controller: session.ControllerSnapshot{
+			SessionID:      sessionID,
+			State:          session.ControllerStateRunningTool,
+			CurrentCommand: "bash -lc long-task",
+			LastStep:       "旧运行态",
+			ActiveMeta: protocol.RuntimeMeta{
+				Command: "bash -lc long-task",
+				CWD:     "/tmp/project",
+			},
+		},
+		Runtime: store.SessionRuntime{
+			Command: "bash -lc long-task",
+			CWD:     "/tmp/project",
+			Source:  "mobilevc",
+		},
+		RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
+	})
+	if _, err := h.SessionStore.SaveProjection(context.Background(), sessionID, record.Projection); err != nil {
+		t.Fatalf("save projection: %v", err)
+	}
+
+	if err := conn.WriteJSON(protocol.SessionLoadRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_load"},
+		SessionID:   sessionID,
+	}); err != nil {
+		t.Fatalf("write session_load request: %v", err)
+	}
+
+	_ = readUntilSessionHistory(t, conn)
+	_ = readUntilType(t, conn, protocol.EventTypeReviewState)
+	event := readUntilType(t, conn, protocol.EventTypeSessionState)
+	if event["state"] != string(session.StateActive) {
+		t.Fatalf("expected active session state after history load, got %#v", event)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
+	var extra map[string]any
+	if err := conn.ReadJSON(&extra); err == nil && extra["type"] == protocol.EventTypeAgentState {
+		t.Fatalf("expected no restored running agent state without resume, got %#v", extra)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+}
+
+func TestHandlerReconnectReattachesRunningSessionRuntime(t *testing.T) {
+	runnerStub := newSwitchableStubRunner()
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return runnerStub }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "reattach-runtime")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	runnerStub.WaitStarted(t)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close first connection: %v", err)
+	}
+
+	select {
+	case <-runnerStub.closed:
+		t.Fatal("expected running session to survive websocket disconnect")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	conn2 := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn2)
+	if err := conn2.WriteJSON(protocol.SessionLoadRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "session_load"},
+		SessionID:   sessionID,
+	}); err != nil {
+		t.Fatalf("write session_load request: %v", err)
+	}
+
+	history := readUntilSessionHistory(t, conn2)
+	if history["sessionId"] != sessionID {
+		t.Fatalf("expected session history for %s, got %#v", sessionID, history)
+	}
+	_ = readUntilType(t, conn2, protocol.EventTypeReviewState)
+	agentState := readUntilType(t, conn2, protocol.EventTypeAgentState)
+	requireAgentState(t, agentState, "THINKING", false)
+
+	runnerStub.Emit(protocol.NewLogEvent("ignored", "live output after reconnect", "stdout"))
+	logEvent := readUntilType(t, conn2, protocol.EventTypeLog)
+	if logEvent["msg"] != "live output after reconnect" {
+		t.Fatalf("expected live log after reconnect, got %#v", logEvent)
+	}
+
+	if entry := h.runtimeSessions.Ensure(sessionID); entry != nil {
+		entry.service.Cleanup()
 	}
 }
 
@@ -2621,6 +2889,30 @@ func TestHandlerInputAutoResumesDetachedClaudeSession(t *testing.T) {
 	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "second turn\n"}); err != nil {
 		t.Fatalf("write input request: %v", err)
 	}
+	var thinking map[string]any
+	for i := 0; i < 5; i++ {
+		event := readUntilType(t, conn, protocol.EventTypeAgentState)
+		if event["state"] == "THINKING" {
+			thinking = event
+			break
+		}
+	}
+	if thinking == nil {
+		t.Fatal("expected transient THINKING event after detached resume input")
+	}
+	requireAgentState(t, thinking, "THINKING", false)
+	if thinking["msg"] != "恢复会话中" {
+		t.Fatalf("expected transient resume message, got %#v", thinking)
+	}
+	if thinking["resumeSessionId"] != "resume-chat-123" {
+		t.Fatalf("expected resumeSessionId on transient thinking event, got %#v", thinking)
+	}
+	if thinking["claudeLifecycle"] != "active" {
+		t.Fatalf("expected active claudeLifecycle on transient thinking event, got %#v", thinking)
+	}
+	if thinking["permissionMode"] != "default" {
+		t.Fatalf("expected default permission mode on transient thinking event, got %#v", thinking)
+	}
 	secondRunner.WaitStarted(t)
 	if !strings.Contains(secondRunner.lastReq.Command, "--resume ") {
 		t.Fatalf("expected resumed command, got %q", secondRunner.lastReq.Command)
@@ -2642,8 +2934,7 @@ func TestHandlerInputWithoutRunner(t *testing.T) {
 		t.Fatalf("new temp store: %v", err)
 	}
 	h.SessionStore = tempStore
-	server := httptest.NewServer(h)
-	defer server.Close()
+	server := newLocalHTTPServer(t, h)
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/?token=test"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -2697,8 +2988,7 @@ func TestHandlerInputRejectedForExecRunner(t *testing.T) {
 	h.SessionStore = tempStore
 	h.NewExecRunner = func() runner.Runner { return execRunner }
 
-	server := httptest.NewServer(h)
-	defer server.Close()
+	server := newLocalHTTPServer(t, h)
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/?token=test"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -2842,8 +3132,7 @@ func TestParseMode(t *testing.T) {
 
 func TestHandlerRejectsEmptyInput(t *testing.T) {
 	h := newTestHandler()
-	server := httptest.NewServer(h)
-	defer server.Close()
+	server := newLocalHTTPServer(t, h)
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/?token=test"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -2882,8 +3171,7 @@ func TestHandlerRejectsEmptyInput(t *testing.T) {
 
 func TestHandlerUnknownAction(t *testing.T) {
 	h := newTestHandler()
-	server := httptest.NewServer(h)
-	defer server.Close()
+	server := newLocalHTTPServer(t, h)
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/?token=test"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -2924,8 +3212,7 @@ func TestHandlerUnknownMode(t *testing.T) {
 		t.Fatalf("new temp store: %v", err)
 	}
 	h.SessionStore = tempStore
-	server := httptest.NewServer(h)
-	defer server.Close()
+	server := newLocalHTTPServer(t, h)
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/?token=test"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)

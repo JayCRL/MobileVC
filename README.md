@@ -218,6 +218,96 @@ Go 后端通过结构化事件流向前端推送状态，例如：
 
 ## 快速开始
 
+推荐按照下面这条路径上手：
+
+1. 在电脑上安装 `MobileVC` 启动器
+2. 启动本机后端并拿到 `Host / Port / Token`
+3. 在手机上安装对应客户端
+4. 通过扫码或公网地址连接到这台电脑上的会话
+
+### 1. 在电脑上安装启动器
+
+推荐直接通过 npm 全局安装：
+
+```bash
+npm install -g @justprove/mobilevc
+```
+
+安装后终端里直接使用 `mobilevc` 即可，启动器会自动按当前操作系统下载对应后端分包。
+
+如果你是在仓库里本地开发，也可以继续在仓库根目录执行：
+
+```bash
+npm i
+```
+
+### 2. 启动后台
+
+首次启动时，`mobilevc start` 会引导你设置后端端口和 `AUTH_TOKEN`；保存后会直接启动后台，并在终端打印：
+
+- 本机访问地址
+- 局域网访问地址
+- 一张给手机端使用的二维码
+
+```bash
+mobilevc start
+```
+
+如果你希望重新配置端口、`AUTH_TOKEN` 或语言，可随时执行：
+
+```bash
+mobilevc config
+```
+
+### 3. 在手机上安装客户端
+
+打开官网安装页：
+
+```text
+https://mobilevc.top/install/
+```
+
+- iPhone：请用 Safari 打开安装页并点击安装
+- Android：直接下载并安装 APK
+
+### 4. 连接手机端
+
+手机端安装完成后，连接方式有两种。
+
+1. 扫码连接
+
+- 电脑上执行 `mobilevc start` 后，终端会输出二维码
+- 手机端打开 `连接配置`
+- 点击 `扫码连接`
+- 扫描终端二维码后，会自动回填 `Host / Port / Token`
+
+2. 手动连接
+
+- 如果手机和电脑在同一局域网，可直接填写终端输出的局域网地址、端口和 `AUTH_TOKEN`
+- 如果你已经把本机后端映射到公网 IP、域名或反向代理地址，手机端也可以直接填写公网 `Host / Port / Token` 连接
+- 公网连接时，二维码通常不会自动携带你的公网入口；这类场景建议手动填写外部访问地址
+
+### 5. 常用后台命令
+
+```bash
+mobilevc status
+mobilevc logs
+mobilevc logs --follow
+mobilevc stop
+```
+
+### 6. 健康检查
+
+```bash
+curl http://127.0.0.1:8001/healthz
+```
+
+### 7. 打开 Web 工作台
+
+```text
+http://127.0.0.1:8001/
+```
+
 ### 引擎兼容说明（Claude / Codex）
 
 MobileVC 支持把 `Claude` 或 `codex` 作为 AI 引擎使用（例如在移动端连接配置里把 `Engine` 设置为 `codex`）。
@@ -256,98 +346,11 @@ MobileVC 支持把 `Claude` 或 `codex` 作为 AI 引擎使用（例如在移动
 
 列表里标记为 `电脑 Codex` 的会话就是这类原生 Codex 会话。它们支持加载和继续，不支持在 MobileVC 内删除。
 
-### 1. 安装启动器
-
 > Smoke test：运行 `AUTH_TOKEN=test ./scripts/test_smoke_flow.sh` 可快速验证后端、WebSocket 与会话主链路。
 >
 > Codex smoke：运行 `AUTH_TOKEN=test ./scripts/smoke_codex_backend.sh` 可验证 Codex 适配后的后端启动、WS 会话与基础交互链路。
 
-直接通过 npm 安装：
-
-```bash
-npm install -g @justprove/mobilevc
-```
-
-安装后终端里直接使用 `mobilevc` 即可，启动器会自动按当前操作系统下载对应后端分包。
-
-如果你是在仓库里本地开发，也可以继续在仓库根目录执行：
-
-```bash
-npm i
-```
-
-### 2. 首次启动并配置
-
-第一次运行 `mobilevc` 会先询问后端端口和 `AUTH_TOKEN`，保存后立刻启动并输出二维码：
-
-```bash
-mobilevc
-```
-
-也可以随时重新配置：
-
-```bash
-mobilevc config
-```
-
-### 3. 后续直接启动后台
-
-```bash
-mobilevc
-```
-
-如果已经配置过，也可以显式使用：
-
-```bash
-mobilevc start
-```
-
-### 3.1 Flutter 扫码连接 / 手动连接
-
-执行 `mobilevc` 或 `mobilevc start` 后，启动器会在终端输出：
-
-- 本机访问地址
-- 局域网访问地址
-- 一张给 Flutter 客户端使用的二维码
-
-Flutter 端连接方式有两种：
-
-1. 扫码连接
-
-- 打开 Flutter 客户端里的 `连接配置`
-- 点击 `扫码连接`
-- 扫描 `mobilevc start` 输出的二维码
-- App 会自动回填 `Host / Port / Token`
-
-2. 手动连接
-
-- 在 `连接配置` 里直接填写 `Host / Port / Token`
-- 也可以继续手动设置 `CWD / Engine / Permission Mode`
-
-如果二维码不可用，也可以直接使用终端里打印出来的局域网地址手动填写。
-
-### 4. 查看状态 / 日志 / 停止
-
-```bash
-mobilevc status
-mobilevc logs
-mobilevc logs --follow
-mobilevc stop
-```
-
-### 5. 健康检查
-
-```bash
-curl http://127.0.0.1:8001/healthz
-```
-
-### 6. 打开 Web 工作台
-
-```text
-http://127.0.0.1:8001/
-```
-
-### 6.1 Android 模拟器调试
+### 7.1 Android 模拟器调试
 
 后端会优先自动探测：
 
@@ -375,7 +378,7 @@ ADB_SERVER_PORT=5038 AUTH_TOKEN=test go run ./cmd/server
 - 当前首帧通常会在模拟器画面发生变化后出现，因此连接后如果界面完全静止，首帧可能略晚到达
 - 如本机存在多个 ADB server 冲突，建议显式指定 `ADB_SERVER_PORT`
 
-### 7. 启动 AI 助手会话（示例）
+### 8. 启动 AI 助手会话（示例）
 
 ```text
 claude
@@ -383,7 +386,7 @@ claude
 codex
 ```
 
-### 仍然支持直接启动 Go 后端
+### 9. 仍然支持直接启动 Go 后端
 
 如果你想绕过 Node 启动器，原来的方式仍然可用：
 
