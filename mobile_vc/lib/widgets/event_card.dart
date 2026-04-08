@@ -49,41 +49,45 @@ class EventCard extends StatelessWidget {
       );
     }
 
+    final bubble = Ink(
+      decoration: BoxDecoration(
+        color: style.background,
+        borderRadius: BorderRadius.circular(style.radius),
+        border: Border.all(color: style.border),
+        boxShadow: compact
+            ? null
+            : [
+                BoxShadow(
+                  color: style.shadow,
+                  blurRadius: isMarkdown ? 18 : 20,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: isUser ? 14 : (compact ? 12 : 14),
+          vertical: isUser ? 12 : (compact ? 10 : 12),
+        ),
+        child: isUser
+            ? _buildUserBubble(context, style)
+            : _buildDefaultCard(context, style),
+      ),
+    );
+
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: isUser ? 320 : 760),
         child: Material(
           color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(style.radius),
-            child: Ink(
-              decoration: BoxDecoration(
-                color: style.background,
-                borderRadius: BorderRadius.circular(style.radius),
-                border: Border.all(color: style.border),
-                boxShadow: compact
-                    ? null
-                    : [
-                        BoxShadow(
-                          color: style.shadow,
-                          blurRadius: isMarkdown ? 18 : 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
-              ),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isUser ? 14 : (compact ? 12 : 14),
-                  vertical: isUser ? 12 : (compact ? 10 : 12),
+          child: onTap == null
+              ? bubble
+              : InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(style.radius),
+                  child: bubble,
                 ),
-                child: isUser
-                    ? _buildUserBubble(context, style)
-                    : _buildDefaultCard(context, style),
-              ),
-            ),
-          ),
         ),
       ),
     );
@@ -102,27 +106,26 @@ class EventCard extends StatelessWidget {
   }
 
   Widget _buildMarkdownText(BuildContext context, _EventCardStyle style) {
-    if (!item.animateBody) {
-      return _BodyContent(
-        item: item,
-        style: style.copyWith(
-          background: Colors.transparent,
-          border: Colors.transparent,
-          shadow: Colors.transparent,
-          iconBackground: Colors.transparent,
-        ),
-        plain: true,
-      );
-    }
-    return _TypewriterMarkdown(
-      item: item,
-      style: style.copyWith(
-        background: Colors.transparent,
-        border: Colors.transparent,
-        shadow: Colors.transparent,
-        iconBackground: Colors.transparent,
-      ),
-      plain: true,
+    final plainStyle = style.copyWith(
+      background: Colors.transparent,
+      border: Colors.transparent,
+      shadow: Colors.transparent,
+      iconBackground: Colors.transparent,
+    );
+    return SelectionArea(
+      child: !item.animateBody
+          ? _BodyContent(
+              item: item,
+              style: plainStyle,
+              plain: true,
+              useSelectionArea: true,
+            )
+          : _TypewriterMarkdown(
+              item: item,
+              style: plainStyle,
+              plain: true,
+              useSelectionArea: true,
+            ),
     );
   }
 
@@ -283,11 +286,13 @@ class _TypewriterMarkdown extends StatefulWidget {
     required this.item,
     required this.style,
     this.plain = false,
+    this.useSelectionArea = false,
   });
 
   final TimelineItem item;
   final _EventCardStyle style;
   final bool plain;
+  final bool useSelectionArea;
 
   @override
   State<_TypewriterMarkdown> createState() => _TypewriterMarkdownState();
@@ -362,6 +367,7 @@ class _TypewriterMarkdownState extends State<_TypewriterMarkdown> {
       ),
       style: widget.style,
       plain: widget.plain,
+      useSelectionArea: widget.useSelectionArea,
     );
   }
 
@@ -410,18 +416,20 @@ class _BodyContent extends StatelessWidget {
     required this.item,
     required this.style,
     this.plain = false,
+    this.useSelectionArea = false,
   });
 
   final TimelineItem item;
   final _EventCardStyle style;
   final bool plain;
+  final bool useSelectionArea;
 
   @override
   Widget build(BuildContext context) {
     if (item.kind == 'markdown') {
       return MarkdownBody(
         data: item.body,
-        selectable: true,
+        selectable: !useSelectionArea,
         styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
           p: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 height: 1.62,

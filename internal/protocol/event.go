@@ -11,6 +11,8 @@ const (
 	EventTypeError                    = "error"
 	EventTypePromptRequest            = "prompt_request"
 	EventTypeInteractionRequest       = "interaction_request"
+	EventTypeSessionResumeResult      = "session_resume_result"
+	EventTypeSessionResumeNotice      = "session_resume_notice"
 	EventTypeSessionState             = "session_state"
 	EventTypeAgentState               = "agent_state"
 	EventTypeRuntimePhase             = "runtime_phase"
@@ -65,9 +67,10 @@ type RuntimeMeta struct {
 }
 
 type Event struct {
-	Type      string    `json:"type"`
-	Timestamp time.Time `json:"timestamp"`
-	SessionID string    `json:"sessionId,omitempty"`
+	Type        string    `json:"type"`
+	Timestamp   time.Time `json:"timestamp"`
+	SessionID   string    `json:"sessionId,omitempty"`
+	EventCursor int64     `json:"eventCursor,omitempty"`
 	RuntimeMeta
 }
 
@@ -371,6 +374,15 @@ type SessionLoadRequestEvent struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
+type SessionResumeRequestEvent struct {
+	ClientEvent
+	SessionID             string `json:"sessionId"`
+	CWD                   string `json:"cwd,omitempty"`
+	Reason                string `json:"reason,omitempty"`
+	LastSeenEventCursor   int64  `json:"lastSeenEventCursor,omitempty"`
+	LastKnownRuntimeState string `json:"lastKnownRuntimeState,omitempty"`
+}
+
 type SessionDeleteRequestEvent struct {
 	ClientEvent
 	SessionID string `json:"sessionId"`
@@ -491,6 +503,24 @@ type SessionHistoryEvent struct {
 	MemoryCatalogMeta   CatalogMetadata     `json:"memoryCatalogMeta,omitempty"`
 	CanResume           bool                `json:"canResume,omitempty"`
 	ResumeRuntimeMeta   RuntimeMeta         `json:"resumeRuntimeMeta,omitempty"`
+}
+
+type SessionResumeResultEvent struct {
+	Event
+	LatestCursor  int64  `json:"latestCursor,omitempty"`
+	RuntimeAlive  bool   `json:"runtimeAlive"`
+	RuntimeState  string `json:"runtimeState,omitempty"`
+	Reattaching   bool   `json:"reattaching,omitempty"`
+	ReplayedCount int    `json:"replayedCount,omitempty"`
+	Message       string `json:"msg,omitempty"`
+}
+
+type SessionResumeNoticeEvent struct {
+	Event
+	NoticeType string `json:"noticeType,omitempty"`
+	Level      string `json:"level,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Message    string `json:"msg,omitempty"`
 }
 
 type ReviewStateEvent struct {
@@ -961,6 +991,28 @@ func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries
 	}
 }
 
+func NewSessionResumeResultEvent(sessionID string, latestCursor int64, runtimeAlive bool, runtimeState string, reattaching bool, replayedCount int, message string) SessionResumeResultEvent {
+	return SessionResumeResultEvent{
+		Event:         NewBaseEvent(EventTypeSessionResumeResult, sessionID),
+		LatestCursor:  latestCursor,
+		RuntimeAlive:  runtimeAlive,
+		RuntimeState:  runtimeState,
+		Reattaching:   reattaching,
+		ReplayedCount: replayedCount,
+		Message:       message,
+	}
+}
+
+func NewSessionResumeNoticeEvent(sessionID, noticeType, level, title, message string) SessionResumeNoticeEvent {
+	return SessionResumeNoticeEvent{
+		Event:      NewBaseEvent(EventTypeSessionResumeNotice, sessionID),
+		NoticeType: noticeType,
+		Level:      level,
+		Title:      title,
+		Message:    message,
+	}
+}
+
 func NewSkillCatalogResultEvent(sessionID string, meta CatalogMetadata, items []SkillDefinition) SkillCatalogResultEvent {
 	return SkillCatalogResultEvent{Event: NewBaseEvent(EventTypeSkillCatalogResult, sessionID), Meta: meta, Items: items}
 }
@@ -1274,6 +1326,12 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 	case SessionHistoryEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
+	case SessionResumeResultEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case SessionResumeNoticeEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
 	case ReviewStateEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
@@ -1312,6 +1370,109 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 		return e
 	case RuntimeProcessLogResultEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	default:
+		return event
+	}
+}
+
+func ApplyEventCursor(event any, cursor int64) any {
+	if cursor <= 0 {
+		return event
+	}
+	switch e := event.(type) {
+	case Event:
+		e.EventCursor = cursor
+		return e
+	case LogEvent:
+		e.EventCursor = cursor
+		return e
+	case ProgressEvent:
+		e.EventCursor = cursor
+		return e
+	case ErrorEvent:
+		e.EventCursor = cursor
+		return e
+	case InteractionRequestEvent:
+		e.EventCursor = cursor
+		return e
+	case PromptRequestEvent:
+		e.EventCursor = cursor
+		return e
+	case SessionStateEvent:
+		e.EventCursor = cursor
+		return e
+	case AgentStateEvent:
+		e.EventCursor = cursor
+		return e
+	case RuntimePhaseEvent:
+		e.EventCursor = cursor
+		return e
+	case StepUpdateEvent:
+		e.EventCursor = cursor
+		return e
+	case FileDiffEvent:
+		e.EventCursor = cursor
+		return e
+	case FSListResultEvent:
+		e.EventCursor = cursor
+		return e
+	case FSReadResultEvent:
+		e.EventCursor = cursor
+		return e
+	case SessionCreatedEvent:
+		e.EventCursor = cursor
+		return e
+	case SessionListResultEvent:
+		e.EventCursor = cursor
+		return e
+	case SessionHistoryEvent:
+		e.EventCursor = cursor
+		return e
+	case SessionResumeResultEvent:
+		e.EventCursor = cursor
+		return e
+	case SessionResumeNoticeEvent:
+		e.EventCursor = cursor
+		return e
+	case ReviewStateEvent:
+		e.EventCursor = cursor
+		return e
+	case SkillCatalogResultEvent:
+		e.EventCursor = cursor
+		return e
+	case MemoryListResultEvent:
+		e.EventCursor = cursor
+		return e
+	case CatalogAuthoringResultEvent:
+		e.EventCursor = cursor
+		return e
+	case SessionContextResultEvent:
+		e.EventCursor = cursor
+		return e
+	case PermissionRuleListResultEvent:
+		e.EventCursor = cursor
+		return e
+	case PermissionAutoAppliedEvent:
+		e.EventCursor = cursor
+		return e
+	case SkillSyncResultEvent:
+		e.EventCursor = cursor
+		return e
+	case CatalogSyncStatusEvent:
+		e.EventCursor = cursor
+		return e
+	case CatalogSyncResultEvent:
+		e.EventCursor = cursor
+		return e
+	case RuntimeInfoResultEvent:
+		e.EventCursor = cursor
+		return e
+	case RuntimeProcessListResultEvent:
+		e.EventCursor = cursor
+		return e
+	case RuntimeProcessLogResultEvent:
+		e.EventCursor = cursor
 		return e
 	default:
 		return event

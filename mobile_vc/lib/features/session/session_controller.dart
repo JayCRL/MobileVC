@@ -28,6 +28,17 @@ enum AppNotificationType {
   error,
 }
 
+enum SessionConnectionStage {
+  disconnected,
+  connecting,
+  connected,
+  backgroundSuspended,
+  reconnecting,
+  catchingUp,
+  ready,
+  failed,
+}
+
 class ActionNeededSignal {
   const ActionNeededSignal({
     required this.id,
@@ -116,13 +127,21 @@ class SessionController extends ChangeNotifier {
       : _service = service ?? MobileVcWsService();
 
   static const _prefsKey = 'mobilevc.app_config';
+  static const int _maxForegroundReconnectAttempts = 4;
   final MobileVcWsService _service;
   final AdbWebRtcService _adbWebRtc = AdbWebRtcService();
 
   StreamSubscription<AppEvent>? _subscription;
   AppConfig _config = const AppConfig();
+  SessionConnectionStage _connectionStage = SessionConnectionStage.disconnected;
   bool _connecting = false;
   bool _connected = false;
+  bool _reconnecting = false;
+  bool _appInForeground = true;
+  bool _autoReconnectEnabled = false;
+  int _reconnectAttempt = 0;
+  Timer? _reconnectTimer;
+  final Map<String, int> _sessionEventCursors = <String, int>{};
   bool _fileListLoading = false;
   bool _fileReading = false;
   bool _canResumeCurrentSession = false;
@@ -133,6 +152,7 @@ class SessionController extends ChangeNotifier {
   String _terminalStdout = '';
   String _terminalStderr = '';
   String _activeTerminalExecutionId = '';
+  String _lastAssistantReplyExecutionKey = '';
   AgentStateEvent? _agentState;
   RuntimePhaseEvent? _runtimePhase;
   SessionStateEvent? _sessionState;
@@ -228,6 +248,7 @@ class SessionController extends ChangeNotifier {
   bool _adbWebRtcStarting = false;
 
   AppConfig get config => _config;
+  SessionConnectionStage get connectionStage => _connectionStage;
   String get currentAiEngine => _resolvedAiEngine(
         command: currentMeta.command,
         engine: currentMeta.engine,
@@ -274,6 +295,12 @@ class SessionController extends ChangeNotifier {
       );
   bool get connecting => _connecting;
   bool get connected => _connected;
+  bool get reconnecting => _reconnecting;
+  bool get shouldShowSessionSurface =>
+      _connected ||
+      _connectionStage == SessionConnectionStage.catchingUp ||
+      ((_connecting || _reconnecting) &&
+          (_selectedSessionId.trim().isNotEmpty || _timeline.isNotEmpty));
   bool get fileListLoading => _fileListLoading;
   bool get fileReading => _fileReading;
   bool get canResumeCurrentSession => _canResumeCurrentSession;
@@ -535,6 +562,7 @@ class SessionController extends ChangeNotifier {
   HistoryContext? get nextPendingDiff => _nextPendingDiff();
   HistoryContext? get openedFileDiff => _diffForOpenedFile();
   HistoryContext? get openedFilePendingDiff => _pendingDiffForOpenedFile();
+  HistoryContext? get reviewActionTargetDiff => _reviewActionTargetDiff();
   bool get openedFileMatchesPendingDiff => openedFilePendingDiff != null;
   bool get isAutoAcceptMode => displayPermissionMode == 'acceptEdits';
   bool get isBypassPermissionsMode =>
@@ -554,6 +582,14 @@ class SessionController extends ChangeNotifier {
         (hasPendingReview && awaitInput);
     return currentReviewDiff != null &&
         waitingForReviewInput &&
+        !hasPendingPermissionPrompt &&
+        !hasPendingPlanPrompt &&
+        !hasPendingPlanQuestions;
+  }
+
+  bool get canShowReviewActions {
+    return !isAutoAcceptMode &&
+        reviewActionTargetDiff != null &&
         !hasPendingPermissionPrompt &&
         !hasPendingPlanPrompt &&
         !hasPendingPlanQuestions;
@@ -677,6 +713,9 @@ class SessionController extends ChangeNotifier {
     if (_isLoadingSession) {
       return true;
     }
+    if (_connectionStage == SessionConnectionStage.catchingUp) {
+      return true;
+    }
     if (!_connected) {
       return false;
     }
@@ -687,15 +726,33 @@ class SessionController extends ChangeNotifier {
       return false;
     }
     final agentState = (_agentState?.state ?? '').trim().toUpperCase();
-    if (agentState == 'THINKING' || agentState == 'RUNNING_TOOL') {
+    if (agentState == 'THINKING' ||
+        agentState == 'RUNNING_TOOL' ||
+        agentState == 'RECOVERING') {
       return true;
     }
     final sessionState = (_sessionState?.state ?? '').trim().toUpperCase();
     if (sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') {
       return true;
     }
-    return sessionState == 'RUNNING' && _activityVisible;
+    if (_hasRunningTerminalExecution) {
+      return true;
+    }
+    if (sessionState != 'RUNNING') {
+      return false;
+    }
+    final runningKey = _runtimeExecutionKey(
+      _sessionState?.runtimeMeta ??
+          _agentState?.runtimeMeta ??
+          const RuntimeMeta(),
+    );
+    if (runningKey.isEmpty) {
+      return true;
+    }
+    return runningKey != _lastAssistantReplyExecutionKey;
   }
+
+  bool get canStopCurrentRun => connected && isSessionBusy;
 
   bool get _canBypassBusyGuardForCodexContinuation {
     if (!shouldShowClaudeMode) {
@@ -954,6 +1011,7 @@ class SessionController extends ChangeNotifier {
   Future<void> disposeController() async {
     _stopAdbRefreshPolling();
     _adbWebRtcStartTimeout?.cancel();
+    _reconnectTimer?.cancel();
     await _subscription?.cancel();
     await _adbWebRtc.dispose();
     await _service.dispose();
@@ -1009,8 +1067,73 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> connect() async {
+  void handleForegroundStateChanged(bool isForeground) {
+    final previous = _appInForeground;
+    _appInForeground = isForeground;
+    if (_appInForeground && !previous) {
+      _scheduleReconnect(immediate: true);
+    }
+  }
+
+  void _cancelReconnectTimer() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+  }
+
+  Duration _nextReconnectDelay({required bool immediate}) {
+    if (immediate) {
+      return Duration.zero;
+    }
+    switch (_reconnectAttempt) {
+      case 0:
+        return const Duration(seconds: 1);
+      case 1:
+        return const Duration(seconds: 2);
+      case 2:
+        return const Duration(seconds: 4);
+      default:
+        return const Duration(seconds: 8);
+    }
+  }
+
+  void _scheduleReconnect({bool immediate = false}) {
+    if (!_autoReconnectEnabled) {
+      return;
+    }
+    if (_connected || _connecting) {
+      return;
+    }
+    _reconnecting = true;
+    _cancelReconnectTimer();
+    if (!_appInForeground) {
+      _connectionStage = SessionConnectionStage.backgroundSuspended;
+      _syncDerivedState();
+      notifyListeners();
+      return;
+    }
+    _connectionStage = SessionConnectionStage.reconnecting;
+    final delay = _nextReconnectDelay(immediate: immediate);
+    if (!immediate) {
+      _reconnectAttempt++;
+    }
+    _reconnectTimer = Timer(delay, () {
+      unawaited(connect(silently: true));
+    });
+    _syncDerivedState();
+    notifyListeners();
+  }
+
+  Future<void> connect({
+    bool restoreSession = true,
+    bool silently = false,
+  }) async {
+    if (_connecting) {
+      return;
+    }
+    _cancelReconnectTimer();
     if (_isInvalidLoopbackHostForMobile()) {
+      _connectionStage = SessionConnectionStage.failed;
+      _reconnecting = false;
       _connecting = false;
       _connected = false;
       _connectionMessage = 'iPhone 不能使用 localhost/127.0.0.1，请改成 Mac 的局域网 IP';
@@ -1019,14 +1142,27 @@ class SessionController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final reconnectTarget = restoreSession ? _selectedSessionId.trim() : '';
+    var shouldRetrySilently = false;
+    _autoReconnectEnabled = true;
+    _reconnecting = silently || _reconnecting;
     _connecting = true;
-    _connectionMessage = '连接中...';
+    _connectionStage = _reconnecting
+        ? SessionConnectionStage.reconnecting
+        : SessionConnectionStage.connecting;
+    _connectionMessage =
+        silently && reconnectTarget.isNotEmpty ? '恢复连接中...' : '连接中...';
     _syncDerivedState();
     notifyListeners();
     try {
       await _service.connect(_config.wsUrl);
       _connected = true;
-      _connectionMessage = '已连接';
+      _reconnecting = false;
+      _reconnectAttempt = 0;
+      _connectionStage = reconnectTarget.isNotEmpty
+          ? SessionConnectionStage.catchingUp
+          : SessionConnectionStage.connected;
+      _connectionMessage = reconnectTarget.isNotEmpty ? '恢复会话中...' : '已连接';
       _autoSessionRequested = false;
       _autoSessionCreating = false;
       _runtimePermissionMode = '';
@@ -1038,26 +1174,61 @@ class SessionController extends ChangeNotifier {
       requestRuntimeInfo('context');
       requestSkillCatalog();
       requestMemoryList();
-      requestSessionContext();
-      requestPermissionRuleList();
-      requestReviewState();
+      requestSessionList();
       requestAdbDevices();
+      if (reconnectTarget.isNotEmpty) {
+        _resumeSession(reconnectTarget,
+            reason: silently ? 'reconnect' : 'restore');
+      } else {
+        requestSessionContext();
+        requestPermissionRuleList();
+        requestReviewState();
+      }
     } catch (error) {
       _connected = false;
-      _connectionMessage = '连接失败：$error';
-      _pushSystem('error', _connectionMessage);
+      if (silently && _autoReconnectEnabled) {
+        if (_appInForeground &&
+            _reconnectAttempt >= _maxForegroundReconnectAttempts) {
+          _reconnecting = false;
+          _autoReconnectEnabled = false;
+          _connectionStage = SessionConnectionStage.failed;
+          _connectionMessage = '恢复失败，需要重连';
+          _pushSystem('error', _connectionMessage);
+        } else {
+          _reconnecting = true;
+          _connectionStage = _appInForeground
+              ? SessionConnectionStage.reconnecting
+              : SessionConnectionStage.backgroundSuspended;
+          _connectionMessage =
+              reconnectTarget.isNotEmpty ? '恢复连接中...' : '连接中...';
+          shouldRetrySilently = true;
+        }
+      } else {
+        _reconnecting = false;
+        _connectionStage = SessionConnectionStage.failed;
+        _connectionMessage = '连接失败：$error';
+        _pushSystem('error', _connectionMessage);
+      }
     } finally {
       _connecting = false;
+      if (shouldRetrySilently) {
+        _scheduleReconnect();
+      }
       _syncDerivedState();
       notifyListeners();
     }
   }
 
   Future<void> disconnect() async {
+    _autoReconnectEnabled = false;
+    _reconnecting = false;
+    _reconnectAttempt = 0;
+    _cancelReconnectTimer();
     _stopAdbRefreshPolling();
     await _adbWebRtc.stop();
     await _service.disconnect();
     _connected = false;
+    _connectionStage = SessionConnectionStage.disconnected;
     _selectedSessionId = '';
     _selectedSessionTitle = 'MobileVC';
     _connectionMessage = '已断开';
@@ -1069,8 +1240,10 @@ class SessionController extends ChangeNotifier {
     _terminalStdout = '';
     _terminalStderr = '';
     _activeTerminalExecutionId = '';
+    _lastAssistantReplyExecutionKey = '';
     _terminalExecutions.clear();
     _resetRuntimeProcessState();
+    _sessionEventCursors.clear();
     _canResumeCurrentSession = false;
     _resumeRuntimeMeta = const RuntimeMeta();
     _pendingAiLaunchEngine = '';
@@ -1119,25 +1292,51 @@ class SessionController extends ChangeNotifier {
     _activeReviewDiffId = '';
     _agentPhaseLabel = '未连接';
     _resetActionNeededTracking();
+    _syncDerivedState();
     notifyListeners();
   }
 
   void _handleUnexpectedSocketDisconnect(String message) {
     final normalized = message.trim().isEmpty ? '连接已断开' : message.trim();
-    final alreadyDisconnected =
-        !_connected && !_connecting && _connectionMessage == normalized;
+    final wasRecovering = _reconnecting;
     _connected = false;
     _connecting = false;
     _pendingAiLaunchEngine = '';
     _pendingAiLaunchAwaitingFirstInput = false;
-    _pendingPrompt = null;
-    _pendingInteraction = null;
-    _runtimePhase = null;
-    _resetActionNeededTracking();
-    _connectionMessage = normalized;
-    if (!alreadyDisconnected) {
-      _pushSystem('error', normalized);
+    if (_autoReconnectEnabled) {
+      _reconnecting = true;
+      _connectionStage = _appInForeground
+          ? SessionConnectionStage.reconnecting
+          : SessionConnectionStage.backgroundSuspended;
+      _connectionMessage = _appInForeground ? '恢复连接中...' : '后台连接已暂停';
+      _scheduleReconnect(immediate: _appInForeground && !wasRecovering);
+    } else {
+      final alreadyDisconnected =
+          !_connected && !_connecting && _connectionMessage == normalized;
+      _reconnecting = false;
+      _connectionStage = SessionConnectionStage.failed;
+      _connectionMessage = normalized;
+      _pendingPrompt = null;
+      _pendingInteraction = null;
+      _runtimePhase = null;
+      _resetActionNeededTracking();
+      if (!alreadyDisconnected) {
+        _pushSystem('error', normalized);
+      }
     }
+    _syncDerivedState();
+    notifyListeners();
+  }
+
+  void resumeConnectionIfNeeded() {
+    _scheduleReconnect(immediate: true);
+  }
+
+  void pauseConnectionRecovery() {
+    if (_appInForeground) {
+      return;
+    }
+    _cancelReconnectTimer();
   }
 
   void requestSessionList() {
@@ -1186,11 +1385,30 @@ class SessionController extends ChangeNotifier {
     if (targetId.isEmpty) {
       return;
     }
+    _connectionStage =
+        _connected ? SessionConnectionStage.catchingUp : _connectionStage;
     _beginSessionLoading(targetId: targetId);
     _service.send({
       'action': 'session_load',
       'sessionId': targetId,
       'cwd': effectiveCwd,
+    });
+  }
+
+  void _resumeSession(String sessionId, {String reason = ''}) {
+    final targetId = sessionId.trim();
+    if (targetId.isEmpty) {
+      return;
+    }
+    _connectionStage = SessionConnectionStage.catchingUp;
+    _connectionMessage = '恢复会话中...';
+    _service.send({
+      'action': 'session_resume',
+      'sessionId': targetId,
+      'cwd': effectiveCwd,
+      'lastSeenEventCursor': _sessionEventCursors[targetId] ?? 0,
+      'lastKnownRuntimeState': _lastKnownRuntimeState,
+      if (reason.isNotEmpty) 'reason': reason,
     });
   }
 
@@ -1276,6 +1494,7 @@ class SessionController extends ChangeNotifier {
     _terminalStdout = '';
     _terminalStderr = '';
     _activeTerminalExecutionId = '';
+    _lastAssistantReplyExecutionKey = '';
     _terminalExecutions.clear();
     _resetRuntimeProcessState();
     _sessionContext = const SessionContext();
@@ -1394,10 +1613,7 @@ class SessionController extends ChangeNotifier {
       return;
     }
     _markActionNeededHandled();
-    final diff = currentReviewDiff ??
-        openedFilePendingDiff ??
-        nextPendingDiff ??
-        currentDiffContext;
+    final diff = reviewActionTargetDiff;
     if (diff == null || diff.diff.isEmpty) {
       _pushSystem('error', '当前没有待审核的 diff');
       return;
@@ -1987,6 +2203,7 @@ class SessionController extends ChangeNotifier {
         permissionMode: _config.permissionMode,
       ),
     );
+    _lastAssistantReplyExecutionKey = '';
     _service.send({
       'action': 'exec',
       'cmd': preferredCommand,
@@ -2026,6 +2243,7 @@ class SessionController extends ChangeNotifier {
       ),
     );
     _pushUser(value, label);
+    _lastAssistantReplyExecutionKey = '';
     _service.send({
       'action': 'input',
       'data': '$value\n',
@@ -2160,6 +2378,7 @@ class SessionController extends ChangeNotifier {
     final isAiCommand = _isAiCommand(lower);
     if (!isAiCommand) {
       _clearPendingAiLaunch();
+      _lastAssistantReplyExecutionKey = '';
       _service.send({
         'action': 'exec',
         'cmd': value,
@@ -2452,6 +2671,7 @@ class SessionController extends ChangeNotifier {
     _pendingPrompt = null;
     _pendingInteraction = null;
     _clearPlanInteractionState();
+    _optimisticallyResumeAiProcessingAfterInput();
     _service.send({
       'action': 'input',
       'data': '$value\n',
@@ -2460,6 +2680,50 @@ class SessionController extends ChangeNotifier {
     _pushUser(value, promptLabel);
     _syncDerivedState();
     notifyListeners();
+  }
+
+  void _optimisticallyResumeAiProcessingAfterInput() {
+    final meta = currentMeta;
+    final engine = _resolvedAiEngine(
+      command: meta.command,
+      engine: meta.engine,
+    );
+    final lifecycle = meta.claudeLifecycle.trim().toLowerCase();
+    final shouldResumeAiProcessing = shouldShowClaudeMode ||
+        meta.resumeSessionId.trim().isNotEmpty ||
+        lifecycle == 'waiting_input' ||
+        lifecycle == 'resumable' ||
+        _isAiCommand(meta.command);
+    if (!shouldResumeAiProcessing) {
+      return;
+    }
+    final nextCommand = meta.command.trim().isNotEmpty
+        ? meta.command
+        : _preferredAiCommandForEngine(engine);
+    final nextMeta = meta.merge(
+      RuntimeMeta(
+        command: nextCommand,
+        engine: engine,
+        cwd: effectiveCwd,
+        permissionMode: _config.permissionMode,
+        claudeLifecycle: 'active',
+      ),
+    );
+    _agentState = AgentStateEvent(
+      timestamp: DateTime.now(),
+      sessionId: _selectedSessionId,
+      runtimeMeta: nextMeta,
+      raw: const {
+        'type': 'agent_state',
+        'source': 'mobilevc-local-optimistic',
+      },
+      state: 'THINKING',
+      message: '${engine.toUpperCase()} 处理中',
+      awaitInput: false,
+      command: nextCommand,
+      step: _agentState?.step ?? '',
+      tool: _agentState?.tool ?? '',
+    );
   }
 
   void _sendPermissionDecision(
@@ -2616,6 +2880,13 @@ class SessionController extends ChangeNotifier {
     );
   }
 
+  void stopCurrentRun() {
+    if (!canStopCurrentRun) {
+      return;
+    }
+    _service.send({'action': 'stop'});
+  }
+
   void requestRuntimeProcessList() {
     _requestRuntimeProcessList();
   }
@@ -2715,8 +2986,11 @@ class SessionController extends ChangeNotifier {
   }
 
   void _handleEvent(AppEvent event) async {
+    _trackSessionEventCursor(event);
     switch (event) {
       case SessionCreatedEvent created:
+        _connectionStage = SessionConnectionStage.ready;
+        _connectionMessage = '已连接';
         _autoSessionRequested = false;
         _autoSessionCreating = false;
         _selectedSessionId = created.summary.id;
@@ -2755,8 +3029,13 @@ class SessionController extends ChangeNotifier {
         _handleAutoSessionBinding(mergedItems);
         break;
       case SessionHistoryEvent history:
+        _connectionStage = SessionConnectionStage.ready;
+        _connectionMessage = '已连接';
         _autoSessionRequested = false;
         _autoSessionCreating = false;
+        _pendingPrompt = null;
+        _pendingInteraction = null;
+        _clearPlanInteractionState();
         _resetActionNeededTracking(suppressNextSignal: true);
         final resolvedHistorySummary =
             _resolvedHistorySummary(history.summary, history.logEntries);
@@ -2768,12 +3047,12 @@ class SessionController extends ChangeNotifier {
         _runtimePhase = null;
         _runtimePermissionMode =
             history.resumeRuntimeMeta.permissionMode.trim();
+        _lastAssistantReplyExecutionKey = '';
         _upsertSession(resolvedHistorySummary);
-        _timeline
-          ..clear()
-          ..addAll(history.logEntries
-              .map(_timelineFromHistory)
-              .where(_shouldKeepTimelineItem));
+        _restoreTimelineFromHistory(
+          history.logEntries,
+          history.resumeRuntimeMeta,
+        );
         _ensureVisibleHistoryForExternalCodex(history, resolvedHistorySummary);
         _recentDiffs
           ..clear()
@@ -2853,6 +3132,19 @@ class SessionController extends ChangeNotifier {
         final targetCwd = restoredCwd.isNotEmpty ? restoredCwd : _config.cwd;
         await switchWorkingDirectory(targetCwd);
         break;
+      case SessionResumeResultEvent result:
+        if (result.sessionId.trim().isNotEmpty) {
+          final previous = _sessionEventCursors[result.sessionId.trim()] ?? 0;
+          if (result.latestCursor > previous) {
+            _sessionEventCursors[result.sessionId.trim()] = result.latestCursor;
+          }
+        }
+        _connectionStage = SessionConnectionStage.ready;
+        _connectionMessage = '已连接';
+        break;
+      case SessionResumeNoticeEvent notice:
+        _emitResumeNotification(notice);
+        break;
       case SessionStateEvent state:
         _sessionState = state;
         _maybeAutoSyncAiModel(state.runtimeMeta);
@@ -2860,6 +3152,12 @@ class SessionController extends ChangeNotifier {
         if (_isLoadingSession &&
             _matchesPendingSessionTarget(state.sessionId)) {
           _finishSessionLoading(sessionId: state.sessionId);
+        }
+        if (_isIdleLikeState(state.state)) {
+          _markTerminalExecutionFinished(
+            state.runtimeMeta,
+            finishedAt: state.timestamp,
+          );
         }
         if (_isIdleLikeState(state.state) && !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
@@ -2875,6 +3173,12 @@ class SessionController extends ChangeNotifier {
         _agentState = agent;
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
+        if (_isIdleLikeState(agent.state) || agent.awaitInput) {
+          _markTerminalExecutionFinished(
+            agent.runtimeMeta,
+            finishedAt: agent.timestamp,
+          );
+        }
         if (_isIdleLikeState(agent.state) && !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
           _pendingPrompt = null;
@@ -2893,21 +3197,17 @@ class SessionController extends ChangeNotifier {
         _syncRuntimePermissionMode();
         break;
       case LogEvent log:
-        _appendTerminalLog(log.stream, log.message,
-            executionId: log.runtimeMeta.executionId);
+        _appendTerminalLog(
+          log.stream,
+          log.message,
+          executionId: log.runtimeMeta.executionId,
+          timestamp: log.timestamp,
+        );
         _maybeAutoSyncAiModel(
           log.runtimeMeta,
           rawText: log.message,
         );
         _handleLogTimeline(log);
-        if (!_shouldPreserveBlockingPrompt() &&
-            _looksLikeAssistantReply(log.message) &&
-            (_agentState?.state.trim().toUpperCase() == 'THINKING' ||
-                _agentState?.state.trim().toUpperCase() == 'RUNNING_TOOL' ||
-                (_sessionState?.state.trim().toUpperCase() == 'RUNNING' &&
-                    _activityVisible))) {
-          _agentState = null;
-        }
         break;
       case ProgressEvent progress:
         _maybeAutoSyncAiModel(
@@ -3435,7 +3735,12 @@ class SessionController extends ChangeNotifier {
       'groupTitle': diff.groupTitle,
       'permissionMode': _currentDecisionPermissionMode,
     });
-    _pendingPrompt = normalized == 'revise' ? _pendingPrompt : null;
+    if (normalized != 'revise') {
+      _pendingPrompt = null;
+      if (_pendingInteraction?.isReview == true) {
+        _pendingInteraction = null;
+      }
+    }
     _markDiffReviewState(
       diff,
       keepPending: normalized == 'revise',
@@ -3487,11 +3792,27 @@ class SessionController extends ChangeNotifier {
       }
     }
 
-    _activeReviewGroupId = reviewedGroupId;
-    _activeReviewDiffId = reviewedDiffId;
+    _activeReviewGroupId = '';
+    _activeReviewDiffId = '';
   }
 
-  TimelineItem _timelineFromHistory(HistoryLogEntry entry) {
+  void _restoreTimelineFromHistory(
+    List<HistoryLogEntry> entries,
+    RuntimeMeta resumeMeta,
+  ) {
+    _timeline.clear();
+    for (final entry in entries) {
+      _appendTimelineItem(
+        _timelineFromHistory(entry, resumeMeta),
+        emitNotifications: false,
+      );
+    }
+  }
+
+  TimelineItem _timelineFromHistory(
+    HistoryLogEntry entry,
+    RuntimeMeta resumeMeta,
+  ) {
     final restoredBody = _restoredHistoryBody(entry);
     final restoredKind = _restoredHistoryKind(entry, restoredBody);
     return TimelineItem(
@@ -3502,8 +3823,34 @@ class SessionController extends ChangeNotifier {
       title: entry.label,
       body: restoredBody,
       stream: entry.stream,
+      meta: _historyRuntimeMetaForEntry(entry, resumeMeta),
       context: entry.context,
       animateBody: false,
+    );
+  }
+
+  RuntimeMeta _historyRuntimeMetaForEntry(
+    HistoryLogEntry entry,
+    RuntimeMeta resumeMeta,
+  ) {
+    final context = entry.context;
+    final targetPath = (context?.path ?? '').trim().isNotEmpty
+        ? context!.path
+        : context?.targetPath ?? '';
+    return resumeMeta.merge(
+      RuntimeMeta(
+        executionId: entry.executionId,
+        contextId: context?.id ?? '',
+        contextTitle: context?.title ?? '',
+        targetPath: targetPath,
+        targetDiff: context?.diff ?? '',
+        targetTitle: context?.title ?? '',
+        command: context?.command ?? '',
+        source: context?.source ?? '',
+        skillName: context?.skillName ?? '',
+        groupId: context?.groupId ?? '',
+        groupTitle: context?.groupTitle ?? '',
+      ),
     );
   }
 
@@ -3549,6 +3896,9 @@ class SessionController extends ChangeNotifier {
   }
 
   String _restoredHistoryBody(HistoryLogEntry entry) {
+    if (_isBootstrapSource(entry.context?.source ?? '')) {
+      return '';
+    }
     if (entry.kind == 'terminal') {
       final body = entry.text.isNotEmpty ? entry.text : entry.message;
       return _sanitizeTimelineLogMessage(
@@ -3722,6 +4072,13 @@ class SessionController extends ChangeNotifier {
   }
 
   void _pushTimelineItem(TimelineItem item) {
+    _appendTimelineItem(item);
+  }
+
+  void _appendTimelineItem(
+    TimelineItem item, {
+    bool emitNotifications = true,
+  }) {
     if (!_shouldKeepTimelineItem(item)) {
       return;
     }
@@ -3740,14 +4097,18 @@ class SessionController extends ChangeNotifier {
         animateBody: previous.animateBody || item.animateBody,
       );
       _timeline.add(mergedItem);
-      _emitTimelineNotification(
-        mergedItem,
-        preserveExistingAssistantReply: true,
-      );
+      if (emitNotifications) {
+        _emitTimelineNotification(
+          mergedItem,
+          preserveExistingAssistantReply: true,
+        );
+      }
       return;
     }
     _timeline.add(item);
-    _emitTimelineNotification(item);
+    if (emitNotifications) {
+      _emitTimelineNotification(item);
+    }
   }
 
   String _mergedTimelineKind(TimelineItem previous, TimelineItem next) {
@@ -3828,6 +4189,9 @@ class SessionController extends ChangeNotifier {
     if (next.isEmpty) {
       return previous;
     }
+    if (_continuesMarkdownLink(previous, next)) {
+      return '$previous$next';
+    }
     if (_endsWithWhitespace(previous) || _startsWithWhitespace(next)) {
       return '$previous$next';
     }
@@ -3839,6 +4203,12 @@ class SessionController extends ChangeNotifier {
       return '$previous $next';
     }
     return '$previous$next';
+  }
+
+  bool _continuesMarkdownLink(String previous, String next) {
+    final previousTrimmed = previous.trimRight();
+    final nextTrimmed = next.trimLeft();
+    return previousTrimmed.endsWith(']') && nextTrimmed.startsWith('(');
   }
 
   bool _endsWithWhitespace(String value) => RegExp(r'\s$').hasMatch(value);
@@ -3880,6 +4250,8 @@ class SessionController extends ChangeNotifier {
       return false;
     }
     switch (item.kind) {
+      case 'terminal':
+      case 'log':
       case 'agent_state':
       case 'step_update':
       case 'progress':
@@ -3957,6 +4329,13 @@ class SessionController extends ChangeNotifier {
     if (kind == null) {
       return;
     }
+    if (kind == 'markdown') {
+      _lastAssistantReplyExecutionKey = _runtimeExecutionKey(log.runtimeMeta);
+      _markTerminalExecutionFinished(
+        log.runtimeMeta,
+        finishedAt: log.timestamp,
+      );
+    }
     _pushTimelineItem(
       TimelineItem(
         id: 'log-${log.timestamp.microsecondsSinceEpoch}',
@@ -3970,6 +4349,9 @@ class SessionController extends ChangeNotifier {
   }
 
   String _sanitizeAiBootstrapLogMessage(String message, RuntimeMeta meta) {
+    if (_isBootstrapSource(meta.source)) {
+      return '';
+    }
     return _sanitizeAiBootstrapReply(
       message,
       _timelineAiEngine(meta),
@@ -4092,13 +4474,13 @@ class SessionController extends ChangeNotifier {
     }
     final normalizedStream = stream.trim().toLowerCase();
     if (normalizedStream == 'stderr') {
-      return 'terminal';
+      return null;
     }
     if (_looksLikeProcessNoise(trimmed)) {
       return null;
     }
     if (_looksLikeTerminalOutput(trimmed) || message.startsWith('\r')) {
-      return 'terminal';
+      return null;
     }
     if (_shouldPreferAssistantText(meta, trimmed)) {
       return 'markdown';
@@ -4106,10 +4488,13 @@ class SessionController extends ChangeNotifier {
     if (_looksLikeAssistantReply(trimmed)) {
       return 'markdown';
     }
-    return 'terminal';
+    return null;
   }
 
   bool _shouldPreferAssistantText(RuntimeMeta meta, String message) {
+    if (_isBootstrapSource(meta.source)) {
+      return false;
+    }
     final normalizedEngine = _timelineAiEngine(meta);
     if (normalizedEngine != 'claude' && normalizedEngine != 'codex') {
       return false;
@@ -4138,6 +4523,10 @@ class SessionController extends ChangeNotifier {
       return 'codex';
     }
     return '';
+  }
+
+  bool _isBootstrapSource(String source) {
+    return source.trim().toLowerCase() == 'system/bootstrap';
   }
 
   bool _shouldSuppressIntentionalHandoffNoise(String message) {
@@ -4662,11 +5051,6 @@ class SessionController extends ChangeNotifier {
         return item;
       }
     }
-    for (final item in _recentDiffs) {
-      if (_diffIdentity(item) == normalized && item.diff.isNotEmpty) {
-        return item;
-      }
-    }
     return null;
   }
 
@@ -4782,6 +5166,26 @@ class SessionController extends ChangeNotifier {
       return openedPending;
     }
     return _pendingDiffs.isEmpty ? null : _pendingDiffs.last;
+  }
+
+  HistoryContext? _reviewActionTargetDiff() {
+    final current = currentReviewDiff;
+    if (current != null) {
+      return current;
+    }
+    final openedPending = openedFilePendingDiff;
+    if (openedPending != null) {
+      return openedPending;
+    }
+    final nextPending = nextPendingDiff;
+    if (nextPending != null) {
+      return nextPending;
+    }
+    final diff = currentDiffContext;
+    if (diff?.pendingReview == true && diff!.diff.isNotEmpty) {
+      return diff;
+    }
+    return null;
   }
 
   HistoryContext? _pendingDiffForCurrentDiff() {
@@ -4983,7 +5387,10 @@ class SessionController extends ChangeNotifier {
     final active = _connected &&
         !hasBlockingPrompt &&
         !_isClaudePendingReadyForInput &&
-        (state == 'THINKING' || state == 'RUNNING_TOOL');
+        (_connectionStage == SessionConnectionStage.catchingUp ||
+            state == 'THINKING' ||
+            state == 'RUNNING_TOOL' ||
+            state == 'RECOVERING');
     if (active) {
       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
       if (_activityToolLabel.isEmpty) {
@@ -5119,6 +5526,49 @@ class SessionController extends ChangeNotifier {
     _shouldSuppressNextActionNeededSignal = suppressNextSignal;
   }
 
+  void _trackSessionEventCursor(AppEvent event) {
+    final sessionId = event.sessionId.trim();
+    if (sessionId.isEmpty) {
+      return;
+    }
+    final rawCursor = event.raw['eventCursor'];
+    final cursor = switch (rawCursor) {
+      int value => value,
+      num value => value.toInt(),
+      String value => int.tryParse(value) ?? 0,
+      _ => 0,
+    };
+    if (cursor <= 0) {
+      return;
+    }
+    final previous = _sessionEventCursors[sessionId] ?? 0;
+    if (cursor > previous) {
+      _sessionEventCursors[sessionId] = cursor;
+    }
+  }
+
+  void _emitResumeNotification(SessionResumeNoticeEvent notice) {
+    final body = notice.message.trim();
+    if (body.isEmpty) {
+      return;
+    }
+    final type = switch (notice.noticeType.trim().toLowerCase()) {
+      'assistant_reply' => AppNotificationType.assistantReply,
+      'error' => AppNotificationType.error,
+      _ => null,
+    };
+    if (type == null) {
+      return;
+    }
+    _notificationSignal = AppNotificationSignal(
+      id: ++_nextNotificationSignalId,
+      type: type,
+      title: notice.title.trim().isNotEmpty ? notice.title.trim() : 'MobileVC',
+      body: _notificationPreview(body),
+      createdAt: DateTime.now(),
+    );
+  }
+
   void _emitTimelineNotification(
     TimelineItem item, {
     bool preserveExistingAssistantReply = false,
@@ -5176,6 +5626,23 @@ class SessionController extends ChangeNotifier {
   }
 
   String _compactAgentMessage() {
+    switch (_connectionStage) {
+      case SessionConnectionStage.backgroundSuspended:
+        return '后台已暂停';
+      case SessionConnectionStage.reconnecting:
+        return '恢复连接中';
+      case SessionConnectionStage.catchingUp:
+        return '恢复会话中';
+      case SessionConnectionStage.failed:
+        return '恢复失败';
+      case SessionConnectionStage.connecting:
+        return '连接中';
+      case SessionConnectionStage.disconnected:
+        return '未连接';
+      case SessionConnectionStage.connected:
+      case SessionConnectionStage.ready:
+        break;
+    }
     if (!_connected) {
       return _connecting ? '连接中' : '未连接';
     }
@@ -5186,6 +5653,9 @@ class SessionController extends ChangeNotifier {
     if (state == 'WAIT_INPUT' || awaitInput) {
       return '等待输入';
     }
+    if (state == 'RECOVERING') {
+      return '恢复中';
+    }
     if (state == 'RUNNING_TOOL') {
       return '执行中';
     }
@@ -5195,8 +5665,23 @@ class SessionController extends ChangeNotifier {
     return '已连接';
   }
 
+  String get _lastKnownRuntimeState {
+    final agentState = (_agentState?.state ?? '').trim();
+    if (agentState.isNotEmpty) {
+      return agentState;
+    }
+    final sessionState = (_sessionState?.state ?? '').trim();
+    if (sessionState.isNotEmpty) {
+      return sessionState;
+    }
+    if (_connectionStage == SessionConnectionStage.catchingUp) {
+      return 'RECOVERING';
+    }
+    return '';
+  }
+
   void _appendTerminalLog(String stream, String message,
-      {String executionId = ''}) {
+      {String executionId = '', DateTime? timestamp}) {
     if (message.isEmpty) {
       return;
     }
@@ -5206,7 +5691,12 @@ class SessionController extends ChangeNotifier {
     } else {
       _terminalStdout = _appendChunk(_terminalStdout, message);
     }
-    _appendExecutionOutput(executionId, normalizedStream, message);
+    _appendExecutionOutput(
+      executionId,
+      normalizedStream,
+      message,
+      timestamp: timestamp,
+    );
   }
 
   void _restoreTerminalLogs(Map<String, String> rawTerminalByStream) {
@@ -5216,7 +5706,11 @@ class SessionController extends ChangeNotifier {
   }
 
   void _appendExecutionOutput(
-      String executionId, String stream, String message) {
+    String executionId,
+    String stream,
+    String message, {
+    DateTime? timestamp,
+  }) {
     final normalizedId = executionId.trim();
     if (normalizedId.isEmpty) {
       return;
@@ -5230,9 +5724,9 @@ class SessionController extends ChangeNotifier {
       executionId: current.executionId,
       command: current.command,
       cwd: current.cwd,
-      startedAt: current.startedAt,
-      completedAt: current.completedAt,
-      running: current.running || current.completedAt == null,
+      startedAt: current.startedAt ?? timestamp ?? DateTime.now(),
+      completedAt: null,
+      running: true,
       exitCode: current.exitCode,
       stdout: stream == 'stderr'
           ? current.stdout
@@ -5247,6 +5741,67 @@ class SessionController extends ChangeNotifier {
       _terminalExecutions[index] = updated;
     }
     _syncActiveTerminalExecution();
+  }
+
+  bool get _hasRunningTerminalExecution =>
+      _terminalExecutions.any((item) => item.running);
+
+  String _runtimeExecutionKey(RuntimeMeta meta) {
+    final executionId = meta.executionId.trim();
+    if (executionId.isNotEmpty) {
+      return 'execution:$executionId';
+    }
+    final contextId = meta.contextId.trim();
+    if (contextId.isNotEmpty) {
+      return 'context:$contextId';
+    }
+    final command = meta.command.trim().toLowerCase();
+    if (command.isNotEmpty) {
+      return 'command:$command';
+    }
+    return '';
+  }
+
+  void _markTerminalExecutionFinished(
+    RuntimeMeta meta, {
+    DateTime? finishedAt,
+  }) {
+    if (_terminalExecutions.isEmpty) {
+      return;
+    }
+    final normalizedId = meta.executionId.trim();
+    final completedAt = finishedAt ?? DateTime.now();
+    var updatedAny = false;
+    for (var i = 0; i < _terminalExecutions.length; i++) {
+      final item = _terminalExecutions[i];
+      final matches = normalizedId.isNotEmpty
+          ? item.executionId == normalizedId
+          : item.running;
+      if (!matches || !item.running) {
+        continue;
+      }
+      _terminalExecutions[i] = TerminalExecution(
+        executionId: item.executionId,
+        command: item.command,
+        cwd: item.cwd,
+        source: item.source,
+        sourceLabel: item.sourceLabel,
+        contextId: item.contextId,
+        contextTitle: item.contextTitle,
+        groupId: item.groupId,
+        groupTitle: item.groupTitle,
+        startedAt: item.startedAt,
+        completedAt: completedAt,
+        running: false,
+        exitCode: item.exitCode,
+        stdout: item.stdout,
+        stderr: item.stderr,
+      );
+      updatedAny = true;
+    }
+    if (updatedAny) {
+      _syncActiveTerminalExecution();
+    }
   }
 
   TerminalExecution? _resolvedActiveTerminalExecution() {

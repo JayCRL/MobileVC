@@ -84,7 +84,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
           children: [
             Expanded(
               child: Text(
-                controller.connected
+                controller.shouldShowSessionSurface
                     ? controller.selectedSessionTitle
                     : 'MobileVC',
                 maxLines: 1,
@@ -131,7 +131,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
           ),
         ],
       ),
-      body: controller.connected
+      body: controller.shouldShowSessionSurface
           ? GestureDetector(
               behavior: HitTestBehavior.translucent,
               onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
@@ -215,6 +215,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
         shouldShowReviewChoices: controller.shouldShowReviewChoices,
         shouldShowPlanChoices: controller.shouldShowPlanChoices,
         onSubmit: controller.sendInputText,
+        onStop: controller.stopCurrentRun,
         onOpenSessions: () => _openSessions(context),
         onOpenRuntimeInfo: () => _openRuntimeInfo(context),
         onOpenLogs: () => _openLogs(context),
@@ -565,7 +566,9 @@ class _SessionHomePageState extends State<SessionHomePage> {
                   return FileViewerSheet(
                     file: controller.openedFile,
                     loading: controller.fileReading,
-                    showReviewActions: controller.openedFileMatchesPendingDiff,
+                    showReviewActions:
+                        controller.openedFileMatchesPendingDiff &&
+                            controller.canShowReviewActions,
                     isDiffMode: controller.openedFileDiff != null,
                     reviewDiff: controller.openedFileDiff,
                     pendingDiffs: controller.pendingDiffs,
@@ -615,7 +618,10 @@ class _SessionHomePageState extends State<SessionHomePage> {
       showDragHandle: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        final diff = controller.currentDiffContext;
+        final diff = controller.canShowReviewActions
+            ? (controller.reviewActionTargetDiff ??
+                controller.currentDiffContext)
+            : controller.currentDiffContext;
         return FractionallySizedBox(
           heightFactor: 0.88,
           child: ClipRRect(
@@ -630,7 +636,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
                 reviewGroups: controller.reviewGroups,
                 activeReviewGroupId: controller.activeReviewGroupId,
                 activeDiffId: controller.activeReviewDiffId,
-                showReviewActions: controller.shouldShowReviewChoices,
+                showReviewActions: controller.canShowReviewActions,
                 onSelectGroup: controller.setActiveReviewGroup,
                 onSelectDiff: controller.setActiveReviewDiff,
                 onAccept: () => controller.sendReviewDecision('accept'),

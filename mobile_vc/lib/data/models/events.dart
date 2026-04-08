@@ -996,6 +996,76 @@ class SessionHistoryEvent extends AppEvent {
       );
 }
 
+class SessionResumeResultEvent extends AppEvent {
+  const SessionResumeResultEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.latestCursor = 0,
+    this.runtimeAlive = false,
+    this.runtimeState = '',
+    this.reattaching = false,
+    this.replayedCount = 0,
+    this.message = '',
+  }) : super(type: 'session_resume_result');
+
+  final int latestCursor;
+  final bool runtimeAlive;
+  final String runtimeState;
+  final bool reattaching;
+  final int replayedCount;
+  final String message;
+
+  factory SessionResumeResultEvent.fromJson(Map<String, dynamic> json) =>
+      SessionResumeResultEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        latestCursor: (json['latestCursor'] as num?)?.toInt() ??
+            int.tryParse((json['latestCursor'] ?? '').toString()) ??
+            0,
+        runtimeAlive: json['runtimeAlive'] == true,
+        runtimeState: (json['runtimeState'] ?? '').toString(),
+        reattaching: json['reattaching'] == true,
+        replayedCount: (json['replayedCount'] as num?)?.toInt() ??
+            int.tryParse((json['replayedCount'] ?? '').toString()) ??
+            0,
+        message: (json['msg'] ?? '').toString(),
+      );
+}
+
+class SessionResumeNoticeEvent extends AppEvent {
+  const SessionResumeNoticeEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.noticeType = '',
+    this.level = '',
+    this.title = '',
+    this.message = '',
+  }) : super(type: 'session_resume_notice');
+
+  final String noticeType;
+  final String level;
+  final String title;
+  final String message;
+
+  factory SessionResumeNoticeEvent.fromJson(Map<String, dynamic> json) =>
+      SessionResumeNoticeEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        noticeType: (json['noticeType'] ?? '').toString(),
+        level: (json['level'] ?? '').toString(),
+        title: (json['title'] ?? '').toString(),
+        message: (json['msg'] ?? '').toString(),
+      );
+}
+
 class ReviewStateEvent extends AppEvent {
   const ReviewStateEvent({
     required super.timestamp,
