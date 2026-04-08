@@ -4447,6 +4447,41 @@ func TestHandlerIgnoresAutoBindSessionLoadWhenSessionAlreadySelected(t *testing.
 	}
 }
 
+func TestFilterStoreSessionsByCWDAcceptsSymlinkEquivalentPaths(t *testing.T) {
+	rootDir := t.TempDir()
+	projectDir := filepath.Join(rootDir, "workspace", "MobileVC")
+	aliasDir := filepath.Join(rootDir, "alias", "MobileVC")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(aliasDir), 0o755); err != nil {
+		t.Fatalf("mkdir alias parent: %v", err)
+	}
+	if err := os.Symlink(projectDir, aliasDir); err != nil {
+		t.Skipf("symlink not available: %v", err)
+	}
+
+	items := []store.SessionSummary{
+		{
+			ID: "matching",
+			Runtime: store.SessionRuntime{
+				CWD: projectDir,
+			},
+		},
+		{
+			ID: "other",
+			Runtime: store.SessionRuntime{
+				CWD: filepath.Join(rootDir, "workspace", "Other"),
+			},
+		},
+	}
+
+	filtered := filterStoreSessionsByCWD(items, aliasDir)
+	if len(filtered) != 1 || filtered[0].ID != "matching" {
+		t.Fatalf("expected symlink-equivalent cwd to match, got %#v", filtered)
+	}
+}
+
 func TestDedupeCodexThreadSummariesPrefersMobileVCSession(t *testing.T) {
 	threadID := "thread-1"
 	projectDir := "/tmp/project"
