@@ -1,0 +1,10 @@
+framework module patrol {
+  umbrella header "patrol-umbrella.h"
+
+  export *
+  module * { export * }
+}
+
+module patrol.__Swift {
+  exclude header "patrol-Swift.h"
+}

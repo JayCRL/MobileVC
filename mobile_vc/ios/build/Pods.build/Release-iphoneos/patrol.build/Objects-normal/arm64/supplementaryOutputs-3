@@ -1,0 +1,12 @@
+{
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/Extensions/Array+Ext.swift" : {
+    "abi-baseline-json" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol.abi.json",
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary.dia",
+    "objc-header" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-Swift.h",
+    "swiftdoc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol.swiftdoc",
+    "swiftmodule" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol.swiftmodule",
+    "swiftsourceinfo" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol.swiftsourceinfo"
+  }
+}

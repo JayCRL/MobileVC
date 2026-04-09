@@ -1,0 +1,5 @@
+
+module SwiftyGif.Swift {
+  header "SwiftyGif-Swift.h"
+  requires objc
+}

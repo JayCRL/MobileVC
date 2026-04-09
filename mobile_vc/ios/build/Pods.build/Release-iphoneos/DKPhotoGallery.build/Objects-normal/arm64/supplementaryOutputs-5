@@ -1,0 +1,12 @@
+{
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/PDFPreview/DKPDFView.swift" : {
+    "abi-baseline-json" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery.abi.json",
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary.dia",
+    "objc-header" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-Swift.h",
+    "swiftdoc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery.swiftdoc",
+    "swiftmodule" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery.swiftmodule",
+    "swiftsourceinfo" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery.swiftsourceinfo"
+  }
+}

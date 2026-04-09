@@ -1,0 +1,126 @@
+{
+  "" : {
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController-primary.dia",
+    "emit-module-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController-primary-emit-module.dia",
+    "pch" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController-primary.swiftdeps"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImageDataManager/DKImageBaseManager.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageBaseManager.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageBaseManager.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageBaseManager.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImageDataManager/DKImageDataManager.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageDataManager.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageDataManager.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageDataManager.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImageDataManager/DKImageGroupDataManager.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageGroupDataManager.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageGroupDataManager.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageGroupDataManager.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImageDataManager/Model/DKAsset+Export.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAsset+Export.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAsset+Export.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAsset+Export.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImageDataManager/Model/DKAsset+Fetch.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAsset+Fetch.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAsset+Fetch.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAsset+Fetch.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImageDataManager/Model/DKAsset.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAsset.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAsset.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAsset.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImageDataManager/Model/DKAssetGroup.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroup.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroup.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroup.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/DKImageAssetExporter.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageAssetExporter.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageAssetExporter.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageAssetExporter.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/DKImageExtensionController.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageExtensionController.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageExtensionController.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageExtensionController.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/DKImagePickerController.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerController.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/DKImagePickerControllerBaseUIDelegate.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerControllerBaseUIDelegate.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerControllerBaseUIDelegate.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerControllerBaseUIDelegate.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/DKPopoverViewController.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKPopoverViewController.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKPopoverViewController.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKPopoverViewController.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/Resource/DKImagePickerControllerResource.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerControllerResource.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerControllerResource.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImagePickerControllerResource.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/View/Cell/DKAssetGroupCellItemProtocol.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupCellItemProtocol.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupCellItemProtocol.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupCellItemProtocol.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/View/Cell/DKAssetGroupDetailBaseCell.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailBaseCell.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailBaseCell.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailBaseCell.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/View/Cell/DKAssetGroupDetailCameraCell.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailCameraCell.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailCameraCell.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailCameraCell.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/View/Cell/DKAssetGroupDetailImageCell.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailImageCell.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailImageCell.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailImageCell.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/View/Cell/DKAssetGroupDetailVideoCell.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailVideoCell.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailVideoCell.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailVideoCell.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/View/DKAssetGroupDetailVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupDetailVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/View/DKAssetGroupGridLayout.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupGridLayout.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupGridLayout.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupGridLayout.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/View/DKAssetGroupListVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupListVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupListVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKAssetGroupListVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/DKImagePickerController/View/DKPermissionView.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKPermissionView.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKPermissionView.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKPermissionView.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKImagePickerController/Sources/Extensions/DKImageExtensionGallery.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageExtensionGallery.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageExtensionGallery.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKImagePickerController.build/Objects-normal/arm64/DKImageExtensionGallery.o"
+  }
+}

@@ -1,0 +1,42 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/wust_lh/MobileVC/mobile_vc/ios/build/Release-iphoneos/integration_test/integration_test.framework/integration_test'
+relocations:
+  - { offset: 0x86202, size: 0x8, addend: 0x0, symName: _integration_testVersionString, symObjAddr: 0x0, symBinAddr: 0x5700, symSize: 0x0 }
+  - { offset: 0x86237, size: 0x8, addend: 0x0, symName: _integration_testVersionNumber, symObjAddr: 0x30, symBinAddr: 0x5730, symSize: 0x0 }
+  - { offset: 0x86274, size: 0x8, addend: 0x0, symName: '-[FLTIntegrationTestRunner init]', symObjAddr: 0x0, symBinAddr: 0x4000, symSize: 0x68 }
+  - { offset: 0x862EE, size: 0x8, addend: 0x0, symName: '-[FLTIntegrationTestRunner init]', symObjAddr: 0x0, symBinAddr: 0x4000, symSize: 0x68 }
+  - { offset: 0x86325, size: 0x8, addend: 0x0, symName: '-[FLTIntegrationTestRunner testIntegrationTestWithResults:]', symObjAddr: 0x68, symBinAddr: 0x4068, symSize: 0x188 }
+  - { offset: 0x86388, size: 0x8, addend: 0x0, symName: '___59-[FLTIntegrationTestRunner testIntegrationTestWithResults:]_block_invoke', symObjAddr: 0x1F0, symBinAddr: 0x41F0, symSize: 0x148 }
+  - { offset: 0x864E1, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48b, symObjAddr: 0x338, symBinAddr: 0x4338, symSize: 0x3C }
+  - { offset: 0x8650A, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48s, symObjAddr: 0x374, symBinAddr: 0x4374, symSize: 0x30 }
+  - { offset: 0x86529, size: 0x8, addend: 0x0, symName: '-[FLTIntegrationTestRunner capturedScreenshotsByName]', symObjAddr: 0x3A4, symBinAddr: 0x43A4, symSize: 0x44 }
+  - { offset: 0x86560, size: 0x8, addend: 0x0, symName: '+[FLTIntegrationTestRunner testCaseNameFromDartTestName:]', symObjAddr: 0x3E8, symBinAddr: 0x43E8, symSize: 0xE4 }
+  - { offset: 0x865D3, size: 0x8, addend: 0x0, symName: '-[FLTIntegrationTestRunner integrationTestPlugin]', symObjAddr: 0x4CC, symBinAddr: 0x44CC, symSize: 0xC }
+  - { offset: 0x8660A, size: 0x8, addend: 0x0, symName: '-[FLTIntegrationTestRunner setIntegrationTestPlugin:]', symObjAddr: 0x4D8, symBinAddr: 0x44D8, symSize: 0x8 }
+  - { offset: 0x86649, size: 0x8, addend: 0x0, symName: '-[FLTIntegrationTestRunner .cxx_destruct]', symObjAddr: 0x4E0, symBinAddr: 0x44E0, symSize: 0xC }
+  - { offset: 0x86884, size: 0x8, addend: 0x0, symName: '-[IntegrationTestIosTest testIntegrationTest:]', symObjAddr: 0x0, symBinAddr: 0x44EC, symSize: 0x194 }
+  - { offset: 0x868A4, size: 0x8, addend: 0x0, symName: '-[IntegrationTestIosTest testIntegrationTest:]', symObjAddr: 0x0, symBinAddr: 0x44EC, symSize: 0x194 }
+  - { offset: 0x86944, size: 0x8, addend: 0x0, symName: '___46-[IntegrationTestIosTest testIntegrationTest:]_block_invoke', symObjAddr: 0x194, symBinAddr: 0x4680, symSize: 0xA0 }
+  - { offset: 0x86A36, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s, symObjAddr: 0x234, symBinAddr: 0x4720, symSize: 0x28 }
+  - { offset: 0x86A5F, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s, symObjAddr: 0x25C, symBinAddr: 0x4748, symSize: 0x28 }
+  - { offset: 0x86BD7, size: 0x8, addend: 0x0, symName: '+[IntegrationTestPlugin instance]', symObjAddr: 0x0, symBinAddr: 0x4770, symSize: 0x30 }
+  - { offset: 0x86BEA, size: 0x8, addend: 0x0, symName: '+[IntegrationTestPlugin instance]', symObjAddr: 0x0, symBinAddr: 0x4770, symSize: 0x30 }
+  - { offset: 0x86C14, size: 0x8, addend: 0x0, symName: _instance.onceToken, symObjAddr: 0x5048, symBinAddr: 0xCB88, symSize: 0x0 }
+  - { offset: 0x86C2A, size: 0x8, addend: 0x0, symName: _instance.sInstance, symObjAddr: 0x5050, symBinAddr: 0xCB90, symSize: 0x0 }
+  - { offset: 0x86CFB, size: 0x8, addend: 0x0, symName: '+[IntegrationTestPlugin instance].cold.1', symObjAddr: 0x5A8, symBinAddr: 0x4D18, symSize: 0x14 }
+  - { offset: 0x86D17, size: 0x8, addend: 0x0, symName: '+[IntegrationTestPlugin instance].cold.1', symObjAddr: 0x5A8, symBinAddr: 0x4D18, symSize: 0x14 }
+  - { offset: 0x86D29, size: 0x8, addend: 0x0, symName: '___33+[IntegrationTestPlugin instance]_block_invoke', symObjAddr: 0x30, symBinAddr: 0x47A0, symSize: 0x30 }
+  - { offset: 0x86D50, size: 0x8, addend: 0x0, symName: '-[IntegrationTestPlugin initForRegistration]', symObjAddr: 0x60, symBinAddr: 0x47D0, symSize: 0x4 }
+  - { offset: 0x86D85, size: 0x8, addend: 0x0, symName: '-[IntegrationTestPlugin init]', symObjAddr: 0x64, symBinAddr: 0x47D4, symSize: 0x60 }
+  - { offset: 0x86DBC, size: 0x8, addend: 0x0, symName: '+[IntegrationTestPlugin registerWithRegistrar:]', symObjAddr: 0xC4, symBinAddr: 0x4834, symSize: 0xA8 }
+  - { offset: 0x86E0F, size: 0x8, addend: 0x0, symName: '-[IntegrationTestPlugin handleMethodCall:result:]', symObjAddr: 0x16C, symBinAddr: 0x48DC, symSize: 0x240 }
+  - { offset: 0x86EFB, size: 0x8, addend: 0x0, symName: '-[IntegrationTestPlugin capturePngScreenshot]', symObjAddr: 0x3AC, symBinAddr: 0x4B1C, symSize: 0x184 }
+  - { offset: 0x86F6E, size: 0x8, addend: 0x0, symName: '___45-[IntegrationTestPlugin capturePngScreenshot]_block_invoke', symObjAddr: 0x530, symBinAddr: 0x4CA0, symSize: 0x18 }
+  - { offset: 0x86FC5, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s, symObjAddr: 0x548, symBinAddr: 0x4CB8, symSize: 0x8 }
+  - { offset: 0x86FEC, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s, symObjAddr: 0x550, symBinAddr: 0x4CC0, symSize: 0x8 }
+  - { offset: 0x8700B, size: 0x8, addend: 0x0, symName: '-[IntegrationTestPlugin testResults]', symObjAddr: 0x558, symBinAddr: 0x4CC8, symSize: 0x8 }
+  - { offset: 0x87042, size: 0x8, addend: 0x0, symName: '-[IntegrationTestPlugin setTestResults:]', symObjAddr: 0x560, symBinAddr: 0x4CD0, symSize: 0xC }
+  - { offset: 0x87083, size: 0x8, addend: 0x0, symName: '-[IntegrationTestPlugin capturedScreenshotsByName]', symObjAddr: 0x56C, symBinAddr: 0x4CDC, symSize: 0xC }
+  - { offset: 0x870BA, size: 0x8, addend: 0x0, symName: '-[IntegrationTestPlugin .cxx_destruct]', symObjAddr: 0x578, symBinAddr: 0x4CE8, symSize: 0x30 }
+...

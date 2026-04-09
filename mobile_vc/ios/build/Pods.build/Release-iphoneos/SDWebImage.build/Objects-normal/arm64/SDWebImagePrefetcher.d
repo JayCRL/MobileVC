@@ -1,0 +1,29 @@
+dependencies: \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/usr/include/Darwin.modulemap \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/SDWebImage.build/module.modulemap \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDWebImagePrefetcher.m \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/Target\ Support\ Files/SDWebImage/SDWebImage-prefix.pch \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks/UIKit.framework/Modules/module.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks/Foundation.framework/Modules/module.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/usr/include/DarwinFoundation1.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/17/include/module.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/usr/include/os.modulemap \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDWebImagePrefetcher.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDWebImageManager.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDWebImageCompat.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDWebImageOperation.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDImageCacheDefine.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDWebImageDefine.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDImageCoder.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/NSData+ImageContentType.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDImageFrame.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDImageLoader.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDImageTransformer.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/UIImage+Transform.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDWebImageCacheKeyFilter.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDWebImageCacheSerializer.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDWebImageOptionsProcessor.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Private/SDAsyncBlockOperation.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Core/SDCallbackQueue.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Private/SDInternalMacros.h \
+  /Users/wust_lh/MobileVC/mobile_vc/ios/Pods/SDWebImage/SDWebImage/Private/SDmetamacros.h

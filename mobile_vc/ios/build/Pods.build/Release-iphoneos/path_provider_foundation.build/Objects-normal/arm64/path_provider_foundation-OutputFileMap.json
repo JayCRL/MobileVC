@@ -1,0 +1,21 @@
+{
+  "" : {
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/path_provider_foundation-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/path_provider_foundation-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/path_provider_foundation-primary.dia",
+    "emit-module-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/path_provider_foundation-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/path_provider_foundation-primary-emit-module.dia",
+    "pch" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/path_provider_foundation-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/path_provider_foundation-primary.swiftdeps"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/path_provider_foundation-2.4.1/darwin/path_provider_foundation/Sources/path_provider_foundation/PathProviderPlugin.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/PathProviderPlugin.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/PathProviderPlugin.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/PathProviderPlugin.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/path_provider_foundation-2.4.1/darwin/path_provider_foundation/Sources/path_provider_foundation/messages.g.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/messages.g.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/messages.g.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/path_provider_foundation.build/Objects-normal/arm64/messages.g.o"
+  }
+}

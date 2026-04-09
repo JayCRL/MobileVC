@@ -1,0 +1,688 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/wust_lh/MobileVC/mobile_vc/ios/build/Release-iphoneos/CocoaAsyncSocket/CocoaAsyncSocket.framework/CocoaAsyncSocket'
+relocations:
+  - { offset: 0x2706E, size: 0x8, addend: 0x0, symName: _CocoaAsyncSocketVersionString, symObjAddr: 0x0, symBinAddr: 0x21768, symSize: 0x0 }
+  - { offset: 0x270A2, size: 0x8, addend: 0x0, symName: _CocoaAsyncSocketVersionNumber, symObjAddr: 0x30, symBinAddr: 0x21798, symSize: 0x0 }
+  - { offset: 0x270DE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer init]', symObjAddr: 0x0, symBinAddr: 0x4000, symSize: 0x18 }
+  - { offset: 0x270F7, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketException, symObjAddr: 0x10818, symBinAddr: 0x284C8, symSize: 0x0 }
+  - { offset: 0x271F5, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketErrorDomain, symObjAddr: 0x10820, symBinAddr: 0x284D0, symSize: 0x0 }
+  - { offset: 0x2720A, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketQueueName, symObjAddr: 0x10828, symBinAddr: 0x284D8, symSize: 0x0 }
+  - { offset: 0x2721F, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketThreadName, symObjAddr: 0x10830, symBinAddr: 0x284E0, symSize: 0x0 }
+  - { offset: 0x27234, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketManuallyEvaluateTrust, symObjAddr: 0x10838, symBinAddr: 0x284E8, symSize: 0x0 }
+  - { offset: 0x27249, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketUseCFStreamForTLS, symObjAddr: 0x10840, symBinAddr: 0x284F0, symSize: 0x0 }
+  - { offset: 0x2725E, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketSSLPeerID, symObjAddr: 0x10848, symBinAddr: 0x284F8, symSize: 0x0 }
+  - { offset: 0x27273, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketSSLProtocolVersionMin, symObjAddr: 0x10850, symBinAddr: 0x28500, symSize: 0x0 }
+  - { offset: 0x27288, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketSSLProtocolVersionMax, symObjAddr: 0x10858, symBinAddr: 0x28508, symSize: 0x0 }
+  - { offset: 0x2729D, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketSSLSessionOptionFalseStart, symObjAddr: 0x10860, symBinAddr: 0x28510, symSize: 0x0 }
+  - { offset: 0x272B2, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketSSLSessionOptionSendOneByteRecord, symObjAddr: 0x10868, symBinAddr: 0x28518, symSize: 0x0 }
+  - { offset: 0x272C7, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketSSLCipherSuites, symObjAddr: 0x10870, symBinAddr: 0x28520, symSize: 0x0 }
+  - { offset: 0x272DC, size: 0x8, addend: 0x0, symName: _GCDAsyncSocketSSLALPN, symObjAddr: 0x10878, symBinAddr: 0x28528, symSize: 0x0 }
+  - { offset: 0x272F3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket doWriteData]', symObjAddr: 0xA9A0, symBinAddr: 0xE9A0, symSize: 0x4B0 }
+  - { offset: 0x2760D, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket startCFStreamThreadIfNeeded]', symObjAddr: 0xCB3C, symBinAddr: 0x10B3C, symSize: 0x7C }
+  - { offset: 0x27635, size: 0x8, addend: 0x0, symName: _startCFStreamThreadIfNeeded.predicate, symObjAddr: 0x519A8, symBinAddr: 0x2E698, symSize: 0x0 }
+  - { offset: 0x2769B, size: 0x8, addend: 0x0, symName: _cfstreamThread, symObjAddr: 0x519C0, symBinAddr: 0x2E6B0, symSize: 0x0 }
+  - { offset: 0x276B6, size: 0x8, addend: 0x0, symName: _cfstreamThreadRetainCount, symObjAddr: 0x519B0, symBinAddr: 0x2E6A0, symSize: 0x0 }
+  - { offset: 0x276D3, size: 0x8, addend: 0x0, symName: _cfstreamThreadSetupQueue, symObjAddr: 0x519B8, symBinAddr: 0x2E6A8, symSize: 0x0 }
+  - { offset: 0x27CC6, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer init]', symObjAddr: 0x0, symBinAddr: 0x4000, symSize: 0x18 }
+  - { offset: 0x27CFB, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer initWithCapacity:]', symObjAddr: 0x18, symBinAddr: 0x4018, symSize: 0x60 }
+  - { offset: 0x27D68, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer dealloc]', symObjAddr: 0x78, symBinAddr: 0x4078, symSize: 0x4C }
+  - { offset: 0x27DB5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer ensureCapacityForWrite:]', symObjAddr: 0xC4, symBinAddr: 0x40C4, symSize: 0x5C }
+  - { offset: 0x27E92, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer availableBytes]', symObjAddr: 0x120, symBinAddr: 0x4120, symSize: 0xC }
+  - { offset: 0x27EC8, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer readBuffer]', symObjAddr: 0x12C, symBinAddr: 0x412C, symSize: 0x8 }
+  - { offset: 0x27EFD, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer getReadBuffer:availableBytes:]', symObjAddr: 0x134, symBinAddr: 0x4134, symSize: 0x34 }
+  - { offset: 0x27F51, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer didRead:]', symObjAddr: 0x168, symBinAddr: 0x4168, symSize: 0x24 }
+  - { offset: 0x27F91, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer availableSpace]', symObjAddr: 0x18C, symBinAddr: 0x418C, symSize: 0x14 }
+  - { offset: 0x27FC7, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer writeBuffer]', symObjAddr: 0x1A0, symBinAddr: 0x41A0, symSize: 0x8 }
+  - { offset: 0x27FFC, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer getWriteBuffer:availableSpace:]', symObjAddr: 0x1A8, symBinAddr: 0x41A8, symSize: 0x34 }
+  - { offset: 0x28050, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer didWrite:]', symObjAddr: 0x1DC, symBinAddr: 0x41DC, symSize: 0x10 }
+  - { offset: 0x28090, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocketPreBuffer reset]', symObjAddr: 0x1EC, symBinAddr: 0x41EC, symSize: 0xC }
+  - { offset: 0x280C1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncReadPacket init]', symObjAddr: 0x1F8, symBinAddr: 0x41F8, symSize: 0x18 }
+  - { offset: 0x280F7, size: 0x8, addend: 0x0, symName: '-[GCDAsyncReadPacket initWithData:startOffset:maxLength:timeout:readLength:terminator:tag:]', symObjAddr: 0x210, symBinAddr: 0x4210, symSize: 0x144 }
+  - { offset: 0x281A3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncReadPacket ensureCapacityForAdditionalDataOfLength:]', symObjAddr: 0x354, symBinAddr: 0x4354, symSize: 0x4C }
+  - { offset: 0x28231, size: 0x8, addend: 0x0, symName: '-[GCDAsyncReadPacket optimalReadLengthWithDefault:shouldPreBuffer:]', symObjAddr: 0x3A0, symBinAddr: 0x43A0, symSize: 0x88 }
+  - { offset: 0x28303, size: 0x8, addend: 0x0, symName: '-[GCDAsyncReadPacket readLengthForNonTermWithHint:]', symObjAddr: 0x428, symBinAddr: 0x4428, symSize: 0x2C }
+  - { offset: 0x28366, size: 0x8, addend: 0x0, symName: '-[GCDAsyncReadPacket readLengthForTermWithHint:shouldPreBuffer:]', symObjAddr: 0x454, symBinAddr: 0x4454, symSize: 0x6C }
+  - { offset: 0x28428, size: 0x8, addend: 0x0, symName: '-[GCDAsyncReadPacket readLengthForTermWithPreBuffer:found:]', symObjAddr: 0x4C0, symBinAddr: 0x44C0, symSize: 0x234 }
+  - { offset: 0x28613, size: 0x8, addend: 0x0, symName: '-[GCDAsyncReadPacket searchForTermAfterPreBuffering:]', symObjAddr: 0x6F4, symBinAddr: 0x46F4, symSize: 0xB0 }
+  - { offset: 0x286E2, size: 0x8, addend: 0x0, symName: '-[GCDAsyncReadPacket .cxx_destruct]', symObjAddr: 0x7A4, symBinAddr: 0x47A4, symSize: 0x30 }
+  - { offset: 0x28714, size: 0x8, addend: 0x0, symName: '-[GCDAsyncWritePacket init]', symObjAddr: 0x7D4, symBinAddr: 0x47D4, symSize: 0x18 }
+  - { offset: 0x2874A, size: 0x8, addend: 0x0, symName: '-[GCDAsyncWritePacket initWithData:timeout:tag:]', symObjAddr: 0x7EC, symBinAddr: 0x47EC, symSize: 0x90 }
+  - { offset: 0x287B3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncWritePacket .cxx_destruct]', symObjAddr: 0x87C, symBinAddr: 0x487C, symSize: 0xC }
+  - { offset: 0x287E5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSpecialPacket init]', symObjAddr: 0x888, symBinAddr: 0x4888, symSize: 0x18 }
+  - { offset: 0x2881B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSpecialPacket initWithTLSSettings:]', symObjAddr: 0x8A0, symBinAddr: 0x48A0, symSize: 0x78 }
+  - { offset: 0x28862, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSpecialPacket .cxx_destruct]', symObjAddr: 0x918, symBinAddr: 0x4918, symSize: 0xC }
+  - { offset: 0x28894, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket init]', symObjAddr: 0x924, symBinAddr: 0x4924, symSize: 0x10 }
+  - { offset: 0x288C9, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket initWithSocketQueue:]', symObjAddr: 0x934, symBinAddr: 0x4934, symSize: 0x10 }
+  - { offset: 0x28910, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket initWithDelegate:delegateQueue:]', symObjAddr: 0x944, symBinAddr: 0x4944, symSize: 0x8 }
+  - { offset: 0x28963, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket initWithDelegate:delegateQueue:socketQueue:]', symObjAddr: 0x94C, symBinAddr: 0x494C, symSize: 0x1B0 }
+  - { offset: 0x28A63, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket dealloc]', symObjAddr: 0xAFC, symBinAddr: 0x4AFC, symSize: 0xC8 }
+  - { offset: 0x28AE6, size: 0x8, addend: 0x0, symName: '___25-[GCDAsyncSocket dealloc]_block_invoke', symObjAddr: 0xBC4, symBinAddr: 0x4BC4, symSize: 0xC }
+  - { offset: 0x28B28, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s, symObjAddr: 0xBD0, symBinAddr: 0x4BD0, symSize: 0x8 }
+  - { offset: 0x28B4F, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s, symObjAddr: 0xBD8, symBinAddr: 0x4BD8, symSize: 0x8 }
+  - { offset: 0x28B6E, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket socketFromConnectedSocketFD:socketQueue:error:]', symObjAddr: 0xBE0, symBinAddr: 0x4BE0, symSize: 0x14 }
+  - { offset: 0x28BD4, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket socketFromConnectedSocketFD:delegate:delegateQueue:error:]', symObjAddr: 0xBF4, symBinAddr: 0x4BF4, symSize: 0xC }
+  - { offset: 0x28C47, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket socketFromConnectedSocketFD:delegate:delegateQueue:socketQueue:error:]', symObjAddr: 0xC00, symBinAddr: 0x4C00, symSize: 0x158 }
+  - { offset: 0x28D15, size: 0x8, addend: 0x0, symName: '___87+[GCDAsyncSocket socketFromConnectedSocketFD:delegate:delegateQueue:socketQueue:error:]_block_invoke', symObjAddr: 0xD58, symBinAddr: 0x4D58, symSize: 0x214 }
+  - { offset: 0x28E5D, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40r, symObjAddr: 0xF6C, symBinAddr: 0x4F6C, symSize: 0x34 }
+  - { offset: 0x28E86, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40r, symObjAddr: 0xFA0, symBinAddr: 0x4FA0, symSize: 0x2C }
+  - { offset: 0x28EA5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket delegate]', symObjAddr: 0xFCC, symBinAddr: 0x4FCC, symSize: 0xD0 }
+  - { offset: 0x28F23, size: 0x8, addend: 0x0, symName: ___Block_byref_object_copy_, symObjAddr: 0x109C, symBinAddr: 0x509C, symSize: 0x10 }
+  - { offset: 0x28F48, size: 0x8, addend: 0x0, symName: ___Block_byref_object_dispose_, symObjAddr: 0x10AC, symBinAddr: 0x50AC, symSize: 0x8 }
+  - { offset: 0x28F67, size: 0x8, addend: 0x0, symName: '___26-[GCDAsyncSocket delegate]_block_invoke', symObjAddr: 0x10B4, symBinAddr: 0x50B4, symSize: 0x3C }
+  - { offset: 0x28FB8, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setDelegate:synchronously:]', symObjAddr: 0x10F0, symBinAddr: 0x50F0, symSize: 0xCC }
+  - { offset: 0x2906D, size: 0x8, addend: 0x0, symName: '___44-[GCDAsyncSocket setDelegate:synchronously:]_block_invoke', symObjAddr: 0x11BC, symBinAddr: 0x51BC, symSize: 0xC }
+  - { offset: 0x290BF, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s, symObjAddr: 0x11C8, symBinAddr: 0x51C8, symSize: 0x28 }
+  - { offset: 0x290E8, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s, symObjAddr: 0x11F0, symBinAddr: 0x51F0, symSize: 0x28 }
+  - { offset: 0x29107, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setDelegate:]', symObjAddr: 0x1218, symBinAddr: 0x5218, symSize: 0x8 }
+  - { offset: 0x29147, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket synchronouslySetDelegate:]', symObjAddr: 0x1220, symBinAddr: 0x5220, symSize: 0x8 }
+  - { offset: 0x29187, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket delegateQueue]', symObjAddr: 0x1228, symBinAddr: 0x5228, symSize: 0xD0 }
+  - { offset: 0x29205, size: 0x8, addend: 0x0, symName: '___31-[GCDAsyncSocket delegateQueue]_block_invoke', symObjAddr: 0x12F8, symBinAddr: 0x52F8, symSize: 0x14 }
+  - { offset: 0x29256, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setDelegateQueue:synchronously:]', symObjAddr: 0x130C, symBinAddr: 0x530C, symSize: 0xCC }
+  - { offset: 0x292F8, size: 0x8, addend: 0x0, symName: '___49-[GCDAsyncSocket setDelegateQueue:synchronously:]_block_invoke', symObjAddr: 0x13D8, symBinAddr: 0x53D8, symSize: 0xC }
+  - { offset: 0x2934A, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setDelegateQueue:]', symObjAddr: 0x13E4, symBinAddr: 0x53E4, symSize: 0x8 }
+  - { offset: 0x2938A, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket synchronouslySetDelegateQueue:]', symObjAddr: 0x13EC, symBinAddr: 0x53EC, symSize: 0x8 }
+  - { offset: 0x293C9, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket getDelegate:delegateQueue:]', symObjAddr: 0x13F4, symBinAddr: 0x53F4, symSize: 0x138 }
+  - { offset: 0x2947C, size: 0x8, addend: 0x0, symName: '___44-[GCDAsyncSocket getDelegate:delegateQueue:]_block_invoke', symObjAddr: 0x152C, symBinAddr: 0x552C, symSize: 0x54 }
+  - { offset: 0x294DE, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40r48r, symObjAddr: 0x1580, symBinAddr: 0x5580, symSize: 0x44 }
+  - { offset: 0x29507, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40r48r, symObjAddr: 0x15C4, symBinAddr: 0x55C4, symSize: 0x38 }
+  - { offset: 0x29525, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setDelegate:delegateQueue:synchronously:]', symObjAddr: 0x15FC, symBinAddr: 0x55FC, symSize: 0x10C }
+  - { offset: 0x295D8, size: 0x8, addend: 0x0, symName: '___58-[GCDAsyncSocket setDelegate:delegateQueue:synchronously:]_block_invoke', symObjAddr: 0x1708, symBinAddr: 0x5708, symSize: 0x34 }
+  - { offset: 0x2963A, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48s, symObjAddr: 0x173C, symBinAddr: 0x573C, symSize: 0x30 }
+  - { offset: 0x29663, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48s, symObjAddr: 0x176C, symBinAddr: 0x576C, symSize: 0x30 }
+  - { offset: 0x29682, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setDelegate:delegateQueue:]', symObjAddr: 0x179C, symBinAddr: 0x579C, symSize: 0x8 }
+  - { offset: 0x296D1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket synchronouslySetDelegate:delegateQueue:]', symObjAddr: 0x17A4, symBinAddr: 0x57A4, symSize: 0x8 }
+  - { offset: 0x29720, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket isIPv4Enabled]', symObjAddr: 0x17AC, symBinAddr: 0x57AC, symSize: 0xA8 }
+  - { offset: 0x2979E, size: 0x8, addend: 0x0, symName: '___31-[GCDAsyncSocket isIPv4Enabled]_block_invoke', symObjAddr: 0x1854, symBinAddr: 0x5854, symSize: 0x1C }
+  - { offset: 0x297F8, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setIPv4Enabled:]', symObjAddr: 0x1870, symBinAddr: 0x5870, symSize: 0x94 }
+  - { offset: 0x2987F, size: 0x8, addend: 0x0, symName: '___33-[GCDAsyncSocket setIPv4Enabled:]_block_invoke', symObjAddr: 0x1904, symBinAddr: 0x5904, symSize: 0x1C }
+  - { offset: 0x298D4, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket isIPv6Enabled]', symObjAddr: 0x1920, symBinAddr: 0x5920, symSize: 0xA8 }
+  - { offset: 0x29952, size: 0x8, addend: 0x0, symName: '___31-[GCDAsyncSocket isIPv6Enabled]_block_invoke', symObjAddr: 0x19C8, symBinAddr: 0x59C8, symSize: 0x1C }
+  - { offset: 0x299AC, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setIPv6Enabled:]', symObjAddr: 0x19E4, symBinAddr: 0x59E4, symSize: 0x94 }
+  - { offset: 0x29A33, size: 0x8, addend: 0x0, symName: '___33-[GCDAsyncSocket setIPv6Enabled:]_block_invoke', symObjAddr: 0x1A78, symBinAddr: 0x5A78, symSize: 0x28 }
+  - { offset: 0x29A88, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket isIPv4PreferredOverIPv6]', symObjAddr: 0x1AA0, symBinAddr: 0x5AA0, symSize: 0xA8 }
+  - { offset: 0x29B06, size: 0x8, addend: 0x0, symName: '___41-[GCDAsyncSocket isIPv4PreferredOverIPv6]_block_invoke', symObjAddr: 0x1B48, symBinAddr: 0x5B48, symSize: 0x1C }
+  - { offset: 0x29B60, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setIPv4PreferredOverIPv6:]', symObjAddr: 0x1B64, symBinAddr: 0x5B64, symSize: 0x94 }
+  - { offset: 0x29BE7, size: 0x8, addend: 0x0, symName: '___43-[GCDAsyncSocket setIPv4PreferredOverIPv6:]_block_invoke', symObjAddr: 0x1BF8, symBinAddr: 0x5BF8, symSize: 0x28 }
+  - { offset: 0x29C3C, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket alternateAddressDelay]', symObjAddr: 0x1C20, symBinAddr: 0x5C20, symSize: 0xDC }
+  - { offset: 0x29CCF, size: 0x8, addend: 0x0, symName: '___39-[GCDAsyncSocket alternateAddressDelay]_block_invoke', symObjAddr: 0x1CFC, symBinAddr: 0x5CFC, symSize: 0x14 }
+  - { offset: 0x29D29, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setAlternateAddressDelay:]', symObjAddr: 0x1D10, symBinAddr: 0x5D10, symSize: 0x94 }
+  - { offset: 0x29DB4, size: 0x8, addend: 0x0, symName: '___43-[GCDAsyncSocket setAlternateAddressDelay:]_block_invoke', symObjAddr: 0x1DA4, symBinAddr: 0x5DA4, symSize: 0x10 }
+  - { offset: 0x29E09, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket userData]', symObjAddr: 0x1DB4, symBinAddr: 0x5DB4, symSize: 0xFC }
+  - { offset: 0x29E9C, size: 0x8, addend: 0x0, symName: '___26-[GCDAsyncSocket userData]_block_invoke', symObjAddr: 0x1EB0, symBinAddr: 0x5EB0, symSize: 0x14 }
+  - { offset: 0x29EED, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setUserData:]', symObjAddr: 0x1EC4, symBinAddr: 0x5EC4, symSize: 0xBC }
+  - { offset: 0x29F78, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncSocket setUserData:]_block_invoke', symObjAddr: 0x1F80, symBinAddr: 0x5F80, symSize: 0x1C }
+  - { offset: 0x29FCA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket acceptOnPort:error:]', symObjAddr: 0x1F9C, symBinAddr: 0x5F9C, symSize: 0x10 }
+  - { offset: 0x2A021, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket acceptOnInterface:port:error:]', symObjAddr: 0x1FAC, symBinAddr: 0x5FAC, symSize: 0x208 }
+  - { offset: 0x2A11E, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncSocket acceptOnInterface:port:error:]_block_invoke', symObjAddr: 0x21B4, symBinAddr: 0x61B4, symSize: 0x1B0 }
+  - { offset: 0x2A3D7, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncSocket acceptOnInterface:port:error:]_block_invoke.117', symObjAddr: 0x2364, symBinAddr: 0x6364, symSize: 0x4C8 }
+  - { offset: 0x2A787, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncSocket acceptOnInterface:port:error:]_block_invoke_2', symObjAddr: 0x282C, symBinAddr: 0x682C, symSize: 0x7C }
+  - { offset: 0x2A844, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40w, symObjAddr: 0x28A8, symBinAddr: 0x68A8, symSize: 0x30 }
+  - { offset: 0x2A86D, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40w, symObjAddr: 0x28D8, symBinAddr: 0x68D8, symSize: 0x28 }
+  - { offset: 0x2A88C, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncSocket acceptOnInterface:port:error:]_block_invoke.132', symObjAddr: 0x2900, symBinAddr: 0x6900, symSize: 0x8 }
+  - { offset: 0x2A8D7, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncSocket acceptOnInterface:port:error:]_block_invoke_2.134', symObjAddr: 0x2908, symBinAddr: 0x6908, symSize: 0x7C }
+  - { offset: 0x2A981, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncSocket acceptOnInterface:port:error:]_block_invoke_3', symObjAddr: 0x2984, symBinAddr: 0x6984, symSize: 0x8 }
+  - { offset: 0x2A9CC, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48b56r64r, symObjAddr: 0x298C, symBinAddr: 0x698C, symSize: 0x5C }
+  - { offset: 0x2A9F5, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48s56r64r, symObjAddr: 0x29E8, symBinAddr: 0x69E8, symSize: 0x48 }
+  - { offset: 0x2AA14, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket acceptOnUrl:error:]', symObjAddr: 0x2A30, symBinAddr: 0x6A30, symSize: 0x1E8 }
+  - { offset: 0x2AAF0, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncSocket acceptOnUrl:error:]_block_invoke', symObjAddr: 0x2C18, symBinAddr: 0x6C18, symSize: 0x1B0 }
+  - { offset: 0x2ACC9, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncSocket acceptOnUrl:error:]_block_invoke_2', symObjAddr: 0x2DC8, symBinAddr: 0x6DC8, symSize: 0x358 }
+  - { offset: 0x2AEC5, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncSocket acceptOnUrl:error:]_block_invoke_3', symObjAddr: 0x3120, symBinAddr: 0x7120, symSize: 0x78 }
+  - { offset: 0x2AF6F, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncSocket acceptOnUrl:error:]_block_invoke_4', symObjAddr: 0x3198, symBinAddr: 0x7198, symSize: 0x8 }
+  - { offset: 0x2AFBA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket doAccept:]', symObjAddr: 0x31A0, symBinAddr: 0x71A0, symSize: 0x24C }
+  - { offset: 0x2B202, size: 0x8, addend: 0x0, symName: '___27-[GCDAsyncSocket doAccept:]_block_invoke', symObjAddr: 0x33EC, symBinAddr: 0x73EC, symSize: 0x148 }
+  - { offset: 0x2B2D0, size: 0x8, addend: 0x0, symName: '___27-[GCDAsyncSocket doAccept:]_block_invoke_2', symObjAddr: 0x3534, symBinAddr: 0x7534, symSize: 0x34 }
+  - { offset: 0x2B31D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket preConnectWithInterface:error:]', symObjAddr: 0x3568, symBinAddr: 0x7568, symSize: 0x1D4 }
+  - { offset: 0x2B413, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket preConnectWithUrl:error:]', symObjAddr: 0x373C, symBinAddr: 0x773C, symSize: 0x134 }
+  - { offset: 0x2B4EA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectToHost:onPort:error:]', symObjAddr: 0x3870, symBinAddr: 0x7870, symSize: 0x8 }
+  - { offset: 0x2B54C, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectToHost:onPort:withTimeout:error:]', symObjAddr: 0x3878, symBinAddr: 0x7878, symSize: 0xC }
+  - { offset: 0x2B5C0, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectToHost:onPort:viaInterface:withTimeout:error:]', symObjAddr: 0x3884, symBinAddr: 0x7884, symSize: 0x200 }
+  - { offset: 0x2B6DF, size: 0x8, addend: 0x0, symName: '___70-[GCDAsyncSocket connectToHost:onPort:viaInterface:withTimeout:error:]_block_invoke', symObjAddr: 0x3A84, symBinAddr: 0x7A84, symSize: 0x1C0 }
+  - { offset: 0x2B836, size: 0x8, addend: 0x0, symName: '___70-[GCDAsyncSocket connectToHost:onPort:viaInterface:withTimeout:error:]_block_invoke_2', symObjAddr: 0x3C44, symBinAddr: 0x7C44, symSize: 0x2D4 }
+  - { offset: 0x2B980, size: 0x8, addend: 0x0, symName: '___70-[GCDAsyncSocket connectToHost:onPort:viaInterface:withTimeout:error:]_block_invoke_3', symObjAddr: 0x3F18, symBinAddr: 0x7F18, symSize: 0x34 }
+  - { offset: 0x2B9DD, size: 0x8, addend: 0x0, symName: '___70-[GCDAsyncSocket connectToHost:onPort:viaInterface:withTimeout:error:]_block_invoke.153', symObjAddr: 0x3F4C, symBinAddr: 0x7F4C, symSize: 0x38 }
+  - { offset: 0x2BA4A, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48w, symObjAddr: 0x3F84, symBinAddr: 0x7F84, symSize: 0x38 }
+  - { offset: 0x2BA73, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48w, symObjAddr: 0x3FBC, symBinAddr: 0x7FBC, symSize: 0x30 }
+  - { offset: 0x2BA92, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48s56r64r, symObjAddr: 0x3FEC, symBinAddr: 0x7FEC, symSize: 0x54 }
+  - { offset: 0x2BABB, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectToAddress:error:]', symObjAddr: 0x4040, symBinAddr: 0x8040, symSize: 0x10 }
+  - { offset: 0x2BB10, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectToAddress:withTimeout:error:]', symObjAddr: 0x4050, symBinAddr: 0x8050, symSize: 0xC }
+  - { offset: 0x2BB75, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectToAddress:viaInterface:withTimeout:error:]', symObjAddr: 0x405C, symBinAddr: 0x805C, symSize: 0x200 }
+  - { offset: 0x2BC83, size: 0x8, addend: 0x0, symName: '___66-[GCDAsyncSocket connectToAddress:viaInterface:withTimeout:error:]_block_invoke', symObjAddr: 0x425C, symBinAddr: 0x825C, symSize: 0x1C8 }
+  - { offset: 0x2BDD0, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectToUrl:withTimeout:error:]', symObjAddr: 0x4424, symBinAddr: 0x8424, symSize: 0x18C }
+  - { offset: 0x2BEAD, size: 0x8, addend: 0x0, symName: '___49-[GCDAsyncSocket connectToUrl:withTimeout:error:]_block_invoke', symObjAddr: 0x45B0, symBinAddr: 0x85B0, symSize: 0x12C }
+  - { offset: 0x2BF6D, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48r56r, symObjAddr: 0x46DC, symBinAddr: 0x86DC, symSize: 0x4C }
+  - { offset: 0x2BF96, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48r56r, symObjAddr: 0x4728, symBinAddr: 0x8728, symSize: 0x40 }
+  - { offset: 0x2BFB5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectToNetService:error:]', symObjAddr: 0x4768, symBinAddr: 0x8768, symSize: 0x12C }
+  - { offset: 0x2C05A, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket lookup:didSucceedWithAddress4:address6:]', symObjAddr: 0x4894, symBinAddr: 0x8894, symSize: 0xF0 }
+  - { offset: 0x2C125, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket lookup:didFail:]', symObjAddr: 0x4984, symBinAddr: 0x8984, symSize: 0x50 }
+  - { offset: 0x2C179, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket bindSocket:toInterface:error:]', symObjAddr: 0x49D4, symBinAddr: 0x89D4, symSize: 0xF8 }
+  - { offset: 0x2C284, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket createSocket:connectInterface:errPtr:]', symObjAddr: 0x4ACC, symBinAddr: 0x8ACC, symSize: 0xE4 }
+  - { offset: 0x2C370, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectSocket:address:stateIndex:]', symObjAddr: 0x4BB0, symBinAddr: 0x8BB0, symSize: 0x110 }
+  - { offset: 0x2C42D, size: 0x8, addend: 0x0, symName: '___51-[GCDAsyncSocket connectSocket:address:stateIndex:]_block_invoke', symObjAddr: 0x4CC0, symBinAddr: 0x8CC0, symSize: 0xE4 }
+  - { offset: 0x2C557, size: 0x8, addend: 0x0, symName: '___51-[GCDAsyncSocket connectSocket:address:stateIndex:]_block_invoke_2', symObjAddr: 0x4DA4, symBinAddr: 0x8DA4, symSize: 0xD4 }
+  - { offset: 0x2C607, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket closeSocket:]', symObjAddr: 0x4E78, symBinAddr: 0x8E78, symSize: 0x7C }
+  - { offset: 0x2C660, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket closeUnusedSocket:]', symObjAddr: 0x4EF4, symBinAddr: 0x8EF4, symSize: 0x24 }
+  - { offset: 0x2C6A2, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectWithAddress4:address6:error:]', symObjAddr: 0x4F18, symBinAddr: 0x8F18, symSize: 0x1DC }
+  - { offset: 0x2C7D1, size: 0x8, addend: 0x0, symName: '___53-[GCDAsyncSocket connectWithAddress4:address6:error:]_block_invoke', symObjAddr: 0x50F4, symBinAddr: 0x90F4, symSize: 0x10 }
+  - { offset: 0x2C843, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectWithAddressUN:error:]', symObjAddr: 0x5104, symBinAddr: 0x9104, symSize: 0x158 }
+  - { offset: 0x2C9B8, size: 0x8, addend: 0x0, symName: '___45-[GCDAsyncSocket connectWithAddressUN:error:]_block_invoke', symObjAddr: 0x525C, symBinAddr: 0x925C, symSize: 0x9C }
+  - { offset: 0x2CAAD, size: 0x8, addend: 0x0, symName: '___45-[GCDAsyncSocket connectWithAddressUN:error:]_block_invoke.cold.1', symObjAddr: 0xE4A8, symBinAddr: 0x1DBFC, symSize: 0xC0 }
+  - { offset: 0x2CAE5, size: 0x8, addend: 0x0, symName: '___45-[GCDAsyncSocket connectWithAddressUN:error:]_block_invoke_2', symObjAddr: 0x52F8, symBinAddr: 0x92F8, symSize: 0x34 }
+  - { offset: 0x2CB37, size: 0x8, addend: 0x0, symName: '___45-[GCDAsyncSocket connectWithAddressUN:error:]_block_invoke_3', symObjAddr: 0x532C, symBinAddr: 0x932C, symSize: 0x34 }
+  - { offset: 0x2CB98, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket didConnect:]', symObjAddr: 0x5360, symBinAddr: 0x9360, symSize: 0x310 }
+  - { offset: 0x2CD1E, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncSocket didConnect:]_block_invoke', symObjAddr: 0x5670, symBinAddr: 0x9670, symSize: 0x84 }
+  - { offset: 0x2CD60, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncSocket didConnect:]_block_invoke_2', symObjAddr: 0x56F4, symBinAddr: 0x96F4, symSize: 0x90 }
+  - { offset: 0x2CDB2, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncSocket didConnect:]_block_invoke_3', symObjAddr: 0x5784, symBinAddr: 0x9784, symSize: 0xA0 }
+  - { offset: 0x2CE51, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncSocket didConnect:]_block_invoke_4', symObjAddr: 0x5824, symBinAddr: 0x9824, symSize: 0x34 }
+  - { offset: 0x2CE9A, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32b, symObjAddr: 0x5858, symBinAddr: 0x9858, symSize: 0x10 }
+  - { offset: 0x2CEC3, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48s56b, symObjAddr: 0x5868, symBinAddr: 0x9868, symSize: 0x44 }
+  - { offset: 0x2CEEC, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48s56s, symObjAddr: 0x58AC, symBinAddr: 0x98AC, symSize: 0x38 }
+  - { offset: 0x2CF0B, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncSocket didConnect:]_block_invoke.179', symObjAddr: 0x58E4, symBinAddr: 0x98E4, symSize: 0x9C }
+  - { offset: 0x2CF9A, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncSocket didConnect:]_block_invoke_2.180', symObjAddr: 0x5980, symBinAddr: 0x9980, symSize: 0x34 }
+  - { offset: 0x2CFE3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket didNotConnect:error:]', symObjAddr: 0x59B4, symBinAddr: 0x99B4, symSize: 0x18 }
+  - { offset: 0x2D033, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket startConnectTimeout:]', symObjAddr: 0x59CC, symBinAddr: 0x99CC, symSize: 0x104 }
+  - { offset: 0x2D133, size: 0x8, addend: 0x0, symName: '___38-[GCDAsyncSocket startConnectTimeout:]_block_invoke', symObjAddr: 0x5AD0, symBinAddr: 0x9AD0, symSize: 0x48 }
+  - { offset: 0x2D18F, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32w, symObjAddr: 0x5B18, symBinAddr: 0x9B18, symSize: 0xC }
+  - { offset: 0x2D1B8, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32w, symObjAddr: 0x5B24, symBinAddr: 0x9B24, symSize: 0x8 }
+  - { offset: 0x2D1D6, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket endConnectTimeout]', symObjAddr: 0x5B2C, symBinAddr: 0x9B2C, symSize: 0x68 }
+  - { offset: 0x2D224, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket doConnectTimeout]', symObjAddr: 0x5B94, symBinAddr: 0x9B94, symSize: 0x44 }
+  - { offset: 0x2D255, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket closeWithError:]', symObjAddr: 0x5BD8, symBinAddr: 0x9BD8, symSize: 0x324 }
+  - { offset: 0x2D4B1, size: 0x8, addend: 0x0, symName: '___33-[GCDAsyncSocket closeWithError:]_block_invoke', symObjAddr: 0x5EFC, symBinAddr: 0x9EFC, symSize: 0x34 }
+  - { offset: 0x2D50D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket disconnect]', symObjAddr: 0x5F30, symBinAddr: 0x9F30, symSize: 0x90 }
+  - { offset: 0x2D587, size: 0x8, addend: 0x0, symName: '___28-[GCDAsyncSocket disconnect]_block_invoke', symObjAddr: 0x5FC0, symBinAddr: 0x9FC0, symSize: 0x3C }
+  - { offset: 0x2D5C8, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket disconnectAfterReading]', symObjAddr: 0x5FFC, symBinAddr: 0x9FFC, symSize: 0x58 }
+  - { offset: 0x2D610, size: 0x8, addend: 0x0, symName: '___40-[GCDAsyncSocket disconnectAfterReading]_block_invoke', symObjAddr: 0x6054, symBinAddr: 0xA054, symSize: 0x48 }
+  - { offset: 0x2D651, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket disconnectAfterWriting]', symObjAddr: 0x609C, symBinAddr: 0xA09C, symSize: 0x58 }
+  - { offset: 0x2D699, size: 0x8, addend: 0x0, symName: '___40-[GCDAsyncSocket disconnectAfterWriting]_block_invoke', symObjAddr: 0x60F4, symBinAddr: 0xA0F4, symSize: 0x48 }
+  - { offset: 0x2D6DA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket disconnectAfterReadingAndWriting]', symObjAddr: 0x613C, symBinAddr: 0xA13C, symSize: 0x58 }
+  - { offset: 0x2D722, size: 0x8, addend: 0x0, symName: '___50-[GCDAsyncSocket disconnectAfterReadingAndWriting]_block_invoke', symObjAddr: 0x6194, symBinAddr: 0xA194, symSize: 0x48 }
+  - { offset: 0x2D763, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket maybeClose]', symObjAddr: 0x61DC, symBinAddr: 0xA1DC, symSize: 0x70 }
+  - { offset: 0x2D7A5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket badConfigError:]', symObjAddr: 0x624C, symBinAddr: 0xA24C, symSize: 0xD4 }
+  - { offset: 0x2D7F8, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket badParamError:]', symObjAddr: 0x6320, symBinAddr: 0xA320, symSize: 0xD4 }
+  - { offset: 0x2D84B, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket gaiError:]', symObjAddr: 0x63F4, symBinAddr: 0xA3F4, symSize: 0xF4 }
+  - { offset: 0x2D8D8, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket errorWithErrno:reason:]', symObjAddr: 0x64E8, symBinAddr: 0xA4E8, symSize: 0x118 }
+  - { offset: 0x2D97D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket errnoError]', symObjAddr: 0x6600, symBinAddr: 0xA600, symSize: 0x100 }
+  - { offset: 0x2D9F9, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket sslError:]', symObjAddr: 0x6700, symBinAddr: 0xA700, symSize: 0xC0 }
+  - { offset: 0x2DA5C, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectTimeoutError]', symObjAddr: 0x67C0, symBinAddr: 0xA7C0, symSize: 0x10C }
+  - { offset: 0x2DAAE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readMaxedOutError]', symObjAddr: 0x68CC, symBinAddr: 0xA8CC, symSize: 0x10C }
+  - { offset: 0x2DB00, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readTimeoutError]', symObjAddr: 0x69D8, symBinAddr: 0xA9D8, symSize: 0x10C }
+  - { offset: 0x2DB52, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket writeTimeoutError]', symObjAddr: 0x6AE4, symBinAddr: 0xAAE4, symSize: 0x10C }
+  - { offset: 0x2DBA4, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectionClosedError]', symObjAddr: 0x6BF0, symBinAddr: 0xABF0, symSize: 0x10C }
+  - { offset: 0x2DBF6, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket otherError:]', symObjAddr: 0x6CFC, symBinAddr: 0xACFC, symSize: 0xD4 }
+  - { offset: 0x2DC49, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket isDisconnected]', symObjAddr: 0x6DD0, symBinAddr: 0xADD0, symSize: 0xD8 }
+  - { offset: 0x2DCDC, size: 0x8, addend: 0x0, symName: '___32-[GCDAsyncSocket isDisconnected]_block_invoke', symObjAddr: 0x6EA8, symBinAddr: 0xAEA8, symSize: 0x1C }
+  - { offset: 0x2DD37, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket isConnected]', symObjAddr: 0x6EC4, symBinAddr: 0xAEC4, symSize: 0xD8 }
+  - { offset: 0x2DDCA, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncSocket isConnected]_block_invoke', symObjAddr: 0x6F9C, symBinAddr: 0xAF9C, symSize: 0x18 }
+  - { offset: 0x2DE25, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedHost]', symObjAddr: 0x6FB4, symBinAddr: 0xAFB4, symSize: 0x10C }
+  - { offset: 0x2DEA3, size: 0x8, addend: 0x0, symName: '___31-[GCDAsyncSocket connectedHost]_block_invoke', symObjAddr: 0x70C0, symBinAddr: 0xB0C0, symSize: 0x78 }
+  - { offset: 0x2DEF5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedPort]', symObjAddr: 0x7138, symBinAddr: 0xB138, symSize: 0xE4 }
+  - { offset: 0x2DF73, size: 0x8, addend: 0x0, symName: '___31-[GCDAsyncSocket connectedPort]_block_invoke', symObjAddr: 0x721C, symBinAddr: 0xB21C, symSize: 0x50 }
+  - { offset: 0x2DFC5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedUrl]', symObjAddr: 0x726C, symBinAddr: 0xB26C, symSize: 0xEC }
+  - { offset: 0x2E043, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncSocket connectedUrl]_block_invoke', symObjAddr: 0x7358, symBinAddr: 0xB358, symSize: 0x5C }
+  - { offset: 0x2E095, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localHost]', symObjAddr: 0x73B4, symBinAddr: 0xB3B4, symSize: 0x10C }
+  - { offset: 0x2E113, size: 0x8, addend: 0x0, symName: '___27-[GCDAsyncSocket localHost]_block_invoke', symObjAddr: 0x74C0, symBinAddr: 0xB4C0, symSize: 0x78 }
+  - { offset: 0x2E165, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localPort]', symObjAddr: 0x7538, symBinAddr: 0xB538, symSize: 0xE4 }
+  - { offset: 0x2E1E3, size: 0x8, addend: 0x0, symName: '___27-[GCDAsyncSocket localPort]_block_invoke', symObjAddr: 0x761C, symBinAddr: 0xB61C, symSize: 0x50 }
+  - { offset: 0x2E235, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedHost4]', symObjAddr: 0x766C, symBinAddr: 0xB66C, symSize: 0x30 }
+  - { offset: 0x2E26B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedHost6]', symObjAddr: 0x769C, symBinAddr: 0xB69C, symSize: 0x30 }
+  - { offset: 0x2E2A1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedPort4]', symObjAddr: 0x76CC, symBinAddr: 0xB6CC, symSize: 0x18 }
+  - { offset: 0x2E2D7, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedPort6]', symObjAddr: 0x76E4, symBinAddr: 0xB6E4, symSize: 0x18 }
+  - { offset: 0x2E30D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localHost4]', symObjAddr: 0x76FC, symBinAddr: 0xB6FC, symSize: 0x30 }
+  - { offset: 0x2E343, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localHost6]', symObjAddr: 0x772C, symBinAddr: 0xB72C, symSize: 0x30 }
+  - { offset: 0x2E379, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localPort4]', symObjAddr: 0x775C, symBinAddr: 0xB75C, symSize: 0x18 }
+  - { offset: 0x2E3AF, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localPort6]', symObjAddr: 0x7774, symBinAddr: 0xB774, symSize: 0x18 }
+  - { offset: 0x2E3E5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedHostFromSocket4:]', symObjAddr: 0x778C, symBinAddr: 0xB78C, symSize: 0x90 }
+  - { offset: 0x2E471, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedHostFromSocket6:]', symObjAddr: 0x781C, symBinAddr: 0xB81C, symSize: 0x64 }
+  - { offset: 0x2E4FD, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedPortFromSocket4:]', symObjAddr: 0x7880, symBinAddr: 0xB880, symSize: 0x88 }
+  - { offset: 0x2E589, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedPortFromSocket6:]', symObjAddr: 0x7908, symBinAddr: 0xB908, symSize: 0x5C }
+  - { offset: 0x2E615, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedUrlFromSocketUN:]', symObjAddr: 0x7964, symBinAddr: 0xB964, symSize: 0x90 }
+  - { offset: 0x2E6A1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localHostFromSocket4:]', symObjAddr: 0x79F4, symBinAddr: 0xB9F4, symSize: 0x90 }
+  - { offset: 0x2E74E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localHostFromSocket6:]', symObjAddr: 0x7A84, symBinAddr: 0xBA84, symSize: 0x64 }
+  - { offset: 0x2E7DA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localPortFromSocket4:]', symObjAddr: 0x7AE8, symBinAddr: 0xBAE8, symSize: 0x88 }
+  - { offset: 0x2E866, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localPortFromSocket6:]', symObjAddr: 0x7B70, symBinAddr: 0xBB70, symSize: 0x5C }
+  - { offset: 0x2E8F2, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket connectedAddress]', symObjAddr: 0x7BCC, symBinAddr: 0xBBCC, symSize: 0xFC }
+  - { offset: 0x2E985, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncSocket connectedAddress]_block_invoke', symObjAddr: 0x7CC8, symBinAddr: 0xBCC8, symSize: 0x100 }
+  - { offset: 0x2EA6F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket localAddress]', symObjAddr: 0x7DC8, symBinAddr: 0xBDC8, symSize: 0xFC }
+  - { offset: 0x2EB02, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncSocket localAddress]_block_invoke', symObjAddr: 0x7EC4, symBinAddr: 0xBEC4, symSize: 0x100 }
+  - { offset: 0x2EBEC, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket isIPv4]', symObjAddr: 0x7FC4, symBinAddr: 0xBFC4, symSize: 0xAC }
+  - { offset: 0x2EC6A, size: 0x8, addend: 0x0, symName: '___24-[GCDAsyncSocket isIPv4]_block_invoke', symObjAddr: 0x8070, symBinAddr: 0xC070, symSize: 0x1C }
+  - { offset: 0x2ECC5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket isIPv6]', symObjAddr: 0x808C, symBinAddr: 0xC08C, symSize: 0xAC }
+  - { offset: 0x2ED43, size: 0x8, addend: 0x0, symName: '___24-[GCDAsyncSocket isIPv6]_block_invoke', symObjAddr: 0x8138, symBinAddr: 0xC138, symSize: 0x1C }
+  - { offset: 0x2ED9E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket isSecure]', symObjAddr: 0x8154, symBinAddr: 0xC154, symSize: 0xA4 }
+  - { offset: 0x2EE1C, size: 0x8, addend: 0x0, symName: '___26-[GCDAsyncSocket isSecure]_block_invoke', symObjAddr: 0x81F8, symBinAddr: 0xC1F8, symSize: 0x18 }
+  - { offset: 0x2EE76, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket getInterfaceAddress4:address6:fromDescription:port:]', symObjAddr: 0x8210, symBinAddr: 0xC210, symSize: 0x3F4 }
+  - { offset: 0x2F21F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket getInterfaceAddressFromUrl:]', symObjAddr: 0x8604, symBinAddr: 0xC604, symSize: 0xD8 }
+  - { offset: 0x2F2FF, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setupReadAndWriteSourcesForNewlyConnectedSocket:]', symObjAddr: 0x86DC, symBinAddr: 0xC6DC, symSize: 0x1E8 }
+  - { offset: 0x2F416, size: 0x8, addend: 0x0, symName: '___66-[GCDAsyncSocket setupReadAndWriteSourcesForNewlyConnectedSocket:]_block_invoke', symObjAddr: 0x88C4, symBinAddr: 0xC8C4, symSize: 0x64 }
+  - { offset: 0x2F480, size: 0x8, addend: 0x0, symName: '___66-[GCDAsyncSocket setupReadAndWriteSourcesForNewlyConnectedSocket:]_block_invoke_2', symObjAddr: 0x8928, symBinAddr: 0xC928, symSize: 0x54 }
+  - { offset: 0x2F4DC, size: 0x8, addend: 0x0, symName: '___66-[GCDAsyncSocket setupReadAndWriteSourcesForNewlyConnectedSocket:]_block_invoke_3', symObjAddr: 0x897C, symBinAddr: 0xC97C, symSize: 0x24 }
+  - { offset: 0x2F537, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32r, symObjAddr: 0x89A0, symBinAddr: 0xC9A0, symSize: 0x10 }
+  - { offset: 0x2F560, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32r, symObjAddr: 0x89B0, symBinAddr: 0xC9B0, symSize: 0xC }
+  - { offset: 0x2F57F, size: 0x8, addend: 0x0, symName: '___66-[GCDAsyncSocket setupReadAndWriteSourcesForNewlyConnectedSocket:]_block_invoke.216', symObjAddr: 0x89BC, symBinAddr: 0xC9BC, symSize: 0x24 }
+  - { offset: 0x2F5DA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket usingCFStreamForTLS]', symObjAddr: 0x89E0, symBinAddr: 0xC9E0, symSize: 0x18 }
+  - { offset: 0x2F610, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket usingSecureTransportForTLS]', symObjAddr: 0x89F8, symBinAddr: 0xC9F8, symSize: 0x18 }
+  - { offset: 0x2F645, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket suspendReadSource]', symObjAddr: 0x8A10, symBinAddr: 0xCA10, symSize: 0x38 }
+  - { offset: 0x2F693, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket resumeReadSource]', symObjAddr: 0x8A48, symBinAddr: 0xCA48, symSize: 0x38 }
+  - { offset: 0x2F6D2, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket suspendWriteSource]', symObjAddr: 0x8A80, symBinAddr: 0xCA80, symSize: 0x38 }
+  - { offset: 0x2F711, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket resumeWriteSource]', symObjAddr: 0x8AB8, symBinAddr: 0xCAB8, symSize: 0x38 }
+  - { offset: 0x2F751, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readDataWithTimeout:tag:]', symObjAddr: 0x8AF0, symBinAddr: 0xCAF0, symSize: 0x14 }
+  - { offset: 0x2F7A3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readDataWithTimeout:buffer:bufferOffset:tag:]', symObjAddr: 0x8B04, symBinAddr: 0xCB04, symSize: 0xC }
+  - { offset: 0x2F812, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readDataWithTimeout:buffer:bufferOffset:maxLength:tag:]', symObjAddr: 0x8B10, symBinAddr: 0xCB10, symSize: 0xF0 }
+  - { offset: 0x2F8C6, size: 0x8, addend: 0x0, symName: '___72-[GCDAsyncSocket readDataWithTimeout:buffer:bufferOffset:maxLength:tag:]_block_invoke', symObjAddr: 0x8C00, symBinAddr: 0xCC00, symSize: 0x54 }
+  - { offset: 0x2F918, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readDataToLength:withTimeout:tag:]', symObjAddr: 0x8C54, symBinAddr: 0xCC54, symSize: 0x10 }
+  - { offset: 0x2F978, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readDataToLength:withTimeout:buffer:bufferOffset:tag:]', symObjAddr: 0x8C64, symBinAddr: 0xCC64, symSize: 0xF8 }
+  - { offset: 0x2FA2C, size: 0x8, addend: 0x0, symName: '___71-[GCDAsyncSocket readDataToLength:withTimeout:buffer:bufferOffset:tag:]_block_invoke', symObjAddr: 0x8D5C, symBinAddr: 0xCD5C, symSize: 0x54 }
+  - { offset: 0x2FA7E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readDataToData:withTimeout:tag:]', symObjAddr: 0x8DB0, symBinAddr: 0xCDB0, symSize: 0x14 }
+  - { offset: 0x2FADF, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readDataToData:withTimeout:buffer:bufferOffset:tag:]', symObjAddr: 0x8DC4, symBinAddr: 0xCDC4, symSize: 0xC }
+  - { offset: 0x2FB5E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readDataToData:withTimeout:maxLength:tag:]', symObjAddr: 0x8DD0, symBinAddr: 0xCDD0, symSize: 0x14 }
+  - { offset: 0x2FBCF, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readDataToData:withTimeout:buffer:bufferOffset:maxLength:tag:]', symObjAddr: 0x8DE4, symBinAddr: 0xCDE4, symSize: 0x12C }
+  - { offset: 0x2FC94, size: 0x8, addend: 0x0, symName: '___79-[GCDAsyncSocket readDataToData:withTimeout:buffer:bufferOffset:maxLength:tag:]_block_invoke', symObjAddr: 0x8F10, symBinAddr: 0xCF10, symSize: 0x54 }
+  - { offset: 0x2FCE6, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket progressOfReadReturningTag:bytesDone:total:]', symObjAddr: 0x8F64, symBinAddr: 0xCF64, symSize: 0xE8 }
+  - { offset: 0x2FDAC, size: 0x8, addend: 0x0, symName: '___61-[GCDAsyncSocket progressOfReadReturningTag:bytesDone:total:]_block_invoke', symObjAddr: 0x904C, symBinAddr: 0xD04C, symSize: 0xD0 }
+  - { offset: 0x2FE53, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket maybeDequeueRead]', symObjAddr: 0x911C, symBinAddr: 0xD11C, symSize: 0x130 }
+  - { offset: 0x2FE84, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket flushSSLBuffers]', symObjAddr: 0x924C, symBinAddr: 0xD24C, symSize: 0x194 }
+  - { offset: 0x3002C, size: 0x8, addend: 0x0, symName: '___33-[GCDAsyncSocket flushSSLBuffers]_block_invoke', symObjAddr: 0x93E0, symBinAddr: 0xD3E0, symSize: 0x70 }
+  - { offset: 0x300CA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket doReadData]', symObjAddr: 0x9450, symBinAddr: 0xD450, symSize: 0x92C }
+  - { offset: 0x30476, size: 0x8, addend: 0x0, symName: '___28-[GCDAsyncSocket doReadData]_block_invoke', symObjAddr: 0x9D7C, symBinAddr: 0xDD7C, symSize: 0x34 }
+  - { offset: 0x304E7, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket doReadEOF]', symObjAddr: 0x9DB0, symBinAddr: 0xDDB0, symSize: 0x200 }
+  - { offset: 0x305E2, size: 0x8, addend: 0x0, symName: '___27-[GCDAsyncSocket doReadEOF]_block_invoke', symObjAddr: 0x9FB0, symBinAddr: 0xDFB0, symSize: 0x30 }
+  - { offset: 0x30633, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket completeCurrentRead]', symObjAddr: 0x9FE0, symBinAddr: 0xDFE0, symSize: 0x190 }
+  - { offset: 0x30744, size: 0x8, addend: 0x0, symName: '___37-[GCDAsyncSocket completeCurrentRead]_block_invoke', symObjAddr: 0xA170, symBinAddr: 0xE170, symSize: 0x38 }
+  - { offset: 0x307B6, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48s56s, symObjAddr: 0xA1A8, symBinAddr: 0xE1A8, symSize: 0x38 }
+  - { offset: 0x307DE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket endCurrentRead]', symObjAddr: 0xA1E0, symBinAddr: 0xE1E0, symSize: 0x3C }
+  - { offset: 0x3081D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setupReadTimerWithTimeout:]', symObjAddr: 0xA21C, symBinAddr: 0xE21C, symSize: 0x104 }
+  - { offset: 0x308FF, size: 0x8, addend: 0x0, symName: '___44-[GCDAsyncSocket setupReadTimerWithTimeout:]_block_invoke', symObjAddr: 0xA320, symBinAddr: 0xE320, symSize: 0x48 }
+  - { offset: 0x3095A, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket doReadTimeout]', symObjAddr: 0xA368, symBinAddr: 0xE368, symSize: 0xF4 }
+  - { offset: 0x309CB, size: 0x8, addend: 0x0, symName: '___31-[GCDAsyncSocket doReadTimeout]_block_invoke', symObjAddr: 0xA45C, symBinAddr: 0xE45C, symSize: 0x90 }
+  - { offset: 0x30A62, size: 0x8, addend: 0x0, symName: '___31-[GCDAsyncSocket doReadTimeout]_block_invoke_2', symObjAddr: 0xA4EC, symBinAddr: 0xE4EC, symSize: 0x34 }
+  - { offset: 0x30AB3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket doReadTimeoutWithExtension:]', symObjAddr: 0xA520, symBinAddr: 0xE520, symSize: 0xB0 }
+  - { offset: 0x30B3E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket writeData:withTimeout:tag:]', symObjAddr: 0xA5D0, symBinAddr: 0xE5D0, symSize: 0xCC }
+  - { offset: 0x30BD0, size: 0x8, addend: 0x0, symName: '___44-[GCDAsyncSocket writeData:withTimeout:tag:]_block_invoke', symObjAddr: 0xA69C, symBinAddr: 0xE69C, symSize: 0x54 }
+  - { offset: 0x30C22, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket progressOfWriteReturningTag:bytesDone:total:]', symObjAddr: 0xA6F0, symBinAddr: 0xE6F0, symSize: 0xE8 }
+  - { offset: 0x30CE8, size: 0x8, addend: 0x0, symName: '___62-[GCDAsyncSocket progressOfWriteReturningTag:bytesDone:total:]_block_invoke', symObjAddr: 0xA7D8, symBinAddr: 0xE7D8, symSize: 0xCC }
+  - { offset: 0x30D98, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket maybeDequeueWrite]', symObjAddr: 0xA8A4, symBinAddr: 0xE8A4, symSize: 0xFC }
+  - { offset: 0x30E47, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncSocket doWriteData]_block_invoke', symObjAddr: 0xAE50, symBinAddr: 0xEE50, symSize: 0x30 }
+  - { offset: 0x30E89, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncSocket doWriteData]_block_invoke_2', symObjAddr: 0xAE80, symBinAddr: 0xEE80, symSize: 0x34 }
+  - { offset: 0x30EFA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket completeCurrentWrite]', symObjAddr: 0xAEB4, symBinAddr: 0xEEB4, symSize: 0xC0 }
+  - { offset: 0x30F78, size: 0x8, addend: 0x0, symName: '___38-[GCDAsyncSocket completeCurrentWrite]_block_invoke', symObjAddr: 0xAF74, symBinAddr: 0xEF74, symSize: 0x34 }
+  - { offset: 0x30FD9, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket endCurrentWrite]', symObjAddr: 0xAFA8, symBinAddr: 0xEFA8, symSize: 0x3C }
+  - { offset: 0x31018, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setupWriteTimerWithTimeout:]', symObjAddr: 0xAFE4, symBinAddr: 0xEFE4, symSize: 0x104 }
+  - { offset: 0x310FA, size: 0x8, addend: 0x0, symName: '___45-[GCDAsyncSocket setupWriteTimerWithTimeout:]_block_invoke', symObjAddr: 0xB0E8, symBinAddr: 0xF0E8, symSize: 0x48 }
+  - { offset: 0x31155, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket doWriteTimeout]', symObjAddr: 0xB130, symBinAddr: 0xF130, symSize: 0xF4 }
+  - { offset: 0x311C6, size: 0x8, addend: 0x0, symName: '___32-[GCDAsyncSocket doWriteTimeout]_block_invoke', symObjAddr: 0xB224, symBinAddr: 0xF224, symSize: 0x8C }
+  - { offset: 0x3125D, size: 0x8, addend: 0x0, symName: '___32-[GCDAsyncSocket doWriteTimeout]_block_invoke_2', symObjAddr: 0xB2B0, symBinAddr: 0xF2B0, symSize: 0x34 }
+  - { offset: 0x312AE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket doWriteTimeoutWithExtension:]', symObjAddr: 0xB2E4, symBinAddr: 0xF2E4, symSize: 0xB0 }
+  - { offset: 0x31339, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket startTLS:]', symObjAddr: 0xB394, symBinAddr: 0xF394, symSize: 0xC8 }
+  - { offset: 0x313A9, size: 0x8, addend: 0x0, symName: '___27-[GCDAsyncSocket startTLS:]_block_invoke', symObjAddr: 0xB45C, symBinAddr: 0xF45C, symSize: 0x78 }
+  - { offset: 0x313FA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket maybeStartTLS]', symObjAddr: 0xB4D4, symBinAddr: 0xF4D4, symSize: 0xE8 }
+  - { offset: 0x31474, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket sslReadWithBuffer:length:]', symObjAddr: 0xB5BC, symBinAddr: 0xF5BC, symSize: 0x1B8 }
+  - { offset: 0x31624, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket sslWriteWithBuffer:length:]', symObjAddr: 0xB774, symBinAddr: 0xF774, symSize: 0xC4 }
+  - { offset: 0x316FF, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket ssl_startTLS]', symObjAddr: 0xB838, symBinAddr: 0xF838, symSize: 0x964 }
+  - { offset: 0x31B9A, size: 0x8, addend: 0x0, symName: _SSLReadFunction, symObjAddr: 0xC19C, symBinAddr: 0x1019C, symSize: 0xC }
+  - { offset: 0x31BF6, size: 0x8, addend: 0x0, symName: _SSLWriteFunction, symObjAddr: 0xC1A8, symBinAddr: 0x101A8, symSize: 0xC }
+  - { offset: 0x31C51, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket ssl_continueSSLHandshake]', symObjAddr: 0xC1B4, symBinAddr: 0x101B4, symSize: 0x370 }
+  - { offset: 0x31DCF, size: 0x8, addend: 0x0, symName: '___42-[GCDAsyncSocket ssl_continueSSLHandshake]_block_invoke', symObjAddr: 0xC524, symBinAddr: 0x10524, symSize: 0x30 }
+  - { offset: 0x31E21, size: 0x8, addend: 0x0, symName: '___42-[GCDAsyncSocket ssl_continueSSLHandshake]_block_invoke_2', symObjAddr: 0xC554, symBinAddr: 0x10554, symSize: 0xAC }
+  - { offset: 0x31EB8, size: 0x8, addend: 0x0, symName: '___42-[GCDAsyncSocket ssl_continueSSLHandshake]_block_invoke_3', symObjAddr: 0xC600, symBinAddr: 0x10600, symSize: 0x78 }
+  - { offset: 0x31F52, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32r40w, symObjAddr: 0xC678, symBinAddr: 0x10678, symSize: 0x38 }
+  - { offset: 0x31F7B, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32r40w, symObjAddr: 0xC6B0, symBinAddr: 0x106B0, symSize: 0x2C }
+  - { offset: 0x31F9A, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40r48w, symObjAddr: 0xC6DC, symBinAddr: 0x106DC, symSize: 0x40 }
+  - { offset: 0x31FC3, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40r48w, symObjAddr: 0xC71C, symBinAddr: 0x1071C, symSize: 0x34 }
+  - { offset: 0x31FE2, size: 0x8, addend: 0x0, symName: '___42-[GCDAsyncSocket ssl_continueSSLHandshake]_block_invoke.305', symObjAddr: 0xC750, symBinAddr: 0x10750, symSize: 0x3C }
+  - { offset: 0x32054, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48b56r, symObjAddr: 0xC78C, symBinAddr: 0x1078C, symSize: 0x4C }
+  - { offset: 0x3207D, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48s56r, symObjAddr: 0xC7D8, symBinAddr: 0x107D8, symSize: 0x3C }
+  - { offset: 0x3209B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket ssl_shouldTrustPeer:stateIndex:]', symObjAddr: 0xC814, symBinAddr: 0x10814, symSize: 0x78 }
+  - { offset: 0x320EE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket cf_finishSSLHandshake]', symObjAddr: 0xC88C, symBinAddr: 0x1088C, symSize: 0xE8 }
+  - { offset: 0x3215C, size: 0x8, addend: 0x0, symName: '___39-[GCDAsyncSocket cf_finishSSLHandshake]_block_invoke', symObjAddr: 0xC974, symBinAddr: 0x10974, symSize: 0x30 }
+  - { offset: 0x321AE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket cf_abortSSLHandshake:]', symObjAddr: 0xC9A4, symBinAddr: 0x109A4, symSize: 0x20 }
+  - { offset: 0x321ED, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket cf_startTLS]', symObjAddr: 0xC9C4, symBinAddr: 0x109C4, symSize: 0x174 }
+  - { offset: 0x322E8, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket ignore:]', symObjAddr: 0xCB38, symBinAddr: 0x10B38, symSize: 0x4 }
+  - { offset: 0x3234A, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket startCFStreamThreadIfNeeded].cold.1', symObjAddr: 0xE568, symBinAddr: 0x1DCBC, symSize: 0x14 }
+  - { offset: 0x32366, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket startCFStreamThreadIfNeeded].cold.1', symObjAddr: 0xE568, symBinAddr: 0x1DCBC, symSize: 0x14 }
+  - { offset: 0x32379, size: 0x8, addend: 0x0, symName: '___45+[GCDAsyncSocket startCFStreamThreadIfNeeded]_block_invoke', symObjAddr: 0xCBB8, symBinAddr: 0x10BB8, symSize: 0x38 }
+  - { offset: 0x323B7, size: 0x8, addend: 0x0, symName: '___45+[GCDAsyncSocket startCFStreamThreadIfNeeded]_block_invoke_2', symObjAddr: 0xCBF0, symBinAddr: 0x10BF0, symSize: 0x78 }
+  - { offset: 0x323F8, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket stopCFStreamThreadIfNeeded]', symObjAddr: 0xCC68, symBinAddr: 0x10C68, symSize: 0x78 }
+  - { offset: 0x32473, size: 0x8, addend: 0x0, symName: '___44+[GCDAsyncSocket stopCFStreamThreadIfNeeded]_block_invoke', symObjAddr: 0xCCE0, symBinAddr: 0x10CE0, symSize: 0xB8 }
+  - { offset: 0x324B4, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket cfstreamThread:]', symObjAddr: 0xCD98, symBinAddr: 0x10D98, symSize: 0x164 }
+  - { offset: 0x32535, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket scheduleCFStreams:]', symObjAddr: 0xCEFC, symBinAddr: 0x10EFC, symSize: 0x68 }
+  - { offset: 0x325FB, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket unscheduleCFStreams:]', symObjAddr: 0xCF64, symBinAddr: 0x10F64, symSize: 0x68 }
+  - { offset: 0x326B6, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket createReadAndWriteStream]', symObjAddr: 0xCFCC, symBinAddr: 0x10FCC, symSize: 0x110 }
+  - { offset: 0x327A3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket registerForStreamCallbacksIncludingReadWrite:]', symObjAddr: 0xD0DC, symBinAddr: 0x110DC, symSize: 0x8C }
+  - { offset: 0x32836, size: 0x8, addend: 0x0, symName: _CFReadStreamCallback, symObjAddr: 0xD168, symBinAddr: 0x11168, symSize: 0x138 }
+  - { offset: 0x328FD, size: 0x8, addend: 0x0, symName: _CFWriteStreamCallback, symObjAddr: 0xD2A0, symBinAddr: 0x112A0, symSize: 0x138 }
+  - { offset: 0x329C4, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket addStreamsToRunLoop]', symObjAddr: 0xD3D8, symBinAddr: 0x113D8, symSize: 0x84 }
+  - { offset: 0x32A10, size: 0x8, addend: 0x0, symName: '___37-[GCDAsyncSocket addStreamsToRunLoop]_block_invoke', symObjAddr: 0xD45C, symBinAddr: 0x1145C, symSize: 0x3C }
+  - { offset: 0x32A51, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket removeStreamsFromRunLoop]', symObjAddr: 0xD498, symBinAddr: 0x11498, symSize: 0x84 }
+  - { offset: 0x32A99, size: 0x8, addend: 0x0, symName: '___42-[GCDAsyncSocket removeStreamsFromRunLoop]_block_invoke', symObjAddr: 0xD51C, symBinAddr: 0x1151C, symSize: 0x3C }
+  - { offset: 0x32ADB, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket openStreams]', symObjAddr: 0xD558, symBinAddr: 0x11558, symSize: 0x64 }
+  - { offset: 0x32BE1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket autoDisconnectOnClosedReadStream]', symObjAddr: 0xD5BC, symBinAddr: 0x115BC, symSize: 0xA8 }
+  - { offset: 0x32C5F, size: 0x8, addend: 0x0, symName: '___50-[GCDAsyncSocket autoDisconnectOnClosedReadStream]_block_invoke', symObjAddr: 0xD664, symBinAddr: 0x11664, symSize: 0x1C }
+  - { offset: 0x32CB9, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket setAutoDisconnectOnClosedReadStream:]', symObjAddr: 0xD680, symBinAddr: 0x11680, symSize: 0x94 }
+  - { offset: 0x32D40, size: 0x8, addend: 0x0, symName: '___54-[GCDAsyncSocket setAutoDisconnectOnClosedReadStream:]_block_invoke', symObjAddr: 0xD714, symBinAddr: 0x11714, symSize: 0x28 }
+  - { offset: 0x32D95, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket markSocketQueueTargetQueue:]', symObjAddr: 0xD73C, symBinAddr: 0x1173C, symSize: 0x18 }
+  - { offset: 0x32E0D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket unmarkSocketQueueTargetQueue:]', symObjAddr: 0xD754, symBinAddr: 0x11754, symSize: 0x14 }
+  - { offset: 0x32E72, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket performBlock:]', symObjAddr: 0xD768, symBinAddr: 0x11768, symSize: 0x48 }
+  - { offset: 0x32EDD, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket socketFD]', symObjAddr: 0xD7B0, symBinAddr: 0x117B0, symSize: 0x40 }
+  - { offset: 0x32F21, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket socket4FD]', symObjAddr: 0xD7F0, symBinAddr: 0x117F0, symSize: 0x34 }
+  - { offset: 0x32F65, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket socket6FD]', symObjAddr: 0xD824, symBinAddr: 0x11824, symSize: 0x34 }
+  - { offset: 0x32FA9, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket readStream]', symObjAddr: 0xD858, symBinAddr: 0x11858, symSize: 0x3C }
+  - { offset: 0x32FED, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket writeStream]', symObjAddr: 0xD894, symBinAddr: 0x11894, symSize: 0x3C }
+  - { offset: 0x33031, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket enableBackgroundingOnSocketWithCaveat:]', symObjAddr: 0xD8D0, symBinAddr: 0x118D0, symSize: 0x9C }
+  - { offset: 0x330CC, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket enableBackgroundingOnSocket]', symObjAddr: 0xD96C, symBinAddr: 0x1196C, symSize: 0x3C }
+  - { offset: 0x33110, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket enableBackgroundingOnSocketWithCaveat]', symObjAddr: 0xD9A8, symBinAddr: 0x119A8, symSize: 0x3C }
+  - { offset: 0x33154, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket sslContext]', symObjAddr: 0xD9E4, symBinAddr: 0x119E4, symSize: 0x2C }
+  - { offset: 0x33198, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket lookupHost:port:error:]', symObjAddr: 0xDA10, symBinAddr: 0x11A10, symSize: 0x310 }
+  - { offset: 0x333CF, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket hostFromSockaddr4:]', symObjAddr: 0xDD20, symBinAddr: 0x11D20, symSize: 0x7C }
+  - { offset: 0x33444, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket hostFromSockaddr6:]', symObjAddr: 0xDD9C, symBinAddr: 0x11D9C, symSize: 0x7C }
+  - { offset: 0x334BA, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket portFromSockaddr4:]', symObjAddr: 0xDE18, symBinAddr: 0x11E18, symSize: 0x10 }
+  - { offset: 0x334FB, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket portFromSockaddr6:]', symObjAddr: 0xDE28, symBinAddr: 0x11E28, symSize: 0x10 }
+  - { offset: 0x3353C, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket urlFromSockaddrUN:]', symObjAddr: 0xDE38, symBinAddr: 0x11E38, symSize: 0x5C }
+  - { offset: 0x3358F, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket hostFromAddress:]', symObjAddr: 0xDE94, symBinAddr: 0x11E94, symSize: 0x6C }
+  - { offset: 0x335E6, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket portFromAddress:]', symObjAddr: 0xDF00, symBinAddr: 0x11F00, symSize: 0x38 }
+  - { offset: 0x3363D, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket isIPv4Address:]', symObjAddr: 0xDF38, symBinAddr: 0x11F38, symSize: 0x60 }
+  - { offset: 0x3369F, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket isIPv6Address:]', symObjAddr: 0xDF98, symBinAddr: 0x11F98, symSize: 0x60 }
+  - { offset: 0x33701, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket getHost:port:fromAddress:]', symObjAddr: 0xDFF8, symBinAddr: 0x11FF8, symSize: 0xC }
+  - { offset: 0x33765, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket getHost:port:family:fromAddress:]', symObjAddr: 0xE004, symBinAddr: 0x12004, symSize: 0x178 }
+  - { offset: 0x3383C, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket CRLFData]', symObjAddr: 0xE17C, symBinAddr: 0x1217C, symSize: 0x18 }
+  - { offset: 0x3386E, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket CRData]', symObjAddr: 0xE194, symBinAddr: 0x12194, symSize: 0x18 }
+  - { offset: 0x338A0, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket LFData]', symObjAddr: 0xE1AC, symBinAddr: 0x121AC, symSize: 0x18 }
+  - { offset: 0x338D2, size: 0x8, addend: 0x0, symName: '+[GCDAsyncSocket ZeroData]', symObjAddr: 0xE1C4, symBinAddr: 0x121C4, symSize: 0x18 }
+  - { offset: 0x33904, size: 0x8, addend: 0x0, symName: '-[GCDAsyncSocket .cxx_destruct]', symObjAddr: 0xE1DC, symBinAddr: 0x121DC, symSize: 0x11C }
+  - { offset: 0x33936, size: 0x8, addend: 0x0, symName: ___CFReadStreamCallback_block_invoke, symObjAddr: 0xE2F8, symBinAddr: 0x122F8, symSize: 0x7C }
+  - { offset: 0x33991, size: 0x8, addend: 0x0, symName: ___CFReadStreamCallback_block_invoke_2, symObjAddr: 0xE374, symBinAddr: 0x12374, symSize: 0x5C }
+  - { offset: 0x339EE, size: 0x8, addend: 0x0, symName: ___CFWriteStreamCallback_block_invoke, symObjAddr: 0xE3D0, symBinAddr: 0x123D0, symSize: 0x7C }
+  - { offset: 0x33A5C, size: 0x8, addend: 0x0, symName: ___CFWriteStreamCallback_block_invoke_2, symObjAddr: 0xE44C, symBinAddr: 0x1244C, symSize: 0x5C }
+  - { offset: 0x376E3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSendPacket init]', symObjAddr: 0x0, symBinAddr: 0x124A8, symSize: 0x18 }
+  - { offset: 0x376FC, size: 0x8, addend: 0x0, symName: _GCDAsyncUdpSocketException, symObjAddr: 0xD470, symBinAddr: 0x28BE0, symSize: 0x0 }
+  - { offset: 0x3779F, size: 0x8, addend: 0x0, symName: _GCDAsyncUdpSocketErrorDomain, symObjAddr: 0xD478, symBinAddr: 0x28BE8, symSize: 0x0 }
+  - { offset: 0x377B4, size: 0x8, addend: 0x0, symName: _GCDAsyncUdpSocketQueueName, symObjAddr: 0xD480, symBinAddr: 0x28BF0, symSize: 0x0 }
+  - { offset: 0x377C9, size: 0x8, addend: 0x0, symName: _GCDAsyncUdpSocketThreadName, symObjAddr: 0xD488, symBinAddr: 0x28BF8, symSize: 0x0 }
+  - { offset: 0x377D2, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket startListenerThreadIfNeeded]', symObjAddr: 0xA7CC, symBinAddr: 0x1C984, symSize: 0x6C }
+  - { offset: 0x377FA, size: 0x8, addend: 0x0, symName: _startListenerThreadIfNeeded.predicate, symObjAddr: 0x40968, symBinAddr: 0x2E6B8, symSize: 0x0 }
+  - { offset: 0x3785E, size: 0x8, addend: 0x0, symName: _listenerThread, symObjAddr: 0x40970, symBinAddr: 0x2E6C0, symSize: 0x0 }
+  - { offset: 0x37D52, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSendPacket init]', symObjAddr: 0x0, symBinAddr: 0x124A8, symSize: 0x18 }
+  - { offset: 0x37D88, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSendPacket initWithData:timeout:tag:]', symObjAddr: 0x18, symBinAddr: 0x124C0, symSize: 0x94 }
+  - { offset: 0x37DF1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSendPacket .cxx_destruct]', symObjAddr: 0xAC, symBinAddr: 0x12554, symSize: 0x48 }
+  - { offset: 0x37E23, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSpecialPacket init]', symObjAddr: 0xF4, symBinAddr: 0x1259C, symSize: 0x34 }
+  - { offset: 0x37E59, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSpecialPacket .cxx_destruct]', symObjAddr: 0x128, symBinAddr: 0x125D0, symSize: 0x30 }
+  - { offset: 0x37E8B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket init]', symObjAddr: 0x158, symBinAddr: 0x12600, symSize: 0x10 }
+  - { offset: 0x37EC0, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket initWithSocketQueue:]', symObjAddr: 0x168, symBinAddr: 0x12610, symSize: 0x10 }
+  - { offset: 0x37F07, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket initWithDelegate:delegateQueue:]', symObjAddr: 0x178, symBinAddr: 0x12620, symSize: 0x8 }
+  - { offset: 0x37F5A, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket initWithDelegate:delegateQueue:socketQueue:]', symObjAddr: 0x180, symBinAddr: 0x12628, symSize: 0x190 }
+  - { offset: 0x38050, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket dealloc]', symObjAddr: 0x310, symBinAddr: 0x127B8, symSize: 0xE4 }
+  - { offset: 0x380D3, size: 0x8, addend: 0x0, symName: '___28-[GCDAsyncUdpSocket dealloc]_block_invoke', symObjAddr: 0x3F4, symBinAddr: 0x1289C, symSize: 0xC }
+  - { offset: 0x38115, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket delegate]', symObjAddr: 0x410, symBinAddr: 0x128A8, symSize: 0xD0 }
+  - { offset: 0x38193, size: 0x8, addend: 0x0, symName: ___Block_byref_object_copy_, symObjAddr: 0x4E0, symBinAddr: 0x12978, symSize: 0x10 }
+  - { offset: 0x381B8, size: 0x8, addend: 0x0, symName: ___Block_byref_object_dispose_, symObjAddr: 0x4F0, symBinAddr: 0x12988, symSize: 0x8 }
+  - { offset: 0x381D7, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncUdpSocket delegate]_block_invoke', symObjAddr: 0x4F8, symBinAddr: 0x12990, symSize: 0x3C }
+  - { offset: 0x38228, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setDelegate:synchronously:]', symObjAddr: 0x594, symBinAddr: 0x129CC, symSize: 0xCC }
+  - { offset: 0x382DD, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncUdpSocket setDelegate:synchronously:]_block_invoke', symObjAddr: 0x660, symBinAddr: 0x12A98, symSize: 0xC }
+  - { offset: 0x3832F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setDelegate:]', symObjAddr: 0x6BC, symBinAddr: 0x12AA4, symSize: 0x8 }
+  - { offset: 0x3836F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket synchronouslySetDelegate:]', symObjAddr: 0x6C4, symBinAddr: 0x12AAC, symSize: 0x8 }
+  - { offset: 0x383AF, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket delegateQueue]', symObjAddr: 0x6CC, symBinAddr: 0x12AB4, symSize: 0xD0 }
+  - { offset: 0x3842D, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncUdpSocket delegateQueue]_block_invoke', symObjAddr: 0x79C, symBinAddr: 0x12B84, symSize: 0x14 }
+  - { offset: 0x3847E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setDelegateQueue:synchronously:]', symObjAddr: 0x7B0, symBinAddr: 0x12B98, symSize: 0xCC }
+  - { offset: 0x38520, size: 0x8, addend: 0x0, symName: '___52-[GCDAsyncUdpSocket setDelegateQueue:synchronously:]_block_invoke', symObjAddr: 0x87C, symBinAddr: 0x12C64, symSize: 0xC }
+  - { offset: 0x38572, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setDelegateQueue:]', symObjAddr: 0x888, symBinAddr: 0x12C70, symSize: 0x8 }
+  - { offset: 0x385B2, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket synchronouslySetDelegateQueue:]', symObjAddr: 0x890, symBinAddr: 0x12C78, symSize: 0x8 }
+  - { offset: 0x385F1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket getDelegate:delegateQueue:]', symObjAddr: 0x898, symBinAddr: 0x12C80, symSize: 0x138 }
+  - { offset: 0x386A4, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncUdpSocket getDelegate:delegateQueue:]_block_invoke', symObjAddr: 0x9D0, symBinAddr: 0x12DB8, symSize: 0x54 }
+  - { offset: 0x38705, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setDelegate:delegateQueue:synchronously:]', symObjAddr: 0xAA0, symBinAddr: 0x12E0C, symSize: 0x10C }
+  - { offset: 0x387B8, size: 0x8, addend: 0x0, symName: '___61-[GCDAsyncUdpSocket setDelegate:delegateQueue:synchronously:]_block_invoke', symObjAddr: 0xBAC, symBinAddr: 0x12F18, symSize: 0x34 }
+  - { offset: 0x3881A, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setDelegate:delegateQueue:]', symObjAddr: 0xC40, symBinAddr: 0x12F4C, symSize: 0x8 }
+  - { offset: 0x38869, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket synchronouslySetDelegate:delegateQueue:]', symObjAddr: 0xC48, symBinAddr: 0x12F54, symSize: 0x8 }
+  - { offset: 0x388B8, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isIPv4Enabled]', symObjAddr: 0xC50, symBinAddr: 0x12F5C, symSize: 0xD8 }
+  - { offset: 0x3894B, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncUdpSocket isIPv4Enabled]_block_invoke', symObjAddr: 0xD28, symBinAddr: 0x13034, symSize: 0x1C }
+  - { offset: 0x389A5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setIPv4Enabled:]', symObjAddr: 0xD44, symBinAddr: 0x13050, symSize: 0x94 }
+  - { offset: 0x38A2C, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncUdpSocket setIPv4Enabled:]_block_invoke', symObjAddr: 0xDD8, symBinAddr: 0x130E4, symSize: 0x1C }
+  - { offset: 0x38A81, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isIPv6Enabled]', symObjAddr: 0xDF4, symBinAddr: 0x13100, symSize: 0xD8 }
+  - { offset: 0x38B14, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncUdpSocket isIPv6Enabled]_block_invoke', symObjAddr: 0xECC, symBinAddr: 0x131D8, symSize: 0x1C }
+  - { offset: 0x38B6E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setIPv6Enabled:]', symObjAddr: 0xEE8, symBinAddr: 0x131F4, symSize: 0x94 }
+  - { offset: 0x38BF5, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncUdpSocket setIPv6Enabled:]_block_invoke', symObjAddr: 0xF7C, symBinAddr: 0x13288, symSize: 0x28 }
+  - { offset: 0x38C4A, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isIPv4Preferred]', symObjAddr: 0xFA4, symBinAddr: 0x132B0, symSize: 0xD8 }
+  - { offset: 0x38CDD, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncUdpSocket isIPv4Preferred]_block_invoke', symObjAddr: 0x107C, symBinAddr: 0x13388, symSize: 0x18 }
+  - { offset: 0x38D38, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isIPv6Preferred]', symObjAddr: 0x1094, symBinAddr: 0x133A0, symSize: 0xD8 }
+  - { offset: 0x38DCB, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncUdpSocket isIPv6Preferred]_block_invoke', symObjAddr: 0x116C, symBinAddr: 0x13478, symSize: 0x18 }
+  - { offset: 0x38E26, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isIPVersionNeutral]', symObjAddr: 0x1184, symBinAddr: 0x13490, symSize: 0xD8 }
+  - { offset: 0x38EB9, size: 0x8, addend: 0x0, symName: '___39-[GCDAsyncUdpSocket isIPVersionNeutral]_block_invoke', symObjAddr: 0x125C, symBinAddr: 0x13568, symSize: 0x1C }
+  - { offset: 0x38F13, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setPreferIPv4]', symObjAddr: 0x1278, symBinAddr: 0x13584, symSize: 0x90 }
+  - { offset: 0x38F8D, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncUdpSocket setPreferIPv4]_block_invoke', symObjAddr: 0x1308, symBinAddr: 0x13614, symSize: 0x24 }
+  - { offset: 0x38FCE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setPreferIPv6]', symObjAddr: 0x132C, symBinAddr: 0x13638, symSize: 0x90 }
+  - { offset: 0x39048, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncUdpSocket setPreferIPv6]_block_invoke', symObjAddr: 0x13BC, symBinAddr: 0x136C8, symSize: 0x24 }
+  - { offset: 0x39089, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setIPVersionNeutral]', symObjAddr: 0x13E0, symBinAddr: 0x136EC, symSize: 0x90 }
+  - { offset: 0x39103, size: 0x8, addend: 0x0, symName: '___40-[GCDAsyncUdpSocket setIPVersionNeutral]_block_invoke', symObjAddr: 0x1470, symBinAddr: 0x1377C, symSize: 0x24 }
+  - { offset: 0x39145, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket maxReceiveIPv4BufferSize]', symObjAddr: 0x1494, symBinAddr: 0x137A0, symSize: 0xD8 }
+  - { offset: 0x391D8, size: 0x8, addend: 0x0, symName: '___45-[GCDAsyncUdpSocket maxReceiveIPv4BufferSize]_block_invoke', symObjAddr: 0x156C, symBinAddr: 0x13878, symSize: 0x14 }
+  - { offset: 0x39232, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setMaxReceiveIPv4BufferSize:]', symObjAddr: 0x1580, symBinAddr: 0x1388C, symSize: 0x94 }
+  - { offset: 0x392BD, size: 0x8, addend: 0x0, symName: '___49-[GCDAsyncUdpSocket setMaxReceiveIPv4BufferSize:]_block_invoke', symObjAddr: 0x1614, symBinAddr: 0x13920, symSize: 0x10 }
+  - { offset: 0x39312, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket maxReceiveIPv6BufferSize]', symObjAddr: 0x1624, symBinAddr: 0x13930, symSize: 0xD8 }
+  - { offset: 0x393A5, size: 0x8, addend: 0x0, symName: '___45-[GCDAsyncUdpSocket maxReceiveIPv6BufferSize]_block_invoke', symObjAddr: 0x16FC, symBinAddr: 0x13A08, symSize: 0x14 }
+  - { offset: 0x393FF, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setMaxReceiveIPv6BufferSize:]', symObjAddr: 0x1710, symBinAddr: 0x13A1C, symSize: 0x94 }
+  - { offset: 0x3948A, size: 0x8, addend: 0x0, symName: '___49-[GCDAsyncUdpSocket setMaxReceiveIPv6BufferSize:]_block_invoke', symObjAddr: 0x17A4, symBinAddr: 0x13AB0, symSize: 0x10 }
+  - { offset: 0x394DE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setMaxSendBufferSize:]', symObjAddr: 0x17B4, symBinAddr: 0x13AC0, symSize: 0x94 }
+  - { offset: 0x39569, size: 0x8, addend: 0x0, symName: '___42-[GCDAsyncUdpSocket setMaxSendBufferSize:]_block_invoke', symObjAddr: 0x1848, symBinAddr: 0x13B54, symSize: 0x10 }
+  - { offset: 0x395BE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket maxSendBufferSize]', symObjAddr: 0x1858, symBinAddr: 0x13B64, symSize: 0xD8 }
+  - { offset: 0x39651, size: 0x8, addend: 0x0, symName: '___38-[GCDAsyncUdpSocket maxSendBufferSize]_block_invoke', symObjAddr: 0x1930, symBinAddr: 0x13C3C, symSize: 0x14 }
+  - { offset: 0x396AC, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket userData]', symObjAddr: 0x1944, symBinAddr: 0x13C50, symSize: 0xFC }
+  - { offset: 0x3973F, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncUdpSocket userData]_block_invoke', symObjAddr: 0x1A40, symBinAddr: 0x13D4C, symSize: 0x14 }
+  - { offset: 0x39790, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setUserData:]', symObjAddr: 0x1A54, symBinAddr: 0x13D60, symSize: 0xBC }
+  - { offset: 0x3981B, size: 0x8, addend: 0x0, symName: '___33-[GCDAsyncUdpSocket setUserData:]_block_invoke', symObjAddr: 0x1B10, symBinAddr: 0x13E1C, symSize: 0x1C }
+  - { offset: 0x3986C, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket notifyDidConnectToAddress:]', symObjAddr: 0x1B2C, symBinAddr: 0x13E38, symSize: 0xF4 }
+  - { offset: 0x398FB, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncUdpSocket notifyDidConnectToAddress:]_block_invoke', symObjAddr: 0x1C20, symBinAddr: 0x13F2C, symSize: 0x34 }
+  - { offset: 0x3995C, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket notifyDidNotConnect:]', symObjAddr: 0x1C54, symBinAddr: 0x13F60, symSize: 0xD4 }
+  - { offset: 0x399CC, size: 0x8, addend: 0x0, symName: '___41-[GCDAsyncUdpSocket notifyDidNotConnect:]_block_invoke', symObjAddr: 0x1D28, symBinAddr: 0x14034, symSize: 0x34 }
+  - { offset: 0x39A2D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket notifyDidSendDataWithTag:]', symObjAddr: 0x1D5C, symBinAddr: 0x14068, symSize: 0xB4 }
+  - { offset: 0x39A9D, size: 0x8, addend: 0x0, symName: '___46-[GCDAsyncUdpSocket notifyDidSendDataWithTag:]_block_invoke', symObjAddr: 0x1E10, symBinAddr: 0x1411C, symSize: 0x34 }
+  - { offset: 0x39AFE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket notifyDidNotSendDataWithTag:dueToError:]', symObjAddr: 0x1E44, symBinAddr: 0x14150, symSize: 0xE4 }
+  - { offset: 0x39B7F, size: 0x8, addend: 0x0, symName: '___60-[GCDAsyncUdpSocket notifyDidNotSendDataWithTag:dueToError:]_block_invoke', symObjAddr: 0x1F28, symBinAddr: 0x14234, symSize: 0x34 }
+  - { offset: 0x39BF0, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket notifyDidReceiveData:fromAddress:withFilterContext:]', symObjAddr: 0x1F5C, symBinAddr: 0x14268, symSize: 0x134 }
+  - { offset: 0x39C92, size: 0x8, addend: 0x0, symName: '___72-[GCDAsyncUdpSocket notifyDidReceiveData:fromAddress:withFilterContext:]_block_invoke', symObjAddr: 0x2090, symBinAddr: 0x1439C, symSize: 0x38 }
+  - { offset: 0x39D14, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48s56s64s, symObjAddr: 0x20C8, symBinAddr: 0x143D4, symSize: 0x40 }
+  - { offset: 0x39D3D, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48s56s64s, symObjAddr: 0x2108, symBinAddr: 0x14414, symSize: 0x40 }
+  - { offset: 0x39D5B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket notifyDidCloseWithError:]', symObjAddr: 0x2148, symBinAddr: 0x14454, symSize: 0xD4 }
+  - { offset: 0x39DCB, size: 0x8, addend: 0x0, symName: '___45-[GCDAsyncUdpSocket notifyDidCloseWithError:]_block_invoke', symObjAddr: 0x221C, symBinAddr: 0x14528, symSize: 0x34 }
+  - { offset: 0x39E2D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket badConfigError:]', symObjAddr: 0x2250, symBinAddr: 0x1455C, symSize: 0xD4 }
+  - { offset: 0x39E80, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket badParamError:]', symObjAddr: 0x2324, symBinAddr: 0x14630, symSize: 0xD4 }
+  - { offset: 0x39ED3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket gaiError:]', symObjAddr: 0x23F8, symBinAddr: 0x14704, symSize: 0xF4 }
+  - { offset: 0x39F60, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket errnoErrorWithReason:]', symObjAddr: 0x24EC, symBinAddr: 0x147F8, symSize: 0x14C }
+  - { offset: 0x3A019, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket errnoError]', symObjAddr: 0x2638, symBinAddr: 0x14944, symSize: 0x8 }
+  - { offset: 0x3A04E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket sendTimeoutError]', symObjAddr: 0x2640, symBinAddr: 0x1494C, symSize: 0x10C }
+  - { offset: 0x3A0A0, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket socketClosedError]', symObjAddr: 0x274C, symBinAddr: 0x14A58, symSize: 0x10C }
+  - { offset: 0x3A0F2, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket otherError:]', symObjAddr: 0x2858, symBinAddr: 0x14B64, symSize: 0xD4 }
+  - { offset: 0x3A145, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket preOp:]', symObjAddr: 0x292C, symBinAddr: 0x14C38, symSize: 0x90 }
+  - { offset: 0x3A1C5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket asyncResolveHost:port:withCompletionBlock:]', symObjAddr: 0x29BC, symBinAddr: 0x14CC8, symSize: 0x178 }
+  - { offset: 0x3A2E7, size: 0x8, addend: 0x0, symName: '___63-[GCDAsyncUdpSocket asyncResolveHost:port:withCompletionBlock:]_block_invoke', symObjAddr: 0x2B34, symBinAddr: 0x14E40, symSize: 0x38 }
+  - { offset: 0x3A347, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40b, symObjAddr: 0x2B6C, symBinAddr: 0x14E78, symSize: 0x34 }
+  - { offset: 0x3A370, size: 0x8, addend: 0x0, symName: '___63-[GCDAsyncUdpSocket asyncResolveHost:port:withCompletionBlock:]_block_invoke.72', symObjAddr: 0x2BA0, symBinAddr: 0x14EAC, symSize: 0x340 }
+  - { offset: 0x3A579, size: 0x8, addend: 0x0, symName: '___63-[GCDAsyncUdpSocket asyncResolveHost:port:withCompletionBlock:]_block_invoke_2', symObjAddr: 0x2EE0, symBinAddr: 0x151EC, symSize: 0x38 }
+  - { offset: 0x3A5E2, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48b, symObjAddr: 0x2F18, symBinAddr: 0x15224, symSize: 0x3C }
+  - { offset: 0x3A60B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket getAddress:error:fromAddresses:]', symObjAddr: 0x2F54, symBinAddr: 0x15260, symSize: 0x370 }
+  - { offset: 0x3A82F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket convertIntefaceDescription:port:intoAddress4:address6:]', symObjAddr: 0x32C4, symBinAddr: 0x155D0, symSize: 0x348 }
+  - { offset: 0x3AB87, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket convertNumericHost:port:intoAddress4:address6:]', symObjAddr: 0x360C, symBinAddr: 0x15918, symSize: 0x1C0 }
+  - { offset: 0x3AC91, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isConnectedToAddress4:]', symObjAddr: 0x37CC, symBinAddr: 0x15AD8, symSize: 0x70 }
+  - { offset: 0x3ACF8, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isConnectedToAddress6:]', symObjAddr: 0x383C, symBinAddr: 0x15B48, symSize: 0x74 }
+  - { offset: 0x3AD5F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket indexOfInterfaceAddr4:]', symObjAddr: 0x38B0, symBinAddr: 0x15BBC, symSize: 0xC0 }
+  - { offset: 0x3AE3D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket indexOfInterfaceAddr6:]', symObjAddr: 0x3970, symBinAddr: 0x15C7C, symSize: 0xC4 }
+  - { offset: 0x3AF07, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket4]', symObjAddr: 0x3A34, symBinAddr: 0x15D40, symSize: 0x184 }
+  - { offset: 0x3B02D, size: 0x8, addend: 0x0, symName: '___57-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket4]_block_invoke', symObjAddr: 0x3BB8, symBinAddr: 0x15EC4, symSize: 0x68 }
+  - { offset: 0x3B06F, size: 0x8, addend: 0x0, symName: '___57-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket4]_block_invoke_2', symObjAddr: 0x3C20, symBinAddr: 0x15F2C, symSize: 0x58 }
+  - { offset: 0x3B0D2, size: 0x8, addend: 0x0, symName: '___57-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket4]_block_invoke_3', symObjAddr: 0x3C78, symBinAddr: 0x15F84, symSize: 0x24 }
+  - { offset: 0x3B144, size: 0x8, addend: 0x0, symName: '___57-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket4]_block_invoke.88', symObjAddr: 0x3CB8, symBinAddr: 0x15FA8, symSize: 0x24 }
+  - { offset: 0x3B19E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket6]', symObjAddr: 0x3CDC, symBinAddr: 0x15FCC, symSize: 0x184 }
+  - { offset: 0x3B27A, size: 0x8, addend: 0x0, symName: '___57-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket6]_block_invoke', symObjAddr: 0x3E60, symBinAddr: 0x16150, symSize: 0x68 }
+  - { offset: 0x3B2BC, size: 0x8, addend: 0x0, symName: '___57-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket6]_block_invoke_2', symObjAddr: 0x3EC8, symBinAddr: 0x161B8, symSize: 0x58 }
+  - { offset: 0x3B30C, size: 0x8, addend: 0x0, symName: '___57-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket6]_block_invoke_3', symObjAddr: 0x3F20, symBinAddr: 0x16210, symSize: 0x24 }
+  - { offset: 0x3B367, size: 0x8, addend: 0x0, symName: '___57-[GCDAsyncUdpSocket setupSendAndReceiveSourcesForSocket6]_block_invoke_4', symObjAddr: 0x3F44, symBinAddr: 0x16234, symSize: 0x24 }
+  - { offset: 0x3B3C2, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket createSocket4:socket6:error:]', symObjAddr: 0x3F68, symBinAddr: 0x16258, symSize: 0x10C }
+  - { offset: 0x3B47D, size: 0x8, addend: 0x0, symName: '___49-[GCDAsyncUdpSocket createSocket4:socket6:error:]_block_invoke', symObjAddr: 0x4074, symBinAddr: 0x16364, symSize: 0x1DC }
+  - { offset: 0x3B6A2, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket createSockets:]', symObjAddr: 0x4250, symBinAddr: 0x16540, symSize: 0x48 }
+  - { offset: 0x3B708, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket suspendSend4Source]', symObjAddr: 0x4298, symBinAddr: 0x16588, symSize: 0x3C }
+  - { offset: 0x3B756, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket suspendSend6Source]', symObjAddr: 0x42D4, symBinAddr: 0x165C4, symSize: 0x3C }
+  - { offset: 0x3B795, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket resumeSend4Source]', symObjAddr: 0x4310, symBinAddr: 0x16600, symSize: 0x3C }
+  - { offset: 0x3B7E3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket resumeSend6Source]', symObjAddr: 0x434C, symBinAddr: 0x1663C, symSize: 0x3C }
+  - { offset: 0x3B822, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket suspendReceive4Source]', symObjAddr: 0x4388, symBinAddr: 0x16678, symSize: 0x3C }
+  - { offset: 0x3B861, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket suspendReceive6Source]', symObjAddr: 0x43C4, symBinAddr: 0x166B4, symSize: 0x3C }
+  - { offset: 0x3B8A0, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket resumeReceive4Source]', symObjAddr: 0x4400, symBinAddr: 0x166F0, symSize: 0x3C }
+  - { offset: 0x3B8DF, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket resumeReceive6Source]', symObjAddr: 0x443C, symBinAddr: 0x1672C, symSize: 0x3C }
+  - { offset: 0x3B91E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket closeSocket4]', symObjAddr: 0x4478, symBinAddr: 0x16768, symSize: 0x94 }
+  - { offset: 0x3B97A, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket closeSocket6]', symObjAddr: 0x450C, symBinAddr: 0x167FC, symSize: 0x94 }
+  - { offset: 0x3B9C7, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket closeSockets]', symObjAddr: 0x45A0, symBinAddr: 0x16890, symSize: 0x34 }
+  - { offset: 0x3B9F9, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket getLocalAddress:host:port:forSocket:withFamily:]', symObjAddr: 0x45D4, symBinAddr: 0x168C4, symSize: 0x1AC }
+  - { offset: 0x3BB74, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket maybeUpdateCachedLocalAddress4Info]', symObjAddr: 0x4780, symBinAddr: 0x16A70, symSize: 0xD4 }
+  - { offset: 0x3BBD5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket maybeUpdateCachedLocalAddress6Info]', symObjAddr: 0x4854, symBinAddr: 0x16B44, symSize: 0xD4 }
+  - { offset: 0x3BC37, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket localAddress]', symObjAddr: 0x4928, symBinAddr: 0x16C18, symSize: 0x140 }
+  - { offset: 0x3BCD2, size: 0x8, addend: 0x0, symName: '___33-[GCDAsyncUdpSocket localAddress]_block_invoke', symObjAddr: 0x4A68, symBinAddr: 0x16D58, symSize: 0x50 }
+  - { offset: 0x3BD24, size: 0x8, addend: 0x0, symName: '___33-[GCDAsyncUdpSocket localAddress]_block_invoke_2', symObjAddr: 0x4AB8, symBinAddr: 0x16DA8, symSize: 0x34 }
+  - { offset: 0x3BD6D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket localHost]', symObjAddr: 0x4AFC, symBinAddr: 0x16DDC, symSize: 0x140 }
+  - { offset: 0x3BE08, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket localHost]_block_invoke', symObjAddr: 0x4C3C, symBinAddr: 0x16F1C, symSize: 0x50 }
+  - { offset: 0x3BE5A, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket localHost]_block_invoke_2', symObjAddr: 0x4C8C, symBinAddr: 0x16F6C, symSize: 0x34 }
+  - { offset: 0x3BEA3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket localPort]', symObjAddr: 0x4CC0, symBinAddr: 0x16FA0, symSize: 0x11C }
+  - { offset: 0x3BF3E, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket localPort]_block_invoke', symObjAddr: 0x4DDC, symBinAddr: 0x170BC, symSize: 0x50 }
+  - { offset: 0x3BF90, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket localPort]_block_invoke_2', symObjAddr: 0x4E2C, symBinAddr: 0x1710C, symSize: 0x34 }
+  - { offset: 0x3BFD9, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket localAddress_IPv4]', symObjAddr: 0x4E60, symBinAddr: 0x17140, symSize: 0x140 }
+  - { offset: 0x3C074, size: 0x8, addend: 0x0, symName: '___38-[GCDAsyncUdpSocket localAddress_IPv4]_block_invoke', symObjAddr: 0x4FA0, symBinAddr: 0x17280, symSize: 0x34 }
+  - { offset: 0x3C0C6, size: 0x8, addend: 0x0, symName: '___38-[GCDAsyncUdpSocket localAddress_IPv4]_block_invoke_2', symObjAddr: 0x4FD4, symBinAddr: 0x172B4, symSize: 0x34 }
+  - { offset: 0x3C10F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket localHost_IPv4]', symObjAddr: 0x5008, symBinAddr: 0x172E8, symSize: 0x140 }
+  - { offset: 0x3C1AA, size: 0x8, addend: 0x0, symName: '___35-[GCDAsyncUdpSocket localHost_IPv4]_block_invoke', symObjAddr: 0x5148, symBinAddr: 0x17428, symSize: 0x34 }
+  - { offset: 0x3C1FC, size: 0x8, addend: 0x0, symName: '___35-[GCDAsyncUdpSocket localHost_IPv4]_block_invoke_2', symObjAddr: 0x517C, symBinAddr: 0x1745C, symSize: 0x34 }
+  - { offset: 0x3C245, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket localPort_IPv4]', symObjAddr: 0x51B0, symBinAddr: 0x17490, symSize: 0x11C }
+  - { offset: 0x3C2E0, size: 0x8, addend: 0x0, symName: '___35-[GCDAsyncUdpSocket localPort_IPv4]_block_invoke', symObjAddr: 0x52CC, symBinAddr: 0x175AC, symSize: 0x34 }
+  - { offset: 0x3C332, size: 0x8, addend: 0x0, symName: '___35-[GCDAsyncUdpSocket localPort_IPv4]_block_invoke_2', symObjAddr: 0x5300, symBinAddr: 0x175E0, symSize: 0x34 }
+  - { offset: 0x3C37B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket localAddress_IPv6]', symObjAddr: 0x5334, symBinAddr: 0x17614, symSize: 0x140 }
+  - { offset: 0x3C416, size: 0x8, addend: 0x0, symName: '___38-[GCDAsyncUdpSocket localAddress_IPv6]_block_invoke', symObjAddr: 0x5474, symBinAddr: 0x17754, symSize: 0x34 }
+  - { offset: 0x3C468, size: 0x8, addend: 0x0, symName: '___38-[GCDAsyncUdpSocket localAddress_IPv6]_block_invoke_2', symObjAddr: 0x54A8, symBinAddr: 0x17788, symSize: 0x34 }
+  - { offset: 0x3C4B1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket localHost_IPv6]', symObjAddr: 0x54DC, symBinAddr: 0x177BC, symSize: 0x140 }
+  - { offset: 0x3C54C, size: 0x8, addend: 0x0, symName: '___35-[GCDAsyncUdpSocket localHost_IPv6]_block_invoke', symObjAddr: 0x561C, symBinAddr: 0x178FC, symSize: 0x34 }
+  - { offset: 0x3C59E, size: 0x8, addend: 0x0, symName: '___35-[GCDAsyncUdpSocket localHost_IPv6]_block_invoke_2', symObjAddr: 0x5650, symBinAddr: 0x17930, symSize: 0x34 }
+  - { offset: 0x3C5E7, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket localPort_IPv6]', symObjAddr: 0x5684, symBinAddr: 0x17964, symSize: 0x11C }
+  - { offset: 0x3C682, size: 0x8, addend: 0x0, symName: '___35-[GCDAsyncUdpSocket localPort_IPv6]_block_invoke', symObjAddr: 0x57A0, symBinAddr: 0x17A80, symSize: 0x34 }
+  - { offset: 0x3C6D4, size: 0x8, addend: 0x0, symName: '___35-[GCDAsyncUdpSocket localPort_IPv6]_block_invoke_2', symObjAddr: 0x57D4, symBinAddr: 0x17AB4, symSize: 0x34 }
+  - { offset: 0x3C71C, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket maybeUpdateCachedConnectedAddressInfo]', symObjAddr: 0x5808, symBinAddr: 0x17AE8, symSize: 0x1B0 }
+  - { offset: 0x3C83E, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket connectedAddress]', symObjAddr: 0x59B8, symBinAddr: 0x17C98, symSize: 0x140 }
+  - { offset: 0x3C8D9, size: 0x8, addend: 0x0, symName: '___37-[GCDAsyncUdpSocket connectedAddress]_block_invoke', symObjAddr: 0x5AF8, symBinAddr: 0x17DD8, symSize: 0x34 }
+  - { offset: 0x3C92B, size: 0x8, addend: 0x0, symName: '___37-[GCDAsyncUdpSocket connectedAddress]_block_invoke_2', symObjAddr: 0x5B2C, symBinAddr: 0x17E0C, symSize: 0x34 }
+  - { offset: 0x3C974, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket connectedHost]', symObjAddr: 0x5B60, symBinAddr: 0x17E40, symSize: 0x140 }
+  - { offset: 0x3CA0F, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncUdpSocket connectedHost]_block_invoke', symObjAddr: 0x5CA0, symBinAddr: 0x17F80, symSize: 0x34 }
+  - { offset: 0x3CA61, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncUdpSocket connectedHost]_block_invoke_2', symObjAddr: 0x5CD4, symBinAddr: 0x17FB4, symSize: 0x34 }
+  - { offset: 0x3CAAA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket connectedPort]', symObjAddr: 0x5D08, symBinAddr: 0x17FE8, symSize: 0x11C }
+  - { offset: 0x3CB45, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncUdpSocket connectedPort]_block_invoke', symObjAddr: 0x5E24, symBinAddr: 0x18104, symSize: 0x34 }
+  - { offset: 0x3CB97, size: 0x8, addend: 0x0, symName: '___34-[GCDAsyncUdpSocket connectedPort]_block_invoke_2', symObjAddr: 0x5E58, symBinAddr: 0x18138, symSize: 0x34 }
+  - { offset: 0x3CBE0, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isConnected]', symObjAddr: 0x5E8C, symBinAddr: 0x1816C, symSize: 0xD8 }
+  - { offset: 0x3CC73, size: 0x8, addend: 0x0, symName: '___32-[GCDAsyncUdpSocket isConnected]_block_invoke', symObjAddr: 0x5F64, symBinAddr: 0x18244, symSize: 0x18 }
+  - { offset: 0x3CCCE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isClosed]', symObjAddr: 0x5F7C, symBinAddr: 0x1825C, symSize: 0xDC }
+  - { offset: 0x3CD61, size: 0x8, addend: 0x0, symName: '___29-[GCDAsyncUdpSocket isClosed]_block_invoke', symObjAddr: 0x6058, symBinAddr: 0x18338, symSize: 0x1C }
+  - { offset: 0x3CDBC, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isIPv4]', symObjAddr: 0x6074, symBinAddr: 0x18354, symSize: 0xD8 }
+  - { offset: 0x3CE4F, size: 0x8, addend: 0x0, symName: '___27-[GCDAsyncUdpSocket isIPv4]_block_invoke', symObjAddr: 0x614C, symBinAddr: 0x1842C, symSize: 0x48 }
+  - { offset: 0x3CEA1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket isIPv6]', symObjAddr: 0x6194, symBinAddr: 0x18474, symSize: 0xD8 }
+  - { offset: 0x3CF34, size: 0x8, addend: 0x0, symName: '___27-[GCDAsyncUdpSocket isIPv6]_block_invoke', symObjAddr: 0x626C, symBinAddr: 0x1854C, symSize: 0x48 }
+  - { offset: 0x3CF86, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket preBind:]', symObjAddr: 0x62B4, symBinAddr: 0x18594, symSize: 0xA4 }
+  - { offset: 0x3CFE7, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket bindToPort:error:]', symObjAddr: 0x6358, symBinAddr: 0x18638, symSize: 0xC }
+  - { offset: 0x3D03C, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket bindToPort:interface:error:]', symObjAddr: 0x6364, symBinAddr: 0x18644, symSize: 0x184 }
+  - { offset: 0x3D119, size: 0x8, addend: 0x0, symName: '___48-[GCDAsyncUdpSocket bindToPort:interface:error:]_block_invoke', symObjAddr: 0x64E8, symBinAddr: 0x187C8, symSize: 0x260 }
+  - { offset: 0x3D2DB, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket bindToAddress:error:]', symObjAddr: 0x67D4, symBinAddr: 0x18A28, symSize: 0x174 }
+  - { offset: 0x3D3A6, size: 0x8, addend: 0x0, symName: '___41-[GCDAsyncUdpSocket bindToAddress:error:]_block_invoke', symObjAddr: 0x6948, symBinAddr: 0x18B9C, symSize: 0x29C }
+  - { offset: 0x3D53F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket preConnect:]', symObjAddr: 0x6BE4, symBinAddr: 0x18E38, symSize: 0x90 }
+  - { offset: 0x3D5A0, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket connectToHost:onPort:error:]', symObjAddr: 0x6C74, symBinAddr: 0x18EC8, symSize: 0x184 }
+  - { offset: 0x3D67D, size: 0x8, addend: 0x0, symName: '___48-[GCDAsyncUdpSocket connectToHost:onPort:error:]_block_invoke', symObjAddr: 0x6DF8, symBinAddr: 0x1904C, symSize: 0x18C }
+  - { offset: 0x3D73D, size: 0x8, addend: 0x0, symName: '___48-[GCDAsyncUdpSocket connectToHost:onPort:error:]_block_invoke_2', symObjAddr: 0x6F84, symBinAddr: 0x191D8, symSize: 0x9C }
+  - { offset: 0x3D7B1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket connectToAddress:error:]', symObjAddr: 0x7020, symBinAddr: 0x19274, symSize: 0x174 }
+  - { offset: 0x3D87C, size: 0x8, addend: 0x0, symName: '___44-[GCDAsyncUdpSocket connectToAddress:error:]_block_invoke', symObjAddr: 0x7194, symBinAddr: 0x193E8, symSize: 0x180 }
+  - { offset: 0x3D94B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket maybeConnect]', symObjAddr: 0x7314, symBinAddr: 0x19568, symSize: 0x1E4 }
+  - { offset: 0x3D9F7, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket connectWithAddress4:error:]', symObjAddr: 0x74F8, symBinAddr: 0x1974C, symSize: 0xC4 }
+  - { offset: 0x3DAA4, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket connectWithAddress6:error:]', symObjAddr: 0x75BC, symBinAddr: 0x19810, symSize: 0xC4 }
+  - { offset: 0x3DB30, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket preJoin:]', symObjAddr: 0x7680, symBinAddr: 0x198D4, symSize: 0x84 }
+  - { offset: 0x3DB77, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket joinMulticastGroup:error:]', symObjAddr: 0x7704, symBinAddr: 0x19958, symSize: 0xC }
+  - { offset: 0x3DBCC, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket joinMulticastGroup:onInterface:error:]', symObjAddr: 0x7710, symBinAddr: 0x19964, symSize: 0x14 }
+  - { offset: 0x3DC34, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket leaveMulticastGroup:error:]', symObjAddr: 0x7724, symBinAddr: 0x19978, symSize: 0xC }
+  - { offset: 0x3DC89, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket leaveMulticastGroup:onInterface:error:]', symObjAddr: 0x7730, symBinAddr: 0x19984, symSize: 0x14 }
+  - { offset: 0x3DCF1, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket performMulticastRequest:forGroup:onInterface:error:]', symObjAddr: 0x7744, symBinAddr: 0x19998, symSize: 0x1C4 }
+  - { offset: 0x3DDDF, size: 0x8, addend: 0x0, symName: '___72-[GCDAsyncUdpSocket performMulticastRequest:forGroup:onInterface:error:]_block_invoke', symObjAddr: 0x7908, symBinAddr: 0x19B5C, symSize: 0x270 }
+  - { offset: 0x3DFDA, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket sendIPv4MulticastOnInterface:error:]', symObjAddr: 0x7C14, symBinAddr: 0x19DCC, symSize: 0x174 }
+  - { offset: 0x3E0A5, size: 0x8, addend: 0x0, symName: '___56-[GCDAsyncUdpSocket sendIPv4MulticastOnInterface:error:]_block_invoke', symObjAddr: 0x7D88, symBinAddr: 0x19F40, symSize: 0x178 }
+  - { offset: 0x3E1CC, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket sendIPv6MulticastOnInterface:error:]', symObjAddr: 0x7F00, symBinAddr: 0x1A0B8, symSize: 0x174 }
+  - { offset: 0x3E297, size: 0x8, addend: 0x0, symName: '___56-[GCDAsyncUdpSocket sendIPv6MulticastOnInterface:error:]_block_invoke', symObjAddr: 0x8074, symBinAddr: 0x1A22C, symSize: 0x184 }
+  - { offset: 0x3E39D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket enableReusePort:error:]', symObjAddr: 0x81F8, symBinAddr: 0x1A3B0, symSize: 0x150 }
+  - { offset: 0x3E464, size: 0x8, addend: 0x0, symName: '___43-[GCDAsyncUdpSocket enableReusePort:error:]_block_invoke', symObjAddr: 0x8348, symBinAddr: 0x1A500, symSize: 0x150 }
+  - { offset: 0x3E57B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket enableBroadcast:error:]', symObjAddr: 0x8498, symBinAddr: 0x1A650, symSize: 0x150 }
+  - { offset: 0x3E642, size: 0x8, addend: 0x0, symName: '___43-[GCDAsyncUdpSocket enableBroadcast:error:]_block_invoke', symObjAddr: 0x85E8, symBinAddr: 0x1A7A0, symSize: 0x114 }
+  - { offset: 0x3E70F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket sendData:withTag:]', symObjAddr: 0x86FC, symBinAddr: 0x1A8B4, symSize: 0x8 }
+  - { offset: 0x3E75D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket sendData:withTimeout:tag:]', symObjAddr: 0x8704, symBinAddr: 0x1A8BC, symSize: 0xCC }
+  - { offset: 0x3E7EF, size: 0x8, addend: 0x0, symName: '___46-[GCDAsyncUdpSocket sendData:withTimeout:tag:]_block_invoke', symObjAddr: 0x87D0, symBinAddr: 0x1A988, symSize: 0x3C }
+  - { offset: 0x3E840, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket sendData:toHost:port:withTimeout:tag:]', symObjAddr: 0x880C, symBinAddr: 0x1A9C4, symSize: 0x144 }
+  - { offset: 0x3E8F4, size: 0x8, addend: 0x0, symName: '___58-[GCDAsyncUdpSocket sendData:toHost:port:withTimeout:tag:]_block_invoke', symObjAddr: 0x8950, symBinAddr: 0x1AB08, symSize: 0x94 }
+  - { offset: 0x3E968, size: 0x8, addend: 0x0, symName: '___58-[GCDAsyncUdpSocket sendData:toHost:port:withTimeout:tag:]_block_invoke_2', symObjAddr: 0x89E4, symBinAddr: 0x1AB9C, symSize: 0x3C }
+  - { offset: 0x3E9B9, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket sendData:toAddress:withTimeout:tag:]', symObjAddr: 0x8A20, symBinAddr: 0x1ABD8, symSize: 0x118 }
+  - { offset: 0x3EA5C, size: 0x8, addend: 0x0, symName: '___56-[GCDAsyncUdpSocket sendData:toAddress:withTimeout:tag:]_block_invoke', symObjAddr: 0x8B38, symBinAddr: 0x1ACF0, symSize: 0x3C }
+  - { offset: 0x3EAAE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setSendFilter:withQueue:]', symObjAddr: 0x8B74, symBinAddr: 0x1AD2C, symSize: 0x8 }
+  - { offset: 0x3EAFC, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setSendFilter:withQueue:isAsynchronous:]', symObjAddr: 0x8B7C, symBinAddr: 0x1AD34, symSize: 0x13C }
+  - { offset: 0x3EBC5, size: 0x8, addend: 0x0, symName: '___60-[GCDAsyncUdpSocket setSendFilter:withQueue:isAsynchronous:]_block_invoke', symObjAddr: 0x8CB8, symBinAddr: 0x1AE70, symSize: 0x50 }
+  - { offset: 0x3EC36, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket maybeDequeueSend]', symObjAddr: 0x8D08, symBinAddr: 0x1AEC0, symSize: 0x144 }
+  - { offset: 0x3EC7D, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket doPreSend]', symObjAddr: 0x8E4C, symBinAddr: 0x1B004, symSize: 0x2D4 }
+  - { offset: 0x3EDA2, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket doPreSend]_block_invoke', symObjAddr: 0x9120, symBinAddr: 0x1B2D8, symSize: 0xB4 }
+  - { offset: 0x3EE39, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket doPreSend]_block_invoke_2', symObjAddr: 0x91D4, symBinAddr: 0x1B38C, symSize: 0x6C }
+  - { offset: 0x3EE9B, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket doPreSend]_block_invoke.151', symObjAddr: 0x9240, symBinAddr: 0x1B3F8, symSize: 0x54 }
+  - { offset: 0x3EEF8, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket doSend]', symObjAddr: 0x9294, symBinAddr: 0x1B44C, symSize: 0x1A8 }
+  - { offset: 0x3F076, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket endCurrentSend]', symObjAddr: 0x943C, symBinAddr: 0x1B5F4, symSize: 0x3C }
+  - { offset: 0x3F0B5, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket doSendTimeout]', symObjAddr: 0x9478, symBinAddr: 0x1B630, symSize: 0x60 }
+  - { offset: 0x3F0E6, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setupSendTimerWithTimeout:]', symObjAddr: 0x94D8, symBinAddr: 0x1B690, symSize: 0xC8 }
+  - { offset: 0x3F1DE, size: 0x8, addend: 0x0, symName: '___47-[GCDAsyncUdpSocket setupSendTimerWithTimeout:]_block_invoke', symObjAddr: 0x95A0, symBinAddr: 0x1B758, symSize: 0x30 }
+  - { offset: 0x3F220, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket receiveOnce:]', symObjAddr: 0x95D0, symBinAddr: 0x1B788, symSize: 0x14C }
+  - { offset: 0x3F2DA, size: 0x8, addend: 0x0, symName: '___33-[GCDAsyncUdpSocket receiveOnce:]_block_invoke', symObjAddr: 0x971C, symBinAddr: 0x1B8D4, symSize: 0xD4 }
+  - { offset: 0x3F371, size: 0x8, addend: 0x0, symName: '___33-[GCDAsyncUdpSocket receiveOnce:]_block_invoke_2', symObjAddr: 0x97F0, symBinAddr: 0x1B9A8, symSize: 0x30 }
+  - { offset: 0x3F3B3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket beginReceiving:]', symObjAddr: 0x9820, symBinAddr: 0x1B9D8, symSize: 0x14C }
+  - { offset: 0x3F46D, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncUdpSocket beginReceiving:]_block_invoke', symObjAddr: 0x996C, symBinAddr: 0x1BB24, symSize: 0xD4 }
+  - { offset: 0x3F504, size: 0x8, addend: 0x0, symName: '___36-[GCDAsyncUdpSocket beginReceiving:]_block_invoke_2', symObjAddr: 0x9A40, symBinAddr: 0x1BBF8, symSize: 0x30 }
+  - { offset: 0x3F545, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket pauseReceiving]', symObjAddr: 0x9A70, symBinAddr: 0x1BC28, symSize: 0x90 }
+  - { offset: 0x3F5BF, size: 0x8, addend: 0x0, symName: '___35-[GCDAsyncUdpSocket pauseReceiving]_block_invoke', symObjAddr: 0x9B00, symBinAddr: 0x1BCB8, symSize: 0x64 }
+  - { offset: 0x3F601, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setReceiveFilter:withQueue:]', symObjAddr: 0x9B64, symBinAddr: 0x1BD1C, symSize: 0x8 }
+  - { offset: 0x3F64F, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket setReceiveFilter:withQueue:isAsynchronous:]', symObjAddr: 0x9B6C, symBinAddr: 0x1BD24, symSize: 0x13C }
+  - { offset: 0x3F718, size: 0x8, addend: 0x0, symName: '___63-[GCDAsyncUdpSocket setReceiveFilter:withQueue:isAsynchronous:]_block_invoke', symObjAddr: 0x9CA8, symBinAddr: 0x1BE60, symSize: 0x50 }
+  - { offset: 0x3F789, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket doReceive]', symObjAddr: 0x9CF8, symBinAddr: 0x1BEB0, symSize: 0x648 }
+  - { offset: 0x3FAC9, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket doReceive]_block_invoke', symObjAddr: 0xA340, symBinAddr: 0x1C4F8, symSize: 0x104 }
+  - { offset: 0x3FB7C, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket doReceive]_block_invoke_2', symObjAddr: 0xA444, symBinAddr: 0x1C5FC, symSize: 0x9C }
+  - { offset: 0x3FBFE, size: 0x8, addend: 0x0, symName: '___30-[GCDAsyncUdpSocket doReceive]_block_invoke.158', symObjAddr: 0xA4E0, symBinAddr: 0x1C698, symSize: 0x80 }
+  - { offset: 0x3FC93, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket doReceiveEOF]', symObjAddr: 0xA560, symBinAddr: 0x1C718, symSize: 0x3C }
+  - { offset: 0x3FCC4, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket closeWithError:]', symObjAddr: 0xA59C, symBinAddr: 0x1C754, symSize: 0x7C }
+  - { offset: 0x3FD13, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket close]', symObjAddr: 0xA618, symBinAddr: 0x1C7D0, symSize: 0x90 }
+  - { offset: 0x3FD8D, size: 0x8, addend: 0x0, symName: '___26-[GCDAsyncUdpSocket close]_block_invoke', symObjAddr: 0xA6A8, symBinAddr: 0x1C860, symSize: 0x34 }
+  - { offset: 0x3FDCE, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket closeAfterSending]', symObjAddr: 0xA6DC, symBinAddr: 0x1C894, symSize: 0x90 }
+  - { offset: 0x3FE48, size: 0x8, addend: 0x0, symName: '___38-[GCDAsyncUdpSocket closeAfterSending]_block_invoke', symObjAddr: 0xA76C, symBinAddr: 0x1C924, symSize: 0x5C }
+  - { offset: 0x3FE8A, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket ignore:]', symObjAddr: 0xA7C8, symBinAddr: 0x1C980, symSize: 0x4 }
+  - { offset: 0x3FEFF, size: 0x8, addend: 0x0, symName: '___48+[GCDAsyncUdpSocket startListenerThreadIfNeeded]_block_invoke', symObjAddr: 0xA838, symBinAddr: 0x1C9F0, symSize: 0x54 }
+  - { offset: 0x3FF40, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket listenerThread:]', symObjAddr: 0xA88C, symBinAddr: 0x1CA44, symSize: 0xEC }
+  - { offset: 0x3FF82, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket addStreamListener:]', symObjAddr: 0xA978, symBinAddr: 0x1CB30, symSize: 0x90 }
+  - { offset: 0x40074, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket removeStreamListener:]', symObjAddr: 0xAA08, symBinAddr: 0x1CBC0, symSize: 0x90 }
+  - { offset: 0x4015B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket createReadAndWriteStreams:]', symObjAddr: 0xAA98, symBinAddr: 0x1CC50, symSize: 0x1D4 }
+  - { offset: 0x40387, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket registerForStreamCallbacks:]', symObjAddr: 0xAC6C, symBinAddr: 0x1CE24, symSize: 0x1A8 }
+  - { offset: 0x4058C, size: 0x8, addend: 0x0, symName: _CFReadStreamCallback, symObjAddr: 0xAE14, symBinAddr: 0x1CFCC, symSize: 0x10C }
+  - { offset: 0x40657, size: 0x8, addend: 0x0, symName: _CFWriteStreamCallback, symObjAddr: 0xAF20, symBinAddr: 0x1D0D8, symSize: 0x10C }
+  - { offset: 0x40722, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket addStreamsToRunLoop:]', symObjAddr: 0xB02C, symBinAddr: 0x1D1E4, symSize: 0x60 }
+  - { offset: 0x40765, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket openStreams:]', symObjAddr: 0xB08C, symBinAddr: 0x1D244, symSize: 0xD0 }
+  - { offset: 0x4087C, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket removeStreamsFromRunLoop]', symObjAddr: 0xB15C, symBinAddr: 0x1D314, symSize: 0x50 }
+  - { offset: 0x408AD, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket closeReadAndWriteStreams]', symObjAddr: 0xB1AC, symBinAddr: 0x1D364, symSize: 0xCC }
+  - { offset: 0x409D2, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket applicationWillEnterForeground:]', symObjAddr: 0xB278, symBinAddr: 0x1D430, symSize: 0x90 }
+  - { offset: 0x40A59, size: 0x8, addend: 0x0, symName: '___52-[GCDAsyncUdpSocket applicationWillEnterForeground:]_block_invoke', symObjAddr: 0xB308, symBinAddr: 0x1D4C0, symSize: 0x38 }
+  - { offset: 0x40A9B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket markSocketQueueTargetQueue:]', symObjAddr: 0xB340, symBinAddr: 0x1D4F8, symSize: 0x18 }
+  - { offset: 0x40B13, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket unmarkSocketQueueTargetQueue:]', symObjAddr: 0xB358, symBinAddr: 0x1D510, symSize: 0x14 }
+  - { offset: 0x40B78, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket performBlock:]', symObjAddr: 0xB36C, symBinAddr: 0x1D524, symSize: 0x48 }
+  - { offset: 0x40BE3, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket socketFD]', symObjAddr: 0xB3B4, symBinAddr: 0x1D56C, symSize: 0x40 }
+  - { offset: 0x40C27, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket socket4FD]', symObjAddr: 0xB3F4, symBinAddr: 0x1D5AC, symSize: 0x34 }
+  - { offset: 0x40C6B, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket socket6FD]', symObjAddr: 0xB428, symBinAddr: 0x1D5E0, symSize: 0x34 }
+  - { offset: 0x40CAF, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket readStream]', symObjAddr: 0xB45C, symBinAddr: 0x1D614, symSize: 0x58 }
+  - { offset: 0x40D03, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket writeStream]', symObjAddr: 0xB4B4, symBinAddr: 0x1D66C, symSize: 0x58 }
+  - { offset: 0x40D57, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket enableBackgroundingOnSockets]', symObjAddr: 0xB50C, symBinAddr: 0x1D6C4, symSize: 0x8 }
+  - { offset: 0x40D89, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket hostFromSockaddr4:]', symObjAddr: 0xB514, symBinAddr: 0x1D6CC, symSize: 0x7C }
+  - { offset: 0x40DFE, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket hostFromSockaddr6:]', symObjAddr: 0xB590, symBinAddr: 0x1D748, symSize: 0x7C }
+  - { offset: 0x40E74, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket portFromSockaddr4:]', symObjAddr: 0xB60C, symBinAddr: 0x1D7C4, symSize: 0x10 }
+  - { offset: 0x40EB5, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket portFromSockaddr6:]', symObjAddr: 0xB61C, symBinAddr: 0x1D7D4, symSize: 0x10 }
+  - { offset: 0x40EF6, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket hostFromAddress:]', symObjAddr: 0xB62C, symBinAddr: 0x1D7E4, symSize: 0x34 }
+  - { offset: 0x40F4B, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket portFromAddress:]', symObjAddr: 0xB660, symBinAddr: 0x1D818, symSize: 0x34 }
+  - { offset: 0x40FA2, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket familyFromAddress:]', symObjAddr: 0xB694, symBinAddr: 0x1D84C, symSize: 0x34 }
+  - { offset: 0x40FF9, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket isIPv4Address:]', symObjAddr: 0xB6C8, symBinAddr: 0x1D880, symSize: 0x3C }
+  - { offset: 0x41050, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket isIPv6Address:]', symObjAddr: 0xB704, symBinAddr: 0x1D8BC, symSize: 0x3C }
+  - { offset: 0x410A7, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket getHost:port:fromAddress:]', symObjAddr: 0xB740, symBinAddr: 0x1D8F8, symSize: 0xC }
+  - { offset: 0x4110B, size: 0x8, addend: 0x0, symName: '+[GCDAsyncUdpSocket getHost:port:family:fromAddress:]', symObjAddr: 0xB74C, symBinAddr: 0x1D904, symSize: 0x148 }
+  - { offset: 0x411E0, size: 0x8, addend: 0x0, symName: '-[GCDAsyncUdpSocket .cxx_destruct]', symObjAddr: 0xB894, symBinAddr: 0x1DA4C, symSize: 0x110 }
+  - { offset: 0x41212, size: 0x8, addend: 0x0, symName: ___CFReadStreamCallback_block_invoke, symObjAddr: 0xB9A4, symBinAddr: 0x1DB5C, symSize: 0x50 }
+  - { offset: 0x4126F, size: 0x8, addend: 0x0, symName: ___CFWriteStreamCallback_block_invoke, symObjAddr: 0xB9F4, symBinAddr: 0x1DBAC, symSize: 0x50 }
+...

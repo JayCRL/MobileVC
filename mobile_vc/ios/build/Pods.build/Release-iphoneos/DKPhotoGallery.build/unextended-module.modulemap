@@ -1,0 +1,10 @@
+framework module DKPhotoGallery {
+  umbrella header "DKPhotoGallery-umbrella.h"
+
+  export *
+  module * { export * }
+}
+
+module DKPhotoGallery.__Swift {
+  exclude header "DKPhotoGallery-Swift.h"
+}

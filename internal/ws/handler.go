@@ -20,6 +20,7 @@ import (
 	"mobilevc/internal/codexsync"
 	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
+	"mobilevc/internal/push"
 	"mobilevc/internal/runner"
 	runtimepkg "mobilevc/internal/runtime"
 	"mobilevc/internal/session"
@@ -36,6 +37,7 @@ type Handler struct {
 	Upgrader        websocket.Upgrader
 	SkillLauncher   *skills.Launcher
 	SessionStore    store.Store
+	PushService     push.Service
 	runtimeSessions *runtimeSessionRegistry
 }
 
@@ -50,6 +52,7 @@ func NewHandler(authToken string, sessionStore store.Store) *Handler {
 		},
 		SkillLauncher: skills.NewLauncher(sessionStore),
 		SessionStore:  sessionStore,
+		PushService:   &push.NoopService{},
 		Upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -607,6 +610,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(*restored)
 			}
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
+		case "register_push_token":
+			var req protocol.RegisterPushTokenRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid register_push_token request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid register_push_token request: %v", err), ""))
+				continue
+			}
+			logx.Info("ws", "register push token: connectionID=%s sessionID=%s remoteAddr=%s requestedSessionID=%s platform=%s token=%s", connectionID, selectedSessionID, remoteAddr, req.SessionID, req.Platform, req.Token)
+			if h.SessionStore != nil {
+				targetSessionID := req.SessionID
+				if targetSessionID == "" {
+					targetSessionID = selectedSessionID
+				}
+				if err := h.SessionStore.SavePushToken(ctx, targetSessionID, req.Token, req.Platform); err != nil {
+					logx.Warn("ws", "save push token failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				}
+			}
 		case "session_resume":
 			var req protocol.SessionResumeRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {

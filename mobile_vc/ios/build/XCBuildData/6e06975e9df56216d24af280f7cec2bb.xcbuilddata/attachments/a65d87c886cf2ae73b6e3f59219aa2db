@@ -1,0 +1,31 @@
+{
+  "" : {
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary.dia",
+    "emit-module-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary-emit-module.dia",
+    "pch" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary.swiftdeps"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/url_launcher_ios-6.3.3/ios/url_launcher_ios/Sources/url_launcher_ios/Launcher.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/Launcher.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/Launcher.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/Launcher.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/url_launcher_ios-6.3.3/ios/url_launcher_ios/Sources/url_launcher_ios/URLLaunchSession.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/URLLaunchSession.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/URLLaunchSession.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/URLLaunchSession.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/url_launcher_ios-6.3.3/ios/url_launcher_ios/Sources/url_launcher_ios/URLLauncherPlugin.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/URLLauncherPlugin.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/URLLauncherPlugin.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/URLLauncherPlugin.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/url_launcher_ios-6.3.3/ios/url_launcher_ios/Sources/url_launcher_ios/messages.g.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/messages.g.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/messages.g.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/messages.g.o"
+  }
+}

@@ -1,0 +1,4 @@
+
+module path_provider_foundation.__Swift {
+  exclude header "path_provider_foundation-Swift.h"
+}

@@ -1,0 +1,23 @@
+{
+  "version": 0,
+  "use-external-names": false,
+  "case-sensitive": false,
+  "roots": [{
+    "type": "directory",
+    "name": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Release-iphoneos/DKPhotoGallery/DKPhotoGallery.framework/Modules",
+    "contents": [{
+      "type": "file",
+      "name": "module.modulemap",
+      "external-contents": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/unextended-module.modulemap",
+    }]
+    },
+    {
+    "type": "directory",
+    "name": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Release-iphoneos/DKPhotoGallery/DKPhotoGallery.framework/Headers",
+    "contents": [{
+      "type": "file",
+      "name": "DKPhotoGallery-Swift.h",
+      "external-contents": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/unextended-interface-header.h",
+    }]
+  }]
+}

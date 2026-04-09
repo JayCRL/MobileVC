@@ -1,0 +1,4 @@
+
+module DKPhotoGallery.__Swift {
+  exclude header "DKPhotoGallery-Swift.h"
+}

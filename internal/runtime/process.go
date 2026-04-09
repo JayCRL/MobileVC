@@ -111,12 +111,18 @@ func snapshotProcessTree(ctx context.Context, ref runner.ProcessRef) ([]protocol
 		if !ok {
 			return
 		}
+		if executionID := strings.TrimSpace(ref.ExecutionID); executionID != "" {
+			item.ExecutionID = executionID
+			item.LogAvailable = true
+		}
+		if cwd := strings.TrimSpace(ref.CWD); cwd != "" {
+			item.CWD = cwd
+		}
+		if source := strings.TrimSpace(ref.Source); source != "" {
+			item.Source = source
+		}
 		if pid == ref.RootPID {
 			item.Root = true
-			item.ExecutionID = strings.TrimSpace(ref.ExecutionID)
-			item.CWD = strings.TrimSpace(ref.CWD)
-			item.Source = strings.TrimSpace(ref.Source)
-			item.LogAvailable = true
 		}
 		ordered = append(ordered, item)
 		kids := append([]int(nil), children[pid]...)

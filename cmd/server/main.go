@@ -13,6 +13,7 @@ import (
 
 	"mobilevc/internal/config"
 	"mobilevc/internal/logx"
+	"mobilevc/internal/push"
 	"mobilevc/internal/store"
 	"mobilevc/internal/tts"
 	"mobilevc/internal/ws"
@@ -78,8 +79,37 @@ func main() {
 	}
 	logx.Info("bootstrap", "Session store ready: driver=file dir=%s", sessionStore.BaseDir())
 
+	logx.Info("bootstrap", "Initializing push service")
+	var pushService push.Service
+	apnsAuthKeyPath := os.Getenv("APNS_AUTH_KEY_PATH")
+	apnsKeyID := os.Getenv("APNS_KEY_ID")
+	apnsTeamID := os.Getenv("APNS_TEAM_ID")
+	apnsTopic := os.Getenv("APNS_TOPIC")
+	apnsProduction := os.Getenv("APNS_PRODUCTION") == "true"
+
+	if apnsAuthKeyPath != "" && apnsKeyID != "" && apnsTeamID != "" && apnsTopic != "" {
+		apnsService, err := push.NewAPNsService(push.APNsConfig{
+			AuthKeyPath: apnsAuthKeyPath,
+			KeyID:       apnsKeyID,
+			TeamID:      apnsTeamID,
+			Topic:       apnsTopic,
+			Production:  apnsProduction,
+		})
+		if err != nil {
+			logx.Warn("bootstrap", "initialize APNs service failed: %v", err)
+			pushService = &push.NoopService{}
+		} else {
+			pushService = apnsService
+			logx.Info("bootstrap", "APNs service ready: topic=%s production=%v", apnsTopic, apnsProduction)
+		}
+	} else {
+		logx.Info("bootstrap", "APNs not configured, push notifications disabled")
+		pushService = &push.NoopService{}
+	}
+
 	logx.Info("bootstrap", "Preparing websocket handler")
 	wsHandler := ws.NewHandler(cfg.AuthToken, sessionStore)
+	wsHandler.PushService = pushService
 	logx.Info("bootstrap", "WebSocket handler ready")
 
 	var ttsHandler *tts.HTTPHandler

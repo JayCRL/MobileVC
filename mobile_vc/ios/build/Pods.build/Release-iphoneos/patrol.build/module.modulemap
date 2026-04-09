@@ -1,0 +1,11 @@
+framework module patrol {
+  umbrella header "patrol-umbrella.h"
+
+  export *
+  module * { export * }
+}
+
+module patrol.Swift {
+  header "patrol-Swift.h"
+  requires objc
+}

@@ -1,0 +1,401 @@
+{
+  "" : {
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary.dia",
+    "emit-module-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary-emit-module.dia",
+    "pch" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/patrol-primary.swiftdeps"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/Automator/Automator.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Automator.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Automator.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Automator.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/Automator/IOSAutomator.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/IOSAutomator.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/IOSAutomator.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/IOSAutomator.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/Automator/MacOSAutomator.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/MacOSAutomator.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/MacOSAutomator.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/MacOSAutomator.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/AutomatorServer.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/AutomatorServer.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/AutomatorServer.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/AutomatorServer.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/Contracts.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Contracts.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Contracts.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Contracts.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/ElementTypeUtils.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/ElementTypeUtils.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/ElementTypeUtils.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/ElementTypeUtils.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/Errors.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Errors.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Errors.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Errors.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/Logger.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Logger.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Logger.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Logger.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/NativeAutomatorServer.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/NativeAutomatorServer.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/NativeAutomatorServer.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/NativeAutomatorServer.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/PatrolAppServiceClient.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/PatrolAppServiceClient.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/PatrolAppServiceClient.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/PatrolAppServiceClient.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/AutomatorServer/PatrolServer.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/PatrolServer.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/PatrolServer.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/PatrolServer.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/ObjCPatrolAppServiceClient.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/ObjCPatrolAppServiceClient.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/ObjCPatrolAppServiceClient.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/ObjCPatrolAppServiceClient.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/SwiftPatrolPlugin.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/SwiftPatrolPlugin.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/SwiftPatrolPlugin.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/SwiftPatrolPlugin.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Clients/Client+Config.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Client+Config.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Client+Config.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Client+Config.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Clients/WebSocketClient.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketClient.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketClient.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketClient.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Clients/WebSocketClientError.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketClientError.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketClientError.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketClientError.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/Deprecations.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Deprecations.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Deprecations.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Deprecations.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/DispatchTimer.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/DispatchTimer.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/DispatchTimer.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/DispatchTimer.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/Extensions/Array+Ext.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Array+Ext.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Array+Ext.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Array+Ext.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/Extensions/Data+Ext.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Data+Ext.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Data+Ext.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Data+Ext.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/Extensions/FileManager+Ext.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/FileManager+Ext.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/FileManager+Ext.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/FileManager+Ext.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/Extensions/NSRegularExpression+Ext.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/NSRegularExpression+Ext.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/NSRegularExpression+Ext.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/NSRegularExpression+Ext.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/Extensions/String+Ext.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/String+Ext.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/String+Ext.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/String+Ext.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/Extensions/UInt+Ext.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/UInt+Ext.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/UInt+Ext.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/UInt+Ext.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/Extensions/URL+Ext.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/URL+Ext.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/URL+Ext.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/URL+Ext.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/RFC1123.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/RFC1123.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/RFC1123.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/RFC1123.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Helpers/SynchronizedSet.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/SynchronizedSet.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/SynchronizedSet.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/SynchronizedSet.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Handlers/HTTPErrorDefaultHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPErrorDefaultHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPErrorDefaultHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPErrorDefaultHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Handlers/HTTPErrorHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPErrorHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPErrorHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPErrorHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Handlers/HTTPRequestHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRequestHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRequestHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRequestHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPConfig.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPConfig.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPConfig.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPConfig.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPConnection.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPConnection.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPConnection.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPConnection.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPError.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPError.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPError.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPError.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPHeader+Common.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPHeader+Common.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPHeader+Common.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPHeader+Common.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPHeader.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPHeader.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPHeader.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPHeader.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPMessage.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPMessage.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPMessage.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPMessage.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPMethod.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPMethod.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPMethod.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPMethod.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPParser+Raw.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPParser+Raw.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPParser+Raw.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPParser+Raw.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPParser.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPParser.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPParser.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPParser.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPRequest+Host.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRequest+Host.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRequest+Host.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRequest+Host.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPRequest.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRequest.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRequest.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRequest.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPResponse.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPResponse.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPResponse.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPResponse.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPStatus.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPStatus.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPStatus.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPStatus.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Models/HTTPVersion.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPVersion.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPVersion.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPVersion.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Routing/HTTPRoute.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRoute.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRoute.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRoute.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Routing/HTTPRouteHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRouteHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRouteHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPRouteHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/HTTP/Routing/Server+Routing.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Server+Routing.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Server+Routing.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Server+Routing.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Handlers/HTTPWebSocketHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPWebSocketHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPWebSocketHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPWebSocketHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Handlers/WebSocketErrorDefaultHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketErrorDefaultHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketErrorDefaultHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketErrorDefaultHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Handlers/WebSocketErrorHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketErrorHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketErrorHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketErrorHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Handlers/WebSocketMessageDefaultHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessageDefaultHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessageDefaultHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessageDefaultHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Handlers/WebSocketMessageHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessageHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessageHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessageHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Models/HTTPHeader+WebSocket.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPHeader+WebSocket.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPHeader+WebSocket.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPHeader+WebSocket.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Models/HTTPMessage+WebSocket.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPMessage+WebSocket.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPMessage+WebSocket.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/HTTPMessage+WebSocket.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Models/WebSocket.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocket.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocket.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocket.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Models/WebSocketConfig.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketConfig.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketConfig.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketConfig.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Models/WebSocketConnection.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketConnection.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketConnection.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketConnection.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Models/WebSocketError.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketError.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketError.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketError.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Models/WebSocketMessage+Write.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessage+Write.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessage+Write.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessage+Write.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Models/WebSocketMessage.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessage.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessage.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketMessage.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Protocols/WebSockets/Models/WebSocketParser.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketParser.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketParser.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/WebSocketParser.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Security/Certificate.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Certificate.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Certificate.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Certificate.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Security/CertificateIdentity.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/CertificateIdentity.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/CertificateIdentity.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/CertificateIdentity.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Security/KeychainError.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/KeychainError.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/KeychainError.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/KeychainError.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Security/KeychainManager.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/KeychainManager.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/KeychainManager.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/KeychainManager.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Security/SHA1.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/SHA1.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/SHA1.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/SHA1.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Security/TLSConfig.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TLSConfig.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TLSConfig.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TLSConfig.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Security/TLSPolicy.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TLSPolicy.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TLSPolicy.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TLSPolicy.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Server/Server+Config.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Server+Config.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Server+Config.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Server+Config.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Server/Server.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Server.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Server.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Server.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Server/ServerDelegates.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/ServerDelegates.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/ServerDelegates.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/ServerDelegates.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Transport/DataStream.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/DataStream.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/DataStream.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/DataStream.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Transport/Endpoint.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Endpoint.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Endpoint.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Endpoint.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Transport/Streams.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Streams.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Streams.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/Streams.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Transport/TCPConnection.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TCPConnection.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TCPConnection.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TCPConnection.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Transport/TCPListener.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TCPListener.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TCPListener.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TCPListener.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Transport/TCPSocket.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TCPSocket.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TCPSocket.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/TCPSocket.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/patrol-3.15.2/darwin/Classes/Telegraph/Transport/URI.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/URI.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/URI.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/Objects-normal/arm64/URI.o"
+  }
+}

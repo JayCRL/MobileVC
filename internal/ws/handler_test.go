@@ -786,6 +786,9 @@ func TestHandlerSkillCatalogLifecycle(t *testing.T) {
 			if item["syncState"] != string(store.CatalogSyncStateSynced) {
 				t.Fatalf("expected synced item state, got %#v", item)
 			}
+			if item["editable"] != true {
+				t.Fatalf("expected synced external skill editable, got %#v", item)
+			}
 		}
 	}
 	if !foundExternal {
@@ -1134,6 +1137,9 @@ func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 			if item["source"] != "claude-project-memory" || item["syncState"] != string(store.CatalogSyncStateSynced) {
 				t.Fatalf("unexpected external memory payload: %#v", item)
 			}
+			if item["editable"] != true {
+				t.Fatalf("expected synced external memory editable, got %#v", item)
+			}
 		}
 	}
 	if !foundLocal || !foundExternal {
@@ -1188,6 +1194,9 @@ func TestHandlerMemorySyncPullUsesCodexMemoryForCodexSession(t *testing.T) {
 			foundCodexMemory = true
 			if item["source"] != "codex-memory" {
 				t.Fatalf("expected codex memory source, got %#v", item)
+			}
+			if item["editable"] != true {
+				t.Fatalf("expected codex memory editable, got %#v", item)
 			}
 		}
 		if item["id"] == "testing_notes" {
@@ -2025,6 +2034,89 @@ func TestHandlerRuntimeProcessLogReturnsCapturedExecutionOutput(t *testing.T) {
 	}
 	if event["stderr"] != "captured stderr" {
 		t.Fatalf("expected captured stderr, got %#v", event["stderr"])
+	}
+}
+
+func TestHandlerRuntimeProcessListAndLogUseGeneratedExecutionIDForPty(t *testing.T) {
+	ptyRunner := newHoldingStubRunner()
+	ptyRunner.processRef = runner.ProcessRef{
+		RootPID: os.Getpid(),
+		Command: "bash -lc 'sleep 10'",
+		CWD:     "/tmp/mobilevc",
+		Source:  "pty",
+	}
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "runtime-process-pty")
+
+	ptyRunner.mu.Lock()
+	ptyRunner.events = []any{
+		protocol.NewLogEvent(sessionID, "pty stdout", "stdout"),
+	}
+	ptyRunner.mu.Unlock()
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "bash -lc 'sleep 10'",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write pty exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	ptyRunner.WaitStarted(t)
+
+	ptyRunner.mu.Lock()
+	executionID := strings.TrimSpace(ptyRunner.lastReq.RuntimeMeta.ExecutionID)
+	ptyRunner.mu.Unlock()
+	if executionID == "" {
+		t.Fatal("expected generated execution id on pty request")
+	}
+
+	if err := conn.WriteJSON(protocol.RuntimeProcessListRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "runtime_process_list"},
+	}); err != nil {
+		t.Fatalf("write runtime_process_list request: %v", err)
+	}
+
+	listEvent := readUntilType(t, conn, protocol.EventTypeRuntimeProcessList)
+	items, ok := listEvent["items"].([]any)
+	if !ok || len(items) == 0 {
+		t.Fatalf("expected runtime process items, got %#v", listEvent)
+	}
+	root, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first runtime process item, got %#v", items[0])
+	}
+	if root["executionId"] != executionID {
+		t.Fatalf("expected generated executionId %q, got %#v", executionID, root["executionId"])
+	}
+	if root["logAvailable"] != true {
+		t.Fatalf("expected logAvailable=true, got %#v", root["logAvailable"])
+	}
+
+	if err := conn.WriteJSON(protocol.RuntimeProcessLogRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "runtime_process_log_get"},
+		PID:         os.Getpid(),
+	}); err != nil {
+		t.Fatalf("write runtime_process_log_get request: %v", err)
+	}
+
+	logEvent := readUntilType(t, conn, protocol.EventTypeRuntimeProcessLog)
+	if logEvent["executionId"] != executionID {
+		t.Fatalf("expected generated executionId %q on runtime log, got %#v", executionID, logEvent["executionId"])
+	}
+	if logEvent["stdout"] != "pty stdout" {
+		t.Fatalf("expected pty stdout, got %#v", logEvent["stdout"])
 	}
 }
 

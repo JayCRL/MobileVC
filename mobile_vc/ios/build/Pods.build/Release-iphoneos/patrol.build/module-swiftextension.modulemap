@@ -1,0 +1,5 @@
+
+module patrol.Swift {
+  header "patrol-Swift.h"
+  requires objc
+}

@@ -1,0 +1,23 @@
+{
+  "version": 0,
+  "use-external-names": false,
+  "case-sensitive": false,
+  "roots": [{
+    "type": "directory",
+    "name": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Release-iphoneos/patrol/patrol.framework/Modules",
+    "contents": [{
+      "type": "file",
+      "name": "module.modulemap",
+      "external-contents": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/unextended-module.modulemap",
+    }]
+    },
+    {
+    "type": "directory",
+    "name": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Release-iphoneos/patrol/patrol.framework/Headers",
+    "contents": [{
+      "type": "file",
+      "name": "patrol-Swift.h",
+      "external-contents": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/patrol.build/unextended-interface-header.h",
+    }]
+  }]
+}

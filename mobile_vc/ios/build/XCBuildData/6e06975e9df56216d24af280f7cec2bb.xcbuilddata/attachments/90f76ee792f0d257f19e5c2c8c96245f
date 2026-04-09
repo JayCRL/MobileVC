@@ -1,0 +1,4 @@
+
+module DKImagePickerController.__Swift {
+  exclude header "DKImagePickerController-Swift.h"
+}

@@ -1,0 +1,23 @@
+{
+  "version": 0,
+  "use-external-names": false,
+  "case-sensitive": false,
+  "roots": [{
+    "type": "directory",
+    "name": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Release-iphoneos/mobile_scanner/mobile_scanner.framework/Modules",
+    "contents": [{
+      "type": "file",
+      "name": "module.modulemap",
+      "external-contents": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/unextended-module.modulemap",
+    }]
+    },
+    {
+    "type": "directory",
+    "name": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Release-iphoneos/mobile_scanner/mobile_scanner.framework/Headers",
+    "contents": [{
+      "type": "file",
+      "name": "mobile_scanner-Swift.h",
+      "external-contents": "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/unextended-interface-header.h",
+    }]
+  }]
+}

@@ -1,0 +1,4 @@
+
+module SwiftyGif.__Swift {
+  exclude header "SwiftyGif-Swift.h"
+}

@@ -374,6 +374,13 @@ type SessionLoadRequestEvent struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
+type RegisterPushTokenRequestEvent struct {
+	ClientEvent
+	SessionID string `json:"sessionId"`
+	Token     string `json:"token"`
+	Platform  string `json:"platform"`
+}
+
 type SessionResumeRequestEvent struct {
 	ClientEvent
 	SessionID             string `json:"sessionId"`

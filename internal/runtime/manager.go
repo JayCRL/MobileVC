@@ -704,6 +704,9 @@ func (s *Service) prepareExecuteRequest(req ExecuteRequest) ExecuteRequest {
 			return "inactive"
 		}()),
 	})
+	if prepared.Mode == runner.ModePTY && strings.TrimSpace(prepared.RuntimeMeta.ExecutionID) == "" {
+		prepared.RuntimeMeta.ExecutionID = newExecutionID()
+	}
 	if prepared.Mode != runner.ModePTY || !runnerIsClaudeSession(nil, prepared.Command, prepared.RuntimeMeta.Command) {
 		return prepared
 	}
@@ -1200,6 +1203,10 @@ func newManagedClaudeSessionID() string {
 	}
 	encoded := hex.EncodeToString(buf)
 	return fmt.Sprintf("%s-%s-%s-%s-%s", encoded[0:8], encoded[8:12], encoded[12:16], encoded[16:20], encoded[20:32])
+}
+
+func newExecutionID() string {
+	return fmt.Sprintf("exec-%d", time.Now().UTC().UnixNano())
 }
 
 func firstNonEmptyRuntimeValue(values ...string) string {

@@ -1,0 +1,141 @@
+{
+  "" : {
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary.dia",
+    "emit-module-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary-emit-module.dia",
+    "pch" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery-primary.swiftdeps"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/DKPhotoGallery.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGallery.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/DKPhotoGalleryContentVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryContentVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryContentVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryContentVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/DKPhotoGalleryItem.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryItem.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryItem.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryItem.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/DKPhotoGalleryScrollView.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryScrollView.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryScrollView.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryScrollView.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/DKPhotoIncrementalIndicator.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoIncrementalIndicator.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoIncrementalIndicator.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoIncrementalIndicator.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/DKPhotoPreviewFactory.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoPreviewFactory.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoPreviewFactory.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoPreviewFactory.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/DKPhotoBasePreviewVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoBasePreviewVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoBasePreviewVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoBasePreviewVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/DKPhotoContentAnimationView.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoContentAnimationView.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoContentAnimationView.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoContentAnimationView.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/DKPhotoProgressIndicator.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoProgressIndicator.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoProgressIndicator.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoProgressIndicator.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/DKPhotoProgressIndicatorProtocol.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoProgressIndicatorProtocol.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoProgressIndicatorProtocol.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoProgressIndicatorProtocol.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/ImagePreview/DKPhotoBaseImagePreviewVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoBaseImagePreviewVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoBaseImagePreviewVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoBaseImagePreviewVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/ImagePreview/DKPhotoImageDownloader.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImageDownloader.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImageDownloader.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImageDownloader.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/ImagePreview/DKPhotoImagePreviewVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImagePreviewVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImagePreviewVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImagePreviewVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/ImagePreview/DKPhotoImageUtility.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImageUtility.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImageUtility.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImageUtility.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/ImagePreview/DKPhotoImageView.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImageView.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImageView.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoImageView.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/PDFPreview/DKPDFView.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPDFView.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPDFView.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPDFView.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/PDFPreview/DKPhotoPDFPreviewVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoPDFPreviewVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoPDFPreviewVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoPDFPreviewVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/PlayerPreview/DKPhotoPlayerPreviewVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoPlayerPreviewVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoPlayerPreviewVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoPlayerPreviewVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/PlayerPreview/DKPlayerView.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPlayerView.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPlayerView.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPlayerView.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/QRCode/DKPhotoQRCodeResultVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoQRCodeResultVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoQRCodeResultVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoQRCodeResultVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Preview/QRCode/DKPhotoWebVC.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoWebVC.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoWebVC.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoWebVC.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Resource/DKPhotoGalleryResource.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryResource.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryResource.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryResource.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Transition/DKPhotoGalleryInteractiveTransition.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryInteractiveTransition.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryInteractiveTransition.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryInteractiveTransition.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Transition/DKPhotoGalleryTransitionController.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryTransitionController.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryTransitionController.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryTransitionController.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Transition/DKPhotoGalleryTransitionDismiss.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryTransitionDismiss.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryTransitionDismiss.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryTransitionDismiss.o"
+  },
+  "/Users/wust_lh/MobileVC/mobile_vc/ios/Pods/DKPhotoGallery/DKPhotoGallery/Transition/DKPhotoGalleryTransitionPresent.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryTransitionPresent.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryTransitionPresent.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/DKPhotoGallery.build/Objects-normal/arm64/DKPhotoGalleryTransitionPresent.o"
+  }
+}

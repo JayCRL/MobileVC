@@ -1,0 +1,46 @@
+{
+  "" : {
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/mobile_scanner-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/mobile_scanner-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/mobile_scanner-primary.dia",
+    "emit-module-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/mobile_scanner-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/mobile_scanner-primary-emit-module.dia",
+    "pch" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/mobile_scanner-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/mobile_scanner-primary.swiftdeps"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/mobile_scanner-6.0.11/ios/Classes/BarcodeHandler.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/BarcodeHandler.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/BarcodeHandler.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/BarcodeHandler.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/mobile_scanner-6.0.11/ios/Classes/DetectionSpeed.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/DetectionSpeed.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/DetectionSpeed.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/DetectionSpeed.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/mobile_scanner-6.0.11/ios/Classes/MobileScanner.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScanner.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScanner.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScanner.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/mobile_scanner-6.0.11/ios/Classes/MobileScannerError.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerError.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerError.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerError.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/mobile_scanner-6.0.11/ios/Classes/MobileScannerErrorCodes.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerErrorCodes.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerErrorCodes.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerErrorCodes.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/mobile_scanner-6.0.11/ios/Classes/MobileScannerPlugin.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerPlugin.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerPlugin.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerPlugin.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/mobile_scanner-6.0.11/ios/Classes/MobileScannerUtilities.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerUtilities.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerUtilities.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/mobile_scanner.build/Objects-normal/arm64/MobileScannerUtilities.o"
+  }
+}

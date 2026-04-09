@@ -22,6 +22,7 @@ type FileStore struct {
 	skillCatalogPath    string
 	memoryCatalogPath   string
 	permissionRulesPath string
+	pushTokensPath      string
 }
 
 type fileIndex struct {
@@ -46,6 +47,7 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 		skillCatalogPath:    filepath.Join(baseDir, "skills.catalog.json"),
 		memoryCatalogPath:   filepath.Join(baseDir, "memory.catalog.json"),
 		permissionRulesPath: filepath.Join(baseDir, "permissions.rules.json"),
+		pushTokensPath:      filepath.Join(baseDir, "push_tokens.json"),
 	}, nil
 }
 
@@ -638,7 +640,7 @@ func normalizeSkillCatalog(items []SkillDefinition) []SkillDefinition {
 		if item.Source == SkillSourceBuiltin {
 			item.Editable = false
 		} else if !item.Editable {
-			item.Editable = item.Source == SkillSourceLocal
+			item.Editable = true
 		}
 		if _, ok := seen[item.Name]; ok {
 			continue
@@ -683,7 +685,7 @@ func normalizeMemoryCatalog(items []MemoryItem) []MemoryItem {
 		if item.Source == "builtin" {
 			item.Editable = false
 		} else if !item.Editable {
-			item.Editable = item.Source == "local"
+			item.Editable = true
 		}
 		if _, ok := seen[item.ID]; ok {
 			continue
@@ -1088,4 +1090,51 @@ func (s *FileStore) reconcileIndexLocked(index fileIndex) (fileIndex, error) {
 		}
 	}
 	return index, nil
+}
+
+func (s *FileStore) SavePushToken(ctx context.Context, sessionID, token, platform string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tokens := make(map[string]map[string]string)
+	if data, err := os.ReadFile(s.pushTokensPath); err == nil {
+		_ = json.Unmarshal(data, &tokens)
+	}
+
+	if tokens[sessionID] == nil {
+		tokens[sessionID] = make(map[string]string)
+	}
+	tokens[sessionID]["token"] = token
+	tokens[sessionID]["platform"] = platform
+
+	data, err := json.MarshalIndent(tokens, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal push tokens: %w", err)
+	}
+
+	return os.WriteFile(s.pushTokensPath, data, 0644)
+}
+
+func (s *FileStore) GetPushToken(ctx context.Context, sessionID string) (string, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, err := os.ReadFile(s.pushTokensPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", nil
+		}
+		return "", "", err
+	}
+
+	tokens := make(map[string]map[string]string)
+	if err := json.Unmarshal(data, &tokens); err != nil {
+		return "", "", err
+	}
+
+	if info, ok := tokens[sessionID]; ok {
+		return info["token"], info["platform"], nil
+	}
+
+	return "", "", nil
 }

@@ -1,0 +1,12 @@
+{
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/url_launcher_ios-6.3.3/ios/url_launcher_ios/Sources/url_launcher_ios/Launcher.swift" : {
+    "abi-baseline-json" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios.abi.json",
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-primary.dia",
+    "objc-header" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios-Swift.h",
+    "swiftdoc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios.swiftdoc",
+    "swiftmodule" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios.swiftmodule",
+    "swiftsourceinfo" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/url_launcher_ios.build/Objects-normal/arm64/url_launcher_ios.swiftsourceinfo"
+  }
+}

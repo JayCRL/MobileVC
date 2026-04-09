@@ -1,0 +1,4 @@
+
+module patrol.__Swift {
+  exclude header "patrol-Swift.h"
+}

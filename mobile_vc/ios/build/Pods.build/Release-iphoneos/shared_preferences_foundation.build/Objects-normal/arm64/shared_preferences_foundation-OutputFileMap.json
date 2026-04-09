@@ -1,0 +1,21 @@
+{
+  "" : {
+    "const-values" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/shared_preferences_foundation-primary.swiftconstvalues",
+    "dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/shared_preferences_foundation-primary.d",
+    "diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/shared_preferences_foundation-primary.dia",
+    "emit-module-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/shared_preferences_foundation-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/shared_preferences_foundation-primary-emit-module.dia",
+    "pch" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/shared_preferences_foundation-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/shared_preferences_foundation-primary.swiftdeps"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/shared_preferences_foundation-2.5.4/darwin/shared_preferences_foundation/Sources/shared_preferences_foundation/SharedPreferencesPlugin.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/SharedPreferencesPlugin.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/SharedPreferencesPlugin.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/SharedPreferencesPlugin.o"
+  },
+  "/Users/wust_lh/.pub-cache/hosted/pub.flutter-io.cn/shared_preferences_foundation-2.5.4/darwin/shared_preferences_foundation/Sources/shared_preferences_foundation/messages.g.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/messages.g.o",
+    "llvm-bc" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/messages.g.bc",
+    "object" : "/Users/wust_lh/MobileVC/mobile_vc/ios/build/Pods.build/Release-iphoneos/shared_preferences_foundation.build/Objects-normal/arm64/messages.g.o"
+  }
+}
