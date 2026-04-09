@@ -42,10 +42,12 @@ class TerminalLogSheet extends StatelessWidget {
     final hasProcesses = runtimeProcesses.isNotEmpty;
     final activeExecution = _activeExecution();
     final activeProcess = _activeProcess();
-    final resolvedStdout =
-        hasProcesses ? processStdout : (activeExecution?.stdout ?? stdout);
-    final resolvedStderr =
-        hasProcesses ? processStderr : (activeExecution?.stderr ?? stderr);
+    final resolvedStdout = hasProcesses && activeProcess != null
+        ? processStdout
+        : (activeExecution?.stdout ?? stdout);
+    final resolvedStderr = hasProcesses && activeProcess != null
+        ? processStderr
+        : (activeExecution?.stderr ?? stderr);
     final statusMessage = hasProcesses ? processMessage.trim() : '';
 
     return DefaultTabController(

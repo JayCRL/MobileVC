@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -7,6 +8,7 @@ import '../features/session/session_home_page.dart';
 import 'app_notification_coordinator.dart';
 import 'background_keep_alive_service.dart';
 import 'local_notification_service.dart';
+import 'push_notification_service.dart';
 import 'theme.dart';
 
 class MobileVcApp extends StatefulWidget {
@@ -14,11 +16,14 @@ class MobileVcApp extends StatefulWidget {
     super.key,
     SessionController? controller,
     LocalNotificationService? notificationService,
+    PushNotificationService? pushNotificationService,
   })  : _controller = controller,
-        _notificationService = notificationService;
+        _notificationService = notificationService,
+        _pushNotificationService = pushNotificationService;
 
   final SessionController? _controller;
   final LocalNotificationService? _notificationService;
+  final PushNotificationService? _pushNotificationService;
 
   @override
   State<MobileVcApp> createState() => _MobileVcAppState();
@@ -28,6 +33,7 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
   late final SessionController _controller;
   late final AppNotificationCoordinator _notificationCoordinator;
   late final BackgroundKeepAliveService _backgroundKeepAliveService;
+  late final PushNotificationService _pushNotificationService;
 
   @override
   void initState() {
@@ -40,6 +46,10 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
           widget._notificationService ?? FlutterLocalNotificationService(),
     );
     _backgroundKeepAliveService = BackgroundKeepAliveService();
+    _pushNotificationService = widget._pushNotificationService ??
+        (Platform.isIOS
+            ? FirebasePushNotificationService()
+            : NoopPushNotificationService());
     _controller.addListener(_handleControllerChanged);
     _startApp();
   }
@@ -68,6 +78,7 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
   Future<void> _initializeNotifications() async {
     try {
       await _notificationCoordinator.initialize();
+      await _initializePushNotifications();
       await _syncBackgroundKeepAlive();
     } catch (error, stack) {
       debugPrint('[startup] notification bootstrap failed: $error');
@@ -75,6 +86,43 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
         stackTrace: stack,
         label: '[startup] notification bootstrap stack',
       );
+    }
+  }
+
+  Future<void> _initializePushNotifications() async {
+    if (!_pushNotificationService.isAvailable) {
+      debugPrint('[push] service not available on this platform');
+      return;
+    }
+
+    try {
+      await _pushNotificationService.initialize();
+      final token = await _pushNotificationService.getDeviceToken();
+      if (token != null && token.isNotEmpty) {
+        debugPrint('[push] device token: $token');
+        _controller.setDevicePushToken(token);
+      }
+
+      // 监听 token 刷新
+      _pushNotificationService.onTokenRefresh((token) {
+        debugPrint('[push] token refreshed: $token');
+        _controller.setDevicePushToken(token);
+      });
+
+      // 监听推送消息（App 在前台时）
+      _pushNotificationService.onMessageReceived((message) {
+        debugPrint('[push] message received: $message');
+        // 前台收到推送，可以显示本地通知或直接处理
+      });
+
+      // 监听用户点击推送打开 App
+      _pushNotificationService.onMessageOpenedApp((message) {
+        debugPrint('[push] message opened app: $message');
+        _controller.resumeConnectionIfNeeded();
+      });
+    } catch (error, stack) {
+      debugPrint('[push] initialization failed: $error');
+      debugPrintStack(stackTrace: stack, label: '[push] init stack');
     }
   }
 

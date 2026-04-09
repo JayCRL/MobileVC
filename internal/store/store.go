@@ -232,6 +232,8 @@ type Store interface {
 	GetSession(ctx context.Context, sessionID string) (SessionRecord, error)
 	ListSessions(ctx context.Context) ([]SessionSummary, error)
 	DeleteSession(ctx context.Context, sessionID string) error
+	SavePushToken(ctx context.Context, sessionID, token, platform string) error
+	GetPushToken(ctx context.Context, sessionID string) (token string, platform string, err error)
 	ListSkillCatalog(ctx context.Context) ([]SkillDefinition, error)
 	SaveSkillCatalog(ctx context.Context, items []SkillDefinition) error
 	GetSkillCatalogSnapshot(ctx context.Context) (SkillCatalogSnapshot, error)

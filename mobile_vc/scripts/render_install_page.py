@@ -58,8 +58,8 @@ def render_testflight(url: str, version: str, bundle_id: str) -> str:
             <span class="platform-tag testflight">TestFlight</span>
             <span class="platform-version">{escape(version)}</span>
           </div>
-          <h2>iPhone Beta</h2>
-          <p>适合不方便提供 UDID 的成员。先安装 Apple TestFlight，再通过邀请链接加入测试版本。</p>
+          <h2>TestFlight 安装</h2>
+          <p>通过 TestFlight 安装 iPhone 测试版本。先安装 Apple TestFlight，再打开邀请链接加入测试版本。</p>
           <a class="button secondary" href="{escape(url)}">加入 TestFlight</a>
           <p class="meta-line">应用标识：<code>{escape(bundle_id)}</code></p>
 {render_link_line("邀请链接", url)}

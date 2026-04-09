@@ -1067,6 +1067,25 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  String? _devicePushToken;
+  String get devicePushToken => _devicePushToken ?? '';
+
+  void setDevicePushToken(String token) {
+    final normalized = token.trim();
+    if (normalized.isEmpty || _devicePushToken == normalized) {
+      return;
+    }
+    _devicePushToken = normalized;
+    if (_connected && _selectedSessionId.isNotEmpty) {
+      _service.send({
+        'action': 'register_push_token',
+        'sessionId': _selectedSessionId,
+        'token': normalized,
+        'platform': 'ios',
+      });
+    }
+  }
+
   void handleForegroundStateChanged(bool isForeground) {
     final previous = _appInForeground;
     _appInForeground = isForeground;
@@ -2242,6 +2261,8 @@ class SessionController extends ChangeNotifier {
         permissionMode: _config.permissionMode,
       ),
     );
+    _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
+    _syncDerivedState();
     _pushUser(value, label);
     _lastAssistantReplyExecutionKey = '';
     _service.send({
@@ -2545,6 +2566,20 @@ class SessionController extends ChangeNotifier {
     _pendingPlanQuestions.clear();
     _pendingPlanQuestionIndex = 0;
     _pendingInteraction = null;
+    _optimisticallyResumeAiProcessingAfterInput(
+      metaOverride: currentMeta.merge(
+        RuntimeMeta(
+          resumeSessionId: interaction.resumeSessionId,
+          executionId: interaction.executionId,
+          groupId: interaction.groupId,
+          groupTitle: interaction.groupTitle,
+          contextId: interaction.contextId,
+          contextTitle: interaction.contextTitle,
+          targetPath: interaction.targetPath,
+          permissionMode: _currentDecisionPermissionMode,
+        ),
+      ),
+    );
     _service.send({
       'action': 'plan_decision',
       'decision': payload,
@@ -2637,6 +2672,17 @@ class SessionController extends ChangeNotifier {
         return;
       }
       _pendingInteraction = null;
+      _optimisticallyResumeAiProcessingAfterInput(
+        metaOverride: currentMeta.merge(
+          RuntimeMeta(
+            resumeSessionId: interaction.resumeSessionId,
+            contextId: interaction.contextId,
+            contextTitle: interaction.contextTitle,
+            targetPath: interaction.targetPath,
+            permissionMode: _currentDecisionPermissionMode,
+          ),
+        ),
+      );
       _service.send({
         'action': 'permission_decision',
         'decision': selection.decision,
@@ -2682,8 +2728,10 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _optimisticallyResumeAiProcessingAfterInput() {
-    final meta = currentMeta;
+  void _optimisticallyResumeAiProcessingAfterInput({
+    RuntimeMeta? metaOverride,
+  }) {
+    final meta = metaOverride ?? currentMeta;
     final engine = _resolvedAiEngine(
       command: meta.command,
       engine: meta.engine,
@@ -2700,10 +2748,14 @@ class SessionController extends ChangeNotifier {
     final nextCommand = meta.command.trim().isNotEmpty
         ? meta.command
         : _preferredAiCommandForEngine(engine);
+    final normalizedEngine =
+        engine.trim().isNotEmpty ? engine.trim() : _config.engine.trim();
+    final statusLabel =
+        normalizedEngine.isNotEmpty ? normalizedEngine.toUpperCase() : 'AI';
     final nextMeta = meta.merge(
       RuntimeMeta(
         command: nextCommand,
-        engine: engine,
+        engine: normalizedEngine,
         cwd: effectiveCwd,
         permissionMode: _config.permissionMode,
         claudeLifecycle: 'active',
@@ -2718,7 +2770,7 @@ class SessionController extends ChangeNotifier {
         'source': 'mobilevc-local-optimistic',
       },
       state: 'THINKING',
-      message: '${engine.toUpperCase()} 处理中',
+      message: '$statusLabel 处理中',
       awaitInput: false,
       command: nextCommand,
       step: _agentState?.step ?? '',
@@ -2746,6 +2798,15 @@ class SessionController extends ChangeNotifier {
     _pendingPrompt = null;
     _pendingInteraction = null;
     _runtimePhase = null;
+    _optimisticallyResumeAiProcessingAfterInput(
+      metaOverride: meta.merge(
+        RuntimeMeta(
+          contextTitle: contextTitle,
+          targetPath: targetPath,
+          permissionMode: _currentDecisionPermissionMode,
+        ),
+      ),
+    );
     _service.send({
       'action': 'permission_decision',
       'decision': selection.decision,
@@ -3074,6 +3135,7 @@ class SessionController extends ChangeNotifier {
         _restoreTerminalLogs(history.rawTerminalByStream);
         _syncActiveTerminalExecution();
         _resetRuntimeProcessState();
+        requestRuntimeProcessList();
         requestPermissionRuleList();
         if (history.currentDiff != null) {
           final current = _normalizeHistoryDiff(history.currentDiff!);
@@ -3167,6 +3229,7 @@ class SessionController extends ChangeNotifier {
         }
         _connectionMessage =
             state.message.isNotEmpty ? state.message : state.state;
+        _syncDerivedState();
         _handleSessionStateTimeline(state);
         break;
       case AgentStateEvent agent:
@@ -3191,6 +3254,7 @@ class SessionController extends ChangeNotifier {
           command: agent.command,
           targetPath: agent.runtimeMeta.targetPath,
         );
+        _syncDerivedState();
         break;
       case RuntimePhaseEvent runtimePhase:
         _runtimePhase = runtimePhase;
@@ -3202,6 +3266,7 @@ class SessionController extends ChangeNotifier {
           log.message,
           executionId: log.runtimeMeta.executionId,
           timestamp: log.timestamp,
+          meta: log.runtimeMeta,
         );
         _maybeAutoSyncAiModel(
           log.runtimeMeta,
@@ -3217,6 +3282,7 @@ class SessionController extends ChangeNotifier {
         if (progress.message.isNotEmpty && _currentStepSummary.isEmpty) {
           _currentStepSummary = progress.message;
         }
+        _syncDerivedState();
         break;
       case ErrorEvent error:
         _fileListLoading = false;
@@ -5680,12 +5746,24 @@ class SessionController extends ChangeNotifier {
     return '';
   }
 
-  void _appendTerminalLog(String stream, String message,
-      {String executionId = '', DateTime? timestamp}) {
+  void _appendTerminalLog(
+    String stream,
+    String message, {
+    String executionId = '',
+    DateTime? timestamp,
+    RuntimeMeta meta = const RuntimeMeta(),
+  }) {
     if (message.isEmpty) {
       return;
     }
     final normalizedStream = stream.trim().toLowerCase();
+    if (!_shouldCaptureTerminalLog(
+      normalizedStream,
+      message,
+      meta: meta,
+    )) {
+      return;
+    }
     if (normalizedStream == 'stderr') {
       _terminalStderr = _appendChunk(_terminalStderr, message);
     } else {
@@ -5834,6 +5912,35 @@ class SessionController extends ChangeNotifier {
       return chunk;
     }
     return '$original$chunk';
+  }
+
+  bool _shouldCaptureTerminalLog(
+    String stream,
+    String message, {
+    RuntimeMeta meta = const RuntimeMeta(),
+  }) {
+    final trimmed = message.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    if (_isBootstrapSource(meta.source)) {
+      return false;
+    }
+    if (_shouldHideTimelineLogMessage(trimmed, stream) ||
+        _looksLikeFrontendToolResultNoise(trimmed) ||
+        _shouldFilterTimelineText(trimmed)) {
+      return false;
+    }
+    if (stream != 'stderr' &&
+        _timelineKindForLog(message, stream, meta: meta) == 'markdown') {
+      return false;
+    }
+    if (!_looksLikeTerminalOutput(trimmed) &&
+        _looksLikeProcessNoise(trimmed) &&
+        !message.startsWith('\r')) {
+      return false;
+    }
+    return true;
   }
 
   void _requestRuntimeProcessList({bool notify = true}) {
