@@ -1,6 +1,6 @@
 {
   "name": "@justprove/mobilevc-server-linux-arm64",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Precompiled MobileVC server binary for linux-arm64",
   "license": "MIT",
   "os": [
