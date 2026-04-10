@@ -1581,6 +1581,119 @@ void main() {
       expect(controller.activityBannerTitle, isNot('待输入'));
     });
 
+    test('stop Claude 后会退出 AI 模式，后续 ls 重新走 shell exec', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('claude');
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'exec');
+
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude --model sonnet',
+            engine: 'claude',
+            claudeLifecycle: 'starting',
+            executionId: 'exec-stop-shell-1',
+          ),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'claude running',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.shouldShowClaudeMode, isTrue);
+      expect(controller.canStopCurrentRun, isTrue);
+
+      controller.stopCurrentRun();
+
+      expect(service.sentPayloads.last['action'], 'stop');
+      expect(controller.shouldShowClaudeMode, isFalse);
+      expect(controller.awaitInput, isFalse);
+      expect(controller.canResumeCurrentSession, isFalse);
+
+      service.sentPayloads.clear();
+      controller.sendInputText('ls');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'exec');
+      expect(service.sentPayloads.single['cmd'], 'ls');
+    });
+
+    test('stop Claude 后忽略回灌的旧 AI 状态与 prompt', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('claude');
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude --model sonnet',
+            engine: 'claude',
+            claudeLifecycle: 'starting',
+            executionId: 'exec-stop-stale-1',
+          ),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'claude running',
+        ),
+      );
+      await _flushEvents();
+
+      controller.stopCurrentRun();
+      expect(controller.shouldShowClaudeMode, isFalse);
+
+      service.emit(
+        PromptRequestEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude --model sonnet',
+            engine: 'claude',
+            claudeLifecycle: 'waiting_input',
+          ),
+          raw: const {'type': 'prompt_request'},
+          message: 'AI 会话已就绪，可继续输入',
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 2)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude --model sonnet',
+            engine: 'claude',
+            claudeLifecycle: 'waiting_input',
+          ),
+          raw: const {'type': 'agent_state'},
+          state: 'WAIT_INPUT',
+          message: '等待输入',
+          awaitInput: true,
+          command: 'claude --model sonnet',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.shouldShowClaudeMode, isFalse);
+      expect(controller.awaitInput, isFalse);
+    });
+
     test('有待审核 diff 但没有 review prompt 时仍允许显示 differ 审核按钮', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
