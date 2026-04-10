@@ -1476,6 +1476,142 @@ void main() {
       expect(controller.isSessionBusy, isTrue);
     });
 
+    test('codex 未 settled 的 WAIT_INPUT 期间仍保持顶部运行态动画与耗时', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-busy-1'),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'codex running',
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-busy-1'),
+          raw: const {'type': 'agent_state'},
+          state: 'THINKING',
+          message: '处理中',
+          command: 'codex',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.isSessionBusy, isTrue);
+      expect(controller.activityVisible, isTrue);
+      expect(controller.activityBannerVisible, isTrue);
+      expect(controller.activityBannerAnimated, isTrue);
+      expect(controller.activityBannerShowsElapsed, isTrue);
+      expect(controller.activityBannerTitle, 'AI 助手正在运行中');
+
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-busy-1'),
+          raw: const {'type': 'agent_state'},
+          state: 'WAIT_INPUT',
+          message: '等待继续输入',
+          awaitInput: true,
+          command: 'codex',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.awaitInput, isFalse);
+      expect(controller.isSessionBusy, isTrue);
+      expect(controller.activityVisible, isTrue);
+      expect(controller.activityBannerVisible, isTrue);
+      expect(controller.activityBannerAnimated, isTrue);
+      expect(controller.activityBannerShowsElapsed, isTrue);
+      expect(controller.activityBannerTitle, 'AI 助手正在运行中');
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 2)),
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-busy-1'),
+          raw: const {'type': 'log'},
+          message: '处理完成，我已经修好了。',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.awaitInput, isTrue);
+      expect(controller.isSessionBusy, isFalse);
+      expect(controller.activityVisible, isFalse);
+      expect(controller.activityBannerAnimated, isFalse);
+      expect(controller.activityBannerShowsElapsed, isFalse);
+    });
+
+    test('codex 等待权限确认时不会继续显示顶部运行态', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-perm-1'),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'codex running',
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-perm-1'),
+          raw: const {'type': 'agent_state'},
+          state: 'THINKING',
+          message: '处理中',
+          command: 'codex',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.activityVisible, isTrue);
+
+      service.emit(
+        PromptRequestEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'codex', contextId: 'perm-codex-1'),
+          raw: const {'type': 'prompt_request', 'msg': 'Allow edit a.dart?'},
+          message: 'Allow edit a.dart?',
+          options: const [PromptOption(value: 'y'), PromptOption(value: 'n')],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.awaitInput, isTrue);
+      expect(controller.isSessionBusy, isFalse);
+      expect(controller.activityVisible, isFalse);
+      expect(controller.activityBannerAnimated, isFalse);
+      expect(controller.activityBannerShowsElapsed, isFalse);
+    });
+
     test('仅有 RUNNING session state 时也保持 busy，避免过早显示空闲', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
