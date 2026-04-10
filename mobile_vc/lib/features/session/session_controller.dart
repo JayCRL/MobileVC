@@ -548,9 +548,40 @@ class SessionController extends ChangeNotifier {
     if (_isLoadingSession) {
       return false;
     }
+    if (_hasUnsettledAiAwaitInput) {
+      return false;
+    }
     return _agentState?.awaitInput == true ||
         _pendingPrompt != null ||
         _pendingInteraction != null;
+  }
+
+  bool get _hasUnsettledAiAwaitInput {
+    final agent = _agentState;
+    if (agent?.awaitInput != true) {
+      return false;
+    }
+    if (_pendingPrompt != null ||
+        _pendingInteraction != null ||
+        _pendingPlanQuestions.isNotEmpty) {
+      return false;
+    }
+    if (!_looksLikeAiRuntimeMeta(agent!.runtimeMeta)) {
+      return false;
+    }
+    final command = agent.command.trim().toLowerCase();
+    final engine = agent.runtimeMeta.engine.trim().toLowerCase();
+    final isCodex = command == 'codex' ||
+        command.startsWith('codex ') ||
+        engine == 'codex';
+    if (!isCodex) {
+      return false;
+    }
+    final executionKey = _runtimeExecutionKey(agent.runtimeMeta);
+    if (executionKey.isEmpty) {
+      return false;
+    }
+    return executionKey != _lastAssistantReplyExecutionKey;
   }
 
   ActionNeededSignal? get actionNeededSignal => _actionNeededSignal;
@@ -5606,7 +5637,8 @@ class SessionController extends ChangeNotifier {
     _syncReviewGroupsFromRecentDiffs();
     _agentPhaseLabel = _compactAgentMessage();
     _syncActiveReviewSelection();
-    final state = (_agentState?.state ?? '').trim().toUpperCase();
+    final agentState = (_agentState?.state ?? '').trim().toUpperCase();
+    final sessionState = (_sessionState?.state ?? '').trim().toUpperCase();
     final currentExecutionKey = _runtimeExecutionKey(
       _agentState?.runtimeMeta ??
           _sessionState?.runtimeMeta ??
@@ -5622,10 +5654,13 @@ class SessionController extends ChangeNotifier {
         !hasBlockingPrompt &&
         !_isClaudePendingReadyForInput &&
         (((_connectionStage == SessionConnectionStage.catchingUp ||
-                    state == 'THINKING' ||
-                    state == 'RECOVERING') &&
+                    agentState == 'THINKING' ||
+                    agentState == 'RECOVERING' ||
+                    sessionState == 'THINKING' ||
+                    sessionState == 'RUNNING') &&
                 !assistantReplySettled) ||
-            state == 'RUNNING_TOOL');
+            agentState == 'RUNNING_TOOL' ||
+            sessionState == 'RUNNING_TOOL');
     if (active) {
       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
       if (_activityToolLabel.isEmpty) {
