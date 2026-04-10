@@ -657,6 +657,46 @@ func TestPtyRunnerSuppressesDuplicateResultAfterAssistantText(t *testing.T) {
 	}
 }
 
+func TestPtyRunnerEmitsReadyPromptAfterResult(t *testing.T) {
+	runner := NewPtyRunner()
+	var events []any
+	sink := func(event any) { events = append(events, event) }
+
+	resultEnvelope, err := json.Marshal(map[string]any{
+		"type":       "result",
+		"session_id": "resume-ready-1",
+		"result":     "Fallback result text",
+	})
+	if err != nil {
+		t.Fatalf("marshal result envelope: %v", err)
+	}
+
+	runner.readClaudeStreamJSON(context.Background(), strings.NewReader(string(resultEnvelope)+"\n"), "s-result-only", sink)
+
+	var logs []protocol.LogEvent
+	var prompts []protocol.PromptRequestEvent
+	for _, event := range events {
+		switch v := event.(type) {
+		case protocol.LogEvent:
+			logs = append(logs, v)
+		case protocol.PromptRequestEvent:
+			prompts = append(prompts, v)
+		}
+	}
+	if len(logs) != 1 || logs[0].Message != "Fallback result text" {
+		t.Fatalf("expected fallback result log, got %#v", logs)
+	}
+	if len(prompts) != 1 {
+		t.Fatalf("expected one ready prompt event, got %#v", prompts)
+	}
+	if prompts[0].Message != "等待输入" {
+		t.Fatalf("unexpected ready prompt message: %#v", prompts[0])
+	}
+	if prompts[0].RuntimeMeta.ResumeSessionID != "resume-ready-1" {
+		t.Fatalf("expected resume session id on ready prompt, got %#v", prompts[0].RuntimeMeta)
+	}
+}
+
 func TestPtyRunnerEmitsResultWhenAssistantTextMissing(t *testing.T) {
 	runner := NewPtyRunner()
 	var events []any
@@ -674,13 +714,26 @@ func TestPtyRunnerEmitsResultWhenAssistantTextMissing(t *testing.T) {
 	runner.readClaudeStreamJSON(context.Background(), strings.NewReader(string(resultEnvelope)+"\n"), "s-result-only", sink)
 
 	var logs []protocol.LogEvent
+	var prompts []protocol.PromptRequestEvent
 	for _, event := range events {
-		if v, ok := event.(protocol.LogEvent); ok {
+		switch v := event.(type) {
+		case protocol.LogEvent:
 			logs = append(logs, v)
+		case protocol.PromptRequestEvent:
+			prompts = append(prompts, v)
 		}
 	}
 	if len(logs) != 1 || logs[0].Message != "Fallback result text" {
 		t.Fatalf("expected fallback result log, got %#v", logs)
+	}
+	if len(prompts) != 1 {
+		t.Fatalf("expected one ready prompt event, got %#v", prompts)
+	}
+	if prompts[0].Message != "等待输入" {
+		t.Fatalf("unexpected ready prompt message: %#v", prompts[0])
+	}
+	if prompts[0].RuntimeMeta.ResumeSessionID != "resume-dedup-2" {
+		t.Fatalf("expected resume session id on ready prompt, got %#v", prompts[0].RuntimeMeta)
 	}
 }
 

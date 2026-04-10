@@ -78,6 +78,32 @@ void main() {
       expect(field.decoration?.hintText, '继续回复 Claude');
     });
 
+    testWidgets('等待输入时即使 canStop 为 true 也显示发送按钮', (tester) async {
+      var submitted = false;
+      var stopped = false;
+      await tester.pumpWidget(
+        _buildTestApp(
+          awaitInput: true,
+          isBusy: true,
+          showClaudeMode: true,
+          currentEngine: 'claude',
+          canStop: true,
+          onSubmit: (_) => submitted = true,
+          onStop: () => stopped = true,
+        ),
+      );
+
+      expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
+      expect(find.byIcon(Icons.stop_rounded), findsNothing);
+
+      await tester.enterText(find.byType(TextField), '继续');
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+
+      expect(submitted, isTrue);
+      expect(stopped, isFalse);
+    });
+
     testWidgets('Codex 模式显示 Codex 状态与 hint', (tester) async {
       await tester.pumpWidget(
         _buildTestApp(
@@ -113,6 +139,7 @@ void main() {
       await tester.pumpWidget(
         _buildTestApp(
           isBusy: true,
+          canStop: true,
           showClaudeMode: true,
           currentEngine: 'codex',
           onStop: () => stopped = true,
@@ -148,6 +175,7 @@ Widget _buildTestApp({
   bool shouldShowReviewChoices = false,
   bool awaitInput = false,
   bool isBusy = false,
+  bool canStop = false,
   bool showClaudeMode = true,
   String currentEngine = 'claude',
   bool isSessionLoading = false,
@@ -159,6 +187,7 @@ Widget _buildTestApp({
       bottomNavigationBar: CommandInputBar(
         awaitInput: awaitInput,
         isBusy: isBusy,
+        canStop: canStop,
         hasPendingReview: false,
         fastMode: false,
         permissionMode: 'default',

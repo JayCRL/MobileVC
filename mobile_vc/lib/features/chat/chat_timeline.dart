@@ -102,13 +102,17 @@ class _ChatTimelineState extends State<ChatTimeline> {
 
   @override
   Widget build(BuildContext context) {
-    final visiblePrompt = widget.shouldShowReviewChoices
+    final promptCandidate = widget.shouldShowReviewChoices
         ? null
         : (widget.pendingInteraction?.hasVisiblePrompt == true
             ? widget.pendingInteraction
             : (widget.pendingPrompt?.hasVisiblePrompt == true
                 ? widget.pendingPrompt
                 : null));
+    final visiblePrompt = promptCandidate is PromptRequestEvent &&
+            _shouldHidePassiveReadyPrompt(promptCandidate)
+        ? null
+        : promptCandidate;
     final visiblePlanQuestion =
         widget.shouldShowPlanChoices ? widget.pendingPlanQuestion : null;
     final visiblePromptMessage = visiblePrompt is InteractionRequestEvent
@@ -148,7 +152,7 @@ class _ChatTimelineState extends State<ChatTimeline> {
           timestamp: visiblePrompt.timestamp,
           title: visiblePrompt is InteractionRequestEvent
               ? (visiblePrompt.title.isNotEmpty ? visiblePrompt.title : '交互确认')
-              : '授权确认',
+              : _promptRequestTitle(visiblePrompt as PromptRequestEvent),
           body: visiblePromptMessage,
           meta: visiblePrompt.runtimeMeta,
         ),
@@ -249,6 +253,30 @@ class _ChatTimelineState extends State<ChatTimeline> {
       return left.id == right.id;
     }
     return left.path == right.path;
+  }
+
+  bool _shouldHidePassiveReadyPrompt(PromptRequestEvent prompt) {
+    if (prompt.looksLikePermissionPrompt) {
+      return false;
+    }
+    if (prompt.options.any((option) => option.displayText.isNotEmpty)) {
+      return false;
+    }
+    final message = prompt.message.trim().toLowerCase();
+    if (message.isEmpty) {
+      return true;
+    }
+    return message.contains('会话已就绪') ||
+        message.contains('可继续输入') ||
+        message.contains('waiting for input') ||
+        message.contains('continue input') ||
+        message.contains('ready for input') ||
+        message == 'ready' ||
+        message == '等待输入';
+  }
+
+  String _promptRequestTitle(PromptRequestEvent prompt) {
+    return prompt.looksLikePermissionPrompt ? '授权确认' : '等待输入';
   }
 }
 
@@ -355,12 +383,15 @@ class _PromptRequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final options = prompt.looksLikePermissionPrompt
+    final isPermissionPrompt = prompt.looksLikePermissionPrompt;
+    final options = isPermissionPrompt
         ? _permissionPromptOptions
         : _resolvedOptions();
     return _ActionCardFrame(
-      icon: Icons.verified_user_outlined,
-      title: '授权确认',
+      icon: isPermissionPrompt
+          ? Icons.verified_user_outlined
+          : Icons.keyboard_outlined,
+      title: isPermissionPrompt ? '授权确认' : '等待输入',
       description: prompt.message.trim(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

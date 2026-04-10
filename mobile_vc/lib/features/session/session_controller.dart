@@ -491,8 +491,7 @@ class SessionController extends ChangeNotifier {
 
   bool get hasPendingPermissionPrompt =>
       pendingInteraction?.isPermission == true ||
-      pendingPrompt?.looksLikePermissionPrompt == true ||
-      _runtimePhase?.isPermissionBlocked == true;
+      pendingPrompt?.looksLikePermissionPrompt == true;
   bool get hasPendingPlanPrompt => pendingInteraction?.isPlan == true;
   bool get hasPendingPlanQuestions => _pendingPlanQuestions.isNotEmpty;
   PlanQuestion? get pendingPlanQuestion {
@@ -1376,6 +1375,8 @@ class SessionController extends ChangeNotifier {
     final wasRecovering = _reconnecting;
     _connected = false;
     _connecting = false;
+    _isLoadingSession = false;
+    _pendingSessionTargetId = '';
     _pendingAiLaunchEngine = '';
     _pendingAiLaunchAwaitingFirstInput = false;
     if (_autoReconnectEnabled) {
@@ -5415,7 +5416,6 @@ class SessionController extends ChangeNotifier {
 
   bool _shouldPreserveBlockingPrompt() {
     return _pendingInteraction?.isPermission == true ||
-        _runtimePhase?.isPermissionBlocked == true ||
         _pendingInteraction?.isReview == true ||
         shouldShowReviewChoices ||
         _pendingInteraction?.isPlan == true ||
@@ -5432,8 +5432,7 @@ class SessionController extends ChangeNotifier {
       return currentInteraction?.isPermission == true ||
           currentInteraction?.isReview == true ||
           currentInteraction?.isPlan == true ||
-          currentPrompt != null ||
-          _runtimePhase?.isPermissionBlocked == true;
+          currentPrompt != null;
     }
     if (!_looksLikeGenericReadyPrompt(incoming)) {
       return false;
@@ -5441,9 +5440,7 @@ class SessionController extends ChangeNotifier {
     return currentInteraction?.isPermission == true ||
         currentInteraction?.isReview == true ||
         currentInteraction?.isPlan == true ||
-        currentPrompt?.looksLikePermissionPrompt == true ||
         currentPrompt?.looksLikeReviewPrompt == true ||
-        _runtimePhase?.isPermissionBlocked == true ||
         hasPendingPlanQuestions;
   }
 

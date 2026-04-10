@@ -18,12 +18,20 @@ class MobileVcWsService {
       StreamController<AppEvent>.broadcast();
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
+  int _connectionEpoch = 0;
 
   Stream<AppEvent> get events => _events.stream;
   bool get isConnected => _channel != null;
 
   Future<void> connect(String url) async {
-    await disconnect();
+    final previousSubscription = _subscription;
+    final previousChannel = _channel;
+    _subscription = null;
+    _channel = null;
+    _connectionEpoch++;
+    await previousSubscription?.cancel();
+    await previousChannel?.sink.close();
+
     final uri = Uri.parse(url);
     final channel = kIsWeb
         ? WebSocketChannel.connect(uri)
@@ -33,17 +41,19 @@ class MobileVcWsService {
             connectTimeout: const Duration(seconds: 15),
           );
     _channel = channel;
+    final epoch = _connectionEpoch;
     var disconnectEmitted = false;
     void emitDisconnect({
       required String code,
       required String message,
       Map<String, dynamic> raw = const <String, dynamic>{},
     }) {
-      if (disconnectEmitted) {
+      if (disconnectEmitted || epoch != _connectionEpoch || _channel != channel) {
         return;
       }
       disconnectEmitted = true;
       _channel = null;
+      _subscription = null;
       _events.add(
         ErrorEvent(
           timestamp: DateTime.now(),
@@ -63,6 +73,9 @@ class MobileVcWsService {
 
     _subscription = channel.stream.listen(
       (dynamic data) {
+        if (epoch != _connectionEpoch || _channel != channel) {
+          return;
+        }
         final decoded = jsonDecode(data as String);
         if (decoded is Map<String, dynamic>) {
           _events.add(_mapper.mapEvent(decoded));
@@ -99,10 +112,13 @@ class MobileVcWsService {
   }
 
   Future<void> disconnect() async {
-    await _subscription?.cancel();
-    await _channel?.sink.close();
+    final previousSubscription = _subscription;
+    final previousChannel = _channel;
     _subscription = null;
     _channel = null;
+    _connectionEpoch++;
+    await previousSubscription?.cancel();
+    await previousChannel?.sink.close();
   }
 
   void send(Map<String, dynamic> payload) {

@@ -45,4 +45,29 @@ void main() {
 
     expect(submitted, 'approve:persistent');
   });
+
+  testWidgets('generic waiting prompt_request 不显示额外卡片', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatTimeline(
+            items: const [],
+            pendingPrompt: PromptRequestEvent(
+              timestamp: DateTime(2026),
+              sessionId: 'session-1',
+              runtimeMeta: const RuntimeMeta(command: 'claude'),
+              raw: const {
+                'type': 'prompt_request',
+                'msg': '等待输入',
+              },
+              message: '等待输入',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('等待输入'), findsNothing);
+    expect(find.text('授权确认'), findsNothing);
+  });
 }
