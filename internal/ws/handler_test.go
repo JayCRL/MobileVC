@@ -36,6 +36,7 @@ type stubRunner struct {
 	holdOpen                  bool
 	interactive               bool
 	started                   chan struct{}
+	sink                      runner.EventSink
 	lastPermissionMode        string
 	permissionModes           []string
 	onStart                   func()
@@ -77,6 +78,8 @@ func newNonInteractiveHoldingStubRunner(events ...any) *stubRunner {
 func (s *stubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
 	s.mu.Lock()
 	s.lastReq = req
+	s.sink = sink
+	events := append([]any(nil), s.events...)
 	s.mu.Unlock()
 	select {
 	case <-s.started:
@@ -86,7 +89,7 @@ func (s *stubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runne
 	if s.onStart != nil {
 		s.onStart()
 	}
-	for _, event := range s.events {
+	for _, event := range events {
 		sink(event)
 	}
 	if !s.holdOpen {
@@ -156,6 +159,16 @@ func (s *stubRunner) WaitStarted(t *testing.T) {
 	case <-s.started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("runner did not start")
+	}
+}
+
+func (s *stubRunner) Emit(event any) {
+	s.mu.Lock()
+	s.events = append(s.events, event)
+	sink := s.sink
+	s.mu.Unlock()
+	if sink != nil {
+		sink(event)
 	}
 }
 
@@ -2537,6 +2550,80 @@ func TestHandlerEmitsAgentStateForToolEventsAndFinish(t *testing.T) {
 	_ = readUntilType(t, conn, protocol.EventTypeFileDiff)
 	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "RUNNING_TOOL", false)
 	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "IDLE", false)
+}
+
+func TestHandlerClaudeSessionReturnsToWaitInputAfterResult(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(
+		protocol.ApplyRuntimeMeta(
+			protocol.NewPromptRequestEvent("ignored", "Claude 会话已就绪，可继续输入", nil),
+			protocol.RuntimeMeta{ResumeSessionID: "resume-chat-456"},
+		),
+	)
+	ptyRunner.claudeSessionID = "resume-chat-456"
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "claude-second-turn-wait-input")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "claude",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        "你是谁\n",
+	}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		if got := string(payload); got != "你是谁\n" {
+			t.Fatalf("unexpected input payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive follow-up input payload")
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+
+	ptyRunner.Emit(protocol.ApplyRuntimeMeta(
+		protocol.NewLogEvent("ignored", "我是 Claude", "stdout"),
+		protocol.RuntimeMeta{ResumeSessionID: "resume-chat-456"},
+	))
+	ptyRunner.Emit(protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent("ignored", "等待输入", nil),
+		protocol.RuntimeMeta{ResumeSessionID: "resume-chat-456", ClaudeLifecycle: "waiting_input"},
+	))
+
+	promptEvent := readUntilType(t, conn, protocol.EventTypePromptRequest)
+	if promptEvent["resumeSessionId"] != "resume-chat-456" {
+		t.Fatalf("expected ready prompt resumeSessionId, got %#v", promptEvent)
+	}
+	agentState := readUntilType(t, conn, protocol.EventTypeAgentState)
+	requireAgentState(t, agentState, "WAIT_INPUT", true)
+	if agentState["claudeLifecycle"] != "waiting_input" {
+		t.Fatalf("expected waiting_input lifecycle after second turn, got %#v", agentState)
+	}
+	if agentState["resumeSessionId"] != "resume-chat-456" {
+		t.Fatalf("expected resumeSessionId after second turn, got %#v", agentState)
+	}
 }
 
 func TestHandlerClaudeSessionStartsInWaitInput(t *testing.T) {

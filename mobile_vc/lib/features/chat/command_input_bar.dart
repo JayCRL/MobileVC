@@ -68,7 +68,7 @@ class _CommandInputBarState extends State<CommandInputBar> {
       widget.shouldShowReviewChoices ||
       widget.shouldShowPlanChoices;
 
-  bool get _showStopAction => widget.canStop;
+  bool get _showStopAction => !_inputLocked && !widget.awaitInput && widget.canStop;
 
   String get _lockedHintText {
     if (widget.isSessionLoading) {

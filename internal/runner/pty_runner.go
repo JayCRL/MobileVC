@@ -1728,6 +1728,13 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 					))
 				}
 			}
+			if shouldEmitClaudeReadyPrompt(envelope) {
+				r.markInteractiveReady()
+				sendEvent(sink, protocol.ApplyRuntimeMeta(
+					protocol.NewPromptRequestEvent(sessionID, "等待输入", nil),
+					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+				))
+			}
 			if envelope.DurationMs > 0 || envelope.TotalCost > 0 {
 				sendEvent(sink, protocol.ProgressEvent{
 					Event:   protocol.NewBaseEvent(protocol.EventTypeProgress, sessionID),
@@ -1747,6 +1754,16 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		}
 		sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read claude stream: %v", err), ""))
 	}
+}
+
+func shouldEmitClaudeReadyPrompt(envelope claudeStreamEnvelope) bool {
+	if strings.TrimSpace(envelope.SessionID) == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(envelope.Subtype), "error") {
+		return false
+	}
+	return true
 }
 
 func shouldSuppressClaudeRawLine(line string) bool {

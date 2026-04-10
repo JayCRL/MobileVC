@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -56,7 +58,66 @@ void main() {
     });
   });
 
+  group('MobileVcWsService reconnect semantics', () {
+    test('replacing connection does not emit stale disconnect event', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      server.transform(WebSocketTransformer()).listen((socket) {
+        addTearDown(socket.close);
+      });
+
+      final service = MobileVcWsService();
+      addTearDown(service.dispose);
+
+      final events = <AppEvent>[];
+      final subscription = service.events.listen(events.add);
+      addTearDown(subscription.cancel);
+
+      final url = 'ws://127.0.0.1:${server.port}';
+      await service.connect(url);
+      await service.connect(url);
+      await _flushEvents();
+
+      expect(
+        events.whereType<ErrorEvent>().where((e) => e.code == 'ws_closed'),
+        isEmpty,
+      );
+      expect(
+        events.whereType<ErrorEvent>().where((e) => e.code == 'ws_stream_error'),
+        isEmpty,
+      );
+    });
+  });
+
   group('SessionController action needed signal', () {
+    test('ws 断开时会退出会话切换中状态', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      controller.createSession();
+
+      expect(controller.isLoadingSession, isTrue);
+      expect(service.sentPayloads, isNotEmpty);
+      expect(service.sentPayloads.last['action'], 'session_create');
+
+      service.emit(
+        ErrorEvent(
+          timestamp: _timestamp,
+          sessionId: '',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'error', 'code': 'ws_closed', 'msg': 'WebSocket 连接已断开'},
+          code: 'ws_closed',
+          message: 'WebSocket 连接已断开',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.isLoadingSession, isFalse);
+    });
+
     test('运行态进入普通 WAIT_INPUT 时产出继续输入信号', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -96,6 +157,36 @@ void main() {
 
       final signal = _expectSignal(controller, ActionNeededType.continueInput);
       expect(signal.message, 'AI 助手需要你继续输入');
+    });
+
+    test('仅残留 permission_blocked phase 时不显示授权确认', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        RuntimePhaseEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'permission_blocked',
+          kind: 'permission',
+          message: 'Allow edit a.dart?',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.shouldShowPermissionChoices, isFalse);
+      expect(controller.hasPendingPermissionPrompt, isFalse);
+
+      controller.sendInputText('你好');
+
+      expect(service.sentPayloads, isNotEmpty);
+      expect(service.sentPayloads.last['action'], 'exec');
+      expect(controller.timeline.any((item) => item.body.contains('请先在上方完成授权')), isFalse);
     });
 
     test('permission prompt 到来时产出权限确认信号', () async {
@@ -252,7 +343,7 @@ void main() {
       expect(signal.message, 'AI 助手正在等待你的回复');
     });
 
-    test('permission prompt 遇到普通 WAIT_INPUT 更新时保持原授权提示', () async {
+    test('permission-like prompt_request 遇到普通 ready prompt 时会切回继续输入', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -300,11 +391,11 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.shouldShowPermissionChoices, isTrue);
-      expect(controller.pendingPrompt?.message, 'Allow edit a.dart?');
+      expect(controller.shouldShowPermissionChoices, isFalse);
+      expect(controller.pendingPrompt?.message, 'AI 会话已就绪，可继续输入');
       expect(controller.pendingInteraction, isNull);
-      final signal = _expectSignal(controller, ActionNeededType.permission);
-      expect(signal.message, 'AI 助手需要你确认权限');
+      final signal = _expectSignal(controller, ActionNeededType.reply);
+      expect(signal.message, 'AI 助手正在等待你的回复');
     });
 
     test('review prompt 不会被普通 WAIT_INPUT 更新覆盖', () async {
