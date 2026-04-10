@@ -734,14 +734,24 @@ class SessionController extends ChangeNotifier {
     if (_isClaudePendingReadyForInput) {
       return false;
     }
+    final currentExecutionKey = _runtimeExecutionKey(
+      _agentState?.runtimeMeta ??
+          _sessionState?.runtimeMeta ??
+          const RuntimeMeta(),
+    );
+    final assistantReplySettled = currentExecutionKey.isNotEmpty &&
+        currentExecutionKey == _lastAssistantReplyExecutionKey;
     final agentState = (_agentState?.state ?? '').trim().toUpperCase();
-    if (agentState == 'THINKING' ||
-        agentState == 'RUNNING_TOOL' ||
-        agentState == 'RECOVERING') {
+    if ((agentState == 'THINKING' || agentState == 'RECOVERING') &&
+        !assistantReplySettled) {
+      return true;
+    }
+    if (agentState == 'RUNNING_TOOL') {
       return true;
     }
     final sessionState = (_sessionState?.state ?? '').trim().toUpperCase();
-    if (sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') {
+    if ((sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') &&
+        !assistantReplySettled) {
       return true;
     }
     if (_hasRunningTerminalExecution) {
@@ -768,14 +778,24 @@ class SessionController extends ChangeNotifier {
     if (_hasRunningTerminalExecution) {
       return true;
     }
+    final currentExecutionKey = _runtimeExecutionKey(
+      _agentState?.runtimeMeta ??
+          _sessionState?.runtimeMeta ??
+          const RuntimeMeta(),
+    );
+    final assistantReplySettled = currentExecutionKey.isNotEmpty &&
+        currentExecutionKey == _lastAssistantReplyExecutionKey;
     final agentState = (_agentState?.state ?? '').trim().toUpperCase();
-    if (agentState == 'THINKING' ||
-        agentState == 'RUNNING_TOOL' ||
-        agentState == 'RECOVERING') {
+    if ((agentState == 'THINKING' || agentState == 'RECOVERING') &&
+        !assistantReplySettled) {
+      return true;
+    }
+    if (agentState == 'RUNNING_TOOL') {
       return true;
     }
     final sessionState = (_sessionState?.state ?? '').trim().toUpperCase();
-    if (sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') {
+    if ((sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') &&
+        !assistantReplySettled) {
       return true;
     }
     if (sessionState != 'RUNNING') {
@@ -4721,7 +4741,50 @@ class SessionController extends ChangeNotifier {
     if (normalized.contains('\n')) {
       return true;
     }
-    return RegExp(r'[。！？；：]|\.\s+[A-Z]|,\s+\w').hasMatch(normalized);
+    if (RegExp(r'[。！？；：]|\.\s+[A-Z]|,\s+\w').hasMatch(normalized)) {
+      return true;
+    }
+    return _looksLikeShortAssistantReply(normalized);
+  }
+
+  bool _looksLikeShortAssistantReply(String message) {
+    final normalized = message.trim();
+    if (normalized.length < 2 || normalized.length >= 24) {
+      return false;
+    }
+    if (_looksLikePassiveWaitingText(normalized) ||
+        _looksLikeProcessNoise(normalized) ||
+        _looksLikeTerminalOutput(normalized)) {
+      return false;
+    }
+    if (RegExp(r'^[\$#>]\s*').hasMatch(normalized) ||
+        normalized.contains('/') ||
+        normalized.contains('\\') ||
+        normalized.contains('=') ||
+        normalized.contains(':') ||
+        normalized.startsWith('{') ||
+        normalized.startsWith('[') ||
+        normalized.endsWith('}') ||
+        normalized.endsWith(']')) {
+      return false;
+    }
+    return RegExp(r'\p{Script=Han}|[A-Za-z]', unicode: true)
+        .hasMatch(normalized);
+  }
+
+  bool _looksLikePassiveWaitingText(String message) {
+    final lower = message.trim().toLowerCase();
+    if (lower.isEmpty) {
+      return false;
+    }
+    return lower == '等待输入' ||
+        lower == '等待继续输入' ||
+        lower == '请继续输入' ||
+        lower == '等待中' ||
+        lower == 'ready' ||
+        lower == 'waiting for input' ||
+        lower == 'continue input' ||
+        lower == 'awaiting input';
   }
 
   bool _looksLikeMarkdown(String message) {
@@ -5544,6 +5607,13 @@ class SessionController extends ChangeNotifier {
     _agentPhaseLabel = _compactAgentMessage();
     _syncActiveReviewSelection();
     final state = (_agentState?.state ?? '').trim().toUpperCase();
+    final currentExecutionKey = _runtimeExecutionKey(
+      _agentState?.runtimeMeta ??
+          _sessionState?.runtimeMeta ??
+          const RuntimeMeta(),
+    );
+    final assistantReplySettled = currentExecutionKey.isNotEmpty &&
+        currentExecutionKey == _lastAssistantReplyExecutionKey;
     final hasBlockingPrompt = awaitInput ||
         hasPendingPermissionPrompt ||
         shouldShowReviewChoices ||
@@ -5551,10 +5621,11 @@ class SessionController extends ChangeNotifier {
     final active = _connected &&
         !hasBlockingPrompt &&
         !_isClaudePendingReadyForInput &&
-        (_connectionStage == SessionConnectionStage.catchingUp ||
-            state == 'THINKING' ||
-            state == 'RUNNING_TOOL' ||
-            state == 'RECOVERING');
+        (((_connectionStage == SessionConnectionStage.catchingUp ||
+                    state == 'THINKING' ||
+                    state == 'RECOVERING') &&
+                !assistantReplySettled) ||
+            state == 'RUNNING_TOOL');
     if (active) {
       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
       if (_activityToolLabel.isEmpty) {
