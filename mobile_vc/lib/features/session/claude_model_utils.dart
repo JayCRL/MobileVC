@@ -6,6 +6,10 @@ const Set<String> _claudeAliasModels = <String>{
   'opus[1m]',
   'haiku',
   'opusplan',
+  'claude-sonnet-4-5',
+  'claude-sonnet-4-6',
+  'claude-opus-4-6',
+  'claude-haiku-4-5',
 };
 
 final RegExp _claudePinnedModelPattern = RegExp(
@@ -51,6 +55,14 @@ String claudeModelDisplayLabel(String value) {
       return 'Haiku';
     case 'opusplan':
       return 'Opus Plan';
+    case 'claude-sonnet-4-5':
+      return 'Sonnet 4.5';
+    case 'claude-sonnet-4-6':
+      return 'Sonnet 4.6';
+    case 'claude-opus-4-6':
+      return 'Opus 4.6';
+    case 'claude-haiku-4-5':
+      return 'Haiku 4.5';
   }
   final lower = trimmed.toLowerCase();
   if (lower.endsWith('[1m]')) {
@@ -97,6 +109,10 @@ String? parseClaudeModelFromText(String text) {
     return pinnedMatch.group(0)?.toLowerCase();
   }
   const orderedAliases = <String>[
+    'claude-sonnet-4-6',
+    'claude-opus-4-6',
+    'claude-haiku-4-5',
+    'claude-sonnet-4-5',
     'sonnet[1m]',
     'opus[1m]',
     'opusplan',
@@ -120,4 +136,9 @@ String? parseClaudeModelFromText(String text) {
     return 'opus[1m]';
   }
   return null;
+}
+
+bool isEquivalentClaudeModelSelection(String left, String right) {
+  return normalizeClaudeModelSelection(left) ==
+      normalizeClaudeModelSelection(right);
 }

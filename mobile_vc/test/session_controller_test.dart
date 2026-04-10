@@ -1285,6 +1285,60 @@ void main() {
       expect(controller.isSessionBusy, isFalse);
     });
 
+    test('收到 Claude 最终回复时即使没有后续 idle 事件也会立即退出运行态', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-live-1'),
+          raw: const {'type': 'agent_state'},
+          state: 'THINKING',
+          message: '思考中',
+          command: 'claude',
+        ),
+      );
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-live-1'),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'claude running',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.activityVisible, isTrue);
+      expect(controller.isSessionBusy, isTrue);
+      expect(controller.canStopCurrentRun, isTrue);
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-live-1'),
+          raw: const {'type': 'log'},
+          message: '你好，有什么我可以帮你处理的？',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.activityVisible, isFalse);
+      expect(controller.isSessionBusy, isFalse);
+      expect(controller.canStopCurrentRun, isFalse);
+    });
+
     test('执行中收到 assistant 文本日志时不会错误闪回空闲', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -1399,6 +1453,41 @@ void main() {
 
       expect(service.sentPayloads, isNotEmpty);
       expect(service.sentPayloads.last['action'], 'stop');
+    });
+
+    test('运行中点击 stop 后会立即退出 Claude 待输入占位态', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('claude');
+      expect(service.sentPayloads, hasLength(1));
+      expect(controller.activityBannerVisible, isTrue);
+      expect(controller.activityBannerTitle, '待输入');
+
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', executionId: 'exec-stop-claude'),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'claude running',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.canStopCurrentRun, isTrue);
+
+      controller.stopCurrentRun();
+
+      expect(service.sentPayloads.last['action'], 'stop');
+      expect(controller.activityBannerTitle, isNot('待输入'));
     });
 
     test('有待审核 diff 但没有 review prompt 时仍允许显示 differ 审核按钮', () async {
@@ -2121,7 +2210,7 @@ void main() {
       expect(sessionListRequest['cwd'], controller.effectiveCwd);
     });
 
-    test('连接后收到非空 session 列表时，会自动 load 历史会话，不再 create 新会话', () async {
+    test('连接后收到非空 session 列表时，仅刷新列表，不自动 load 历史会话', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -2144,13 +2233,15 @@ void main() {
       );
       await _flushEvents();
 
-      expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads.single['action'], 'session_load');
-      expect(service.sentPayloads.single['sessionId'], 'session-a');
-      expect(service.sentPayloads.single['reason'], 'auto_bind');
+      expect(service.sentPayloads, isEmpty);
+      expect(controller.sessions.map((item) => item.id).toList(), [
+        'session-a',
+        'session-b',
+      ]);
+      expect(controller.selectedSessionId, isEmpty);
     });
 
-    test('连接后收到空 session 列表时，会自动 create session', () async {
+    test('连接后收到空 session 列表时，不自动 create session', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -2170,9 +2261,9 @@ void main() {
       );
       await _flushEvents();
 
-      expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads.single['action'], 'session_create');
-      expect(service.sentPayloads.single['reason'], 'auto_bind');
+      expect(service.sentPayloads, isEmpty);
+      expect(controller.sessions, isEmpty);
+      expect(controller.selectedSessionId, isEmpty);
     });
 
     test('已有选中会话时，即使列表里没有该会话，也不会再次自动 create 或 load', () async {
@@ -2211,6 +2302,67 @@ void main() {
       expect(service.sentPayloads, isEmpty);
       expect(controller.sessions, hasLength(1));
       expect(controller.sessions.single.id, 'session-current');
+    });
+
+    test('后台断开后回前台重连不会自动恢复上次会话', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-reconnect',
+          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(
+            id: 'session-reconnect',
+            title: '恢复中的会话',
+          ),
+          logEntries: const [
+            HistoryLogEntry(
+              kind: 'assistant',
+              message: '上一条回复',
+              label: 'Assistant',
+            ),
+          ],
+          resumeRuntimeMeta: const RuntimeMeta(
+            command: 'claude --resume session-reconnect',
+            claudeLifecycle: 'resumable',
+          ),
+        ),
+      );
+      await _flushEvents();
+      expect(controller.selectedSessionId, 'session-reconnect');
+
+      controller.handleForegroundStateChanged(false);
+      service.sentPayloads.clear();
+
+      service.emit(
+        ErrorEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-reconnect',
+          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'error'},
+          message: 'websocket closed',
+          code: 'ws_closed',
+        ),
+      );
+      await _flushEvents();
+
+      controller.handleForegroundStateChanged(true);
+      await _flushEvents();
+
+      expect(service.connectCalls, 2);
+      expect(
+        service.sentPayloads.any((item) => item['action'] == 'session_resume'),
+        isFalse,
+      );
+      expect(controller.connectionStage, SessionConnectionStage.connected);
     });
 
     test('后台断开后会保留会话界面，并在回前台时静默重连恢复会话', () async {
@@ -2302,32 +2454,23 @@ void main() {
       expect(service.connectCalls, 2);
       expect(controller.connected, isTrue);
       expect(controller.reconnecting, isFalse);
-      expect(controller.connectionStage, SessionConnectionStage.catchingUp);
+      expect(controller.connectionStage, SessionConnectionStage.connected);
       expect(
-        service.sentPayloads.any((item) =>
-            item['action'] == 'session_resume' &&
-            item['sessionId'] == 'session-reconnect' &&
-            item['lastSeenEventCursor'] == 7 &&
-            item['lastKnownRuntimeState'] == 'RUNNING_TOOL'),
-        isTrue,
+        service.sentPayloads.any((item) => item['action'] == 'session_resume'),
+        isFalse,
       );
-      service.emit(
-        SessionResumeResultEvent(
-          timestamp: _timestamp.add(const Duration(seconds: 2)),
-          sessionId: 'session-reconnect',
-          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
-          raw: const {'type': 'session_resume_result'},
-          latestCursor: 9,
-          runtimeAlive: true,
-          runtimeState: 'RUNNING_TOOL',
-          reattaching: true,
-          replayedCount: 2,
-          message: 'session resumed',
-        ),
+      expect(
+        service.sentPayloads.where((item) => item['action'] == 'session_list'),
+        isNotEmpty,
       );
-      await _flushEvents();
-      expect(controller.connectionStage, SessionConnectionStage.ready);
-      expect(controller.shouldShowSessionSurface, isTrue);
+      expect(
+        service.sentPayloads.where((item) => item['action'] == 'session_context_get'),
+        isNotEmpty,
+      );
+      expect(
+        service.sentPayloads.where((item) => item['action'] == 'review_state_get'),
+        isNotEmpty,
+      );
     });
 
     test('session_resume_notice 会触发补发通知而不插入 timeline', () async {
@@ -3260,7 +3403,7 @@ void main() {
       expect(controller.runtimeProcesses, isEmpty);
       expect(controller.activeRuntimeProcessPid, 0);
       expect(controller.activeRuntimeProcessLog, isNull);
-      expect(controller.runtimeProcessListLoading, isFalse);
+      expect(controller.runtimeProcessListLoading, isTrue);
       expect(controller.runtimeProcessLogLoading, isFalse);
     });
 

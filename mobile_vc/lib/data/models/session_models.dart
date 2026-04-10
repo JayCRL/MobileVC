@@ -844,6 +844,29 @@ class CodexModelCatalogEntry {
   }
 }
 
+class ClaudeModelCatalogEntry {
+  const ClaudeModelCatalogEntry({
+    required this.model,
+    this.displayName = '',
+    this.description = '',
+    this.isDefault = false,
+  });
+
+  final String model;
+  final String displayName;
+  final String description;
+  final bool isDefault;
+
+  factory ClaudeModelCatalogEntry.fromRuntimeInfoItem(RuntimeInfoItem item) {
+    return ClaudeModelCatalogEntry(
+      model: item.label.trim(),
+      displayName: item.value.trim(),
+      description: item.detail.trim(),
+      isDefault: item.status == 'default',
+    );
+  }
+}
+
 class FSItem {
   const FSItem({
     required this.name,

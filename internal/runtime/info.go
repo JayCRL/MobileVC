@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,15 +28,18 @@ type Snapshot struct {
 }
 
 var runtimeInfoQueries = map[string]string{
-	"help":         "命令帮助",
-	"model":        "模型信息",
-	"codex_models": "Codex 模型目录",
-	"cost":         "成本信息",
-	"context":      "运行上下文",
-	"doctor":       "环境诊断",
+	"help":          "命令帮助",
+	"model":         "模型信息",
+	"claude_models": "Claude 模型目录",
+	"codex_models":  "Codex 模型目录",
+	"cost":          "成本信息",
+	"context":       "运行上下文",
+	"doctor":        "环境诊断",
 }
 
 var fetchCodexModelCatalog = runner.FetchCodexModelCatalog
+var fetchClaudeModelsFromAPI = fetchModelsFromAPI
+var fetchClaudeModelsFromNativeCLI = fetchModelsFromNativeCLI
 
 func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protocol.RuntimeInfoResultEvent, error) {
 	key := strings.TrimSpace(strings.ToLower(query))
@@ -56,12 +61,32 @@ func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protoco
 		return protocol.NewRuntimeInfoResultEvent(sessionID, key, title, "当前支持的 runtime info 查询与 slash command 概览。", false, []protocol.RuntimeInfoItem{
 			{Label: "help", Value: "列出 runtime_info 查询能力", Available: true, Status: "ready"},
 			{Label: "model", Value: "查看当前模型识别状态", Available: true, Status: "ready"},
+			{Label: "claude_models", Value: "查看 Claude 可用模型目录（从 settings.json 与 API）", Available: true, Status: "ready"},
 			{Label: "codex_models", Value: "查看 Codex 原生模型与推理强度目录", Available: true, Status: "ready"},
 			{Label: "cost", Value: "查看成本遥测接入状态", Available: true, Status: "ready"},
 			{Label: "context", Value: "查看当前 cwd / 会话 / 运行状态", Available: true, Status: "ready"},
 			{Label: "doctor", Value: "查看环境与连接诊断", Available: true, Status: "ready"},
 			{Label: "slash_commands", Value: "/help /clear /exit /quit /model /cost /context /compact /init /memory /add-dir /review /run /build /test /analyze /git status /git diff /git commit /git push /git pull /pr create /plan /execute /diff /doctor /fast", Available: true, Status: "ready", Detail: "slash_command action 已支持后端解析与分发。"},
 		}), nil
+	case "claude_models":
+		items, err := fetchClaudeModelCatalog()
+		if err != nil {
+			return protocol.NewRuntimeInfoResultEvent(sessionID, key, title, fmt.Sprintf("Claude 模型目录拉取失败：%v", err), true, []protocol.RuntimeInfoItem{{
+				Label:     "claude_model_catalog",
+				Value:     "unavailable",
+				Available: false,
+				Status:    "missing",
+				Detail:    err.Error(),
+			}}), nil
+		}
+		return protocol.NewRuntimeInfoResultEvent(
+			sessionID,
+			key,
+			title,
+			fmt.Sprintf("已同步 %d 个 Claude 模型，可用于 Flutter 侧动态选择。", len(items)),
+			false,
+			items,
+		), nil
 	case "model":
 		items := []protocol.RuntimeInfoItem{{
 			Label:     "active_ai",
@@ -258,4 +283,169 @@ func ternary[T any](cond bool, yes, no T) T {
 		return yes
 	}
 	return no
+}
+
+type claudeSettings struct {
+	Model                string            `json:"model"`
+	ModelReasoningEffort string            `json:"model_reasoning_effort"`
+	Env                  map[string]string `json:"env"`
+}
+
+type anthropicModelsResponse struct {
+	Data []struct {
+		ID     string `json:"id"`
+		Object string `json:"object"`
+	} `json:"data"`
+}
+
+func fetchClaudeModelCatalog() ([]protocol.RuntimeInfoItem, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("get home dir: %w", err)
+	}
+
+	settingsPath := filepath.Join(homeDir, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil, fmt.Errorf("read settings.json: %w", err)
+	}
+
+	var settings claudeSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("parse settings.json: %w", err)
+	}
+
+	return fetchClaudeModelCatalogWithSettings(homeDir, settings)
+}
+
+func fetchClaudeModelCatalogWithSettings(homeDir string, settings claudeSettings) ([]protocol.RuntimeInfoItem, error) {
+	baseURL := settings.Env["ANTHROPIC_BASE_URL"]
+	authToken := settings.Env["ANTHROPIC_AUTH_TOKEN"]
+
+	// 优先尝试从 API 获取模型列表
+	if baseURL != "" && authToken != "" {
+		if items, err := fetchClaudeModelsFromAPI(baseURL, authToken, settings.Model); err == nil && len(items) > 0 {
+			return items, nil
+		}
+	}
+
+	// API 失败时回退到 Claude 原生 /model
+	if items, err := fetchClaudeModelsFromNativeCLI(cwdOrHome(homeDir), settings.Model); err == nil && len(items) > 0 {
+		return items, nil
+	}
+
+	// 最后回退到 settings.json 配置的模型
+	return []protocol.RuntimeInfoItem{{
+		Label:     settings.Model,
+		Value:     settings.Model,
+		Available: true,
+		Status:    "default",
+		Detail:    "当前配置模型（从 settings.json）",
+	}}, nil
+}
+
+func fetchModelsFromAPI(baseURL, authToken, currentModel string) ([]protocol.RuntimeInfoItem, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
+	req, err := http.NewRequestWithContext(ctx, "GET", modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned %d", resp.StatusCode)
+	}
+
+	var modelsResp anthropicModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
+		return nil, err
+	}
+
+	items := make([]protocol.RuntimeInfoItem, 0, len(modelsResp.Data))
+	for _, model := range modelsResp.Data {
+		if !strings.Contains(strings.ToLower(model.ID), "claude") {
+			continue
+		}
+		isDefault := model.ID == currentModel
+		items = append(items, protocol.RuntimeInfoItem{
+			Label:     model.ID,
+			Value:     model.ID,
+			Available: true,
+			Status:    ternary(isDefault, "default", "ready"),
+			Detail:    ternary(isDefault, "当前配置模型", "可用模型"),
+		})
+	}
+
+	return items, nil
+}
+
+func fetchModelsFromNativeCLI(cwd, currentModel string) ([]protocol.RuntimeInfoItem, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "claude", "/model")
+	if strings.TrimSpace(cwd) != "" {
+		cmd.Dir = cwd
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("run claude /model: %w", err)
+	}
+	return parseClaudeModelCLIOutput(string(output), currentModel)
+}
+
+func parseClaudeModelCLIOutput(output, currentModel string) ([]protocol.RuntimeInfoItem, error) {
+	lines := strings.Split(output, "\n")
+	items := make([]protocol.RuntimeInfoItem, 0)
+	seen := make(map[string]struct{})
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "*") {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimLeft(line, "-*• "))
+		if line == "" {
+			continue
+		}
+		if idx := strings.Index(line, " ("); idx > 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
+		label := line
+		key := strings.ToLower(label)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		isDefault := strings.EqualFold(label, currentModel)
+		items = append(items, protocol.RuntimeInfoItem{
+			Label:     label,
+			Value:     label,
+			Available: true,
+			Status:    ternary(isDefault, "default", "ready"),
+			Detail:    ternary(isDefault, "当前配置模型（来自 Claude /model）", "可用模型（来自 Claude /model）"),
+		})
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no models parsed from claude /model output")
+	}
+	return items, nil
+}
+
+func cwdOrHome(homeDir string) string {
+	if strings.TrimSpace(homeDir) == "" {
+		return "."
+	}
+	return homeDir
 }

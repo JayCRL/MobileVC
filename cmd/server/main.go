@@ -179,7 +179,15 @@ func main() {
 	} else {
 		logx.Info("bootstrap", "Registered routes: /ws, /healthz, /version, /download, /")
 	}
-	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+
+	// Serve static files with correct MIME types
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Set correct MIME type for JavaScript files
+		if filepath.Ext(r.URL.Path) == ".js" {
+			w.Header().Set("Content-Type", "application/javascript")
+		}
+		http.FileServer(http.FS(staticFS)).ServeHTTP(w, r)
+	})
 
 	server := &http.Server{
 		Addr:    addr,

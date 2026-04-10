@@ -31,30 +31,83 @@
 
 ## 🚀 快速开始
 
-### 安装
+### 一键安装启动（推荐）
 
 ```bash
-# 通过 npm 安装（推荐）
-npm install -g mobilevc
+# 1. 全局安装
+npm install -g @justprove/mobilevc
 
-# 或通过 Go 安装
-go install github.com/JayCRL/MobileVC/cmd/server@latest
+# 2. 启动服务（首次会引导配置）
+mobilevc start
+
+# 3. 访问 Web 端
+# 浏览器打开 http://localhost:8001
 ```
 
-### 启动服务
+启动后会自动显示：
+- 本机访问地址
+- 局域网访问地址  
+- 手机扫码连接二维码
+
+### 移动端连接
+
+**方式一：扫码连接**
+1. 手机访问 https://mobilevc.top/install/ 安装客户端
+2. 打开客户端，点击"扫码连接"
+3. 扫描终端显示的二维码即可
+
+**方式二：手动配置**
+- 局域网：填写终端显示的局域网地址、端口和 Token
+- 公网：配置反向代理后填写公网地址
+
+### 常用命令
 
 ```bash
-# 使用默认配置启动
-mobilevc
-
-# 或指定配置
-AUTH_TOKEN=your_token PORT=8001 mobilevc
+mobilevc status          # 查看服务状态
+mobilevc logs            # 查看日志
+mobilevc logs --follow   # 实时日志
+mobilevc config          # 重新配置
+mobilevc stop            # 停止服务
 ```
 
-### 访问
+---
 
-- **Web 端**：http://localhost:8001
-- **移动端**：使用 Flutter 客户端连接
+## 从源码构建（开发者）
+
+如果你想从源码编译或参与开发：
+
+```bash
+# 克隆仓库
+git clone https://github.com/JayCRL/MobileVC.git
+cd MobileVC
+
+# 安装依赖
+npm install
+
+# 构建 Flutter Web
+cd mobile_vc
+flutter pub get
+flutter build web --release
+cd ..
+
+# 同步 Web 构建产物
+npm run sync:web
+
+# 启动 Go 后端
+AUTH_TOKEN=test go run ./cmd/server
+
+# 或构建二进制
+go build -o mobilevc-server ./cmd/server
+./mobilevc-server
+```
+
+### Flutter 移动端开发
+
+```bash
+cd mobile_vc
+flutter pub get
+flutter run
+```
 
 ---
 
@@ -83,7 +136,16 @@ MobileVC 解决的不是”怎么远程看见电脑”，而是：
 
 ## ✨ 新功能
 
-### v1.1.0 (2026-04-09)
+### v0.1.13 (2026-04-10)
+
+#### 🌐 Flutter Web 完整集成
+- ✅ Flutter Web 构建产物完整嵌入 Go 二进制
+- ✅ 启动后端即可直接访问 Web 版（无需单独构建）
+- ✅ 修复 JavaScript MIME 类型问题
+- ✅ Web 端移除 Firebase 依赖（移动端保留推送功能）
+- ✅ 二进制包含完整 Flutter Web 运行时（~38MB）
+
+### v0.1.12 (2026-04-09)
 
 #### 🎉 iOS APNs 推送通知
 - ✅ 完整的 APNs 推送集成
@@ -276,95 +338,13 @@ Go 后端通过结构化事件流向前端推送状态，例如：
 
 推荐按照下面这条路径上手：
 
-1. 在电脑上安装 `MobileVC` 启动器
-2. 启动本机后端并拿到 `Host / Port / Token`
-3. 在手机上安装对应客户端
-4. 通过扫码或公网地址连接到这台电脑上的会话
+1. 在电脑上安装并启动 MobileVC
+2. 在手机上安装客户端并连接
+3. 开始使用 AI 助手
 
-### 1. 在电脑上安装启动器
+详细步骤见上方"🚀 快速开始"章节。
 
-推荐直接通过 npm 全局安装：
-
-```bash
-npm install -g @justprove/mobilevc
-```
-
-安装后终端里直接使用 `mobilevc` 即可，启动器会自动按当前操作系统下载对应后端分包。
-
-如果你是在仓库里本地开发，也可以继续在仓库根目录执行：
-
-```bash
-npm i
-```
-
-### 2. 启动后台
-
-首次启动时，`mobilevc start` 会引导你设置后端端口和 `AUTH_TOKEN`；保存后会直接启动后台，并在终端打印：
-
-- 本机访问地址
-- 局域网访问地址
-- 一张给手机端使用的二维码
-
-```bash
-mobilevc start
-```
-
-如果你希望重新配置端口、`AUTH_TOKEN` 或语言，可随时执行：
-
-```bash
-mobilevc config
-```
-
-### 3. 在手机上安装客户端
-
-打开官网安装页：
-
-```text
-https://mobilevc.top/install/
-```
-
-- iPhone：请用 Safari 打开安装页并点击安装
-- Android：直接下载并安装 APK
-
-### 4. 连接手机端
-
-手机端安装完成后，连接方式有两种。
-
-1. 扫码连接
-
-- 电脑上执行 `mobilevc start` 后，终端会输出二维码
-- 手机端打开 `连接配置`
-- 点击 `扫码连接`
-- 扫描终端二维码后，会自动回填 `Host / Port / Token`
-
-2. 手动连接
-
-- 如果手机和电脑在同一局域网，可直接填写终端输出的局域网地址、端口和 `AUTH_TOKEN`
-- 如果你已经把本机后端映射到公网 IP、域名或反向代理地址，手机端也可以直接填写公网 `Host / Port / Token` 连接
-- 公网连接时，二维码通常不会自动携带你的公网入口；这类场景建议手动填写外部访问地址
-
-### 5. 常用后台命令
-
-```bash
-mobilevc status
-mobilevc logs
-mobilevc logs --follow
-mobilevc stop
-```
-
-### 6. 健康检查
-
-```bash
-curl http://127.0.0.1:8001/healthz
-```
-
-### 7. 打开 Web 工作台
-
-```text
-http://127.0.0.1:8001/
-```
-
-### 引擎兼容说明（Claude / Codex）
+---
 
 MobileVC 支持把 `Claude` 或 `codex` 作为 AI 引擎使用（例如在移动端连接配置里把 `Engine` 设置为 `codex`）。
 

@@ -161,6 +161,10 @@ class SessionController extends ChangeNotifier {
   bool _codexModelCatalogLoading = false;
   String _codexModelCatalogMessage = '';
   bool _codexModelCatalogUnavailable = false;
+  final List<ClaudeModelCatalogEntry> _claudeModelCatalog = [];
+  bool _claudeModelCatalogLoading = false;
+  String _claudeModelCatalogMessage = '';
+  bool _claudeModelCatalogUnavailable = false;
   FileDiffEvent? _currentDiff;
   PromptRequestEvent? _pendingPrompt;
   InteractionRequestEvent? _pendingInteraction;
@@ -360,6 +364,11 @@ class SessionController extends ChangeNotifier {
   bool get codexModelCatalogLoading => _codexModelCatalogLoading;
   String get codexModelCatalogMessage => _codexModelCatalogMessage;
   bool get codexModelCatalogUnavailable => _codexModelCatalogUnavailable;
+  List<ClaudeModelCatalogEntry> get claudeModelCatalog =>
+      List.unmodifiable(_claudeModelCatalog);
+  bool get claudeModelCatalogLoading => _claudeModelCatalogLoading;
+  String get claudeModelCatalogMessage => _claudeModelCatalogMessage;
+  bool get claudeModelCatalogUnavailable => _claudeModelCatalogUnavailable;
   FileDiffEvent? get currentDiff => _currentDiff;
   PromptRequestEvent? get pendingPrompt {
     final prompt = _pendingPrompt;
@@ -752,7 +761,36 @@ class SessionController extends ChangeNotifier {
     return runningKey != _lastAssistantReplyExecutionKey;
   }
 
-  bool get canStopCurrentRun => connected && isSessionBusy;
+  bool get canStopCurrentRun {
+    if (!connected) {
+      return false;
+    }
+    if (_hasRunningTerminalExecution) {
+      return true;
+    }
+    final agentState = (_agentState?.state ?? '').trim().toUpperCase();
+    if (agentState == 'THINKING' ||
+        agentState == 'RUNNING_TOOL' ||
+        agentState == 'RECOVERING') {
+      return true;
+    }
+    final sessionState = (_sessionState?.state ?? '').trim().toUpperCase();
+    if (sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') {
+      return true;
+    }
+    if (sessionState != 'RUNNING') {
+      return false;
+    }
+    final runningKey = _runtimeExecutionKey(
+      _sessionState?.runtimeMeta ??
+          _agentState?.runtimeMeta ??
+          const RuntimeMeta(),
+    );
+    if (runningKey.isEmpty) {
+      return true;
+    }
+    return runningKey != _lastAssistantReplyExecutionKey;
+  }
 
   bool get _canBypassBusyGuardForCodexContinuation {
     if (!shouldShowClaudeMode) {
@@ -938,6 +976,21 @@ class SessionController extends ChangeNotifier {
     }
   }
 
+  void _clearPendingAiLaunchIfIdle() {
+    if (_pendingAiLaunchEngine.isEmpty || _pendingAiLaunchAwaitingFirstInput) {
+      return;
+    }
+    final noBlockingPrompt = !awaitInput &&
+        !hasPendingPermissionPrompt &&
+        !shouldShowReviewChoices &&
+        !hasPendingPlanQuestions;
+    final idle = _isIdleLikeState(_agentState?.state ?? '') ||
+        _isIdleLikeState(_sessionState?.state ?? '');
+    if (noBlockingPrompt && idle) {
+      _clearPendingAiLaunch();
+    }
+  }
+
   bool _isAiCommand(String value) {
     final normalized = value.trim().toLowerCase();
     return normalized == 'claude' ||
@@ -1070,20 +1123,26 @@ class SessionController extends ChangeNotifier {
   String? _devicePushToken;
   String get devicePushToken => _devicePushToken ?? '';
 
+  void _sendCachedPushTokenIfPossible() {
+    final token = _devicePushToken?.trim() ?? '';
+    if (!_connected || _selectedSessionId.isEmpty || token.isEmpty) {
+      return;
+    }
+    _service.send({
+      'action': 'register_push_token',
+      'sessionId': _selectedSessionId,
+      'token': token,
+      'platform': 'ios',
+    });
+  }
+
   void setDevicePushToken(String token) {
     final normalized = token.trim();
     if (normalized.isEmpty || _devicePushToken == normalized) {
       return;
     }
     _devicePushToken = normalized;
-    if (_connected && _selectedSessionId.isNotEmpty) {
-      _service.send({
-        'action': 'register_push_token',
-        'sessionId': _selectedSessionId,
-        'token': normalized,
-        'platform': 'ios',
-      });
-    }
+    _sendCachedPushTokenIfPossible();
   }
 
   void handleForegroundStateChanged(bool isForeground) {
@@ -1143,7 +1202,7 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> connect({
-    bool restoreSession = true,
+    bool restoreSession = false,
     bool silently = false,
   }) async {
     if (_connecting) {
@@ -1178,10 +1237,8 @@ class SessionController extends ChangeNotifier {
       _connected = true;
       _reconnecting = false;
       _reconnectAttempt = 0;
-      _connectionStage = reconnectTarget.isNotEmpty
-          ? SessionConnectionStage.catchingUp
-          : SessionConnectionStage.connected;
-      _connectionMessage = reconnectTarget.isNotEmpty ? '恢复会话中...' : '已连接';
+      _connectionStage = SessionConnectionStage.connected;
+      _connectionMessage = '已连接';
       _autoSessionRequested = false;
       _autoSessionCreating = false;
       _runtimePermissionMode = '';
@@ -1189,20 +1246,19 @@ class SessionController extends ChangeNotifier {
       _codexModelCatalogMessage = '';
       _codexModelCatalogUnavailable = false;
       _codexModelCatalog.clear();
+      _claudeModelCatalogLoading = false;
+      _claudeModelCatalogMessage = '';
+      _claudeModelCatalogUnavailable = false;
+      _claudeModelCatalog.clear();
       await switchWorkingDirectory(_config.cwd);
       requestRuntimeInfo('context');
       requestSkillCatalog();
       requestMemoryList();
       requestSessionList();
       requestAdbDevices();
-      if (reconnectTarget.isNotEmpty) {
-        _resumeSession(reconnectTarget,
-            reason: silently ? 'reconnect' : 'restore');
-      } else {
-        requestSessionContext();
-        requestPermissionRuleList();
-        requestReviewState();
-      }
+      requestSessionContext();
+      requestPermissionRuleList();
+      requestReviewState();
     } catch (error) {
       _connected = false;
       if (silently && _autoReconnectEnabled) {
@@ -1372,14 +1428,6 @@ class SessionController extends ChangeNotifier {
     if (_autoSessionCreating) {
       return;
     }
-    _autoSessionRequested = true;
-    if (items.isEmpty) {
-      _autoSessionCreating = true;
-      _requestAutoCreateSession();
-      return;
-    }
-    _autoSessionCreating = false;
-    _requestAutoLoadSession(items.first.id);
   }
 
   void createSession([String title = '']) {
@@ -1388,14 +1436,6 @@ class SessionController extends ChangeNotifier {
       'action': 'session_create',
       'cwd': effectiveCwd,
       if (title.isNotEmpty) 'title': title,
-    });
-  }
-
-  void _requestAutoCreateSession() {
-    _service.send({
-      'action': 'session_create',
-      'cwd': effectiveCwd,
-      'reason': 'auto_bind',
     });
   }
 
@@ -1411,36 +1451,6 @@ class SessionController extends ChangeNotifier {
       'action': 'session_load',
       'sessionId': targetId,
       'cwd': effectiveCwd,
-    });
-  }
-
-  void _resumeSession(String sessionId, {String reason = ''}) {
-    final targetId = sessionId.trim();
-    if (targetId.isEmpty) {
-      return;
-    }
-    _connectionStage = SessionConnectionStage.catchingUp;
-    _connectionMessage = '恢复会话中...';
-    _service.send({
-      'action': 'session_resume',
-      'sessionId': targetId,
-      'cwd': effectiveCwd,
-      'lastSeenEventCursor': _sessionEventCursors[targetId] ?? 0,
-      'lastKnownRuntimeState': _lastKnownRuntimeState,
-      if (reason.isNotEmpty) 'reason': reason,
-    });
-  }
-
-  void _requestAutoLoadSession(String sessionId) {
-    final targetId = sessionId.trim();
-    if (targetId.isEmpty) {
-      return;
-    }
-    _service.send({
-      'action': 'session_load',
-      'sessionId': targetId,
-      'cwd': effectiveCwd,
-      'reason': 'auto_bind',
     });
   }
 
@@ -2384,6 +2394,32 @@ class SessionController extends ChangeNotifier {
       _handleSlashCommand(value);
       return;
     }
+    final lower = value.toLowerCase();
+    final isAiCommand = _isAiCommand(lower);
+    if (isAiCommand) {
+      if (isSessionBusy) {
+        if (hasPendingReview) {
+          _pushSystem('session', '当前会话仍在运行，请先完成待审核 diff，再继续处理。');
+        } else {
+          _pushSystem('session', '当前会话仍在运行，暂时不能发起新的命令。');
+        }
+        return;
+      }
+      _resetActionNeededTracking();
+      final aiHead = lower.split(RegExp(r'\s+')).first;
+      final aiPrompt =
+          lower == aiHead ? '' : value.substring(value.indexOf(' ') + 1).trim();
+      _startClaudeTurn(
+        aiPrompt,
+        meta: currentMeta,
+        label: '命令',
+        targetEngine: aiHead,
+      );
+      if (lower == aiHead) {
+        _pushUser(value, '命令');
+      }
+      return;
+    }
     if (shouldShowClaudeMode) {
       if (isSessionBusy &&
           !_canBypassBusyGuardForCodexContinuation &&
@@ -2395,43 +2431,17 @@ class SessionController extends ChangeNotifier {
       _submitClaudeContinuation(value, label: '回复');
       return;
     }
-    final lower = value.toLowerCase();
-    final isAiCommand = _isAiCommand(lower);
-    if (!isAiCommand) {
-      _clearPendingAiLaunch();
-      _lastAssistantReplyExecutionKey = '';
-      _service.send({
-        'action': 'exec',
-        'cmd': value,
-        'cwd': effectiveCwd,
-        'mode': 'pty',
-        ...currentMeta.toJson(),
-        'permissionMode': _config.permissionMode,
-      });
-      _pushUser(value, '命令');
-      return;
-    }
-    if (isSessionBusy) {
-      if (hasPendingReview) {
-        _pushSystem('session', '当前会话仍在运行，请先完成待审核 diff，再继续处理。');
-      } else {
-        _pushSystem('session', '当前会话仍在运行，暂时不能发起新的命令。');
-      }
-      return;
-    }
-    _resetActionNeededTracking();
-    final aiHead = lower.split(RegExp(r'\s+')).first;
-    final aiPrompt =
-        lower == aiHead ? '' : value.substring(value.indexOf(' ') + 1).trim();
-    _startClaudeTurn(
-      aiPrompt,
-      meta: currentMeta,
-      label: '命令',
-      targetEngine: aiHead,
-    );
-    if (lower == aiHead) {
-      _pushUser(value, '命令');
-    }
+    _clearPendingAiLaunch();
+    _lastAssistantReplyExecutionKey = '';
+    _service.send({
+      'action': 'exec',
+      'cmd': value,
+      'cwd': effectiveCwd,
+      'mode': 'pty',
+      ...currentMeta.toJson(),
+      'permissionMode': _config.permissionMode,
+    });
+    _pushUser(value, '命令');
   }
 
   void submitPromptOption(String value) {
@@ -2906,6 +2916,24 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void requestClaudeModelCatalog({bool force = false}) {
+    if (!_connected) {
+      return;
+    }
+    if (_claudeModelCatalogLoading && !force) {
+      return;
+    }
+    _claudeModelCatalogLoading = true;
+    _claudeModelCatalogMessage = 'Claude 模型目录同步中...';
+    _claudeModelCatalogUnavailable = false;
+    _service.send({
+      'action': 'runtime_info',
+      'query': 'claude_models',
+      'cwd': effectiveCwd,
+    });
+    notifyListeners();
+  }
+
   CodexModelCatalogEntry? codexModelCatalogEntry(String model) {
     return _findCodexModelCatalogEntry(model);
   }
@@ -2945,7 +2973,10 @@ class SessionController extends ChangeNotifier {
     if (!canStopCurrentRun) {
       return;
     }
+    _pendingAiLaunchAwaitingFirstInput = false;
     _service.send({'action': 'stop'});
+    _syncDerivedState();
+    notifyListeners();
   }
 
   void requestRuntimeProcessList() {
@@ -3056,6 +3087,7 @@ class SessionController extends ChangeNotifier {
         _autoSessionCreating = false;
         _selectedSessionId = created.summary.id;
         _selectedSessionTitle = sessionDisplayTitle(created.summary);
+        _sendCachedPushTokenIfPossible();
         _resetNewSessionState();
         _upsertSession(created.summary);
         requestSessionContext();
@@ -3102,6 +3134,7 @@ class SessionController extends ChangeNotifier {
             _resolvedHistorySummary(history.summary, history.logEntries);
         _selectedSessionId = resolvedHistorySummary.id;
         _selectedSessionTitle = sessionDisplayTitle(resolvedHistorySummary);
+        _sendCachedPushTokenIfPossible();
         _sessionContext = history.sessionContext;
         _skillCatalogMeta = history.skillCatalogMeta;
         _memoryCatalogMeta = history.memoryCatalogMeta;
@@ -3459,6 +3492,7 @@ class SessionController extends ChangeNotifier {
         );
         break;
       case RuntimeInfoResultEvent runtimeInfo:
+        _runtimeInfo = runtimeInfo;
         if (runtimeInfo.query.trim().toLowerCase() == 'codex_models') {
           _codexModelCatalogLoading = false;
           _codexModelCatalogMessage = runtimeInfo.message.trim();
@@ -3471,9 +3505,29 @@ class SessionController extends ChangeNotifier {
           _codexModelCatalog
             ..clear()
             ..addAll(nextCatalog);
+          _maybeAutoSyncAiModel(
+            runtimeInfo.runtimeMeta,
+            runtimeInfo: runtimeInfo,
+          );
           break;
         }
-        _runtimeInfo = runtimeInfo;
+        if (runtimeInfo.query.trim().toLowerCase() == 'claude_models') {
+          _claudeModelCatalogLoading = false;
+          _claudeModelCatalogMessage = runtimeInfo.message.trim();
+          _claudeModelCatalogUnavailable = runtimeInfo.unavailable;
+          final nextCatalog = runtimeInfo.items
+              .map(ClaudeModelCatalogEntry.fromRuntimeInfoItem)
+              .where((item) => item.model.trim().isNotEmpty)
+              .toList();
+          _claudeModelCatalog
+            ..clear()
+            ..addAll(nextCatalog);
+          _maybeAutoSyncAiModel(
+            runtimeInfo.runtimeMeta,
+            runtimeInfo: runtimeInfo,
+          );
+          break;
+        }
         _maybeAutoSyncAiModel(
           runtimeInfo.runtimeMeta,
           runtimeInfo: runtimeInfo,
@@ -4396,11 +4450,13 @@ class SessionController extends ChangeNotifier {
       return;
     }
     if (kind == 'markdown') {
-      _lastAssistantReplyExecutionKey = _runtimeExecutionKey(log.runtimeMeta);
+      final executionKey = _runtimeExecutionKey(log.runtimeMeta);
+      _lastAssistantReplyExecutionKey = executionKey;
       _markTerminalExecutionFinished(
         log.runtimeMeta,
         finishedAt: log.timestamp,
       );
+      _syncDerivedState();
     }
     _pushTimelineItem(
       TimelineItem(
@@ -5441,6 +5497,7 @@ class SessionController extends ChangeNotifier {
   }
 
   void _syncDerivedState() {
+    _clearPendingAiLaunchIfIdle();
     _syncRuntimePermissionMode();
     _syncReviewGroupsFromRecentDiffs();
     _agentPhaseLabel = _compactAgentMessage();
@@ -5729,21 +5786,6 @@ class SessionController extends ChangeNotifier {
       return '思考中';
     }
     return '已连接';
-  }
-
-  String get _lastKnownRuntimeState {
-    final agentState = (_agentState?.state ?? '').trim();
-    if (agentState.isNotEmpty) {
-      return agentState;
-    }
-    final sessionState = (_sessionState?.state ?? '').trim();
-    if (sessionState.isNotEmpty) {
-      return sessionState;
-    }
-    if (_connectionStage == SessionConnectionStage.catchingUp) {
-      return 'RECOVERING';
-    }
-    return '';
   }
 
   void _appendTerminalLog(

@@ -40,5 +40,18 @@ void main() {
         'claude-sonnet-4-20250514',
       );
     });
+
+    test('treats aliased and pinned Claude selections as equivalent', () {
+      expect(isEquivalentClaudeModelSelection('Opus Plan', 'opusplan'), isTrue);
+      expect(isEquivalentClaudeModelSelection('sonnet-1m', 'sonnet[1m]'), isTrue);
+      expect(
+        isEquivalentClaudeModelSelection(
+          'Claude-Sonnet-4-20250514',
+          'claude-sonnet-4-20250514',
+        ),
+        isTrue,
+      );
+      expect(isEquivalentClaudeModelSelection('opus', 'haiku'), isFalse);
+    });
   });
 }
