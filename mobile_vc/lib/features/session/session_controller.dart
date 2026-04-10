@@ -229,6 +229,7 @@ class SessionController extends ChangeNotifier {
   bool _isSavingMemory = false;
   bool _sessionPermissionRulesEnabled = true;
   bool _persistentPermissionRulesEnabled = false;
+  bool _suppressStoppedAiUiState = false;
   SessionContext? _pendingSessionContextTarget;
   SessionContext? _pendingSessionContextRollback;
   final List<AdbDevice> _adbDevices = [];
@@ -2370,6 +2371,7 @@ class SessionController extends ChangeNotifier {
     if (value.isEmpty) {
       return;
     }
+    _suppressStoppedAiUiState = false;
     if (_isLoadingSession) {
       _pushSystem('session', '会话切换中，请等待加载完成');
       return;
@@ -2974,7 +2976,18 @@ class SessionController extends ChangeNotifier {
     if (!canStopCurrentRun) {
       return;
     }
+    _suppressStoppedAiUiState = true;
+    _pendingAiLaunchEngine = '';
     _pendingAiLaunchAwaitingFirstInput = false;
+    _canResumeCurrentSession = false;
+    _resumeRuntimeMeta = const RuntimeMeta();
+    _runtimeInfo = null;
+    _pendingPrompt = null;
+    _pendingInteraction = null;
+    _runtimePhase = null;
+    _agentState = null;
+    _sessionState = null;
+    _lastAssistantReplyExecutionKey = '';
     _service.send({'action': 'stop'});
     _syncDerivedState();
     notifyListeners();
@@ -3242,6 +3255,10 @@ class SessionController extends ChangeNotifier {
         _emitResumeNotification(notice);
         break;
       case SessionStateEvent state:
+        if (_suppressStoppedAiUiState &&
+            _looksLikeAiRuntimeMeta(state.runtimeMeta)) {
+          break;
+        }
         _sessionState = state;
         _maybeAutoSyncAiModel(state.runtimeMeta);
         _syncRuntimePermissionMode();
@@ -3267,6 +3284,10 @@ class SessionController extends ChangeNotifier {
         _handleSessionStateTimeline(state);
         break;
       case AgentStateEvent agent:
+        if (_suppressStoppedAiUiState &&
+            _looksLikeAiRuntimeMeta(agent.runtimeMeta)) {
+          break;
+        }
         _agentState = agent;
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
@@ -3291,6 +3312,10 @@ class SessionController extends ChangeNotifier {
         _syncDerivedState();
         break;
       case RuntimePhaseEvent runtimePhase:
+        if (_suppressStoppedAiUiState &&
+            _looksLikeAiRuntimeMeta(runtimePhase.runtimeMeta)) {
+          break;
+        }
         _runtimePhase = runtimePhase;
         _syncRuntimePermissionMode();
         break;
@@ -3365,6 +3390,10 @@ class SessionController extends ChangeNotifier {
         _handleMutationFailure(error.message);
         break;
       case PromptRequestEvent prompt:
+        if (_suppressStoppedAiUiState &&
+            _looksLikeAiRuntimeMeta(prompt.runtimeMeta)) {
+          break;
+        }
         final currentInteraction = _pendingInteraction;
         final currentPrompt = _pendingPrompt;
         final keepBlockingPrompt = _shouldKeepExistingBlockingPrompt(
@@ -3380,6 +3409,10 @@ class SessionController extends ChangeNotifier {
         _pushDebug('收到 prompt_request', _debugReviewStateSummary());
         break;
       case InteractionRequestEvent interaction:
+        if (_suppressStoppedAiUiState &&
+            _looksLikeAiRuntimeMeta(interaction.runtimeMeta)) {
+          break;
+        }
         _pendingPrompt = null;
         _pendingInteraction = interaction;
         if (interaction.isPlan) {
@@ -5461,6 +5494,17 @@ class SessionController extends ChangeNotifier {
         message.contains('continue input') ||
         message.contains('ready for input') ||
         message == 'ready';
+  }
+
+  bool _looksLikeAiRuntimeMeta(RuntimeMeta meta) {
+    final engine = meta.engine.trim().toLowerCase();
+    final command = meta.command.trim().toLowerCase();
+    final lifecycle = meta.claudeLifecycle.trim().toLowerCase();
+    return engine == 'claude' ||
+        engine == 'codex' ||
+        engine == 'gemini' ||
+        lifecycle.isNotEmpty ||
+        _isAiCommand(command);
   }
 
   void _syncRuntimePermissionMode() {
