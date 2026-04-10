@@ -3040,6 +3040,81 @@ void main() {
       expect(item.kind, 'markdown');
     });
 
+    test('metadata 不完整时 codex 短中文回复仍会显示到 timeline', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(executionId: 'exec-codex-short-fallback'),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'codex running',
+        ),
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(executionId: 'exec-codex-short-fallback'),
+          raw: const {'type': 'log'},
+          message: '你好',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      final item = controller.timeline.singleWhere((entry) => entry.body == '你好');
+      expect(item.kind, 'markdown');
+      expect(controller.isSessionBusy, isFalse);
+    });
+
+    test('短 waiting 文本不会被误判为 assistant 回复', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(executionId: 'exec-waiting-short'),
+          raw: const {'type': 'log'},
+          message: '等待输入',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.timeline.where((item) => item.kind == 'markdown'), isEmpty);
+    });
+
+    test('短 terminal 风格文本不会被误判为 assistant 回复', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(executionId: 'exec-terminal-short'),
+          raw: const {'type': 'log'},
+          message: 'a=b',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.timeline.where((item) => item.kind == 'markdown'), isEmpty);
+    });
+
     test('带时间戳的 ws 结构化日志只保留在 terminal logs，不进入 timeline', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
