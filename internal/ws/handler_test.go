@@ -21,6 +21,7 @@ import (
 
 	"mobilevc/internal/codexsync"
 	"mobilevc/internal/protocol"
+	"mobilevc/internal/push"
 	"mobilevc/internal/runner"
 	runtimepkg "mobilevc/internal/runtime"
 	"mobilevc/internal/session"
@@ -2380,6 +2381,76 @@ func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
 
 func intPtr(v int) *int {
 	return &v
+}
+
+func TestHandlerPtyInputFlowSendsPushWhenTokenRegistered(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(
+		protocol.NewPromptRequestEvent("ignored", "Proceed? [y/N]", []string{"y", "n"}),
+	)
+
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	mockPush := push.NewMockAPNsService()
+	h.SessionStore = tempStore
+	h.PushService = mockPush
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "pty-input-push")
+	if err := tempStore.SavePushToken(context.Background(), sessionID, "device-token-1", "ios"); err != nil {
+		t.Fatalf("save push token: %v", err)
+	}
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "exec"},
+		Command:     "printf 'ignored'",
+		Mode:        "pty",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "THINKING", false)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	requireAgentState(t, readUntilType(t, conn, protocol.EventTypeAgentState), "WAIT_INPUT", true)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(mockPush.SentNotifications) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(mockPush.SentNotifications) != 1 {
+		t.Fatalf("expected 1 push notification, got %#v", mockPush.SentNotifications)
+	}
+	if mockPush.SentNotifications[0].Token != "device-token-1" {
+		t.Fatalf("unexpected push token: %#v", mockPush.SentNotifications[0])
+	}
+	if mockPush.SentNotifications[0].Body != "Proceed? [y/N]" {
+		t.Fatalf("unexpected push body: %#v", mockPush.SentNotifications[0])
+	}
+
+	if err := conn.WriteJSON(protocol.InputRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "input"},
+		Data:        "y\n",
+	}); err != nil {
+		t.Fatalf("write input request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		if string(payload) != "y\n" {
+			t.Fatalf("expected y\\n payload, got %q", string(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive input payload")
+	}
+
+	requireAgentState(t, readEventMap(t, conn), "THINKING", false)
 }
 
 func TestHandlerPtyInputFlow(t *testing.T) {

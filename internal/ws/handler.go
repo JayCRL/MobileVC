@@ -453,6 +453,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			default:
 				event = prepareSessionEventForResume(sessionRuntime, runtimeSessionID, event)
 				emitSessionEvent(event)
+				h.sendPushNotificationIfNeeded(ctx, runtimeSessionID, event)
 				snapshot, ok := applyEventToProjection(buildProjectionSnapshotForService(runtimeSessionID, sessionRuntimeSvc), event)
 				if ok {
 					persistProjectionFor(runtimeSessionID, snapshot)

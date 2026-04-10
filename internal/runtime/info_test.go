@@ -104,3 +104,63 @@ func TestBuildRuntimeInfoResultCodexModelsUnavailableOnFetchFailure(t *testing.T
 		t.Fatalf("unexpected unavailable payload: %#v", result.Items)
 	}
 }
+
+func TestBuildRuntimeInfoResultClaudeModelsFallsBackToNativeCLI(t *testing.T) {
+	previousAPI := fetchClaudeModelsFromAPI
+	previousNative := fetchClaudeModelsFromNativeCLI
+	fetchClaudeModelsFromAPI = func(baseURL, authToken, currentModel string) ([]protocol.RuntimeInfoItem, error) {
+		return nil, errors.New("api unavailable")
+	}
+	fetchClaudeModelsFromNativeCLI = func(cwd, currentModel string) ([]protocol.RuntimeInfoItem, error) {
+		if cwd == "" {
+			t.Fatal("expected cwd for native CLI fallback")
+		}
+		if currentModel != "sonnet" {
+			t.Fatalf("expected current model sonnet, got %q", currentModel)
+		}
+		return []protocol.RuntimeInfoItem{
+			{Label: "sonnet", Value: "Sonnet", Available: true, Status: "default"},
+			{Label: "Opus Plan", Value: "Opus Plan", Available: true, Status: "ready"},
+		}, nil
+	}
+	defer func() {
+		fetchClaudeModelsFromAPI = previousAPI
+		fetchClaudeModelsFromNativeCLI = previousNative
+	}()
+
+	items, err := fetchClaudeModelCatalogWithSettings("/tmp", claudeSettings{
+		Model: "sonnet",
+		Env: map[string]string{
+			"ANTHROPIC_BASE_URL":  "https://api.example.com",
+			"ANTHROPIC_AUTH_TOKEN": "secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("fetchClaudeModelCatalogWithSettings returned error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 Claude items, got %d", len(items))
+	}
+	if items[1].Label != "Opus Plan" {
+		t.Fatalf("expected native fallback item, got %#v", items)
+	}
+}
+
+func TestParseClaudeModelCLIOutput(t *testing.T) {
+	items, err := parseClaudeModelCLIOutput("Available models:\n- Sonnet\n- Opus Plan (planning)\n- claude-sonnet-4-20250514\n", "Sonnet")
+	if err != nil {
+		t.Fatalf("parseClaudeModelCLIOutput returned error: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 parsed models, got %d", len(items))
+	}
+	if items[0].Status != "default" {
+		t.Fatalf("expected first item to be default, got %#v", items[0])
+	}
+	if items[1].Label != "Opus Plan" {
+		t.Fatalf("expected Opus Plan label, got %#v", items[1])
+	}
+	if items[2].Label != "claude-sonnet-4-20250514" {
+		t.Fatalf("expected pinned model label, got %#v", items[2])
+	}
+}

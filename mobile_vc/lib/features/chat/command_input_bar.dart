@@ -5,6 +5,7 @@ class CommandInputBar extends StatefulWidget {
     super.key,
     required this.awaitInput,
     required this.isBusy,
+    required this.canStop,
     required this.hasPendingReview,
     required this.fastMode,
     required this.permissionMode,
@@ -30,6 +31,7 @@ class CommandInputBar extends StatefulWidget {
 
   final bool awaitInput;
   final bool isBusy;
+  final bool canStop;
   final bool hasPendingReview;
   final bool fastMode;
   final String permissionMode;
@@ -66,7 +68,7 @@ class _CommandInputBarState extends State<CommandInputBar> {
       widget.shouldShowReviewChoices ||
       widget.shouldShowPlanChoices;
 
-  bool get _showStopAction => !_inputLocked && widget.isBusy && !widget.awaitInput;
+  bool get _showStopAction => widget.canStop;
 
   String get _lockedHintText {
     if (widget.isSessionLoading) {

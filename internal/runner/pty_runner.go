@@ -962,6 +962,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 				r.finishLazyProcess(waitErr, sink, req.SessionID)
 				return
 			}
+			sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
 			r.finishLazyProcess(nil, sink, req.SessionID)
 		}()
 
@@ -1026,6 +1027,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 			r.finishLazyProcess(waitErr, sink, req.SessionID)
 			return
 		}
+		sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateClosed), "command finished"))
 		r.finishLazyProcess(nil, sink, req.SessionID)
 	}()
 
