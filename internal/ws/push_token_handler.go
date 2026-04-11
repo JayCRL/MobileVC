@@ -34,6 +34,4 @@ func (h *Handler) handleRegisterPushToken(ctx context.Context, sessionID, token,
 	}
 
 	logx.Info("ws", "push token registered: sessionID=%s platform=%s", sessionID, platform)
-	// 发送成功响应（使用简单的 log event）
-	emit(protocol.NewLogEvent(sessionID, "push token registered", "info"))
 }

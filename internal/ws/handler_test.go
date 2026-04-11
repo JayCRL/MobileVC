@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -2396,7 +2397,7 @@ func intPtr(v int) *int {
 	return &v
 }
 
-func TestHandlerRegisterPushTokenPersistsExplicitSessionAndEmitsSuccess(t *testing.T) {
+func TestHandlerRegisterPushTokenPersistsExplicitSessionWithoutSuccessLog(t *testing.T) {
 	tempStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("new file store: %v", err)
@@ -2414,24 +2415,34 @@ func TestHandlerRegisterPushTokenPersistsExplicitSessionAndEmitsSuccess(t *testi
 		t.Fatalf("write register_push_token request: %v", err)
 	}
 
-	logEvent := readUntilType(t, conn, protocol.EventTypeLog)
-	if logEvent["msg"] != "push token registered" {
-		t.Fatalf("expected success log event, got %#v", logEvent)
-	}
-	if logEvent["sessionId"] != sessionID {
-		t.Fatalf("expected success log session %q, got %#v", sessionID, logEvent)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		token, platform, err := tempStore.GetPushToken(context.Background(), sessionID)
+		if err == nil && token != "" {
+			if token != "device-token-explicit" || platform != "ios" {
+				t.Fatalf("unexpected push token payload: token=%q platform=%q", token, platform)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("get push token before deadline: token=%q platform=%q err=%v", token, platform, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	token, platform, err := tempStore.GetPushToken(context.Background(), sessionID)
-	if err != nil {
-		t.Fatalf("get push token: %v", err)
+	_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("expected no success log event after register_push_token")
+	} else {
+		var netErr net.Error
+		if !errors.As(err, &netErr) || !netErr.Timeout() {
+			t.Fatalf("expected read timeout, got %v", err)
+		}
 	}
-	if token != "device-token-explicit" || platform != "ios" {
-		t.Fatalf("unexpected push token payload: token=%q platform=%q", token, platform)
-	}
+	_ = conn.SetReadDeadline(time.Time{})
 }
 
-func TestHandlerRegisterPushTokenFallsBackToSelectedSession(t *testing.T) {
+func TestHandlerRegisterPushTokenFallsBackToSelectedSessionWithoutSuccessLog(t *testing.T) {
 	tempStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("new file store: %v", err)
@@ -2448,21 +2459,31 @@ func TestHandlerRegisterPushTokenFallsBackToSelectedSession(t *testing.T) {
 		t.Fatalf("write register_push_token request: %v", err)
 	}
 
-	logEvent := readUntilType(t, conn, protocol.EventTypeLog)
-	if logEvent["msg"] != "push token registered" {
-		t.Fatalf("expected success log event, got %#v", logEvent)
-	}
-	if logEvent["sessionId"] != sessionID {
-		t.Fatalf("expected fallback session %q, got %#v", sessionID, logEvent)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		token, platform, err := tempStore.GetPushToken(context.Background(), sessionID)
+		if err == nil && token != "" {
+			if token != "device-token-selected" || platform != "ios" {
+				t.Fatalf("unexpected push token payload: token=%q platform=%q", token, platform)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("get push token before deadline: token=%q platform=%q err=%v", token, platform, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	token, platform, err := tempStore.GetPushToken(context.Background(), sessionID)
-	if err != nil {
-		t.Fatalf("get push token: %v", err)
+	_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("expected no success log event after register_push_token")
+	} else {
+		var netErr net.Error
+		if !errors.As(err, &netErr) || !netErr.Timeout() {
+			t.Fatalf("expected read timeout, got %v", err)
+		}
 	}
-	if token != "device-token-selected" || platform != "ios" {
-		t.Fatalf("unexpected push token payload: token=%q platform=%q", token, platform)
-	}
+	_ = conn.SetReadDeadline(time.Time{})
 }
 
 func TestHandlerRegisterPushTokenRejectsMissingSession(t *testing.T) {
