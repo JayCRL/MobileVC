@@ -8,6 +8,11 @@ import (
 )
 
 func (h *Handler) handleRegisterPushToken(ctx context.Context, sessionID, token, platform string, emit func(any)) {
+	if h.SessionStore == nil {
+		emit(protocol.NewErrorEvent(sessionID, "session store unavailable", ""))
+		return
+	}
+
 	if sessionID == "" {
 		emit(protocol.NewErrorEvent("", "sessionId is required", ""))
 		return

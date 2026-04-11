@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'push_notification_service.dart';
 
-/// Web 平台推送服务（空实现）
-class FirebasePushNotificationService implements PushNotificationService {
+/// Web 平台推送服务（空实现，不依赖 Firebase）
+class WebPushNotificationService implements PushNotificationService {
   @override
   bool get isAvailable => false;
 
@@ -28,5 +28,5 @@ class FirebasePushNotificationService implements PushNotificationService {
 
 /// 工厂方法：创建 Web 端推送服务（空实现）
 PushNotificationService createPushNotificationService() {
-  return FirebasePushNotificationService();
+  return WebPushNotificationService();
 }
