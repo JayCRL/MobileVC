@@ -14,11 +14,21 @@
 
 ### Flutter 端
 - [x] 推送服务抽象层 `mobile_vc/lib/app/push_notification_service.dart`
-- [x] Firebase 推送实现
+- [x] iOS 原生/APNs token 获取链路
 - [x] App 生命周期集成 `mobile_vc/lib/app/app.dart`
-- [x] SessionController token 注册方法
-- [x] pubspec.yaml 添加 `firebase_core` 和 `firebase_messaging`
-- [x] iOS AppDelegate 初始化 Firebase
+- [x] SessionController token 缓存与注册方法
+- [x] 重连后对当前 session 补发 token 注册
+- [x] iOS 原生推送权限与回调接入
+
+## 📋 当前 token 注册链路
+
+1. App 启动后先获取 iOS APNs token，并通过 `SessionController.setDevicePushToken()` 缓存在 Flutter 侧。
+2. 只有在 websocket 已连接、且当前存在选中 session 时，才会发送 `register_push_token`。
+3. 以下时机会自动补发缓存 token：
+   - 新建 session 后
+   - 恢复/加载历史 session 后
+   - 断线重连成功且当前 session 仍然选中时
+4. 后端注册成功后会返回可观测事件（如 `push token registered` 日志事件）；参数不合法时会返回 error event。
 
 ## 📋 需要手动完成的配置步骤
 

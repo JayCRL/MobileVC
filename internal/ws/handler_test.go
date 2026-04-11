@@ -2396,6 +2396,143 @@ func intPtr(v int) *int {
 	return &v
 }
 
+func TestHandlerRegisterPushTokenPersistsExplicitSessionAndEmitsSuccess(t *testing.T) {
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	h := NewHandler("test", tempStore)
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "push-register-explicit")
+	if err := conn.WriteJSON(protocol.RegisterPushTokenRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "register_push_token"},
+		SessionID:   sessionID,
+		Token:       "device-token-explicit",
+	}); err != nil {
+		t.Fatalf("write register_push_token request: %v", err)
+	}
+
+	logEvent := readUntilType(t, conn, protocol.EventTypeLog)
+	if logEvent["msg"] != "push token registered" {
+		t.Fatalf("expected success log event, got %#v", logEvent)
+	}
+	if logEvent["sessionId"] != sessionID {
+		t.Fatalf("expected success log session %q, got %#v", sessionID, logEvent)
+	}
+
+	token, platform, err := tempStore.GetPushToken(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get push token: %v", err)
+	}
+	if token != "device-token-explicit" || platform != "ios" {
+		t.Fatalf("unexpected push token payload: token=%q platform=%q", token, platform)
+	}
+}
+
+func TestHandlerRegisterPushTokenFallsBackToSelectedSession(t *testing.T) {
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	h := NewHandler("test", tempStore)
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "push-register-selected")
+	if err := conn.WriteJSON(protocol.RegisterPushTokenRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "register_push_token"},
+		Token:       "device-token-selected",
+	}); err != nil {
+		t.Fatalf("write register_push_token request: %v", err)
+	}
+
+	logEvent := readUntilType(t, conn, protocol.EventTypeLog)
+	if logEvent["msg"] != "push token registered" {
+		t.Fatalf("expected success log event, got %#v", logEvent)
+	}
+	if logEvent["sessionId"] != sessionID {
+		t.Fatalf("expected fallback session %q, got %#v", sessionID, logEvent)
+	}
+
+	token, platform, err := tempStore.GetPushToken(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get push token: %v", err)
+	}
+	if token != "device-token-selected" || platform != "ios" {
+		t.Fatalf("unexpected push token payload: token=%q platform=%q", token, platform)
+	}
+}
+
+func TestHandlerRegisterPushTokenRejectsMissingSession(t *testing.T) {
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	h := NewHandler("test", tempStore)
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	if err := conn.WriteJSON(protocol.RegisterPushTokenRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "register_push_token"},
+		Token:       "device-token-missing-session",
+	}); err != nil {
+		t.Fatalf("write register_push_token request: %v", err)
+	}
+
+	errorEvent := readUntilType(t, conn, protocol.EventTypeError)
+	if errorEvent["msg"] != "sessionId is required" {
+		t.Fatalf("expected missing session error, got %#v", errorEvent)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tempStore.BaseDir(), "push_tokens.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		t.Fatalf("read push_tokens.json: %v", err)
+	}
+	if strings.Contains(string(data), "\"\":") {
+		t.Fatalf("expected no empty session key, got %s", string(data))
+	}
+}
+
+func TestHandlerRegisterPushTokenRejectsEmptyToken(t *testing.T) {
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	h := NewHandler("test", tempStore)
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "push-register-empty-token")
+	if err := conn.WriteJSON(protocol.RegisterPushTokenRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "register_push_token"},
+		SessionID:   sessionID,
+		Token:       "   ",
+	}); err != nil {
+		t.Fatalf("write register_push_token request: %v", err)
+	}
+
+	errorEvent := readUntilType(t, conn, protocol.EventTypeError)
+	if errorEvent["msg"] != "token is required" {
+		t.Fatalf("expected empty token error, got %#v", errorEvent)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tempStore.BaseDir(), "push_tokens.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		t.Fatalf("read push_tokens.json: %v", err)
+	}
+	if strings.Contains(string(data), sessionID) {
+		t.Fatalf("expected no persisted token for %q, got %s", sessionID, string(data))
+	}
+}
+
 func TestHandlerPtyInputFlowSendsPushWhenTokenRegistered(t *testing.T) {
 	ptyRunner := newHoldingStubRunner(
 		protocol.NewPromptRequestEvent("ignored", "Proceed? [y/N]", []string{"y", "n"}),

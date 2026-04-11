@@ -1,98 +1,98 @@
+import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/services.dart';
+
 import 'push_notification_service.dart';
 
-/// Firebase 推送服务实现（移动端）
-class FirebasePushNotificationService implements PushNotificationService {
+class APNsPushNotificationService implements PushNotificationService {
+  static const MethodChannel _channel = MethodChannel('top.mobilevc.app/push');
+
   bool _initialized = false;
   String? _cachedToken;
+  void Function(String token)? _tokenRefreshCallback;
+  void Function(Map<String, dynamic> message)? _messageReceivedCallback;
+  void Function(Map<String, dynamic> message)? _messageOpenedAppCallback;
+  void Function(String message)? _registrationErrorCallback;
 
   @override
-  bool get isAvailable => Platform.isIOS || Platform.isAndroid;
+  bool get isAvailable => Platform.isIOS;
 
   @override
   Future<void> initialize() async {
     if (_initialized) return;
-
-    if (!isAvailable) {
-      debugPrint('[push] platform not supported');
-      return;
-    }
-
-    try {
-      // iOS 需要请求权限
-      if (Platform.isIOS) {
-        final settings = await FirebaseMessaging.instance.requestPermission(
-          alert: true,
-          badge: true,
-          sound: true,
-        );
-        debugPrint('[push] iOS permission: ${settings.authorizationStatus}');
-      }
-
-      // 获取 token
-      _cachedToken = await FirebaseMessaging.instance.getToken();
-      debugPrint('[push] device token: $_cachedToken');
-
-      _initialized = true;
-    } catch (e) {
-      debugPrint('[push] initialize failed: $e');
-    }
+    _initialized = true;
+    _channel.setMethodCallHandler(_handleMethodCall);
+    await _channel.invokeMethod<void>('requestPermissionAndRegister');
+    _cachedToken = await getDeviceToken();
+    debugPrint('[push] APNs initialized token=$_cachedToken');
   }
 
   @override
   Future<String?> getDeviceToken() async {
-    if (!_initialized) await initialize();
+    if (!_initialized) {
+      await initialize();
+    }
+    final token = await _channel.invokeMethod<String>('getDeviceToken');
+    if (token != null && token.trim().isNotEmpty) {
+      _cachedToken = token.trim();
+    }
     return _cachedToken;
   }
 
   @override
   void onTokenRefresh(void Function(String token) callback) {
-    FirebaseMessaging.instance.onTokenRefresh.listen((token) {
-      _cachedToken = token;
-      callback(token);
-    });
+    _tokenRefreshCallback = callback;
   }
 
   @override
-  void onMessageReceived(
-      void Function(Map<String, dynamic> message) callback) {
-    FirebaseMessaging.onMessage.listen((remoteMessage) {
-      callback({
-        'title': remoteMessage.notification?.title ?? '',
-        'body': remoteMessage.notification?.body ?? '',
-        'data': remoteMessage.data,
-      });
-    });
+  void onMessageReceived(void Function(Map<String, dynamic> message) callback) {
+    _messageReceivedCallback = callback;
   }
 
   @override
   void onMessageOpenedApp(
-      void Function(Map<String, dynamic> message) callback) {
-    // 监听从通知打开 App
-    FirebaseMessaging.onMessageOpenedApp.listen((remoteMessage) {
-      callback({
-        'title': remoteMessage.notification?.title ?? '',
-        'body': remoteMessage.notification?.body ?? '',
-        'data': remoteMessage.data,
-      });
-    });
+    void Function(Map<String, dynamic> message) callback,
+  ) {
+    _messageOpenedAppCallback = callback;
+  }
 
-    // 检查是否从通知冷启动
-    FirebaseMessaging.instance.getInitialMessage().then((remoteMessage) {
-      if (remoteMessage != null) {
-        callback({
-          'title': remoteMessage.notification?.title ?? '',
-          'body': remoteMessage.notification?.body ?? '',
-          'data': remoteMessage.data,
-        });
-      }
-    });
+  @override
+  void onRegistrationError(void Function(String message) callback) {
+    _registrationErrorCallback = callback;
+  }
+
+  Future<void> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'onToken':
+        final token = (call.arguments as String?)?.trim() ?? '';
+        if (token.isEmpty) return;
+        _cachedToken = token;
+        _tokenRefreshCallback?.call(token);
+        return;
+      case 'onRegistrationError':
+        final message = (call.arguments as String?)?.trim() ?? 'APNs registration failed';
+        _registrationErrorCallback?.call(message);
+        return;
+      case 'onMessageReceived':
+        final payload = Map<String, dynamic>.from(
+          (call.arguments as Map?)?.cast<dynamic, dynamic>() ?? const {},
+        );
+        _messageReceivedCallback?.call(payload);
+        return;
+      case 'onMessageOpenedApp':
+        final payload = Map<String, dynamic>.from(
+          (call.arguments as Map?)?.cast<dynamic, dynamic>() ?? const {},
+        );
+        _messageOpenedAppCallback?.call(payload);
+        return;
+      default:
+        return;
+    }
   }
 }
 
-/// 工厂方法：创建移动端推送服务
 PushNotificationService createPushNotificationService() {
-  return FirebasePushNotificationService();
+  return APNsPushNotificationService();
 }

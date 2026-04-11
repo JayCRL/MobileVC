@@ -83,7 +83,9 @@ void main() {
         isEmpty,
       );
       expect(
-        events.whereType<ErrorEvent>().where((e) => e.code == 'ws_stream_error'),
+        events
+            .whereType<ErrorEvent>()
+            .where((e) => e.code == 'ws_stream_error'),
         isEmpty,
       );
     });
@@ -108,7 +110,11 @@ void main() {
           timestamp: _timestamp,
           sessionId: '',
           runtimeMeta: const RuntimeMeta(),
-          raw: const {'type': 'error', 'code': 'ws_closed', 'msg': 'WebSocket 连接已断开'},
+          raw: const {
+            'type': 'error',
+            'code': 'ws_closed',
+            'msg': 'WebSocket 连接已断开'
+          },
           code: 'ws_closed',
           message: 'WebSocket 连接已断开',
         ),
@@ -186,7 +192,8 @@ void main() {
 
       expect(service.sentPayloads, isNotEmpty);
       expect(service.sentPayloads.last['action'], 'exec');
-      expect(controller.timeline.any((item) => item.body.contains('请先在上方完成授权')), isFalse);
+      expect(controller.timeline.any((item) => item.body.contains('请先在上方完成授权')),
+          isFalse);
     });
 
     test('permission prompt 到来时产出权限确认信号', () async {
@@ -1487,8 +1494,8 @@ void main() {
         SessionStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-busy-1'),
+          runtimeMeta: const RuntimeMeta(
+              command: 'codex', executionId: 'exec-codex-busy-1'),
           raw: const {'type': 'session_state'},
           state: 'RUNNING',
           message: 'codex running',
@@ -1498,8 +1505,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-busy-1'),
+          runtimeMeta: const RuntimeMeta(
+              command: 'codex', executionId: 'exec-codex-busy-1'),
           raw: const {'type': 'agent_state'},
           state: 'THINKING',
           message: '处理中',
@@ -1519,8 +1526,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-busy-1'),
+          runtimeMeta: const RuntimeMeta(
+              command: 'codex', executionId: 'exec-codex-busy-1'),
           raw: const {'type': 'agent_state'},
           state: 'WAIT_INPUT',
           message: '等待继续输入',
@@ -1542,8 +1549,8 @@ void main() {
         LogEvent(
           timestamp: _timestamp.add(const Duration(seconds: 2)),
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-busy-1'),
+          runtimeMeta: const RuntimeMeta(
+              command: 'codex', executionId: 'exec-codex-busy-1'),
           raw: const {'type': 'log'},
           message: '处理完成，我已经修好了。',
           stream: 'stdout',
@@ -1569,8 +1576,8 @@ void main() {
         SessionStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-perm-1'),
+          runtimeMeta: const RuntimeMeta(
+              command: 'codex', executionId: 'exec-codex-perm-1'),
           raw: const {'type': 'session_state'},
           state: 'RUNNING',
           message: 'codex running',
@@ -1580,8 +1587,8 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(command: 'codex', executionId: 'exec-codex-perm-1'),
+          runtimeMeta: const RuntimeMeta(
+              command: 'codex', executionId: 'exec-codex-perm-1'),
           raw: const {'type': 'agent_state'},
           state: 'THINKING',
           message: '处理中',
@@ -1700,8 +1707,8 @@ void main() {
         SessionStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(command: 'claude', executionId: 'exec-stop-claude'),
+          runtimeMeta: const RuntimeMeta(
+              command: 'claude', executionId: 'exec-stop-claude'),
           raw: const {'type': 'session_state'},
           state: 'RUNNING',
           message: 'claude running',
@@ -2705,6 +2712,228 @@ void main() {
       expect(controller.connectionStage, SessionConnectionStage.connected);
     });
 
+    test('缓存 token 会在新建 session 后补发注册', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+      controller.setDevicePushToken('apns-token-created');
+      expect(
+        service.sentPayloads
+            .where((item) => item['action'] == 'register_push_token'),
+        isEmpty,
+      );
+
+      service.emit(
+        SessionCreatedEvent(
+          timestamp: _timestamp,
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_created'},
+          summary: const SessionSummary(
+            id: 'session-created',
+            title: 'Created',
+          ),
+        ),
+      );
+      await _flushEvents();
+
+      expect(
+        service.sentPayloads
+            .where((item) => item['action'] == 'register_push_token'),
+        [
+          {
+            'action': 'register_push_token',
+            'sessionId': 'session-created',
+            'token': 'apns-token-created',
+            'platform': 'ios',
+          },
+        ],
+      );
+    });
+
+    test('缓存 token 会在恢复历史 session 后补发注册', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+      controller.setDevicePushToken('apns-token-history');
+      expect(
+        service.sentPayloads
+            .where((item) => item['action'] == 'register_push_token'),
+        isEmpty,
+      );
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-history',
+          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(
+            id: 'session-history',
+            title: '历史会话',
+          ),
+          logEntries: const [
+            HistoryLogEntry(
+              kind: 'assistant',
+              message: '上一条回复',
+              label: 'Assistant',
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(
+        service.sentPayloads
+            .where((item) => item['action'] == 'register_push_token'),
+        [
+          {
+            'action': 'register_push_token',
+            'sessionId': 'session-history',
+            'token': 'apns-token-history',
+            'platform': 'ios',
+          },
+        ],
+      );
+    });
+
+    test('缓存 token 会在重连成功后对当前 session 补发注册', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-reconnect',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(
+            id: 'session-reconnect',
+            title: '恢复中的会话',
+          ),
+          logEntries: const [
+            HistoryLogEntry(
+              kind: 'assistant',
+              message: '上一条回复',
+              label: 'Assistant',
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      service.sentPayloads.clear();
+      controller.setDevicePushToken('apns-token-reconnect');
+      expect(
+        service.sentPayloads
+            .where((item) => item['action'] == 'register_push_token'),
+        [
+          {
+            'action': 'register_push_token',
+            'sessionId': 'session-reconnect',
+            'token': 'apns-token-reconnect',
+            'platform': 'ios',
+          },
+        ],
+      );
+
+      controller.handleForegroundStateChanged(false);
+      service.sentPayloads.clear();
+      service.emit(
+        ErrorEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-reconnect',
+          runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+          raw: const {'type': 'error'},
+          message: 'websocket closed',
+          code: 'ws_closed',
+        ),
+      );
+      await _flushEvents();
+
+      controller.handleForegroundStateChanged(true);
+      await _flushEvents();
+
+      final registerPayloads = service.sentPayloads
+          .where((item) => item['action'] == 'register_push_token')
+          .toList();
+      expect(registerPayloads, [
+        {
+          'action': 'register_push_token',
+          'sessionId': 'session-reconnect',
+          'token': 'apns-token-reconnect',
+          'platform': 'ios',
+        },
+      ]);
+    });
+
+    test('切换到另一条历史 session 时会向新 session 注册缓存 token', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+      controller.setDevicePushToken('apns-token-switch');
+      expect(
+        service.sentPayloads
+            .where((item) => item['action'] == 'register_push_token'),
+        isEmpty,
+      );
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-a',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(id: 'session-a', title: 'A'),
+          logEntries: const [],
+        ),
+      );
+      await _flushEvents();
+
+      service.sentPayloads.clear();
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-b',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(id: 'session-b', title: 'B'),
+          logEntries: const [],
+        ),
+      );
+      await _flushEvents();
+
+      expect(
+        service.sentPayloads
+            .where((item) => item['action'] == 'register_push_token'),
+        [
+          {
+            'action': 'register_push_token',
+            'sessionId': 'session-b',
+            'token': 'apns-token-switch',
+            'platform': 'ios',
+          },
+        ],
+      );
+    });
+
     test('后台断开后会保留会话界面，并在回前台时静默重连恢复会话', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -2804,11 +3033,13 @@ void main() {
         isNotEmpty,
       );
       expect(
-        service.sentPayloads.where((item) => item['action'] == 'session_context_get'),
+        service.sentPayloads
+            .where((item) => item['action'] == 'session_context_get'),
         isNotEmpty,
       );
       expect(
-        service.sentPayloads.where((item) => item['action'] == 'review_state_get'),
+        service.sentPayloads
+            .where((item) => item['action'] == 'review_state_get'),
         isNotEmpty,
       );
     });
@@ -3186,7 +3417,8 @@ void main() {
         SessionStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(executionId: 'exec-codex-short-fallback'),
+          runtimeMeta:
+              const RuntimeMeta(executionId: 'exec-codex-short-fallback'),
           raw: const {'type': 'session_state'},
           state: 'RUNNING',
           message: 'codex running',
@@ -3196,7 +3428,8 @@ void main() {
         LogEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(executionId: 'exec-codex-short-fallback'),
+          runtimeMeta:
+              const RuntimeMeta(executionId: 'exec-codex-short-fallback'),
           raw: const {'type': 'log'},
           message: '你好',
           stream: 'stdout',
@@ -3204,7 +3437,8 @@ void main() {
       );
       await _flushEvents();
 
-      final item = controller.timeline.singleWhere((entry) => entry.body == '你好');
+      final item =
+          controller.timeline.singleWhere((entry) => entry.body == '你好');
       expect(item.kind, 'markdown');
       expect(controller.isSessionBusy, isFalse);
     });
@@ -3227,7 +3461,8 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.timeline.where((item) => item.kind == 'markdown'), isEmpty);
+      expect(controller.timeline.where((item) => item.kind == 'markdown'),
+          isEmpty);
     });
 
     test('短 terminal 风格文本不会被误判为 assistant 回复', () async {
@@ -3248,7 +3483,8 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.timeline.where((item) => item.kind == 'markdown'), isEmpty);
+      expect(controller.timeline.where((item) => item.kind == 'markdown'),
+          isEmpty);
     });
 
     test('带时间戳的 ws 结构化日志只保留在 terminal logs，不进入 timeline', () async {

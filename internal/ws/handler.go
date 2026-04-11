@@ -618,16 +618,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid register_push_token request: %v", err), ""))
 				continue
 			}
-			logx.Info("ws", "register push token: connectionID=%s sessionID=%s remoteAddr=%s requestedSessionID=%s platform=%s token=%s", connectionID, selectedSessionID, remoteAddr, req.SessionID, req.Platform, req.Token)
-			if h.SessionStore != nil {
-				targetSessionID := req.SessionID
-				if targetSessionID == "" {
-					targetSessionID = selectedSessionID
-				}
-				if err := h.SessionStore.SavePushToken(ctx, targetSessionID, req.Token, req.Platform); err != nil {
-					logx.Warn("ws", "save push token failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
-				}
+			targetSessionID := strings.TrimSpace(req.SessionID)
+			if targetSessionID == "" {
+				targetSessionID = strings.TrimSpace(selectedSessionID)
 			}
+			token := strings.TrimSpace(req.Token)
+			platform := strings.TrimSpace(req.Platform)
+			logx.Info("ws", "register push token: connectionID=%s sessionID=%s remoteAddr=%s requestedSessionID=%s resolvedSessionID=%s platform=%s token=%s", connectionID, selectedSessionID, remoteAddr, req.SessionID, targetSessionID, platform, token)
+			h.handleRegisterPushToken(ctx, targetSessionID, token, platform, emit)
 		case "session_resume":
 			var req protocol.SessionResumeRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {

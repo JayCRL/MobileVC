@@ -5,8 +5,8 @@ import 'package:flutter/widgets.dart';
 
 import 'app/app.dart';
 
-void main() {
-  runZonedGuarded(() {
+Future<void> main() async {
+  await runZonedGuarded(() async {
     FlutterError.onError = (details) {
       debugPrint('[startup] FlutterError: ${details.exceptionAsString()}');
       debugPrintStack(

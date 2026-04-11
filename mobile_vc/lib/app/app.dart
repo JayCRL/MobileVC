@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -47,9 +46,7 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
     );
     _backgroundKeepAliveService = BackgroundKeepAliveService();
     _pushNotificationService = widget._pushNotificationService ??
-        (Platform.isIOS
-            ? FirebasePushNotificationService()
-            : NoopPushNotificationService());
+        createPushNotificationService();
     _controller.addListener(_handleControllerChanged);
     _startApp();
   }
@@ -96,32 +93,35 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
     }
 
     try {
+      _pushNotificationService.onTokenRefresh((token) {
+        debugPrint('[push] token refreshed: $token');
+        _controller.setDevicePushToken(token);
+      });
+
+      _pushNotificationService.onRegistrationError((message) {
+        debugPrint('[push] registration error: $message');
+        _controller.pushSystemMessage('error', message);
+      });
+
+      _pushNotificationService.onMessageReceived((message) {
+        debugPrint('[push] message received: $message');
+      });
+
+      _pushNotificationService.onMessageOpenedApp((message) {
+        debugPrint('[push] message opened app: $message');
+        _controller.resumeConnectionIfNeeded();
+      });
+
       await _pushNotificationService.initialize();
       final token = await _pushNotificationService.getDeviceToken();
       if (token != null && token.isNotEmpty) {
         debugPrint('[push] device token: $token');
         _controller.setDevicePushToken(token);
       }
-
-      // 监听 token 刷新
-      _pushNotificationService.onTokenRefresh((token) {
-        debugPrint('[push] token refreshed: $token');
-        _controller.setDevicePushToken(token);
-      });
-
-      // 监听推送消息（App 在前台时）
-      _pushNotificationService.onMessageReceived((message) {
-        debugPrint('[push] message received: $message');
-        // 前台收到推送，可以显示本地通知或直接处理
-      });
-
-      // 监听用户点击推送打开 App
-      _pushNotificationService.onMessageOpenedApp((message) {
-        debugPrint('[push] message opened app: $message');
-        _controller.resumeConnectionIfNeeded();
-      });
     } catch (error, stack) {
-      debugPrint('[push] initialization failed: $error');
+      final message = '[push] initialization failed: $error';
+      debugPrint(message);
+      _controller.pushSystemMessage('error', message);
       debugPrintStack(stackTrace: stack, label: '[push] init stack');
     }
   }

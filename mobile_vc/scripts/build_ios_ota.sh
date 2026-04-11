@@ -6,6 +6,7 @@ TEAM_ID_DEFAULT="947RV2M27F"
 SERVER_DEFAULT="root@8.162.1.176"
 SERVER_DIR_DEFAULT="/var/www/mobilevc-7899/install"
 SITE_URL_DEFAULT="https://mobilevc.top/install"
+KEYCHAIN_PATH_DEFAULT="$HOME/Library/Keychains/login.keychain-db"
 
 SCRIPT_DIR="$(realpath "$(dirname "${BASH_SOURCE[0]}")")"
 PROJECT_ROOT="$(realpath "$SCRIPT_DIR/..")"
@@ -20,6 +21,9 @@ DEPLOY=0
 TESTFLIGHT_URL=""
 TESTFLIGHT_VERSION=""
 TESTFLIGHT_BUNDLE_ID=""
+KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-}"
+KEYCHAIN_PATH="${KEYCHAIN_PATH:-$KEYCHAIN_PATH_DEFAULT}"
+KEYCHAIN_SERVICE_NAME="${KEYCHAIN_SERVICE_NAME:-mobilevc-ota-keychain-password}"
 
 usage() {
   cat <<'EOF'
@@ -45,6 +49,11 @@ Options:
                         Optional TestFlight version label shown on the install page.
   --testflight-bundle-id ID
                         Optional TestFlight bundle identifier shown on the install page.
+  --keychain-password P Unlock login keychain before xcodebuild codesign.
+                        Can also be passed via KEYCHAIN_PASSWORD env.
+  --keychain-path PATH  Keychain to unlock/authorize. Default: ~/Library/Keychains/login.keychain-db.
+  --keychain-service S  macOS Keychain service name for auto-reading the password.
+                        Default: mobilevc-ota-keychain-password.
   --help                Show this message.
 
 Examples:
@@ -77,6 +86,25 @@ sanitize_generated_registrant() {
     s/\n  \[IntegrationTestPlugin registerWithRegistrar:\[registry registrarForPlugin:@"IntegrationTestPlugin"\]\];\n/\n/g;
     s/\n  \[PatrolPlugin registerWithRegistrar:\[registry registrarForPlugin:@"PatrolPlugin"\]\];\n/\n/g;
   ' "$registrant"
+}
+
+resolve_keychain_password() {
+  if [[ -n "$KEYCHAIN_PASSWORD" ]]; then
+    return 0
+  fi
+
+  KEYCHAIN_PASSWORD="$(security find-generic-password -a "$USER" -s "$KEYCHAIN_SERVICE_NAME" -w 2>/dev/null || true)"
+}
+
+prepare_keychain_for_codesign() {
+  resolve_keychain_password
+  [[ -n "$KEYCHAIN_PASSWORD" ]] || return 0
+  [[ -f "$KEYCHAIN_PATH" ]] || die "keychain not found at $KEYCHAIN_PATH"
+
+  log "unlocking keychain for codesign"
+  security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+  security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 }
 
 plist_get() {
@@ -147,6 +175,21 @@ while [[ $# -gt 0 ]]; do
       TESTFLIGHT_BUNDLE_ID="$2"
       shift 2
       ;;
+    --keychain-password)
+      [[ $# -ge 2 ]] || die "--keychain-password requires a value"
+      KEYCHAIN_PASSWORD="$2"
+      shift 2
+      ;;
+    --keychain-path)
+      [[ $# -ge 2 ]] || die "--keychain-path requires a value"
+      KEYCHAIN_PATH="$2"
+      shift 2
+      ;;
+    --keychain-service)
+      [[ $# -ge 2 ]] || die "--keychain-service requires a value"
+      KEYCHAIN_SERVICE_NAME="$2"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -206,6 +249,7 @@ log "build number: $BUILD_NUMBER"
 log "short version: $SHORT_VERSION"
 log "sanitizing GeneratedPluginRegistrant.m for OTA release"
 sanitize_generated_registrant
+prepare_keychain_for_codesign
 
 cat > "$EXPORT_OPTIONS_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -228,7 +272,7 @@ cat > "$EXPORT_OPTIONS_PLIST" <<EOF
 </plist>
 EOF
 
-log "archiving unsigned app"
+log "archiving signed app"
 if ! xcodebuild \
   -workspace "$PROJECT_ROOT/ios/Runner.xcworkspace" \
   -scheme Runner \
@@ -238,10 +282,8 @@ if ! xcodebuild \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   DEVELOPMENT_TEAM="$TEAM_ID" \
   CODE_SIGN_STYLE=Automatic \
-  CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGNING_REQUIRED=NO \
-  CODE_SIGN_IDENTITY= \
   FLUTTER_BUILD_NUMBER="$BUILD_NUMBER" \
+  -allowProvisioningUpdates \
   archive >"$ARCHIVE_LOG" 2>&1; then
   tail -n 200 "$ARCHIVE_LOG" >&2 || true
   die "archive failed, see $ARCHIVE_LOG"
