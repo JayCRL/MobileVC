@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -5,16 +7,20 @@ class NotificationPayload {
   const NotificationPayload({
     required this.title,
     required this.body,
+    this.data = const <String, dynamic>{},
   });
 
   final String title;
   final String body;
+  final Map<String, dynamic> data;
 }
 
 abstract class LocalNotificationService {
   bool get isAvailable;
 
   Future<void> initialize();
+
+  void onMessageOpenedApp(void Function(Map<String, dynamic> message) callback);
 
   Future<void> showNotification(NotificationPayload payload);
 }
@@ -45,9 +51,16 @@ class FlutterLocalNotificationService implements LocalNotificationService {
   bool _initialized = false;
   bool _available = true;
   bool _permissionGranted = true;
+  void Function(Map<String, dynamic> message)? _messageOpenedAppCallback;
 
   @override
   bool get isAvailable => _available;
+
+  @override
+  void onMessageOpenedApp(
+      void Function(Map<String, dynamic> message) callback) {
+    _messageOpenedAppCallback = callback;
+  }
 
   @override
   Future<void> initialize() async {
@@ -61,7 +74,12 @@ class FlutterLocalNotificationService implements LocalNotificationService {
         iOS: _darwinInitializationSettings,
         macOS: _darwinInitializationSettings,
       );
-      await _plugin.initialize(settings);
+      await _plugin.initialize(
+        settings,
+        onDidReceiveNotificationResponse: _handleNotificationResponse,
+        onDidReceiveBackgroundNotificationResponse:
+            _handleBackgroundNotificationResponse,
+      );
       final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       await androidPlugin?.createNotificationChannel(_channel);
@@ -135,6 +153,7 @@ class FlutterLocalNotificationService implements LocalNotificationService {
         payload.title,
         payload.body,
         details,
+        payload: payload.data.isEmpty ? null : jsonEncode(payload.data),
       );
     } catch (error, stack) {
       debugPrint('[startup] notification show failed: $error');
@@ -144,4 +163,25 @@ class FlutterLocalNotificationService implements LocalNotificationService {
       );
     }
   }
+
+  void _handleNotificationResponse(NotificationResponse response) {
+    final payload = response.payload;
+    if (payload == null || payload.trim().isEmpty) {
+      _messageOpenedAppCallback?.call(const <String, dynamic>{});
+      return;
+    }
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map) {
+        _messageOpenedAppCallback?.call(
+          Map<String, dynamic>.from(decoded.cast<dynamic, dynamic>()),
+        );
+        return;
+      }
+    } catch (_) {}
+    _messageOpenedAppCallback?.call(<String, dynamic>{'payload': payload});
+  }
 }
+
+@pragma('vm:entry-point')
+void _handleBackgroundNotificationResponse(NotificationResponse response) {}

@@ -45,8 +45,8 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
           widget._notificationService ?? FlutterLocalNotificationService(),
     );
     _backgroundKeepAliveService = BackgroundKeepAliveService();
-    _pushNotificationService = widget._pushNotificationService ??
-        createPushNotificationService();
+    _pushNotificationService =
+        widget._pushNotificationService ?? createPushNotificationService();
     _controller.addListener(_handleControllerChanged);
     _startApp();
   }
@@ -86,6 +86,27 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _handleNotificationOpen(Map<String, dynamic> message) async {
+    final sessionId = _extractNotificationSessionId(message);
+    if (sessionId.isEmpty) {
+      _controller.resumeConnectionIfNeeded();
+      return;
+    }
+    _controller.restoreSessionFromNotification(sessionId);
+  }
+
+  String _extractNotificationSessionId(Map<String, dynamic> message) {
+    final direct = (message['sessionId'] ?? '').toString().trim();
+    if (direct.isNotEmpty) {
+      return direct;
+    }
+    final nested = message['data'];
+    if (nested is Map) {
+      return (nested['sessionId'] ?? '').toString().trim();
+    }
+    return '';
+  }
+
   Future<void> _initializePushNotifications() async {
     if (!_pushNotificationService.isAvailable) {
       debugPrint('[push] service not available on this platform');
@@ -109,7 +130,7 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
 
       _pushNotificationService.onMessageOpenedApp((message) {
         debugPrint('[push] message opened app: $message');
-        _controller.resumeConnectionIfNeeded();
+        unawaited(_handleNotificationOpen(message));
       });
 
       await _pushNotificationService.initialize();
