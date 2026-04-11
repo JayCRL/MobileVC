@@ -571,13 +571,18 @@ class SessionController extends ChangeNotifier {
     }
     final command = agent.command.trim().toLowerCase();
     final engine = agent.runtimeMeta.engine.trim().toLowerCase();
-    final isCodex = command == 'codex' ||
-        command.startsWith('codex ') ||
-        engine == 'codex';
+    final isCodex =
+        command == 'codex' || command.startsWith('codex ') || engine == 'codex';
     if (!isCodex) {
       return false;
     }
-    final executionKey = _runtimeExecutionKey(agent.runtimeMeta);
+    final executionId = agent.runtimeMeta.executionId.trim();
+    final contextId = agent.runtimeMeta.contextId.trim();
+    final executionKey = executionId.isNotEmpty
+        ? 'execution:$executionId'
+        : contextId.isNotEmpty
+            ? 'context:$contextId'
+            : '';
     if (executionKey.isEmpty) {
       return false;
     }
@@ -719,6 +724,10 @@ class SessionController extends ChangeNotifier {
     }
     _activeTerminalExecutionId = normalized;
     notifyListeners();
+  }
+
+  void pushSystemMessage(String kind, String text) {
+    _pushSystem(kind, text);
   }
 
   Future<void> acceptAllPendingDiffs() async {
@@ -1127,8 +1136,8 @@ class SessionController extends ChangeNotifier {
         _normalizePath(_currentDirectoryPath) == _normalizePath(config.cwd)) {
       _currentDirectoryPath = config.cwd.trim();
     }
-    final prefs = await SharedPreferences.getInstance();
     try {
+      final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefsKey, jsonEncode(config.toJson()));
     } catch (error, stack) {
       _pushDebug('save config failed',
@@ -1137,6 +1146,7 @@ class SessionController extends ChangeNotifier {
         stackTrace: stack,
         label: '[session] save config stack',
       );
+      _pushSystem('error', '保存连接配置失败：$error');
     }
     notifyListeners();
   }
@@ -1310,6 +1320,7 @@ class SessionController extends ChangeNotifier {
       requestSessionContext();
       requestPermissionRuleList();
       requestReviewState();
+      _sendCachedPushTokenIfPossible();
     } catch (error) {
       _connected = false;
       if (silently && _autoReconnectEnabled) {
@@ -3577,7 +3588,6 @@ class SessionController extends ChangeNotifier {
         );
         break;
       case RuntimeInfoResultEvent runtimeInfo:
-        _runtimeInfo = runtimeInfo;
         if (runtimeInfo.query.trim().toLowerCase() == 'codex_models') {
           _codexModelCatalogLoading = false;
           _codexModelCatalogMessage = runtimeInfo.message.trim();
@@ -3613,6 +3623,7 @@ class SessionController extends ChangeNotifier {
           );
           break;
         }
+        _runtimeInfo = runtimeInfo;
         _maybeAutoSyncAiModel(
           runtimeInfo.runtimeMeta,
           runtimeInfo: runtimeInfo,
@@ -6115,8 +6126,7 @@ class SessionController extends ChangeNotifier {
     if (_isBootstrapSource(meta.source)) {
       return false;
     }
-    if (_shouldHideTimelineLogMessage(trimmed, stream) ||
-        _looksLikeFrontendToolResultNoise(trimmed) ||
+    if (_looksLikeFrontendToolResultNoise(trimmed) ||
         _shouldFilterTimelineText(trimmed)) {
       return false;
     }

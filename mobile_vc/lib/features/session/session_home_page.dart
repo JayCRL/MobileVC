@@ -332,7 +332,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
             }
 
             Future<void> persistConfig({bool connect = false}) async {
-              await controller.saveConfig(controller.config.copyWith(
+              final nextConfig = controller.config.copyWith(
                 host: hostController.text.trim(),
                 port: portController.text.trim(),
                 token: tokenController.text.trim(),
@@ -341,9 +341,13 @@ class _SessionHomePageState extends State<SessionHomePage> {
                 permissionMode: permissionController.text.trim(),
                 fastMode: controller.fastMode,
                 adbIceServersJson: encodedIceConfig(),
-              ));
+              );
+              await controller.saveConfig(nextConfig);
               if (connect) {
                 await controller.connect();
+                if (!controller.connected) {
+                  return;
+                }
               }
               if (context.mounted) {
                 Navigator.pop(context);
@@ -490,7 +494,15 @@ class _SessionHomePageState extends State<SessionHomePage> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: FilledButton(
-                            onPressed: () => persistConfig(connect: true),
+                            onPressed: () async {
+                              await persistConfig(connect: true);
+                              if (!context.mounted || controller.connected) {
+                                return;
+                              }
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(controller.connectionMessage)),
+                              );
+                            },
                             child: const Text('连接'),
                           ),
                         ),
