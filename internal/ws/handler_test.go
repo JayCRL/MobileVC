@@ -2583,6 +2583,15 @@ func TestHandlerPtyInputFlowSendsPushWhenTokenRegistered(t *testing.T) {
 	if mockPush.SentNotifications[0].Body != "Proceed? [y/N]" {
 		t.Fatalf("unexpected push body: %#v", mockPush.SentNotifications[0])
 	}
+	if mockPush.SentNotifications[0].Data["sessionId"] != sessionID {
+		t.Fatalf("unexpected push sessionId: %#v", mockPush.SentNotifications[0])
+	}
+	if mockPush.SentNotifications[0].Data["type"] != "action_needed" {
+		t.Fatalf("unexpected push type: %#v", mockPush.SentNotifications[0])
+	}
+	if mockPush.SentNotifications[0].Data["eventType"] != protocol.EventTypePromptRequest {
+		t.Fatalf("unexpected push eventType: %#v", mockPush.SentNotifications[0])
+	}
 
 	if err := conn.WriteJSON(protocol.InputRequestEvent{
 		ClientEvent: protocol.ClientEvent{Action: "input"},

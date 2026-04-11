@@ -3,6 +3,7 @@ package push
 import (
 	"context"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/sideshow/apns2"
@@ -11,15 +12,24 @@ import (
 	"github.com/sideshow/apns2/token"
 )
 
+// NotificationRequest 推送请求
+type NotificationRequest struct {
+	Token    string
+	Platform string
+	Title    string
+	Body     string
+	Data     map[string]string
+}
+
 // Service 推送服务接口
 type Service interface {
-	SendNotification(ctx context.Context, token, platform, title, body string) error
+	SendNotification(ctx context.Context, req NotificationRequest) error
 }
 
 // NoopService 空实现（用于未配置推送时）
 type NoopService struct{}
 
-func (s *NoopService) SendNotification(ctx context.Context, token, platform, title, body string) error {
+func (s *NoopService) SendNotification(ctx context.Context, req NotificationRequest) error {
 	return nil
 }
 
@@ -91,23 +101,31 @@ func NewAPNsService(config APNsConfig) (*APNsService, error) {
 	}, nil
 }
 
-func (s *APNsService) SendNotification(ctx context.Context, deviceToken, platform, title, body string) error {
-	if platform != "ios" {
-		return fmt.Errorf("APNsService only supports iOS platform, got: %s", platform)
+func (s *APNsService) SendNotification(ctx context.Context, req NotificationRequest) error {
+	if req.Platform != "ios" {
+		return fmt.Errorf("APNsService only supports iOS platform, got: %s", req.Platform)
 	}
 
 	// 构造推送 payload
 	p := payload.NewPayload().
-		Alert(title).
-		AlertBody(body).
+		Alert(req.Title).
+		AlertBody(req.Body).
 		Sound("default").
 		Badge(1)
 
 	// 添加自定义数据
-	p.Custom("type", "action_needed")
+	for key, value := range req.Data {
+		if key == "" || value == "" {
+			continue
+		}
+		p.Custom(key, value)
+	}
+	if _, ok := req.Data["type"]; !ok {
+		p.Custom("type", "action_needed")
+	}
 
 	notification := &apns2.Notification{
-		DeviceToken: deviceToken,
+		DeviceToken: req.Token,
 		Topic:       s.topic,
 		Payload:     p,
 		Priority:    apns2.PriorityHigh,
@@ -138,15 +156,17 @@ type MockNotification struct {
 	Platform string
 	Title    string
 	Body     string
+	Data     map[string]string
 	SentAt   time.Time
 }
 
-func (s *MockAPNsService) SendNotification(ctx context.Context, token, platform, title, body string) error {
+func (s *MockAPNsService) SendNotification(ctx context.Context, req NotificationRequest) error {
 	s.SentNotifications = append(s.SentNotifications, MockNotification{
-		Token:    token,
-		Platform: platform,
-		Title:    title,
-		Body:     body,
+		Token:    req.Token,
+		Platform: req.Platform,
+		Title:    req.Title,
+		Body:     req.Body,
+		Data:     maps.Clone(req.Data),
 		SentAt:   time.Now(),
 	})
 	return nil
@@ -158,4 +178,3 @@ func NewMockAPNsService() *MockAPNsService {
 		SentNotifications: make([]MockNotification, 0),
 	}
 }
-
