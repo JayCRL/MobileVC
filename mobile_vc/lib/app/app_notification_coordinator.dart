@@ -35,6 +35,15 @@ class AppNotificationCoordinator {
 
   Future<void> initialize() async {
     debugPrint('[startup] notification coordinator init start');
+    _notificationService.onMessageOpenedApp((message) {
+      debugPrint('[notification] local notification opened: $message');
+      final sessionId = (message['sessionId'] ?? '').toString().trim();
+      if (sessionId.isNotEmpty) {
+        _controller.restoreSessionFromNotification(sessionId);
+        return;
+      }
+      _controller.resumeConnectionIfNeeded();
+    });
     try {
       await _notificationService.initialize();
       _initialized = _notificationService.isAvailable;
@@ -87,6 +96,11 @@ class AppNotificationCoordinator {
         NotificationPayload(
           title: 'MobileVC',
           body: signal.message,
+          data: <String, dynamic>{
+            'type': 'action_needed',
+            if (_controller.selectedSessionId.trim().isNotEmpty)
+              'sessionId': _controller.selectedSessionId.trim(),
+          },
         ),
       );
       _lastHandledSignalId = signal.id;
@@ -123,6 +137,11 @@ class AppNotificationCoordinator {
         NotificationPayload(
           title: signal.title,
           body: signal.body,
+          data: <String, dynamic>{
+            'type': signal.type.name,
+            if (_controller.selectedSessionId.trim().isNotEmpty)
+              'sessionId': _controller.selectedSessionId.trim(),
+          },
         ),
       );
       _lastHandledNotificationFingerprint = fingerprint;

@@ -92,36 +92,89 @@ void main() {
   });
 
   group('SessionController action needed signal', () {
-    test('ws 断开时会退出会话切换中状态', () async {
+    test('notification restore immediately loads target session when connected',
+        () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
       addTearDown(controller.disposeController);
 
       await controller.connect();
-      controller.createSession();
+      service.sentPayloads.clear();
 
-      expect(controller.isLoadingSession, isTrue);
+      await controller.restoreSessionFromNotification('session-target');
+
       expect(service.sentPayloads, isNotEmpty);
-      expect(service.sentPayloads.last['action'], 'session_create');
+      expect(service.sentPayloads.last['action'], 'session_load');
+      expect(service.sentPayloads.last['sessionId'], 'session-target');
+    });
+
+    test('notification restore reconnects first when disconnected', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.restoreSessionFromNotification('session-target');
+
+      expect(service.connectCalls, 1);
+      expect(
+          service.sentPayloads.any((item) => item['action'] == 'session_load'),
+          isTrue);
+    });
+
+    test('notification restore target clears after matching history arrives',
+        () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+      await controller.restoreSessionFromNotification('session-target');
+      final sentBeforeHistory = service.sentPayloads.length;
 
       service.emit(
-        ErrorEvent(
+        SessionHistoryEvent(
           timestamp: _timestamp,
-          sessionId: '',
+          sessionId: 'session-target',
           runtimeMeta: const RuntimeMeta(),
-          raw: const {
-            'type': 'error',
-            'code': 'ws_closed',
-            'msg': 'WebSocket 连接已断开'
-          },
-          code: 'ws_closed',
-          message: 'WebSocket 连接已断开',
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(
+            id: 'session-target',
+            title: 'Target',
+          ),
+          logEntries: const [],
+          diffs: const [],
+          reviewGroups: const [],
+          rawTerminalByStream: const {},
+          terminalExecutions: const [],
+          sessionContext: const SessionContext(),
+          skillCatalogMeta: const CatalogMetadata(domain: 'skill'),
+          memoryCatalogMeta: const CatalogMetadata(domain: 'memory'),
+          resumeRuntimeMeta: const RuntimeMeta(),
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-target',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_state'},
+          state: 'idle',
+          message: 'ready',
         ),
       );
       await _flushEvents();
 
-      expect(controller.isLoadingSession, isFalse);
+      expect(sentBeforeHistory, greaterThan(0));
+      expect(
+          service.sentPayloads.any((item) => item['action'] == 'session_load'),
+          isFalse);
     });
 
     test('运行态进入普通 WAIT_INPUT 时产出继续输入信号', () async {

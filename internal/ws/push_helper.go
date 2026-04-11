@@ -6,6 +6,7 @@ import (
 
 	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
+	"mobilevc/internal/push"
 )
 
 // shouldSendPushNotification 判断是否需要发送推送通知
@@ -71,7 +72,17 @@ func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID st
 		pushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := h.PushService.SendNotification(pushCtx, token, platform, title, body); err != nil {
+		if err := h.PushService.SendNotification(pushCtx, push.NotificationRequest{
+			Token:    token,
+			Platform: platform,
+			Title:    title,
+			Body:     body,
+			Data: map[string]string{
+				"type":      "action_needed",
+				"sessionId": sessionID,
+				"eventType": eventType,
+			},
+		}); err != nil {
 			logx.Warn("push", "send push notification failed: sessionID=%s platform=%s err=%v", sessionID, platform, err)
 		} else {
 			logx.Info("push", "push notification sent: sessionID=%s platform=%s title=%q body=%q", sessionID, platform, title, body)

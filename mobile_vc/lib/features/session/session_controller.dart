@@ -219,6 +219,7 @@ class SessionController extends ChangeNotifier {
   bool _autoSessionCreating = false;
   bool _isLoadingSession = false;
   String _pendingSessionTargetId = '';
+  String _pendingNotificationSessionTargetId = '';
   String _pendingAiLaunchEngine = '';
   bool _pendingAiLaunchAwaitingFirstInput = false;
   final Map<String, _PendingAiPreference> _pendingAiPreferences =
@@ -1321,6 +1322,7 @@ class SessionController extends ChangeNotifier {
       requestPermissionRuleList();
       requestReviewState();
       _sendCachedPushTokenIfPossible();
+      _restorePendingNotificationSessionIfNeeded();
     } catch (error) {
       _connected = false;
       if (silently && _autoReconnectEnabled) {
@@ -1348,6 +1350,9 @@ class SessionController extends ChangeNotifier {
       }
     } finally {
       _connecting = false;
+      if (_connected) {
+        _restorePendingNotificationSessionIfNeeded();
+      }
       if (shouldRetrySilently) {
         _scheduleReconnect();
       }
@@ -1440,6 +1445,7 @@ class SessionController extends ChangeNotifier {
     _connecting = false;
     _isLoadingSession = false;
     _pendingSessionTargetId = '';
+    _pendingNotificationSessionTargetId = '';
     _pendingAiLaunchEngine = '';
     _pendingAiLaunchAwaitingFirstInput = false;
     if (_autoReconnectEnabled) {
@@ -1471,11 +1477,46 @@ class SessionController extends ChangeNotifier {
     _scheduleReconnect(immediate: true);
   }
 
+  Future<void> restoreSessionFromNotification(String sessionId) async {
+    final targetId = sessionId.trim();
+    if (targetId.isEmpty) {
+      resumeConnectionIfNeeded();
+      return;
+    }
+    _pendingNotificationSessionTargetId = targetId;
+    if (_connected && !_connecting) {
+      if (_selectedSessionId.trim() == targetId && !_isLoadingSession) {
+        _pendingNotificationSessionTargetId = '';
+        resumeConnectionIfNeeded();
+        return;
+      }
+      loadSession(targetId);
+      return;
+    }
+    if (!_autoReconnectEnabled && !_connecting) {
+      await connect(silently: true);
+      return;
+    }
+    resumeConnectionIfNeeded();
+  }
+
   void pauseConnectionRecovery() {
     if (_appInForeground) {
       return;
     }
     _cancelReconnectTimer();
+  }
+
+  void _restorePendingNotificationSessionIfNeeded() {
+    final targetId = _pendingNotificationSessionTargetId.trim();
+    if (targetId.isEmpty || !_connected || _connecting) {
+      return;
+    }
+    if (_selectedSessionId.trim() == targetId && !_isLoadingSession) {
+      _pendingNotificationSessionTargetId = '';
+      return;
+    }
+    loadSession(targetId);
   }
 
   void requestSessionList() {
@@ -3299,6 +3340,10 @@ class SessionController extends ChangeNotifier {
         if (_matchesPendingSessionTarget(resolvedHistorySummary.id)) {
           _finishSessionLoading(sessionId: resolvedHistorySummary.id);
         }
+        if (_pendingNotificationSessionTargetId.trim() ==
+            resolvedHistorySummary.id) {
+          _pendingNotificationSessionTargetId = '';
+        }
         final restoredCwd = history.resumeRuntimeMeta.cwd.trim();
         final targetCwd = restoredCwd.isNotEmpty ? restoredCwd : _config.cwd;
         await switchWorkingDirectory(targetCwd);
@@ -3327,6 +3372,9 @@ class SessionController extends ChangeNotifier {
         if (_isLoadingSession &&
             _matchesPendingSessionTarget(state.sessionId)) {
           _finishSessionLoading(sessionId: state.sessionId);
+        }
+        if (_connected) {
+          _restorePendingNotificationSessionIfNeeded();
         }
         if (_isIdleLikeState(state.state)) {
           _markTerminalExecutionFinished(
