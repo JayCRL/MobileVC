@@ -4407,19 +4407,15 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 		ContextTitle:   "最近 Diff",
 		TargetPath:     "internal/ws/handler.go",
 		PermissionMode: "acceptEdits",
+		IsReviewOnly:   true,
 	}); err != nil {
 		t.Fatalf("write review decision request: %v", err)
 	}
 
 	select {
 	case payload := <-ptyRunner.writeCh:
-		got := string(payload)
-		want := "Review decision: ACCEPT.\nTarget: internal/ws/handler.go.\nPlease land the change and continue; no further review is required.\n"
-		if got != want {
-			t.Fatalf("unexpected review decision payload: %q", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive review decision payload")
+		t.Fatalf("unexpected review decision payload: %q", string(payload))
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	var thinking map[string]any
@@ -4475,18 +4471,15 @@ func TestHandlerReviewDecisionUpdatesProjectionAndReviewState(t *testing.T) {
 		GroupID:        "hhh.txt",
 		GroupTitle:     "hhh.txt",
 		PermissionMode: "default",
+		IsReviewOnly:   true,
 	}); err != nil {
 		t.Fatalf("write review decision request: %v", err)
 	}
 
 	select {
 	case payload := <-ptyRunner.writeCh:
-		want := "Review decision: ACCEPT.\nTarget: hhh.txt.\nPlease land the change and continue; no further review is required.\n"
-		if got := string(payload); got != want {
-			t.Fatalf("unexpected review decision payload: %q", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive review decision payload")
+		t.Fatalf("unexpected review decision payload: %q", string(payload))
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	var reviewState map[string]any

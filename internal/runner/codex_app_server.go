@@ -897,8 +897,12 @@ func codexDrainAssistantChunks(buffer *strings.Builder, flushAll bool) []string 
 }
 
 func codexApprovalPolicy(permissionMode string) string {
+	// Codex 默认必须走 on-request，避免文件修改或命令执行在未显式授权时直接放行。
+	// 只有用户显式配置 bypassPermissions 时，才允许完全跳过审批。
+	// 如果线上看起来“Codex 文件修改不需要授权”，更可能是该改动没有走
+	// item/fileChange/requestApproval，而是直接以 turn diff 的形式下发，而不是这里默认开了绿灯。
 	switch strings.TrimSpace(permissionMode) {
-	case "acceptEdits", "bypassPermissions":
+	case "bypassPermissions":
 		return "never"
 	default:
 		return "on-request"

@@ -3734,7 +3734,8 @@ void main() {
       final item = controller.timeline.singleWhere(
         (entry) =>
             entry.kind == 'markdown' &&
-            entry.body == 'Summary: fixed the missing reply rendering in Flutter.',
+            entry.body ==
+                'Summary: fixed the missing reply rendering in Flutter.',
       );
       expect(item.kind, 'markdown');
       expect(
@@ -5505,6 +5506,72 @@ void main() {
       expect(controller.pendingDiffs.single.pendingReview, isTrue);
     });
 
+    test('权限 interaction 残留时仍显示 review 按钮', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.saveConfig(
+        const AppConfig(
+          cwd: '/workspace',
+          engine: 'claude',
+          permissionMode: 'default',
+        ),
+      );
+
+      service.emit(
+        InteractionRequestEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            targetPath: '/workspace/README.md',
+            blockingKind: 'permission',
+            permissionMode: 'acceptEdits',
+          ),
+          raw: const {
+            'type': 'interaction_request',
+            'kind': 'permission',
+            'message': 'Allow write to README.md?'
+          },
+          kind: 'permission',
+          message: 'Allow write to README.md?',
+          actions: const [
+            InteractionAction(id: 'approve', label: '允许', value: 'approve'),
+            InteractionAction(id: 'deny', label: '拒绝', value: 'deny'),
+          ],
+        ),
+      );
+      service.emit(
+        FileDiffEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            contextId: 'diff-with-permission-interaction',
+            contextTitle: 'README diff',
+            targetPath: '/workspace/README.md',
+            groupId: 'group-review-1',
+            groupTitle: '组一',
+            permissionMode: 'acceptEdits',
+          ),
+          raw: const {'type': 'file_diff'},
+          path: '/workspace/README.md',
+          title: 'README diff',
+          diff: '@@ -1 +1 @@\n-old\n+new',
+          lang: 'markdown',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.currentReviewDiff?.path, '/workspace/README.md');
+      expect(controller.pendingInteraction, isNull);
+      expect(controller.displayPermissionMode, 'default');
+      expect(controller.isAutoAcceptMode, isFalse);
+      expect(controller.shouldShowReviewChoices, isTrue);
+      expect(controller.canShowReviewActions, isTrue);
+    });
+
     test('permission allow 后出现 diff 不会自动 accept，必须显式 review_decision 才推进',
         () async {
       final service = _FakeMobileVcWsService();
@@ -5611,6 +5678,8 @@ void main() {
       expect(service.sentPayloads, hasLength(1));
       expect(service.sentPayloads.single['action'], 'review_decision');
       expect(service.sentPayloads.single['decision'], 'accept');
+      expect(service.sentPayloads.single['is_review_only'], isTrue);
+      expect(service.sentPayloads.single['is_review_only'], isTrue);
     });
 
     test('review prompt 仍发送 review_decision', () async {
@@ -5677,6 +5746,7 @@ void main() {
       final payload = service.sentPayloads.single;
       expect(payload['action'], 'review_decision');
       expect(payload['decision'], 'accept');
+      expect(payload['is_review_only'], isTrue);
     });
 
     test('diff 同意后会退出 review 交互并恢复普通输入', () async {

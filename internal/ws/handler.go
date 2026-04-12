@@ -1286,7 +1286,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid review decision request: %v", err), ""))
 				continue
 			}
-			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=review_decision decision=%q executionID=%q groupID=%q groupTitle=%q contextID=%q contextTitle=%q targetPath=%q permissionMode=%q", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision, reviewEvent.ExecutionID, reviewEvent.GroupID, reviewEvent.GroupTitle, reviewEvent.ContextID, reviewEvent.ContextTitle, reviewEvent.TargetPath, reviewEvent.PermissionMode)
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=review_decision decision=%q executionID=%q groupID=%q groupTitle=%q contextID=%q contextTitle=%q targetPath=%q permissionMode=%q isReviewOnly=%t", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision, reviewEvent.ExecutionID, reviewEvent.GroupID, reviewEvent.GroupTitle, reviewEvent.ContextID, reviewEvent.ContextTitle, reviewEvent.TargetPath, reviewEvent.PermissionMode, reviewEvent.IsReviewOnly)
 			decision := strings.TrimSpace(strings.ToLower(reviewEvent.Decision))
 			if decision != "accept" && decision != "revert" && decision != "revise" {
 				logx.Warn("ws", "reject invalid review decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%q", connectionID, selectedSessionID, remoteAddr, reviewEvent.Decision)
@@ -1316,8 +1316,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if projection.CurrentDiff != nil {
 				currentDiff = *projection.CurrentDiff
 			}
+			interactionType := "none"
+			if controller.ActiveMeta.BlockingKind != "" {
+				interactionType = controller.ActiveMeta.BlockingKind
+			}
+			logx.Info("ws", "review_decision routing: connectionID=%s sessionID=%s targetId=%q groupId=%q interactionType=%q isReviewOnly=%t", connectionID, sessionID, firstNonEmptyString(reviewEvent.ContextID, currentDiff.ContextID), firstNonEmptyString(reviewEvent.GroupID, currentDiff.GroupID), interactionType, reviewEvent.IsReviewOnly)
 			if err := service.ReviewDecision(ctx, sessionID, runtimepkg.ReviewDecisionRequest{
-				Decision: decision,
+				Decision:     decision,
+				IsReviewOnly: reviewEvent.IsReviewOnly,
 				RuntimeMeta: protocol.RuntimeMeta{
 					Source:         "review-decision",
 					ExecutionID:    firstNonEmptyString(reviewEvent.ExecutionID, currentDiff.ExecutionID),
