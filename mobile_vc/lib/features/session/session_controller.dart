@@ -589,23 +589,33 @@ class SessionController extends ChangeNotifier {
   bool get shouldShowReviewChoices {
     final interaction = _pendingInteraction;
     final prompt = _pendingPrompt;
+    final permissionBlockingOnly =
+        (interaction?.isPermission == true || prompt?.isPermission == true) &&
+            interaction?.isReview != true &&
+            prompt?.isReview != true;
     final waitingForReviewInput = interaction?.isReview == true ||
         prompt?.isReview == true ||
         (hasPendingReview &&
-            !hasPendingPermissionPrompt &&
+            (!hasPendingPermissionPrompt || permissionBlockingOnly) &&
             !hasPendingPlanPrompt &&
             !hasPendingPlanQuestions);
     return currentReviewDiff != null &&
         waitingForReviewInput &&
-        !hasPendingPermissionPrompt &&
+        (!hasPendingPermissionPrompt || permissionBlockingOnly) &&
         !hasPendingPlanPrompt &&
         !hasPendingPlanQuestions;
   }
 
   bool get canShowReviewActions {
+    final interaction = _pendingInteraction;
+    final prompt = _pendingPrompt;
+    final permissionBlockingOnly =
+        (interaction?.isPermission == true || prompt?.isPermission == true) &&
+            interaction?.isReview != true &&
+            prompt?.isReview != true;
     return !isAutoAcceptMode &&
         reviewActionTargetDiff != null &&
-        !hasPendingPermissionPrompt &&
+        (!hasPendingPermissionPrompt || permissionBlockingOnly) &&
         !hasPendingPlanPrompt &&
         !hasPendingPlanQuestions;
   }
@@ -1721,6 +1731,17 @@ class SessionController extends ChangeNotifier {
       _pushSystem('error', '当前没有待审核的 diff');
       return;
     }
+    final interactionType = _pendingInteraction == null
+        ? '-'
+        : (_pendingInteraction!.isReview
+            ? 'review'
+            : _pendingInteraction!.isPermission
+                ? 'permission'
+                : _pendingInteraction!.kind);
+    _pushDebug(
+      '发送 review_decision',
+      'targetId=${diff.id} groupId=${diff.groupId} interactionType=$interactionType',
+    );
     _sendReviewDecisionForDiff(diff, normalized);
   }
 
@@ -3551,6 +3572,30 @@ class SessionController extends ChangeNotifier {
         break;
       case FileDiffEvent diff:
         _currentDiff = diff;
+        if (_pendingInteraction?.isPermission == true) {
+          _pendingInteraction = null;
+        }
+        if (_pendingPrompt?.isPermission == true) {
+          _pendingPrompt = null;
+        }
+        if (_runtimePermissionMode.trim() == 'acceptEdits' ||
+            diff.runtimeMeta.permissionMode.trim() == 'acceptEdits') {
+          _runtimePermissionMode = _config.permissionMode;
+        }
+        _runtimePhase = RuntimePhaseEvent(
+          timestamp: diff.timestamp,
+          sessionId: diff.sessionId,
+          runtimeMeta: diff.runtimeMeta.merge(
+            RuntimeMeta(
+              blockingKind: 'review',
+              permissionMode: _runtimePermissionMode,
+            ),
+          ),
+          raw: const {'type': 'runtime_phase'},
+          phase: 'reviewing',
+          kind: 'review',
+          message: '等待审核',
+        );
         final autoAccepted = _reviewShouldAutoAccept(diff.runtimeMeta);
         final historyDiff = HistoryContext(
           id: diff.runtimeMeta.contextId,
@@ -3944,6 +3989,7 @@ class SessionController extends ChangeNotifier {
       'groupId': groupId,
       'groupTitle': diff.groupTitle,
       'permissionMode': _currentDecisionPermissionMode,
+      'is_review_only': true,
     });
     if (normalized != 'revise') {
       _pendingPrompt = null;

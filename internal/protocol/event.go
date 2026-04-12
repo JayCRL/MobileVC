@@ -104,6 +104,7 @@ type ReviewDecisionRequestEvent struct {
 	ContextTitle   string `json:"contextTitle,omitempty"`
 	TargetPath     string `json:"targetPath,omitempty"`
 	PermissionMode string `json:"permissionMode,omitempty"`
+	IsReviewOnly   bool   `json:"is_review_only,omitempty"`
 }
 
 type PermissionDecisionRequestEvent struct {

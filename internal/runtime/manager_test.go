@@ -379,6 +379,9 @@ func TestHotSwapApproveWithTemporaryElevationRestartsWithResumeAndContinuation(t
 	if snapshot.SafePermissionMode != "default" {
 		t.Fatalf("expected safe permission mode default, got %#v", snapshot)
 	}
+	if snapshot.ActiveMeta.PermissionMode != "default" {
+		t.Fatalf("expected exposed runtime permission mode to stay default during temporary elevation, got %#v", snapshot.ActiveMeta)
+	}
 }
 
 func TestRestoreSafePermissionModeBeforeInputRestartsAndSendsUserInput(t *testing.T) {

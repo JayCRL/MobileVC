@@ -24,6 +24,7 @@ class RuntimeMeta {
     this.targetDiff = '',
     this.targetTitle = '',
     this.targetStack = '',
+    this.isReviewOnly = false,
   });
 
   final String source;
@@ -50,6 +51,7 @@ class RuntimeMeta {
   final String targetDiff;
   final String targetTitle;
   final String targetStack;
+  final bool isReviewOnly;
 
   bool get hasContext =>
       contextId.isNotEmpty ||
@@ -96,6 +98,7 @@ class RuntimeMeta {
           other.targetTitle.isNotEmpty ? other.targetTitle : targetTitle,
       targetStack:
           other.targetStack.isNotEmpty ? other.targetStack : targetStack,
+      isReviewOnly: other.isReviewOnly || isReviewOnly,
     );
   }
 
@@ -124,6 +127,7 @@ class RuntimeMeta {
         if (targetDiff.isNotEmpty) 'targetDiff': targetDiff,
         if (targetTitle.isNotEmpty) 'targetTitle': targetTitle,
         if (targetStack.isNotEmpty) 'targetStack': targetStack,
+        if (isReviewOnly) 'isReviewOnly': isReviewOnly,
       };
 
   factory RuntimeMeta.fromJson(Map<String, dynamic> json) {
@@ -153,6 +157,7 @@ class RuntimeMeta {
       targetDiff: read('targetDiff'),
       targetTitle: read('targetTitle'),
       targetStack: read('targetStack'),
+      isReviewOnly: json['isReviewOnly'] == true,
     );
   }
 }
