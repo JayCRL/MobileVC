@@ -74,11 +74,13 @@ class _ActionNeededSnapshot {
     required this.type,
     required this.key,
     required this.message,
+    required this.revision,
   });
 
   final ActionNeededType type;
   final String key;
   final String message;
+  final String revision;
 }
 
 class _PendingAiPreference {
@@ -230,7 +232,6 @@ class SessionController extends ChangeNotifier {
   bool _isSavingMemory = false;
   bool _sessionPermissionRulesEnabled = true;
   bool _persistentPermissionRulesEnabled = false;
-  bool _suppressStoppedAiUiState = false;
   SessionContext? _pendingSessionContextTarget;
   SessionContext? _pendingSessionContextRollback;
   final List<AdbDevice> _adbDevices = [];
@@ -493,8 +494,9 @@ class SessionController extends ChangeNotifier {
 
   bool get hasPendingPermissionPrompt =>
       pendingInteraction?.isPermission == true ||
-      pendingPrompt?.looksLikePermissionPrompt == true;
-  bool get hasPendingPlanPrompt => pendingInteraction?.isPlan == true;
+      pendingPrompt?.isPermission == true;
+  bool get hasPendingPlanPrompt =>
+      pendingInteraction?.isPlan == true || pendingPrompt?.isPlan == true;
   bool get hasPendingPlanQuestions => _pendingPlanQuestions.isNotEmpty;
   PlanQuestion? get pendingPlanQuestion {
     if (!hasPendingPlanQuestions) {
@@ -549,45 +551,9 @@ class SessionController extends ChangeNotifier {
     if (_isLoadingSession) {
       return false;
     }
-    if (_hasUnsettledAiAwaitInput) {
-      return false;
-    }
     return _agentState?.awaitInput == true ||
         _pendingPrompt != null ||
         _pendingInteraction != null;
-  }
-
-  bool get _hasUnsettledAiAwaitInput {
-    final agent = _agentState;
-    if (agent?.awaitInput != true) {
-      return false;
-    }
-    if (_pendingPrompt != null ||
-        _pendingInteraction != null ||
-        _pendingPlanQuestions.isNotEmpty) {
-      return false;
-    }
-    if (!_looksLikeAiRuntimeMeta(agent!.runtimeMeta)) {
-      return false;
-    }
-    final command = agent.command.trim().toLowerCase();
-    final engine = agent.runtimeMeta.engine.trim().toLowerCase();
-    final isCodex =
-        command == 'codex' || command.startsWith('codex ') || engine == 'codex';
-    if (!isCodex) {
-      return false;
-    }
-    final executionId = agent.runtimeMeta.executionId.trim();
-    final contextId = agent.runtimeMeta.contextId.trim();
-    final executionKey = executionId.isNotEmpty
-        ? 'execution:$executionId'
-        : contextId.isNotEmpty
-            ? 'context:$contextId'
-            : '';
-    if (executionKey.isEmpty) {
-      return false;
-    }
-    return executionKey != _lastAssistantReplyExecutionKey;
   }
 
   ActionNeededSignal? get actionNeededSignal => _actionNeededSignal;
@@ -624,8 +590,11 @@ class SessionController extends ChangeNotifier {
     final interaction = _pendingInteraction;
     final prompt = _pendingPrompt;
     final waitingForReviewInput = interaction?.isReview == true ||
-        prompt?.looksLikeReviewPrompt == true ||
-        (hasPendingReview && awaitInput);
+        prompt?.isReview == true ||
+        (hasPendingReview &&
+            !hasPendingPermissionPrompt &&
+            !hasPendingPlanPrompt &&
+            !hasPendingPlanQuestions);
     return currentReviewDiff != null &&
         waitingForReviewInput &&
         !hasPendingPermissionPrompt &&
@@ -2474,7 +2443,6 @@ class SessionController extends ChangeNotifier {
     if (value.isEmpty) {
       return;
     }
-    _suppressStoppedAiUiState = false;
     if (_isLoadingSession) {
       _pushSystem('session', '会话切换中，请等待加载完成');
       return;
@@ -2568,12 +2536,11 @@ class SessionController extends ChangeNotifier {
       return;
     }
     final prompt = pendingPrompt;
-    if (prompt?.looksLikeReviewPrompt == true) {
+    if (prompt?.isReview == true) {
       sendReviewDecision(normalized);
       return;
     }
-    if (prompt?.looksLikePermissionPrompt == true ||
-        hasPendingPermissionPrompt) {
+    if (prompt?.isPermission == true || hasPendingPermissionPrompt) {
       final selection = _parsePermissionDecisionSelection(normalized);
       if (selection == null) {
         return;
@@ -3079,7 +3046,6 @@ class SessionController extends ChangeNotifier {
     if (!canStopCurrentRun) {
       return;
     }
-    _suppressStoppedAiUiState = true;
     _pendingAiLaunchEngine = '';
     _pendingAiLaunchAwaitingFirstInput = false;
     _canResumeCurrentSession = false;
@@ -3362,10 +3328,6 @@ class SessionController extends ChangeNotifier {
         _emitResumeNotification(notice);
         break;
       case SessionStateEvent state:
-        if (_suppressStoppedAiUiState &&
-            _looksLikeAiRuntimeMeta(state.runtimeMeta)) {
-          break;
-        }
         _sessionState = state;
         _maybeAutoSyncAiModel(state.runtimeMeta);
         _syncRuntimePermissionMode();
@@ -3394,10 +3356,6 @@ class SessionController extends ChangeNotifier {
         _handleSessionStateTimeline(state);
         break;
       case AgentStateEvent agent:
-        if (_suppressStoppedAiUiState &&
-            _looksLikeAiRuntimeMeta(agent.runtimeMeta)) {
-          break;
-        }
         _agentState = agent;
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
@@ -3422,10 +3380,6 @@ class SessionController extends ChangeNotifier {
         _syncDerivedState();
         break;
       case RuntimePhaseEvent runtimePhase:
-        if (_suppressStoppedAiUiState &&
-            _looksLikeAiRuntimeMeta(runtimePhase.runtimeMeta)) {
-          break;
-        }
         _runtimePhase = runtimePhase;
         _syncRuntimePermissionMode();
         break;
@@ -3500,10 +3454,6 @@ class SessionController extends ChangeNotifier {
         _handleMutationFailure(error.message);
         break;
       case PromptRequestEvent prompt:
-        if (_suppressStoppedAiUiState &&
-            _looksLikeAiRuntimeMeta(prompt.runtimeMeta)) {
-          break;
-        }
         final currentInteraction = _pendingInteraction;
         final currentPrompt = _pendingPrompt;
         final keepBlockingPrompt = _shouldKeepExistingBlockingPrompt(
@@ -3519,10 +3469,6 @@ class SessionController extends ChangeNotifier {
         _pushDebug('收到 prompt_request', _debugReviewStateSummary());
         break;
       case InteractionRequestEvent interaction:
-        if (_suppressStoppedAiUiState &&
-            _looksLikeAiRuntimeMeta(interaction.runtimeMeta)) {
-          break;
-        }
         _pendingPrompt = null;
         _pendingInteraction = interaction;
         if (interaction.isPlan) {
@@ -4745,11 +4691,11 @@ class SessionController extends ChangeNotifier {
     if (_looksLikeProcessNoise(trimmed)) {
       return null;
     }
-    if (_looksLikeTerminalOutput(trimmed) || message.startsWith('\r')) {
-      return null;
-    }
     if (_shouldPreferAssistantText(meta, trimmed)) {
       return 'markdown';
+    }
+    if (_looksLikeTerminalOutput(trimmed) || message.startsWith('\r')) {
+      return null;
     }
     if (_looksLikeAssistantReply(trimmed)) {
       return 'markdown';
@@ -4769,11 +4715,11 @@ class SessionController extends ChangeNotifier {
       return false;
     }
     if (_looksLikeFrontendToolResultNoise(message) ||
-        _looksLikeTerminalOutput(message) ||
+        _looksLikeHardTerminalOutput(message) ||
         _looksLikeProcessNoise(message)) {
       return false;
     }
-    return true;
+    return _looksLikeAssistantReplyAllowingSoftTerminal(message);
   }
 
   String _timelineAiEngine(RuntimeMeta meta) {
@@ -4820,10 +4766,13 @@ class SessionController extends ChangeNotifier {
     if (_looksLikeMarkdown(message)) {
       return true;
     }
-    if (_looksLikeTerminalOutput(message)) {
+    if (_looksLikeHardTerminalOutput(message)) {
       return false;
     }
+    return _looksLikeAssistantReplyAllowingSoftTerminal(message);
+  }
 
+  bool _looksLikeAssistantReplyAllowingSoftTerminal(String message) {
     final normalized = message.trim();
     if (normalized.length >= 24 && !normalized.contains(RegExp(r'\s{2,}'))) {
       return true;
@@ -4835,6 +4784,57 @@ class SessionController extends ChangeNotifier {
       return true;
     }
     return _looksLikeShortAssistantReply(normalized);
+  }
+
+  bool _looksLikeHardTerminalOutput(String message) {
+    final trimmed = message.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith(r'') || trimmed.contains('[')) {
+      return true;
+    }
+    if (RegExp(
+      r'^\d{4}[/-]\d{2}[/-]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+\[(TRACE|DEBUG|INFO|WARN|ERROR)\]',
+      multiLine: true,
+    ).hasMatch(trimmed)) {
+      return true;
+    }
+    if (trimmed.contains(RegExp(r'^[\$#>]\s', multiLine: true))) {
+      return true;
+    }
+    if (trimmed.contains(RegExp(
+        r'^(npm|pnpm|yarn|flutter|dart|git|gradle|xcodebuild|pod|adb|fastlane|bash|zsh|sh)\b',
+        multiLine: true))) {
+      return true;
+    }
+    if (trimmed.contains(RegExp(
+        r'^(at |Caused by:|Exception:|Error:|FAILURE:|BUILD FAILED|Task :|\[[^\]]+\])',
+        multiLine: true))) {
+      return true;
+    }
+    if (trimmed.contains(
+        RegExp(r'(^|\n)(PASS|FAIL|WARN|INFO|ERROR)\b', multiLine: true))) {
+      return true;
+    }
+    final lines = trimmed
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    if (lines.length >= 3) {
+      final terminalLikeLines = lines.where((line) {
+        return RegExp(r'^[\$#>]\s').hasMatch(line) ||
+            RegExp(r'^(at |Caused by:|Task :|\[[^\]]+\])').hasMatch(line) ||
+            RegExp(r'^\S+\s*[:=]\s*\S+$').hasMatch(line) ||
+            RegExp(r'^(PASS|FAIL|WARN|INFO|ERROR)\b').hasMatch(line);
+      }).length;
+      if (terminalLikeLines >= (lines.length / 2).ceil()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   bool _looksLikeShortAssistantReply(String message) {
@@ -4896,52 +4896,12 @@ class SessionController extends ChangeNotifier {
     if (trimmed.isEmpty) {
       return false;
     }
-    final lower = trimmed.toLowerCase();
-    if (lower.startsWith(r'') || trimmed.contains('[')) {
-      return true;
-    }
-    if (RegExp(
-      r'^\d{4}[/-]\d{2}[/-]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+\[(TRACE|DEBUG|INFO|WARN|ERROR)\]',
-      multiLine: true,
-    ).hasMatch(trimmed)) {
-      return true;
-    }
-    if (trimmed.contains(RegExp(r'^[\$#>]\s', multiLine: true))) {
-      return true;
-    }
-    if (trimmed.contains(RegExp(
-        r'^(npm|pnpm|yarn|flutter|dart|git|gradle|xcodebuild|pod|adb|fastlane|bash|zsh|sh)\b',
-        multiLine: true))) {
-      return true;
-    }
-    if (trimmed.contains(RegExp(
-        r'^(at |Caused by:|Exception:|Error:|FAILURE:|BUILD FAILED|Task :|\[[^\]]+\])',
-        multiLine: true))) {
-      return true;
-    }
-    if (trimmed.contains(
-        RegExp(r'(^|\n)(PASS|FAIL|WARN|INFO|ERROR)\b', multiLine: true))) {
+    if (_looksLikeHardTerminalOutput(trimmed)) {
       return true;
     }
     if (trimmed.contains(RegExp(r'^\S+\s*[:=]\s*\S+$', multiLine: true)) &&
         !trimmed.contains('。')) {
       return true;
-    }
-    final lines = trimmed
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    if (lines.length >= 3) {
-      final terminalLikeLines = lines.where((line) {
-        return RegExp(r'^[\$#>]\s').hasMatch(line) ||
-            RegExp(r'^(at |Caused by:|Task :|\[[^\]]+\])').hasMatch(line) ||
-            RegExp(r'^\S+\s*[:=]\s*\S+$').hasMatch(line) ||
-            RegExp(r'^(PASS|FAIL|WARN|INFO|ERROR)\b').hasMatch(line);
-      }).length;
-      if (terminalLikeLines >= (lines.length / 2).ceil()) {
-        return true;
-      }
     }
     return false;
   }
@@ -5614,50 +5574,20 @@ class SessionController extends ChangeNotifier {
     InteractionRequestEvent? currentInteraction,
     PromptRequestEvent? currentPrompt,
   ) {
+    if (incoming.isReady) {
+      return currentInteraction?.isPermission == true ||
+          currentInteraction?.isReview == true ||
+          currentInteraction?.isPlan == true ||
+          currentPrompt?.isReview == true ||
+          hasPendingPlanQuestions;
+    }
     if (incoming.message.trim().isEmpty) {
       return currentInteraction?.isPermission == true ||
           currentInteraction?.isReview == true ||
           currentInteraction?.isPlan == true ||
           currentPrompt != null;
     }
-    if (!_looksLikeGenericReadyPrompt(incoming)) {
-      return false;
-    }
-    return currentInteraction?.isPermission == true ||
-        currentInteraction?.isReview == true ||
-        currentInteraction?.isPlan == true ||
-        currentPrompt?.looksLikeReviewPrompt == true ||
-        hasPendingPlanQuestions;
-  }
-
-  bool _looksLikeGenericReadyPrompt(PromptRequestEvent? prompt) {
-    if (prompt == null) {
-      return false;
-    }
-    if (prompt.options.isNotEmpty) {
-      return false;
-    }
-    final message = prompt.message.trim().toLowerCase();
-    if (message.isEmpty) {
-      return false;
-    }
-    return message.contains('会话已就绪') ||
-        message.contains('可继续输入') ||
-        message.contains('waiting for input') ||
-        message.contains('continue input') ||
-        message.contains('ready for input') ||
-        message == 'ready';
-  }
-
-  bool _looksLikeAiRuntimeMeta(RuntimeMeta meta) {
-    final engine = meta.engine.trim().toLowerCase();
-    final command = meta.command.trim().toLowerCase();
-    final lifecycle = meta.claudeLifecycle.trim().toLowerCase();
-    return engine == 'claude' ||
-        engine == 'codex' ||
-        engine == 'gemini' ||
-        lifecycle.isNotEmpty ||
-        _isAiCommand(command);
+    return false;
   }
 
   void _syncRuntimePermissionMode() {
@@ -5748,7 +5678,9 @@ class SessionController extends ChangeNotifier {
       return;
     }
     final current = _activeActionNeededSnapshot;
-    if (current != null && current.key == snapshot.key) {
+    if (current != null &&
+        current.key == snapshot.key &&
+        current.revision == snapshot.revision) {
       return;
     }
     _activeActionNeededSnapshot = snapshot;
@@ -5783,6 +5715,12 @@ class SessionController extends ChangeNotifier {
         type: ActionNeededType.review,
         key: 'review::$identity',
         message: 'AI 助手需要你处理代码审核',
+        revision: _actionNeededRevisionToken(
+          interaction?.timestamp,
+          prompt?.timestamp,
+          _agentState?.timestamp,
+          _sessionState?.timestamp,
+        ),
       );
     }
     if (hasPendingPermissionPrompt) {
@@ -5799,6 +5737,12 @@ class SessionController extends ChangeNotifier {
         type: ActionNeededType.permission,
         key: 'permission::$identity',
         message: 'AI 助手需要你确认权限',
+        revision: _actionNeededRevisionToken(
+          interaction?.timestamp,
+          prompt?.timestamp,
+          _agentState?.timestamp,
+          _sessionState?.timestamp,
+        ),
       );
     }
     if (hasPendingPlanPrompt || hasPendingPlanQuestions) {
@@ -5811,10 +5755,39 @@ class SessionController extends ChangeNotifier {
         type: ActionNeededType.plan,
         key: 'plan::$interactionIdentity::$pendingPlanQuestionIndex',
         message: 'AI 助手需要你完成计划选择',
+        revision: _actionNeededRevisionToken(
+          interaction?.timestamp,
+          prompt?.timestamp,
+          _agentState?.timestamp,
+          _sessionState?.timestamp,
+        ),
       );
     }
-    final hasGenericPrompt =
-        interaction != null || (prompt != null && prompt.hasVisiblePrompt);
+    if (prompt?.isReady == true) {
+      final identity = prompt!.runtimeMeta.contextId.isNotEmpty
+          ? prompt.runtimeMeta.contextId
+          : prompt.runtimeMeta.targetPath.isNotEmpty
+              ? prompt.runtimeMeta.targetPath
+              : _selectedSessionId;
+      return _ActionNeededSnapshot(
+        type: ActionNeededType.continueInput,
+        key: 'continue::$identity',
+        message: 'AI 助手需要你继续输入',
+        revision: _actionNeededRevisionToken(
+          prompt?.timestamp,
+          _agentState?.timestamp,
+          _sessionState?.timestamp,
+          null,
+        ),
+      );
+    }
+    final hasGenericPrompt = interaction != null ||
+        (prompt != null &&
+            prompt.hasVisiblePrompt &&
+            !prompt.isPermission &&
+            !prompt.isReview &&
+            !prompt.isPlan &&
+            !prompt.isReady);
     if (hasGenericPrompt) {
       final identity = interaction?.contextId.isNotEmpty == true
           ? interaction!.contextId
@@ -5826,10 +5799,18 @@ class SessionController extends ChangeNotifier {
         key:
             'reply::$identity::${interaction?.message ?? prompt?.message ?? ''}',
         message: 'AI 助手正在等待你的回复',
+        revision: _actionNeededRevisionToken(
+          interaction?.timestamp,
+          prompt?.timestamp,
+          _agentState?.timestamp,
+          _sessionState?.timestamp,
+        ),
       );
     }
     final state = (_agentState?.state ?? '').trim().toUpperCase();
-    if (state == 'WAIT_INPUT' && awaitInput) {
+    final blockingKind =
+        _agentState?.runtimeMeta.blockingKind.trim().toLowerCase() ?? '';
+    if (state == 'WAIT_INPUT' && awaitInput && blockingKind == 'ready') {
       final executionKey =
           _agentState?.runtimeMeta.executionId.isNotEmpty == true
               ? _agentState!.runtimeMeta.executionId
@@ -5840,9 +5821,28 @@ class SessionController extends ChangeNotifier {
         type: ActionNeededType.continueInput,
         key: 'continue::$executionKey',
         message: 'AI 助手需要你继续输入',
+        revision: _actionNeededRevisionToken(
+          prompt?.timestamp,
+          _agentState?.timestamp,
+          _sessionState?.timestamp,
+          null,
+        ),
       );
     }
     return null;
+  }
+
+  String _actionNeededRevisionToken(
+      DateTime? a, DateTime? b, DateTime? c, DateTime? d) {
+    final values = <DateTime?>[a, b, c, d]
+        .where((item) => item != null)
+        .cast<DateTime>()
+        .toList();
+    if (values.isEmpty) {
+      return '';
+    }
+    values.sort((left, right) => left.compareTo(right));
+    return values.last.microsecondsSinceEpoch.toString();
   }
 
   void _markActionNeededHandled() {

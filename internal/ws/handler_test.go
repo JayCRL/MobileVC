@@ -418,6 +418,28 @@ func readUntilType(t *testing.T, conn *websocket.Conn, want string) map[string]a
 	return nil
 }
 
+func assertNoEventType(t *testing.T, conn *websocket.Conn, want string, timeout time.Duration) {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	defer func() {
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	}()
+	for {
+		var event map[string]any
+		if err := conn.ReadJSON(&event); err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				return
+			}
+			t.Fatalf("read event: %v", err)
+		}
+		if event["type"] == want {
+			t.Fatalf("unexpected %s event: %#v", want, event)
+		}
+	}
+}
+
 func readUntilSessionHistory(t *testing.T, conn *websocket.Conn) map[string]any {
 	t.Helper()
 	return readUntilType(t, conn, protocol.EventTypeSessionHistory)
@@ -3013,6 +3035,9 @@ func TestHandlerInputDoesNotInjectEmptySessionContextBeforeUserConfiguresIt(t *t
 	case <-time.After(5 * time.Second):
 		t.Fatal("did not receive input payload")
 	}
+
+	_ = conn.Close()
+	h.runtimeSessions.CleanupAll()
 }
 
 func TestHandlerInputInjectsEnabledSkillAndMemoryIntoAIConversation(t *testing.T) {
@@ -3244,7 +3269,7 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	secondRunner.WaitStarted(t)
 	select {
 	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
+		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。  先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
 			t.Fatalf("unexpected continuation payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):
@@ -3254,7 +3279,6 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "next\n"}); err != nil {
 		t.Fatalf("write input request: %v", err)
 	}
-	thirdRunner.WaitStarted(t)
 	select {
 	case payload := <-thirdRunner.writeCh:
 		if string(payload) != "next\n" {
@@ -3266,6 +3290,9 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	if thirdRunner.lastReq.PermissionMode != "default" {
 		t.Fatalf("expected default permission mode after restore, got %#v", thirdRunner.lastReq)
 	}
+
+	_ = conn.Close()
+	h.runtimeSessions.CleanupAll()
 }
 
 func TestHandlerInputAutoResumesDetachedClaudeSession(t *testing.T) {
@@ -3342,6 +3369,9 @@ func TestHandlerInputAutoResumesDetachedClaudeSession(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("did not receive resumed input payload")
 	}
+
+	_ = conn.Close()
+	h.runtimeSessions.CleanupAll()
 }
 
 func TestHandlerInputWithoutRunner(t *testing.T) {
@@ -3680,6 +3710,7 @@ func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
 	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
 	firstRunner.claudeSessionID = "resume-approve-123"
 	secondRunner := newHoldingStubRunner()
+	thirdRunner := newHoldingStubRunner()
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
@@ -3689,14 +3720,18 @@ func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
 	runnerIndex := 0
 	h.NewPtyRunner = func() runner.Runner {
 		runnerIndex++
-		if runnerIndex == 1 {
+		switch runnerIndex {
+		case 1:
 			return firstRunner
+		case 2:
+			return secondRunner
+		default:
+			return thirdRunner
 		}
-		return secondRunner
 	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
-	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-approve")
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "permission-approve")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "exec"},
@@ -3740,14 +3775,14 @@ func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
 	secondRunner.WaitStarted(t)
 	select {
 	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
+		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。  先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
 			t.Fatalf("unexpected continuation payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("did not receive continuation payload on hot-swapped runner")
 	}
 	if secondRunner.lastReq.PermissionMode != "acceptEdits" {
-		t.Fatalf("expected acceptEdits restart, got %#v", secondRunner.lastReq)
+		t.Fatalf("expected acceptEdits restart permission mode, got %#v", secondRunner.lastReq)
 	}
 	if !strings.Contains(secondRunner.lastReq.Command, "--resume ") {
 		t.Fatalf("expected resume command, got %q", secondRunner.lastReq.Command)
@@ -3781,6 +3816,46 @@ func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
 	if thinking["source"] != "permission-decision" {
 		t.Fatalf("expected permission-decision source, got %#v", thinking)
 	}
+
+	runtimeSession := h.runtimeSessions.Ensure(sessionID)
+	if runtimeSession == nil {
+		t.Fatal("expected runtime session")
+	}
+	foundApprovedPrompt := false
+	for _, pending := range runtimeSession.pendingSince(0) {
+		prompt, ok := pending.(protocol.PromptRequestEvent)
+		if ok && prompt.Message == "写 README 需要你的授权" {
+			foundApprovedPrompt = true
+			break
+		}
+	}
+	if !foundApprovedPrompt {
+		t.Fatal("expected approved permission prompt to remain pending for hot-swap replay semantics")
+	}
+
+	go func() {
+		secondRunner.mu.Lock()
+		sink := secondRunner.sink
+		secondRunner.mu.Unlock()
+		if sink != nil {
+			sink(protocol.ApplyRuntimeMeta(
+				protocol.NewPromptRequestEvent("ignored", "Claude requested permissions to use Edit on README.md", []string{"y", "n"}),
+				protocol.RuntimeMeta{ResumeSessionID: "resume-approve-123", TargetPath: "README.md", Command: "claude"},
+			))
+		}
+	}()
+
+	thirdRunner.WaitStarted(t)
+	select {
+	case payload := <-thirdRunner.writeCh:
+		if !strings.Contains(string(payload), "README.md") {
+			t.Fatalf("unexpected grant replay payload: %q", string(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive continuation payload on grant-consumed hot swap")
+	}
+
+	assertNoEventType(t, conn, protocol.EventTypePromptRequest, 300*time.Millisecond)
 }
 
 func TestHandlerPermissionDecisionApproveForCodexUsesDirectPermissionResponse(t *testing.T) {
@@ -4197,7 +4272,7 @@ func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
 	secondRunner.WaitStarted(t)
 	select {
 	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
+		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。  先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
 			t.Fatalf("unexpected continuation payload on resumed runner: %q", got)
 		}
 	case <-time.After(5 * time.Second):
@@ -4262,7 +4337,7 @@ func TestHandlerPermissionDecisionWithNonInteractiveRunnerStillHotSwaps(t *testi
 	secondRunner.WaitStarted(t)
 	select {
 	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
+		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。  先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次文件修改。  你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入：写 README 需要你的授权\n" {
 			t.Fatalf("unexpected continuation payload: %q", got)
 		}
 	case <-time.After(5 * time.Second):

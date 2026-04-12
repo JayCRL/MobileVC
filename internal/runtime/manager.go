@@ -272,6 +272,11 @@ func (s *Service) StopActive(sessionID string, emit func(any)) error {
 	return nil
 }
 
+func (s *Service) closeActiveAndWait() {
+	s.manager.closeActive()
+	s.execWG.Wait()
+}
+
 func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequest, emit func(any)) error {
 	selected := s.newRunner(req.Mode)
 	preparedReq := s.prepareExecuteRequest(req)
@@ -483,7 +488,7 @@ func (s *Service) HotSwapApproveWithTemporaryElevation(ctx context.Context, sess
 	if err != nil {
 		return err
 	}
-	s.manager.closeActive()
+	s.closeActiveAndWait()
 	if err := s.Execute(ctx, sessionID, restartReq, emit); err != nil {
 		return err
 	}
@@ -537,7 +542,7 @@ func (s *Service) RestoreSafePermissionModeBeforeInput(ctx context.Context, sess
 		if err != nil {
 			return err
 		}
-		s.manager.closeActive()
+		s.closeActiveAndWait()
 		if err := s.Execute(ctx, sessionID, restartReq, emit); err != nil {
 			return err
 		}
@@ -557,7 +562,7 @@ func (s *Service) RestoreSafePermissionModeBeforeInput(ctx context.Context, sess
 	if err != nil {
 		return err
 	}
-	s.manager.closeActive()
+	s.closeActiveAndWait()
 	if err := s.Execute(ctx, sessionID, restartReq, emit); err != nil {
 		return err
 	}
@@ -1223,7 +1228,8 @@ func hotSwapContinuationInput(targetPath, promptMessage string) string {
 	promptMessage = strings.TrimSpace(promptMessage)
 	lines := []string{
 		"我已经批准这次文件修改权限。",
-		"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即重新发起一次新的 Write/Edit 操作。",
+		"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。",
+		"先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。",
 	}
 	if targetPath != "" {
 		lines = append(lines, "本次已授权的目标文件：`"+targetPath+"`。")

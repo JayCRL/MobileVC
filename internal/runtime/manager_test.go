@@ -369,6 +369,9 @@ func TestHotSwapApproveWithTemporaryElevationRestartsWithResumeAndContinuation(t
 	if len(second.writes) != 1 || string(second.writes[0]) != continuation {
 		t.Fatalf("unexpected continuation writes: %#v", second.writes)
 	}
+	if !strings.Contains(continuation, "先使用 Read 读取目标文件的当前内容") {
+		t.Fatalf("expected continuation to require Read before Edit, got %q", continuation)
+	}
 	snapshot := svc.RuntimeSnapshot()
 	if !snapshot.TemporaryElevated {
 		t.Fatal("expected temporary elevated snapshot")

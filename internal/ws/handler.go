@@ -31,14 +31,15 @@ import (
 const wsDebugPreviewLimit = 240
 
 type Handler struct {
-	AuthToken       string
-	NewExecRunner   func() runner.Runner
-	NewPtyRunner    func() runner.Runner
-	Upgrader        websocket.Upgrader
-	SkillLauncher   *skills.Launcher
-	SessionStore    store.Store
-	PushService     push.Service
-	runtimeSessions *runtimeSessionRegistry
+	AuthToken        string
+	NewExecRunner    func() runner.Runner
+	NewPtyRunner     func() runner.Runner
+	Upgrader         websocket.Upgrader
+	SkillLauncher    *skills.Launcher
+	SessionStore     store.Store
+	PushService      push.Service
+	runtimeSessions  *runtimeSessionRegistry
+	permissionGrants *permissionGrantStore
 }
 
 func NewHandler(authToken string, sessionStore store.Store) *Handler {
@@ -50,9 +51,10 @@ func NewHandler(authToken string, sessionStore store.Store) *Handler {
 		NewPtyRunner: func() runner.Runner {
 			return runner.NewPtyRunner()
 		},
-		SkillLauncher: skills.NewLauncher(sessionStore),
-		SessionStore:  sessionStore,
-		PushService:   &push.NoopService{},
+		SkillLauncher:    skills.NewLauncher(sessionStore),
+		SessionStore:     sessionStore,
+		PushService:      &push.NoopService{},
+		permissionGrants: newPermissionGrantStore(),
 		Upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -405,6 +407,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			switch event.(type) {
 			case protocol.PromptRequestEvent, protocol.InteractionRequestEvent:
 				autoApplyCtx, autoApplyCancel := sessionProjectionContext()
+				consumed, err := maybeConsumeTemporaryPermissionGrant(autoApplyCtx, h.SessionStore, runtimeSessionID, event, sessionRuntimeSvc, h.permissionGrants, emitAndPersistFor(runtimeSessionID))
+				autoApplyCancel()
+				if err == nil && consumed {
+					return
+				}
+				autoApplyCtx, autoApplyCancel = sessionProjectionContext()
 				applied, err := maybeAutoApplyPermissionEvent(autoApplyCtx, h.SessionStore, runtimeSessionID, event, sessionRuntimeSvc, emitSessionEvent, emitAndPersistFor(runtimeSessionID))
 				autoApplyCancel()
 				if err == nil && applied {
@@ -1248,27 +1256,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				emitPermissionRuleList(emit, h.SessionStore, ctx, sessionID)
 			}
-			err := executePermissionDecision(ctx, sessionID, permissionEvent, service, projection, controller, emitAndPersist)
-			if err != nil {
-				message := err.Error()
-				if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-					message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
-				} else if errors.Is(err, runtimepkg.ErrPermissionRequestExpired) {
-					message = "当前权限请求已失效，请等待 AI 重新发起操作后再确认"
-				} else if errors.Is(err, runner.ErrInputNotSupported) {
-					message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
-				} else if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {
-					message = "当前没有可恢复的 Claude 会话，无法通过热重启继续此次权限批准"
-				} else if errors.Is(err, runtimepkg.ErrHotSwapUnsupportedRunner) {
-					message = "当前活跃会话不是可热重启恢复的 Claude PTY 会话"
-				} else if errors.Is(err, runtimepkg.ErrResumeConversationNotFound) {
-					message = "当前 Claude 会话的 resume id 已失效或不存在，无法通过热重启继续此次权限批准"
-				} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
-					message = "Claude 恢复后未进入可输入状态，无法继续刚才的操作"
-				}
-				logx.Warn("ws", "permission decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
-				emit(protocol.NewErrorEvent(sessionID, message, ""))
+			err := executePermissionDecision(ctx, sessionID, permissionEvent, service, projection, controller, h.permissionGrants, emitAndPersist)
+			if err == nil {
+				continue
 			}
+			message := err.Error()
+			if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+				message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
+			} else if errors.Is(err, runtimepkg.ErrPermissionRequestExpired) {
+				message = "当前权限请求已失效，请等待 AI 重新发起操作后再确认"
+			} else if errors.Is(err, runner.ErrInputNotSupported) {
+				message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
+			} else if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {
+				message = "当前没有可恢复的 Claude 会话，无法通过热重启继续此次权限批准"
+			} else if errors.Is(err, runtimepkg.ErrHotSwapUnsupportedRunner) {
+				message = "当前活跃会话不是可热重启恢复的 Claude PTY 会话"
+			} else if errors.Is(err, runtimepkg.ErrResumeConversationNotFound) {
+				message = "当前 Claude 会话的 resume id 已失效或不存在，无法通过热重启继续此次权限批准"
+			} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
+				message = "Claude 恢复后未进入可输入状态，无法继续刚才的操作"
+			}
+			logx.Warn("ws", "permission decision failed: connectionID=%s sessionID=%s remoteAddr=%s decision=%s err=%v", connectionID, sessionID, remoteAddr, decision, err)
+			emit(protocol.NewErrorEvent(sessionID, message, ""))
+
 		case "review_decision":
 			var reviewEvent protocol.ReviewDecisionRequestEvent
 			if err := json.Unmarshal(payload, &reviewEvent); err != nil {
@@ -1779,7 +1789,8 @@ func hotSwapApproveContinuation(req protocol.PermissionDecisionRequestEvent) str
 
 	lines := []string{
 		"我已经批准这次文件修改权限。",
-		"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限，立即发起新的 Write/Edit 操作。",
+		"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。",
+		"先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。",
 	}
 
 	if targetPath != "" {

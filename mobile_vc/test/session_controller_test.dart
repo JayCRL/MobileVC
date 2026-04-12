@@ -203,8 +203,11 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            executionId: 'exec-1',
+            blockingKind: 'ready',
+          ),
           raw: const {'type': 'agent_state'},
           state: 'WAIT_INPUT',
           message: '等待继续输入',
@@ -309,6 +312,7 @@ void main() {
             command: 'claude',
             contextId: 'perm-prompt-1',
             targetPath: '/workspace/a.dart',
+            blockingKind: 'permission',
           ),
           raw: const {
             'type': 'prompt_request',
@@ -429,6 +433,7 @@ void main() {
             command: 'claude',
             contextId: 'perm-1',
             targetPath: '/workspace/a.dart',
+            blockingKind: 'permission',
           ),
           raw: const {'type': 'prompt_request', 'msg': 'Allow edit a.dart?'},
           message: 'Allow edit a.dart?',
@@ -443,7 +448,10 @@ void main() {
         PromptRequestEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            blockingKind: 'ready',
+          ),
           raw: const {'type': 'prompt_request', 'msg': 'AI 会话已就绪，可继续输入'},
           message: 'AI 会话已就绪，可继续输入',
           options: const [],
@@ -454,8 +462,8 @@ void main() {
       expect(controller.shouldShowPermissionChoices, isFalse);
       expect(controller.pendingPrompt?.message, 'AI 会话已就绪，可继续输入');
       expect(controller.pendingInteraction, isNull);
-      final signal = _expectSignal(controller, ActionNeededType.reply);
-      expect(signal.message, 'AI 助手正在等待你的回复');
+      final signal = _expectSignal(controller, ActionNeededType.continueInput);
+      expect(signal.message, 'AI 助手需要你继续输入');
     });
 
     test('review prompt 不会被普通 WAIT_INPUT 更新覆盖', () async {
@@ -663,8 +671,11 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 2)),
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(command: 'claude', executionId: 'exec-2'),
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            executionId: 'exec-2',
+            blockingKind: 'ready',
+          ),
           raw: const {'type': 'agent_state'},
           state: 'WAIT_INPUT',
           message: '等待继续输入',
@@ -1590,12 +1601,12 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.awaitInput, isFalse);
-      expect(controller.isSessionBusy, isTrue);
-      expect(controller.activityVisible, isTrue);
-      expect(controller.activityBannerVisible, isTrue);
-      expect(controller.activityBannerAnimated, isTrue);
-      expect(controller.activityBannerShowsElapsed, isTrue);
+      expect(controller.awaitInput, isTrue);
+      expect(controller.isSessionBusy, isFalse);
+      expect(controller.activityVisible, isFalse);
+      expect(controller.activityBannerVisible, isFalse);
+      expect(controller.activityBannerAnimated, isFalse);
+      expect(controller.activityBannerShowsElapsed, isFalse);
       expect(controller.activityBannerTitle, 'AI 助手正在运行中');
 
       service.emit(
@@ -1825,7 +1836,7 @@ void main() {
       expect(service.sentPayloads.single['cmd'], 'ls');
     });
 
-    test('stop Claude 后忽略回灌的旧 AI 状态与 prompt', () async {
+    test('stop Claude 后会继续接收后续 AI 状态与 prompt', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1886,8 +1897,8 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.shouldShowClaudeMode, isFalse);
-      expect(controller.awaitInput, isFalse);
+      expect(controller.shouldShowClaudeMode, isTrue);
+      expect(controller.awaitInput, isTrue);
     });
 
     test('有待审核 diff 但没有 review prompt 时仍允许显示 differ 审核按钮', () async {
@@ -1940,7 +1951,7 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.shouldShowReviewChoices, isFalse);
+      expect(controller.shouldShowReviewChoices, isTrue);
       expect(controller.currentReviewDiff?.id, 'diff-1');
       expect(controller.reviewActionTargetDiff?.id, 'diff-1');
       expect(controller.canShowReviewActions, isTrue);
@@ -3697,6 +3708,43 @@ void main() {
       );
     });
 
+    test('codex 单行总结式回复不会再被误判为 terminal 输出', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'codex',
+            engine: 'codex',
+            executionId: 'exec-codex-summary-1',
+            contextId: 'turn-summary-1',
+          ),
+          raw: const {'type': 'log'},
+          message: 'Summary: fixed the missing reply rendering in Flutter.',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      final item = controller.timeline.singleWhere(
+        (entry) =>
+            entry.kind == 'markdown' &&
+            entry.body == 'Summary: fixed the missing reply rendering in Flutter.',
+      );
+      expect(item.kind, 'markdown');
+      expect(
+        controller.terminalStdout.contains(
+          'Summary: fixed the missing reply rendering in Flutter.',
+        ),
+        isFalse,
+      );
+    });
+
     test('权限交接中的 signal killed 噪声不会进入 timeline', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -4986,7 +5034,8 @@ void main() {
         PromptRequestEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', blockingKind: 'permission'),
           raw: const {
             'type': 'prompt_request',
             'msg': 'Allow write to README.md?'
@@ -5135,6 +5184,7 @@ void main() {
             contextTitle: 'README',
             targetPath: '/workspace/README.md',
             targetType: 'file',
+            blockingKind: 'permission',
           ),
           raw: const {
             'type': 'prompt_request',
@@ -5190,6 +5240,7 @@ void main() {
           runtimeMeta: const RuntimeMeta(
             command: 'claude',
             targetPath: '/workspace/README.md',
+            blockingKind: 'permission',
           ),
           raw: const {
             'type': 'prompt_request',
@@ -5230,7 +5281,8 @@ void main() {
         PromptRequestEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', blockingKind: 'permission'),
           raw: const {
             'type': 'prompt_request',
             'msg': 'Allow write to README.md?',
@@ -5311,6 +5363,7 @@ void main() {
           runtimeMeta: const RuntimeMeta(
             command: 'codex',
             targetPath: '/workspace/lib/main.dart',
+            blockingKind: 'permission',
           ),
           raw: const {'type': 'prompt_request', 'msg': 'Allow edit main.dart?'},
           message: 'Allow edit main.dart?',
@@ -5342,6 +5395,7 @@ void main() {
           runtimeMeta: const RuntimeMeta(
             command: 'codex',
             targetPath: '/workspace/lib/main.dart',
+            blockingKind: 'permission',
           ),
           raw: const {'type': 'prompt_request', 'msg': 'Allow edit main.dart?'},
           message: 'Allow edit main.dart?',
@@ -5475,6 +5529,7 @@ void main() {
             contextId: 'perm-1',
             targetPath: '/workspace/README.md',
             claudeLifecycle: 'waiting_input',
+            blockingKind: 'permission',
           ),
           raw: const {
             'type': 'prompt_request',
@@ -5510,6 +5565,7 @@ void main() {
             command: 'claude',
             contextId: 'diff-after-permission',
             claudeLifecycle: 'waiting_input',
+            blockingKind: 'review',
           ),
           raw: const {'type': 'agent_state'},
           state: 'WAIT_INPUT',
@@ -5527,6 +5583,7 @@ void main() {
             contextId: 'diff-after-permission',
             targetPath: '/workspace/README.md',
             claudeLifecycle: 'waiting_input',
+            blockingKind: 'review',
           ),
           raw: const {
             'type': 'prompt_request',
@@ -5582,7 +5639,7 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
-          runtimeMeta: RuntimeMeta(command: 'claude'),
+          runtimeMeta: RuntimeMeta(command: 'claude', blockingKind: 'review'),
           raw: {'type': 'agent_state'},
           state: 'WAIT_INPUT',
           message: '等待审核',
@@ -5598,6 +5655,7 @@ void main() {
             contextId: 'diff-1',
             contextTitle: 'README diff',
             targetPath: '/workspace/README.md',
+            blockingKind: 'review',
           ),
           raw: const {
             'type': 'prompt_request',
@@ -6123,7 +6181,8 @@ void main() {
         PromptRequestEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
-          runtimeMeta: const RuntimeMeta(command: 'claude'),
+          runtimeMeta:
+              const RuntimeMeta(command: 'claude', blockingKind: 'ready'),
           raw: const {'type': 'prompt_request', 'msg': 'Claude 会话已就绪，可继续输入'},
           message: 'Claude 会话已就绪，可继续输入',
           options: const [],

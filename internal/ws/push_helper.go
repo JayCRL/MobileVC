@@ -30,10 +30,12 @@ func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID st
 	eventType := ""
 	title := "MobileVC"
 	body := "需要你的确认"
+	blockingKind := ""
 
 	switch e := event.(type) {
 	case protocol.PromptRequestEvent:
 		eventType = protocol.EventTypePromptRequest
+		blockingKind = e.RuntimeMeta.BlockingKind
 		if e.Message != "" {
 			body = e.Message
 		} else {
@@ -41,12 +43,26 @@ func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID st
 		}
 	case protocol.InteractionRequestEvent:
 		eventType = protocol.EventTypeInteractionRequest
+		blockingKind = firstNonEmptyPushString(e.Kind, e.RuntimeMeta.BlockingKind)
 		if e.Message != "" {
 			body = e.Message
 		} else {
 			body = "Claude 需要你审核代码变更"
 		}
 	default:
+		return
+	}
+
+	switch blockingKind {
+	case "permission":
+		body = "AI 助手需要你确认权限"
+	case "review":
+		body = "AI 助手需要你处理代码审核"
+	case "plan":
+		body = "AI 助手需要你完成计划选择"
+	case "reply":
+		body = "AI 助手正在等待你的回复"
+	case "ready":
 		return
 	}
 
@@ -78,9 +94,10 @@ func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID st
 			Title:    title,
 			Body:     body,
 			Data: map[string]string{
-				"type":      "action_needed",
-				"sessionId": sessionID,
-				"eventType": eventType,
+				"type":         "action_needed",
+				"sessionId":    sessionID,
+				"eventType":    eventType,
+				"blockingKind": blockingKind,
 			},
 		}); err != nil {
 			logx.Warn("push", "send push notification failed: sessionID=%s platform=%s err=%v", sessionID, platform, err)
@@ -88,4 +105,13 @@ func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID st
 			logx.Info("push", "push notification sent: sessionID=%s platform=%s title=%q body=%q", sessionID, platform, title, body)
 		}
 	}()
+}
+
+func firstNonEmptyPushString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

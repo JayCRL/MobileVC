@@ -19,6 +19,7 @@ func executePermissionDecision(
 	service *runtimepkg.Service,
 	projection store.ProjectionSnapshot,
 	controller session.ControllerSnapshot,
+	grantStore *permissionGrantStore,
 	emitAndPersist func(any),
 ) error {
 	decision := strings.TrimSpace(strings.ToLower(permissionEvent.Decision))
@@ -66,6 +67,16 @@ func executePermissionDecision(
 		}, emitAndPersist)
 	}
 	replayInput := hotSwapApproveContinuation(permissionEvent)
+	targetPath := normalizePermissionGrantPath(inputMeta.TargetPath)
+	grantIssued := false
+	if grantStore != nil && targetPath != "" {
+		grantIssued = grantStore.Issue(sessionID, targetPath, temporaryPermissionGrantTTL)
+	}
+	revokeGrant := func() {
+		if grantIssued {
+			grantStore.Revoke(sessionID, targetPath)
+		}
+	}
 	req := runtimepkg.ExecuteRequest{
 		Command:        inputMeta.Command,
 		CWD:            inputMeta.CWD,
@@ -76,11 +87,19 @@ func executePermissionDecision(
 	currentRunner := service.CurrentRunner()
 	if currentRunner != nil {
 		if err := service.HotSwapApproveWithTemporaryElevation(ctx, sessionID, req, replayInput, emitAndPersist); err == nil || !errors.Is(err, runtimepkg.ErrNoActiveRunner) {
+			if err != nil {
+				revokeGrant()
+			}
 			return err
 		}
 	}
 	if !service.CanHotSwapClaudeSession(req) || !service.HasResumeSession(req) {
+		revokeGrant()
 		return runtimepkg.ErrNoActiveRunner
 	}
-	return service.HotSwapApproveFromResume(ctx, sessionID, req, replayInput, emitAndPersist)
+	if err := service.HotSwapApproveFromResume(ctx, sessionID, req, replayInput, emitAndPersist); err != nil {
+		revokeGrant()
+		return err
+	}
+	return nil
 }
