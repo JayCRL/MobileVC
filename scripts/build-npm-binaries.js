@@ -9,7 +9,7 @@ const MAIN_PACKAGE = require(path.join(ROOT, 'package.json'));
 const VERSION = process.env.MOBILEVC_VERSION || MAIN_PACKAGE.version;
 const COMMIT = process.env.MOBILEVC_COMMIT || 'unknown';
 const BUILD_DATE = process.env.MOBILEVC_BUILD_DATE || new Date().toISOString();
-const SOURCE_DIR = path.join(ROOT, 'web');
+const SOURCE_DIR = path.join(ROOT, 'mobile_vc', 'build', 'web');
 const TARGET_DIR = path.join(ROOT, 'cmd', 'server', 'web');
 
 syncEmbeddedWeb();

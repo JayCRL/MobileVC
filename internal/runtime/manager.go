@@ -208,6 +208,12 @@ func (m *manager) snapshot() Snapshot {
 	if strings.TrimSpace(meta.ResumeSessionID) == "" {
 		meta.ResumeSessionID = m.resumeSessionID
 	}
+	if m.temporaryElevated {
+		safeMode := strings.TrimSpace(m.safePermissionMode)
+		if safeMode != "" {
+			meta.PermissionMode = safeMode
+		}
+	}
 	lifecycle := deriveClaudeLifecycleLocked(m.activeRunner, meta, m.activeSession, m.resumeSessionID)
 	meta.ClaudeLifecycle = lifecycle
 	m.claudeLifecycle = lifecycle
@@ -585,12 +591,18 @@ func (s *Service) ReviewDecision(ctx context.Context, sessionID string, req Revi
 		return errors.New("review decision is required")
 	}
 	meta := req.RuntimeMeta
+	meta.Source = "review-decision"
+	meta.TargetText = decision
+	if req.IsReviewOnly {
+		for _, event := range s.controller.OnInputSent(meta) {
+			emit(event)
+		}
+		return nil
+	}
 	payload := reviewDecisionPayload(decision, meta)
 	if payload == "" {
 		return errors.New("review decision must be one of: accept, revert, revise")
 	}
-	meta.Source = "review-decision"
-	meta.TargetText = decision
 	return s.SendInput(ctx, sessionID, InputRequest{Data: payload, RuntimeMeta: meta}, emit)
 }
 

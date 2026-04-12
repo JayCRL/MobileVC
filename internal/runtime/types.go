@@ -19,7 +19,8 @@ type InputRequest struct {
 }
 
 type ReviewDecisionRequest struct {
-	Decision string
+	Decision     string
+	IsReviewOnly bool
 	protocol.RuntimeMeta
 }
 
