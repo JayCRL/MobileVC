@@ -162,8 +162,7 @@ func classifyPermissionKind(promptMessage, targetPath, command string) store.Per
 		strings.Contains(lowerPrompt, "命令"),
 		(strings.TrimSpace(lowerCommand) != "" && targetPath == ""):
 		return store.PermissionKindShell
-	case targetPath != "",
-		strings.Contains(lowerPrompt, "修改文件"),
+	case strings.Contains(lowerPrompt, "修改文件"),
 		strings.Contains(lowerPrompt, "write"),
 		strings.Contains(lowerPrompt, "edit"),
 		strings.Contains(lowerPrompt, "文件"):
@@ -327,6 +326,96 @@ func buildPermissionDecisionFromEvent(
 	}
 }
 
+func looksLikePermissionPromptForRule(event protocol.PromptRequestEvent) bool {
+	if len(event.Options) >= 2 {
+		first := strings.ToLower(strings.TrimSpace(event.Options[0]))
+		second := strings.ToLower(strings.TrimSpace(event.Options[1]))
+		if (first == "y" || first == "yes" || first == "approve") && (second == "n" || second == "no" || second == "deny") {
+			return true
+		}
+	}
+	kind := classifyPermissionKind(event.Message, strings.TrimSpace(event.RuntimeMeta.TargetPath), strings.TrimSpace(event.RuntimeMeta.Command))
+	return kind != "" && kind != store.PermissionKindGeneric
+}
+
+func looksLikePermissionInteractionForRule(event protocol.InteractionRequestEvent) bool {
+	kind := strings.ToLower(strings.TrimSpace(event.Kind))
+	if strings.Contains(kind, "permission") {
+		return true
+	}
+	hasApprove := false
+	hasDeny := false
+	for _, action := range event.Actions {
+		value := strings.ToLower(strings.TrimSpace(firstNonEmptyString(action.Decision, action.Value, action.Label)))
+		switch value {
+		case "approve", "allow", "accept", "yes", "y":
+			hasApprove = true
+		case "deny", "reject", "no", "n":
+			hasDeny = true
+		}
+	}
+	if hasApprove && hasDeny {
+		return true
+	}
+	message := firstNonEmptyString(event.Message, event.Title)
+	targetPath := firstNonEmptyString(event.TargetPath, event.RuntimeMeta.TargetPath)
+	derivedKind := classifyPermissionKind(message, strings.TrimSpace(targetPath), strings.TrimSpace(event.RuntimeMeta.Command))
+	return derivedKind != "" && derivedKind != store.PermissionKindGeneric
+}
+
+func maybeConsumeTemporaryPermissionGrant(
+	ctx context.Context,
+	sessionStore store.Store,
+	sessionID string,
+	event any,
+	service *runtimepkg.Service,
+	grantStore *permissionGrantStore,
+	emitAndPersist func(any),
+) (bool, error) {
+	if grantStore == nil {
+		return false, nil
+	}
+	var (
+		message string
+		meta    protocol.RuntimeMeta
+	)
+	switch e := event.(type) {
+	case protocol.PromptRequestEvent:
+		if !looksLikePermissionPromptForRule(e) {
+			return false, nil
+		}
+		message = e.Message
+		meta = e.RuntimeMeta
+	case protocol.InteractionRequestEvent:
+		if !looksLikePermissionInteractionForRule(e) {
+			return false, nil
+		}
+		message = e.Message
+		meta = protocol.MergeRuntimeMeta(e.RuntimeMeta, protocol.RuntimeMeta{TargetPath: firstNonEmptyString(e.TargetPath, e.RuntimeMeta.TargetPath)})
+	default:
+		return false, nil
+	}
+	targetPath := normalizePermissionGrantPath(meta.TargetPath)
+	if targetPath == "" || !grantStore.ConsumeIfValid(sessionID, targetPath) {
+		return false, nil
+	}
+	projection := normalizeProjectionSnapshot(store.ProjectionSnapshot{})
+	if strings.TrimSpace(sessionID) != "" && sessionStore != nil {
+		if record, err := sessionStore.GetSession(ctx, sessionID); err == nil {
+			projection = normalizeProjectionSnapshot(record.Projection)
+		}
+	}
+	controller := service.ControllerSnapshot()
+	req := buildPermissionDecisionFromEvent(sessionID, message, meta, projection, controller)
+	if req.TargetPath == "" {
+		req.TargetPath = targetPath
+	}
+	if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, grantStore, emitAndPersist); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func maybeAutoApplyPermissionEvent(
 	ctx context.Context,
 	sessionStore store.Store,
@@ -345,10 +434,13 @@ func maybeAutoApplyPermissionEvent(
 	)
 	switch e := event.(type) {
 	case protocol.PromptRequestEvent:
+		if !looksLikePermissionPromptForRule(e) {
+			return false, nil
+		}
 		message = e.Message
 		meta = e.RuntimeMeta
 	case protocol.InteractionRequestEvent:
-		if strings.TrimSpace(strings.ToLower(e.Kind)) != "permission" {
+		if !looksLikePermissionInteractionForRule(e) {
 			return false, nil
 		}
 		message = e.Message
@@ -368,7 +460,7 @@ func maybeAutoApplyPermissionEvent(
 
 	if projection.PermissionRulesEnabled {
 		if rule, ok := matchPermissionRule(projection.PermissionRules, matchCtx); ok {
-			if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, emitAndPersist); err != nil {
+			if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, nil, emitAndPersist); err != nil {
 				return false, err
 			}
 			if strings.TrimSpace(sessionID) != "" {
@@ -395,7 +487,7 @@ func maybeAutoApplyPermissionEvent(
 	if !ok {
 		return false, nil
 	}
-	if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, emitAndPersist); err != nil {
+	if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, nil, emitAndPersist); err != nil {
 		return false, err
 	}
 	persistentSnapshot.Items = markPermissionRuleMatched(persistentSnapshot.Items, rule.ID)

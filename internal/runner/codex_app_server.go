@@ -515,7 +515,7 @@ func (s *codexAppSession) handleServerRequest(ctx context.Context, message codex
 		})
 		sendEvent(s.sink, protocol.ApplyRuntimeMeta(
 			protocol.NewPromptRequestEvent(s.sessionID, firstNonEmptyString(strings.TrimSpace(payload.Reason), "Codex 请求修改文件"), []string{codexPromptApprove, codexPromptDeny}),
-			s.runtimeMeta("waiting_input"),
+			protocol.MergeRuntimeMeta(s.runtimeMeta("waiting_input"), protocol.RuntimeMeta{BlockingKind: "permission"}),
 		))
 	case "item/commandExecution/requestApproval":
 		var payload codexCommandApprovalRequest
@@ -528,7 +528,7 @@ func (s *codexAppSession) handleServerRequest(ctx context.Context, message codex
 		})
 		sendEvent(s.sink, protocol.ApplyRuntimeMeta(
 			protocol.NewPromptRequestEvent(s.sessionID, codexCommandPromptMessage(payload), []string{codexPromptApprove, codexPromptDeny}),
-			s.runtimeMeta("waiting_input"),
+			protocol.MergeRuntimeMeta(s.runtimeMeta("waiting_input"), protocol.RuntimeMeta{BlockingKind: "permission"}),
 		))
 	case "item/permissions/requestApproval":
 		var payload codexPermissionsApprovalRequest
@@ -542,7 +542,7 @@ func (s *codexAppSession) handleServerRequest(ctx context.Context, message codex
 		})
 		sendEvent(s.sink, protocol.ApplyRuntimeMeta(
 			protocol.NewPromptRequestEvent(s.sessionID, firstNonEmptyString(strings.TrimSpace(payload.Reason), "Codex 请求额外权限"), []string{codexPromptApprove, codexPromptDeny}),
-			s.runtimeMeta("waiting_input"),
+			protocol.MergeRuntimeMeta(s.runtimeMeta("waiting_input"), protocol.RuntimeMeta{BlockingKind: "permission"}),
 		))
 	case "item/tool/requestUserInput":
 		sendEvent(s.sink, protocol.ApplyRuntimeMeta(
@@ -803,6 +803,9 @@ func (s *codexAppSession) runtimeMeta(lifecycle string) protocol.RuntimeMeta {
 	}
 	if meta.ClaudeLifecycle == "" {
 		meta.ClaudeLifecycle = "active"
+	}
+	if meta.ClaudeLifecycle == "waiting_input" {
+		meta.BlockingKind = "ready"
 	}
 	return meta
 }

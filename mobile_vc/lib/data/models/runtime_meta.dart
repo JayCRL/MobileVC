@@ -20,6 +20,7 @@ class RuntimeMeta {
     this.cwd = '',
     this.permissionMode = '',
     this.claudeLifecycle = '',
+    this.blockingKind = '',
     this.targetDiff = '',
     this.targetTitle = '',
     this.targetStack = '',
@@ -45,6 +46,7 @@ class RuntimeMeta {
   final String cwd;
   final String permissionMode;
   final String claudeLifecycle;
+  final String blockingKind;
   final String targetDiff;
   final String targetTitle;
   final String targetStack;
@@ -87,6 +89,8 @@ class RuntimeMeta {
       claudeLifecycle: other.claudeLifecycle.isNotEmpty
           ? other.claudeLifecycle
           : claudeLifecycle,
+      blockingKind:
+          other.blockingKind.isNotEmpty ? other.blockingKind : blockingKind,
       targetDiff: other.targetDiff.isNotEmpty ? other.targetDiff : targetDiff,
       targetTitle:
           other.targetTitle.isNotEmpty ? other.targetTitle : targetTitle,
@@ -116,6 +120,7 @@ class RuntimeMeta {
         if (cwd.isNotEmpty) 'cwd': cwd,
         if (permissionMode.isNotEmpty) 'permissionMode': permissionMode,
         if (claudeLifecycle.isNotEmpty) 'claudeLifecycle': claudeLifecycle,
+        if (blockingKind.isNotEmpty) 'blockingKind': blockingKind,
         if (targetDiff.isNotEmpty) 'targetDiff': targetDiff,
         if (targetTitle.isNotEmpty) 'targetTitle': targetTitle,
         if (targetStack.isNotEmpty) 'targetStack': targetStack,
@@ -144,6 +149,7 @@ class RuntimeMeta {
       cwd: read('cwd'),
       permissionMode: read('permissionMode'),
       claudeLifecycle: read('claudeLifecycle'),
+      blockingKind: read('blockingKind'),
       targetDiff: read('targetDiff'),
       targetTitle: read('targetTitle'),
       targetStack: read('targetStack'),

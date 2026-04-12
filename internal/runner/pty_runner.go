@@ -60,6 +60,7 @@ type PtyRunner struct {
 	fileSnapshots           map[string]fileSnapshot
 	catalogAuthoringBuffer  strings.Builder
 	lastAssistantTextKey    string
+	runGeneration           uint64
 }
 
 type fileSnapshot struct {
@@ -139,10 +140,12 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 	if shouldUseCodexAppServer(req.Command) {
 		initialPrompt := extractCodexInitialPrompt(req.Command)
 		if initialPrompt != "" {
+			generation := r.nextRunGeneration()
 			r.mu.Lock()
 			r.runCtx = ctx
 			r.permissionMode = req.PermissionMode
 			r.interactive = false
+			r.runGeneration = generation
 			r.pendingReq = req
 			r.pendingCWD = cwd
 			r.currentDir = cwd
@@ -154,6 +157,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 			r.mu.Unlock()
 			return r.runCodexAppServer(ctx, req, cwd, sink, initialPrompt)
 		}
+		generation := r.nextRunGeneration()
 		r.mu.Lock()
 		r.runCtx = ctx
 		r.lazyStart = true
@@ -167,8 +171,9 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.processDone = make(chan struct{})
 		r.processErr = nil
 		r.permissionMode = req.PermissionMode
+		r.runGeneration = generation
 		r.mu.Unlock()
-		defer r.clear()
+		defer r.clearGeneration(generation)
 
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
@@ -187,6 +192,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 
 	if shouldUseClaudeStreamJSON(req.Command) {
 		if extractResumeArg(req.Command) != "" && strings.Contains(strings.ToLower(req.Command), " --print") {
+			generation := r.nextRunGeneration()
 			r.mu.Lock()
 			r.runCtx = ctx
 			r.permissionMode = req.PermissionMode
@@ -199,9 +205,11 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 			r.processDone = make(chan struct{})
 			r.processErr = nil
 			r.lazyStart = false
+			r.runGeneration = generation
 			r.mu.Unlock()
 			return r.runClaudeStream(ctx, req, cwd, sink)
 		}
+		generation := r.nextRunGeneration()
 		r.mu.Lock()
 		r.runCtx = ctx
 		r.lazyStart = true
@@ -215,8 +223,9 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.processDone = make(chan struct{})
 		r.processErr = nil
 		r.permissionMode = req.PermissionMode
+		r.runGeneration = generation
 		r.mu.Unlock()
-		defer r.clear()
+		defer r.clearGeneration(generation)
 
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
@@ -233,6 +242,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		}
 	}
 
+	generation := r.nextRunGeneration()
 	cmd := newShellCommand(ctx, req.Command, req.Mode)
 	cmd.Dir = cwd
 
@@ -250,8 +260,9 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 	r.cmd = cmd
 	r.currentDir = cwd
 	r.closed = false
+	r.runGeneration = generation
 	r.mu.Unlock()
-	defer r.clear()
+	defer r.clearGeneration(generation)
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
 
@@ -614,9 +625,19 @@ func (r *PtyRunner) currentPermissionMode() string {
 	return r.permissionMode
 }
 
-func (r *PtyRunner) clear() {
+func (r *PtyRunner) nextRunGeneration() uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.runGeneration++
+	return r.runGeneration
+}
+
+func (r *PtyRunner) clearGeneration(generation uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if generation != 0 && r.runGeneration != generation {
+		return
+	}
 	r.runCtx = nil
 	r.writer = nil
 	r.closer = nil
@@ -637,6 +658,10 @@ func (r *PtyRunner) clear() {
 	r.suppressExitError = false
 }
 
+func (r *PtyRunner) clear() {
+	r.clearGeneration(0)
+}
+
 func (r *PtyRunner) commandContext() context.Context {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -647,6 +672,7 @@ func (r *PtyRunner) commandContext() context.Context {
 }
 
 func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd string, sink EventSink) error {
+	generation := r.nextRunGeneration()
 	cmd := newClaudeStreamCommand(ctx, req.Command, r.claudeSessionID, r.permissionMode)
 	logx.Info("pty", "run claude stream: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q commandPreview=%q", req.SessionID, cwd, r.permissionMode, r.claudeSessionID, ptyDebugPreview(req.Command))
 	cmd.Dir = cwd
@@ -686,9 +712,17 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	r.interactive = true
 	r.awaitingReadyPrompt = false
 	r.closed = false
+	r.runGeneration = generation
 	r.mu.Unlock()
-	defer r.clear()
-	defer stdin.Close()
+	defer r.clearGeneration(generation)
+	defer func() {
+		r.mu.Lock()
+		current := r.runGeneration
+		r.mu.Unlock()
+		if current == generation {
+			_ = stdin.Close()
+		}
+	}()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
 
@@ -726,6 +760,7 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 }
 
 func (r *PtyRunner) runCodexAppServer(ctx context.Context, req ExecRequest, cwd string, sink EventSink, initialPrompt string) error {
+	generation := r.nextRunGeneration()
 	resumeSessionID := extractResumeArg(req.Command)
 	if resumeSessionID == "" {
 		resumeSessionID = strings.TrimSpace(req.RuntimeMeta.ResumeSessionID)
@@ -747,8 +782,9 @@ func (r *PtyRunner) runCodexAppServer(ctx context.Context, req ExecRequest, cwd 
 	r.lazyStart = false
 	r.interactive = true
 	r.awaitingReadyPrompt = false
+	r.runGeneration = generation
 	r.mu.Unlock()
-	defer r.clear()
+	defer r.clearGeneration(generation)
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
 
@@ -781,6 +817,7 @@ func (r *PtyRunner) runCodexAppServer(ctx context.Context, req ExecRequest, cwd 
 }
 
 func (r *PtyRunner) runClaudeResumeInteractive(ctx context.Context, req ExecRequest, cwd string, sink EventSink) error {
+	generation := r.nextRunGeneration()
 	command := appendPermissionModeToCommand(req.Command, req.PermissionMode)
 	cmd := newShellCommand(ctx, command, req.Mode)
 	cmd.Dir = cwd
@@ -805,8 +842,17 @@ func (r *PtyRunner) runClaudeResumeInteractive(ctx context.Context, req ExecRequ
 	r.awaitingReadyPrompt = true
 	r.closed = false
 	r.suppressExitError = false
+	r.runGeneration = generation
 	r.mu.Unlock()
-	defer r.clear()
+	defer r.clearGeneration(generation)
+	defer func() {
+		r.mu.Lock()
+		current := r.runGeneration
+		r.mu.Unlock()
+		if current == generation {
+			_ = interactive.closer.Close()
+		}
+	}()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
 
@@ -891,6 +937,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 
 	lowerCommand := strings.ToLower(strings.TrimSpace(req.Command))
 	if strings.Contains(lowerCommand, "--input-format") || strings.Contains(lowerCommand, "stream-json") || strings.Contains(lowerCommand, "--permission-prompt-tool") {
+		generation := r.nextRunGeneration()
 		cmd := newClaudeStreamCommand(r.commandContext(), req.Command, resumeSessionID, permMode)
 		cmd.Dir = cwd
 
@@ -932,6 +979,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 		r.pendingReq = req
 		r.pendingCWD = cwd
 		r.permissionMode = permMode
+		r.runGeneration = generation
 		r.mu.Unlock()
 
 		go func() {
@@ -945,7 +993,9 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 				defer readWG.Done()
 				r.readOutput(ctx, stderr, req.SessionID, "stderr", false, sink)
 			}()
+			logx.Info("pty", "waiting for claude stream command from first input: sessionID=%s", req.SessionID)
 			waitErr := cmd.Wait()
+			logx.Info("pty", "claude stream command from first input exited: sessionID=%s err=%v", req.SessionID, waitErr)
 			readWG.Wait()
 			if waitErr != nil {
 				if r.shouldSuppressExitError() {
@@ -974,6 +1024,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 		return nil
 	}
 
+	generation := r.nextRunGeneration()
 	cmd := newClaudePromptCommand(ctx, req.Command, text, resumeSessionID, permMode)
 	cmd.Dir = cwd
 
@@ -1001,6 +1052,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 	r.closed = false
 	r.interactive = false
 	r.writer = nil
+	r.runGeneration = generation
 	r.mu.Unlock()
 
 	go func() {
@@ -1650,6 +1702,10 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				}
 			}
 			promptChoices := promptOptions(promptMessage)
+			promptMeta := protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID}
+			if looksLikePermissionPrompt(promptMessage, promptChoices) {
+				promptMeta.BlockingKind = "permission"
+			}
 			if requestID != "" {
 				r.markInteractiveReady()
 				r.mu.Lock()
@@ -1659,7 +1715,7 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				r.mu.Unlock()
 				sendEvent(sink, protocol.ApplyRuntimeMeta(
 					protocol.NewPromptRequestEvent(sessionID, promptMessage, promptChoices),
-					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+					promptMeta,
 				))
 			}
 		case "assistant":
@@ -1747,13 +1803,18 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
+			logx.Info("pty", "claude stream reader stopped by context cancel: sessionID=%s", sessionID)
 			return
 		}
 		if errors.Is(err, os.ErrClosed) || errors.Is(err, io.EOF) || strings.Contains(strings.ToLower(err.Error()), "file already closed") || strings.Contains(strings.ToLower(err.Error()), "use of closed file") {
+			logx.Info("pty", "claude stream reader reached closed/EOF: sessionID=%s err=%v", sessionID, err)
 			return
 		}
+		logx.Warn("pty", "claude stream reader failed: sessionID=%s err=%v", sessionID, err)
 		sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read claude stream: %v", err), ""))
+		return
 	}
+	logx.Info("pty", "claude stream reader finished cleanly: sessionID=%s", sessionID)
 }
 
 func shouldEmitClaudeReadyPrompt(envelope claudeStreamEnvelope) bool {
@@ -2007,6 +2068,8 @@ func (c *interactiveCloser) Close() error {
 }
 
 func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID string, stream string, detectPrompt bool, sink EventSink) {
+	logx.Info("pty", "start reading %s stream: sessionID=%s detectPrompt=%t", stream, sessionID, detectPrompt)
+	defer logx.Info("pty", "stop reading %s stream: sessionID=%s", stream, sessionID)
 	parser := adapter.NewGenericParser()
 	buf := make([]byte, ptyReadBufferSize)
 	var ansiCarry string
@@ -2110,11 +2173,14 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) || errors.Is(err, io.EOF) {
+				logx.Info("pty", "read %s reached EOF/closed: sessionID=%s err=%v", stream, sessionID, err)
 				break
 			}
 			if strings.Contains(err.Error(), "input/output error") || strings.Contains(err.Error(), "file already closed") {
+				logx.Info("pty", "read %s stopped on pipe close: sessionID=%s err=%v", stream, sessionID, err)
 				break
 			}
+			logx.Warn("pty", "read %s failed: sessionID=%s err=%v", stream, sessionID, err)
 			sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("read %s: %v", stream, err), ""))
 			break
 		}

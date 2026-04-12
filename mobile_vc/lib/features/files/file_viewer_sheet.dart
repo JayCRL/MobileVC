@@ -600,7 +600,9 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
         ((interaction != null && interaction.hasVisiblePrompt) ||
             (prompt != null &&
                 prompt.hasVisiblePrompt &&
-                (prompt.looksLikePermissionPrompt ||
+                (prompt.isPermission ||
+                    prompt.isReply ||
+                    prompt.isPlan ||
                     prompt.options.isNotEmpty)));
     if (shouldSubmitPrompt) {
       widget.onSubmitPrompt(value);
@@ -886,10 +888,10 @@ class _PromptRequestSection extends StatelessWidget {
     if (options.isNotEmpty) {
       return options;
     }
-    return const [
-      PromptOption(value: 'y', label: '允许'),
-      PromptOption(value: 'n', label: '拒绝'),
-    ];
+    if (prompt.isPermission) {
+      return _permissionPromptOptions;
+    }
+    return const [];
   }
 
   String _promptOptionLabel(String value, String fallback) {

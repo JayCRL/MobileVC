@@ -256,7 +256,10 @@ class _ChatTimelineState extends State<ChatTimeline> {
   }
 
   bool _shouldHidePassiveReadyPrompt(PromptRequestEvent prompt) {
-    if (prompt.looksLikePermissionPrompt) {
+    if (prompt.isPermission) {
+      return false;
+    }
+    if (!prompt.isReady) {
       return false;
     }
     if (prompt.options.any((option) => option.displayText.isNotEmpty)) {
@@ -276,7 +279,7 @@ class _ChatTimelineState extends State<ChatTimeline> {
   }
 
   String _promptRequestTitle(PromptRequestEvent prompt) {
-    return prompt.looksLikePermissionPrompt ? '授权确认' : '等待输入';
+    return prompt.isPermission ? '授权确认' : '等待输入';
   }
 }
 
@@ -383,10 +386,9 @@ class _PromptRequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isPermissionPrompt = prompt.looksLikePermissionPrompt;
-    final options = isPermissionPrompt
-        ? _permissionPromptOptions
-        : _resolvedOptions();
+    final isPermissionPrompt = prompt.isPermission;
+    final options =
+        isPermissionPrompt ? _permissionPromptOptions : _resolvedOptions();
     return _ActionCardFrame(
       icon: isPermissionPrompt
           ? Icons.verified_user_outlined

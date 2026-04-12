@@ -132,6 +132,15 @@ func normalizeClaudeLifecycle(value string) string {
 	}
 }
 
+func normalizeBlockingKind(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "permission", "review", "plan", "reply", "ready":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return ""
+	}
+}
+
 func isClaudeCommand(command string) bool {
 	fields := strings.Fields(strings.TrimSpace(command))
 	if len(fields) == 0 {
@@ -236,6 +245,7 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		}
 		c.claudeLifecycle = "waiting_input"
 		c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
+		c.activeMeta.BlockingKind = normalizeBlockingKind(e.RuntimeMeta.BlockingKind)
 		return []any{c.newAgentStateEvent(message, true)}
 	case protocol.StepUpdateEvent:
 		if e.Message == c.lastStepMsg && (e.Status == c.lastStepStatus || e.Status == "") {
@@ -305,6 +315,7 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 			if isClaudeCommand(c.currentCommand) {
 				c.claudeLifecycle = "waiting_input"
 				c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
+				c.activeMeta.BlockingKind = normalizeBlockingKind(e.RuntimeMeta.BlockingKind)
 			}
 			message := e.Message
 			if strings.TrimSpace(message) == "" {
@@ -347,6 +358,11 @@ func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {
 	if meta.PermissionMode != "" {
 		c.activeMeta.PermissionMode = meta.PermissionMode
 	}
+	if blockingKind := normalizeBlockingKind(meta.BlockingKind); blockingKind != "" {
+		c.activeMeta.BlockingKind = blockingKind
+	} else {
+		c.activeMeta.BlockingKind = ""
+	}
 	if lifecycle := normalizeClaudeLifecycle(meta.ClaudeLifecycle); lifecycle != "" {
 		c.claudeLifecycle = lifecycle
 	} else if isClaudeCommand(c.currentCommand) {
@@ -373,6 +389,7 @@ func (c *Controller) OnCommandFinished(meta protocol.RuntimeMeta) []any {
 			message = "等待输入"
 		}
 		c.refreshClaudeLifecycleLocked()
+		c.activeMeta.BlockingKind = "ready"
 		return []any{c.newAgentStateEvent(message, true)}
 	}
 	c.currentState = ControllerStateIdle
@@ -459,6 +476,15 @@ func (c *Controller) newAgentStateEvent(message string, awaitInput bool) protoco
 	event.RuntimeMeta = protocol.MergeRuntimeMeta(c.activeMeta, protocol.RuntimeMeta{
 		ResumeSessionID: c.resumeSession,
 		ClaudeLifecycle: c.claudeLifecycle,
+		BlockingKind: func() string {
+			if awaitInput {
+				if blockingKind := normalizeBlockingKind(c.activeMeta.BlockingKind); blockingKind != "" {
+					return blockingKind
+				}
+				return "ready"
+			}
+			return ""
+		}(),
 	})
 	return event
 }

@@ -64,6 +64,7 @@ type RuntimeMeta struct {
 	CWD             string `json:"cwd,omitempty"`
 	PermissionMode  string `json:"permissionMode,omitempty"`
 	ClaudeLifecycle string `json:"claudeLifecycle,omitempty"`
+	BlockingKind    string `json:"blockingKind,omitempty"`
 }
 
 type Event struct {
@@ -1230,6 +1231,9 @@ func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
 	}
 	if overlay.ClaudeLifecycle != "" {
 		merged.ClaudeLifecycle = overlay.ClaudeLifecycle
+	}
+	if overlay.BlockingKind != "" {
+		merged.BlockingKind = overlay.BlockingKind
 	}
 	return merged
 }

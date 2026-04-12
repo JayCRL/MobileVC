@@ -259,11 +259,21 @@ class InteractionRequestEvent extends AppEvent {
       options.any((option) => option.displayText.isNotEmpty) ||
       planQuestions.any((question) => question.hasVisiblePrompt);
 
-  bool get isPermission => kind.trim().toLowerCase() == 'permission';
-  bool get isReview => kind.trim().toLowerCase() == 'review';
-  bool get isChoice => kind.trim().toLowerCase() == 'choice';
-  bool get isInput => kind.trim().toLowerCase() == 'input';
-  bool get isPlan => kind.trim().toLowerCase() == 'plan';
+  String get blockingKind {
+    final normalizedKind = kind.trim().toLowerCase();
+    if (normalizedKind.isNotEmpty) {
+      return normalizedKind;
+    }
+    return runtimeMeta.blockingKind.trim().toLowerCase();
+  }
+
+  bool get isPermission => blockingKind == 'permission';
+  bool get isReview => blockingKind == 'review';
+  bool get isChoice => blockingKind == 'choice';
+  bool get isInput => blockingKind == 'input';
+  bool get isPlan => blockingKind == 'plan';
+  bool get isReply => blockingKind == 'reply';
+  bool get isReady => blockingKind == 'ready';
 
   factory InteractionRequestEvent.fromJson(Map<String, dynamic> json) {
     return InteractionRequestEvent(
@@ -311,46 +321,12 @@ class PromptRequestEvent extends AppEvent {
       message.trim().isNotEmpty ||
       options.any((option) => option.displayText.isNotEmpty);
 
-  bool get looksLikeReviewPrompt => _looksLikeReviewPromptOptions(options);
-
-  bool get looksLikePermissionPrompt {
-    if (looksLikeReviewPrompt) {
-      return false;
-    }
-    final optionValues = _normalizedPromptOptionValues(options);
-    const binaryPermissionValues = <String>{
-      'y',
-      'n',
-      'yes',
-      'no',
-      'allow',
-      'deny',
-      'approve',
-      'reject',
-      '允许',
-      '拒绝',
-      '同意',
-      '取消',
-    };
-    final hasBinaryPermissionOptions = optionValues.isNotEmpty &&
-        optionValues.every(binaryPermissionValues.contains);
-    final normalizedMessage = message.trim().toLowerCase();
-    final looksLikePermissionMessage =
-        normalizedMessage.contains('permission') ||
-            normalizedMessage.contains('authorize') ||
-            normalizedMessage.contains('allow ') ||
-            normalizedMessage.contains('allow\n') ||
-            normalizedMessage.contains('confirm permission') ||
-            normalizedMessage.contains('confirm access') ||
-            normalizedMessage.contains('confirm authorization') ||
-            normalizedMessage.contains('请求授权') ||
-            normalizedMessage.contains('需要授权') ||
-            normalizedMessage.contains('确认授权') ||
-            normalizedMessage.contains('是否允许') ||
-            normalizedMessage.contains('允许') ||
-            normalizedMessage.contains('授权');
-    return hasBinaryPermissionOptions || looksLikePermissionMessage;
-  }
+  String get blockingKind => runtimeMeta.blockingKind.trim().toLowerCase();
+  bool get isPermission => blockingKind == 'permission';
+  bool get isReview => blockingKind == 'review';
+  bool get isPlan => blockingKind == 'plan';
+  bool get isReply => blockingKind == 'reply';
+  bool get isReady => blockingKind == 'ready';
 
   factory PromptRequestEvent.fromJson(Map<String, dynamic> json) =>
       PromptRequestEvent(
@@ -361,20 +337,6 @@ class PromptRequestEvent extends AppEvent {
         message: _readPromptMessage(json),
         options: _readPromptOptions(json),
       );
-}
-
-Set<String> _normalizedPromptOptionValues(List<PromptOption> options) {
-  return options
-      .map((option) => option.value.trim().toLowerCase())
-      .where((value) => value.isNotEmpty)
-      .toSet();
-}
-
-bool _looksLikeReviewPromptOptions(List<PromptOption> options) {
-  final optionValues = _normalizedPromptOptionValues(options);
-  return optionValues.contains('accept') &&
-      optionValues.contains('revert') &&
-      optionValues.contains('revise');
 }
 
 String _readPromptMessage(Map<String, dynamic> json) {
