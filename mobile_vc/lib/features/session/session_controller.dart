@@ -103,6 +103,12 @@ class _PermissionDecisionSelection {
   final String scope;
 }
 
+class _DeferredFirstInput {
+  const _DeferredFirstInput(this.text);
+
+  final String text;
+}
+
 @visibleForTesting
 bool shouldPreserveAdbFailureStatus(String status) {
   final normalized = status.trim().toLowerCase();
@@ -220,8 +226,10 @@ class SessionController extends ChangeNotifier {
   bool _autoSessionRequested = false;
   bool _autoSessionCreating = false;
   bool _isLoadingSession = false;
+  bool _sessionListSyncedSinceConnect = false;
   String _pendingSessionTargetId = '';
   String _pendingNotificationSessionTargetId = '';
+  _DeferredFirstInput? _deferredFirstInput;
   String _pendingAiLaunchEngine = '';
   bool _pendingAiLaunchAwaitingFirstInput = false;
   final Map<String, _PendingAiPreference> _pendingAiPreferences =
@@ -1282,6 +1290,7 @@ class SessionController extends ChangeNotifier {
       _connectionMessage = '已连接';
       _autoSessionRequested = false;
       _autoSessionCreating = false;
+      _sessionListSyncedSinceConnect = false;
       _runtimePermissionMode = '';
       _codexModelCatalogLoading = false;
       _codexModelCatalogMessage = '';
@@ -1353,6 +1362,8 @@ class SessionController extends ChangeNotifier {
     _selectedSessionId = '';
     _selectedSessionTitle = 'MobileVC';
     _connectionMessage = '已断开';
+    _clearDeferredFirstInput();
+    _sessionListSyncedSinceConnect = false;
     _fileListLoading = false;
     _fileReading = false;
     _currentDirectoryPath = '';
@@ -1423,8 +1434,10 @@ class SessionController extends ChangeNotifier {
     _connected = false;
     _connecting = false;
     _isLoadingSession = false;
+    _sessionListSyncedSinceConnect = false;
     _pendingSessionTargetId = '';
     _pendingNotificationSessionTargetId = '';
+    _clearDeferredFirstInput();
     _pendingAiLaunchEngine = '';
     _pendingAiLaunchAwaitingFirstInput = false;
     if (_autoReconnectEnabled) {
@@ -1521,6 +1534,44 @@ class SessionController extends ChangeNotifier {
       'cwd': effectiveCwd,
       if (title.isNotEmpty) 'title': title,
     });
+  }
+
+  bool _shouldAutoCreateSessionOnFirstInput() {
+    return _connected &&
+        !_connecting &&
+        !_isLoadingSession &&
+        _sessionListSyncedSinceConnect &&
+        _selectedSessionId.trim().isEmpty &&
+        _pendingNotificationSessionTargetId.trim().isEmpty &&
+        !_autoSessionCreating;
+  }
+
+  void _deferFirstInputAndCreateSession(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    _deferredFirstInput = _DeferredFirstInput(normalized);
+    _autoSessionRequested = true;
+    _autoSessionCreating = true;
+    createSession();
+  }
+
+  void _clearDeferredFirstInput() {
+    _deferredFirstInput = null;
+    _autoSessionRequested = false;
+    _autoSessionCreating = false;
+  }
+
+  void _flushDeferredFirstInputIfNeeded() {
+    final deferred = _deferredFirstInput;
+    if (deferred == null) {
+      return;
+    }
+    _deferredFirstInput = null;
+    _autoSessionRequested = false;
+    _autoSessionCreating = false;
+    sendInputText(deferred.text);
   }
 
   void loadSession(String sessionId) {
@@ -2491,6 +2542,10 @@ class SessionController extends ChangeNotifier {
     }
     final lower = value.toLowerCase();
     final isAiCommand = _isAiCommand(lower);
+    if (_shouldAutoCreateSessionOnFirstInput()) {
+      _deferFirstInputAndCreateSession(value);
+      return;
+    }
     if (isAiCommand) {
       if (isSessionBusy) {
         if (hasPendingReview) {
@@ -3197,6 +3252,7 @@ class SessionController extends ChangeNotifier {
         requestSessionContext();
         requestPermissionRuleList();
         _finishSessionLoading(sessionId: created.summary.id);
+        _flushDeferredFirstInputIfNeeded();
         break;
       case SessionListResultEvent list:
         final mergedItems = list.items
@@ -3208,6 +3264,7 @@ class SessionController extends ChangeNotifier {
                   item,
                 ))
             .toList();
+        _sessionListSyncedSinceConnect = true;
         final selectedSessionId = _selectedSessionId.trim();
         if (selectedSessionId.isNotEmpty &&
             !mergedItems.any((item) => item.id == selectedSessionId)) {
@@ -3888,6 +3945,9 @@ class SessionController extends ChangeNotifier {
   }
 
   void _handleMutationFailure(String message) {
+    if (_autoSessionCreating) {
+      _clearDeferredFirstInput();
+    }
     if (_pendingSessionContextRollback != null) {
       _sessionContext = _pendingSessionContextRollback!;
       _pendingSessionContextRollback = null;
