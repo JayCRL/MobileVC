@@ -695,6 +695,9 @@ func TestPtyRunnerEmitsReadyPromptAfterResult(t *testing.T) {
 	if prompts[0].RuntimeMeta.ResumeSessionID != "resume-ready-1" {
 		t.Fatalf("expected resume session id on ready prompt, got %#v", prompts[0].RuntimeMeta)
 	}
+	if prompts[0].RuntimeMeta.BlockingKind != "ready" {
+		t.Fatalf("expected ready blocking kind on ready prompt, got %#v", prompts[0].RuntimeMeta)
+	}
 }
 
 func TestPtyRunnerEmitsResultWhenAssistantTextMissing(t *testing.T) {
@@ -734,6 +737,9 @@ func TestPtyRunnerEmitsResultWhenAssistantTextMissing(t *testing.T) {
 	}
 	if prompts[0].RuntimeMeta.ResumeSessionID != "resume-dedup-2" {
 		t.Fatalf("expected resume session id on ready prompt, got %#v", prompts[0].RuntimeMeta)
+	}
+	if prompts[0].RuntimeMeta.BlockingKind != "ready" {
+		t.Fatalf("expected ready blocking kind on ready prompt, got %#v", prompts[0].RuntimeMeta)
 	}
 }
 
