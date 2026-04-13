@@ -544,6 +544,14 @@ func TestPtyRunnerEmitsPromptFromControlRequestPayloadWithoutMessageContent(t *t
 	}
 }
 
+func TestPtyRunnerCurrentPermissionRequestIDUsesPendingControlID(t *testing.T) {
+	runner := NewPtyRunner()
+	runner.pendingControlRequestID = "req-approve"
+	if got := runner.CurrentPermissionRequestID(); got != "req-approve" {
+		t.Fatalf("expected current permission request id req-approve, got %q", got)
+	}
+}
+
 func TestPtyRunnerWritePermissionResponseApproveEncodesControlResponse(t *testing.T) {
 	buf := &nopWriteCloser{}
 	runner := NewPtyRunner()

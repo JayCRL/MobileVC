@@ -58,6 +58,7 @@ type InteractiveStateProvider interface {
 type PermissionResponseWriter interface {
 	WritePermissionResponse(ctx context.Context, decision string) error
 	HasPendingPermissionRequest() bool
+	CurrentPermissionRequestID() string
 }
 
 type ClaudeSessionProvider interface {

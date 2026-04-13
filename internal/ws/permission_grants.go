@@ -16,11 +16,12 @@ import (
 const temporaryPermissionGrantTTL = 60 * time.Second
 
 type permissionGrant struct {
-	sessionID  string
-	targetPath string
-	createdAt  time.Time
-	expiresAt  time.Time
-	signature  string
+	sessionID           string
+	targetPath          string
+	permissionRequestID string
+	createdAt           time.Time
+	expiresAt           time.Time
+	signature           string
 }
 
 type permissionGrantStore struct {
@@ -42,12 +43,13 @@ func newPermissionGrantStore() *permissionGrantStore {
 	}
 }
 
-func (s *permissionGrantStore) Issue(sessionID, targetPath string, ttl time.Duration) bool {
+func (s *permissionGrantStore) Issue(sessionID, targetPath, permissionRequestID string, ttl time.Duration) bool {
 	if s == nil {
 		return false
 	}
 	normalizedSessionID := strings.TrimSpace(sessionID)
 	normalizedTargetPath := normalizePermissionGrantPath(targetPath)
+	normalizedRequestID := strings.TrimSpace(permissionRequestID)
 	if normalizedSessionID == "" || normalizedTargetPath == "" {
 		return false
 	}
@@ -56,10 +58,11 @@ func (s *permissionGrantStore) Issue(sessionID, targetPath string, ttl time.Dura
 		ttl = temporaryPermissionGrantTTL
 	}
 	grant := permissionGrant{
-		sessionID:  normalizedSessionID,
-		targetPath: normalizedTargetPath,
-		createdAt:  now,
-		expiresAt:  now.Add(ttl),
+		sessionID:           normalizedSessionID,
+		targetPath:          normalizedTargetPath,
+		permissionRequestID: normalizedRequestID,
+		createdAt:           now,
+		expiresAt:           now.Add(ttl),
 	}
 	grant.signature = s.sign(grant)
 	key := permissionGrantKey(normalizedSessionID, normalizedTargetPath)
@@ -70,12 +73,13 @@ func (s *permissionGrantStore) Issue(sessionID, targetPath string, ttl time.Dura
 	return true
 }
 
-func (s *permissionGrantStore) ConsumeIfValid(sessionID, targetPath string) bool {
+func (s *permissionGrantStore) ConsumeIfValid(sessionID, targetPath, permissionRequestID string) bool {
 	if s == nil {
 		return false
 	}
 	normalizedSessionID := strings.TrimSpace(sessionID)
 	normalizedTargetPath := normalizePermissionGrantPath(targetPath)
+	normalizedRequestID := strings.TrimSpace(permissionRequestID)
 	if normalizedSessionID == "" || normalizedTargetPath == "" {
 		return false
 	}
@@ -90,6 +94,9 @@ func (s *permissionGrantStore) ConsumeIfValid(sessionID, targetPath string) bool
 	}
 	if grant.expiresAt.Before(now) || !s.isValidLocked(grant) {
 		delete(s.items, key)
+		return false
+	}
+	if normalizedRequestID != "" && grant.permissionRequestID != "" && grant.permissionRequestID != normalizedRequestID {
 		return false
 	}
 	delete(s.items, key)
@@ -116,16 +123,19 @@ func (s *permissionGrantStore) sign(grant permissionGrant) string {
 	mac.Write([]byte("\n"))
 	mac.Write([]byte(grant.targetPath))
 	mac.Write([]byte("\n"))
+	mac.Write([]byte(grant.permissionRequestID))
+	mac.Write([]byte("\n"))
 	mac.Write([]byte(grant.expiresAt.UTC().Format(time.RFC3339Nano)))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func (s *permissionGrantStore) isValidLocked(grant permissionGrant) bool {
 	expected := s.sign(permissionGrant{
-		sessionID:  grant.sessionID,
-		targetPath: grant.targetPath,
-		createdAt:  grant.createdAt,
-		expiresAt:  grant.expiresAt,
+		sessionID:           grant.sessionID,
+		targetPath:          grant.targetPath,
+		permissionRequestID: grant.permissionRequestID,
+		createdAt:           grant.createdAt,
+		expiresAt:           grant.expiresAt,
 	})
 	return hmac.Equal([]byte(expected), []byte(grant.signature))
 }

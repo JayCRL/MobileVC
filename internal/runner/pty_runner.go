@@ -447,6 +447,15 @@ func (r *PtyRunner) HasPendingPermissionRequest() bool {
 	return strings.TrimSpace(r.pendingControlRequestID) != ""
 }
 
+func (r *PtyRunner) CurrentPermissionRequestID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.codexSession != nil {
+		return r.codexSession.CurrentPermissionRequestID()
+	}
+	return strings.TrimSpace(r.pendingControlRequestID)
+}
+
 func (r *PtyRunner) ClaudeSessionID() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2154,8 +2163,9 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 						r.markInteractiveReady()
 						options := promptOptions(trimmedPending)
 						r.cacheTextPermissionPrompt(trimmedPending, options)
+						permissionRequestID := strings.TrimSpace(r.CurrentPermissionRequestID())
 						ptyLogPromptClassification(sessionID, "readOutput.liveTail", stream, trimmedPending, true, options, "live_tail_prompt")
-						sendEvent(sink, protocol.NewPromptRequestEvent(sessionID, trimmedPending, options))
+						sendEvent(sink, protocol.ApplyRuntimeMeta(protocol.NewPromptRequestEvent(sessionID, trimmedPending, options), protocol.RuntimeMeta{PermissionRequestID: permissionRequestID, BlockingKind: "permission"}))
 						promptSent = true
 					}
 				} else if stream != "stderr" && trimmedPending != emittedTail {

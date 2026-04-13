@@ -373,6 +373,15 @@ func (s *codexAppSession) HasPendingPermissionRequest() bool {
 	return s.pendingApproval != nil && len(s.pendingApproval.id) > 0
 }
 
+func (s *codexAppSession) CurrentPermissionRequestID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingApproval == nil {
+		return ""
+	}
+	return strings.TrimSpace(string(s.pendingApproval.id))
+}
+
 func (s *codexAppSession) Close() error {
 	s.failPending(errors.New("codex app-server session closed"))
 	if s.stdin != nil {

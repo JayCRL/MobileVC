@@ -2831,32 +2831,34 @@ class SessionController extends ChangeNotifier {
         return;
       }
       _pendingInteraction = null;
-      _optimisticallyResumeAiProcessingAfterInput(
-        metaOverride: currentMeta.merge(
-          RuntimeMeta(
-            resumeSessionId: interaction.resumeSessionId,
-            contextId: interaction.contextId,
-            contextTitle: interaction.contextTitle,
-            targetPath: interaction.targetPath,
-            permissionMode: _currentDecisionPermissionMode,
-          ),
+      final decisionMeta = interaction.runtimeMeta.merge(
+        RuntimeMeta(
+          resumeSessionId: interaction.resumeSessionId,
+          contextId: interaction.contextId,
+          contextTitle: interaction.contextTitle,
+          targetPath: interaction.targetPath,
+          permissionMode: _currentDecisionPermissionMode,
         ),
+      );
+      _optimisticallyResumeAiProcessingAfterInput(
+        metaOverride: currentMeta.merge(decisionMeta),
       );
       _service.send({
         'action': 'permission_decision',
         'decision': selection.decision,
         if (selection.scope.isNotEmpty) 'scope': selection.scope,
         'permissionMode': _currentDecisionPermissionMode,
+        'permissionRequestId': decisionMeta.permissionRequestId,
         'resumeSessionId': interaction.resumeSessionId,
         'targetPath': interaction.targetPath,
         'contextId': interaction.contextId,
         'contextTitle': interaction.contextTitle,
         'promptMessage': interaction.message,
-        'command': currentMeta.command,
-        'cwd': effectiveCwd,
-        'engine': _config.engine,
-        'target': currentMeta.target,
-        'targetType': currentMeta.targetType,
+        'command': decisionMeta.command,
+        'cwd': decisionMeta.cwd.isNotEmpty ? decisionMeta.cwd : effectiveCwd,
+        'engine': decisionMeta.engine.isNotEmpty ? decisionMeta.engine : _config.engine,
+        'target': decisionMeta.target,
+        'targetType': decisionMeta.targetType,
       });
       _pushUser(
           'Permission: ${selection.decision}${selection.scope.isNotEmpty ? ' (${selection.scope})' : ''}',
@@ -2943,45 +2945,52 @@ class SessionController extends ChangeNotifier {
     _PermissionDecisionSelection selection, {
     String promptLabel = '回复',
   }) {
-    final meta = currentMeta;
-    final targetPath = _openedFile?.path.isNotEmpty == true
-        ? _openedFile!.path
-        : meta.targetPath;
-    final contextTitle = _openedFile?.title.isNotEmpty == true
-        ? _openedFile!.title
-        : meta.contextTitle.isNotEmpty
-            ? meta.contextTitle
-            : meta.targetTitle;
-    final promptMessage = prompt?.message.trim().isNotEmpty == true
-        ? prompt!.message
+    final promptSnapshot = prompt ?? _pendingPrompt;
+    final promptMeta = promptSnapshot?.runtimeMeta ?? const RuntimeMeta();
+    final targetPath = promptMeta.targetPath.isNotEmpty
+        ? promptMeta.targetPath
+        : (_openedFile?.path.isNotEmpty == true
+            ? _openedFile!.path
+            : currentMeta.targetPath);
+    final contextTitle = promptMeta.contextTitle.isNotEmpty
+        ? promptMeta.contextTitle
+        : (_openedFile?.title.isNotEmpty == true
+            ? _openedFile!.title
+            : currentMeta.contextTitle.isNotEmpty
+                ? currentMeta.contextTitle
+                : currentMeta.targetTitle);
+    final promptMessage = promptSnapshot?.message.trim().isNotEmpty == true
+        ? promptSnapshot!.message
         : _runtimePhase?.message;
+    final decisionMeta = currentMeta.merge(promptMeta).merge(
+      RuntimeMeta(
+        contextTitle: contextTitle,
+        targetPath: targetPath,
+        permissionMode: _currentDecisionPermissionMode,
+      ),
+    );
     _pendingPrompt = null;
     _pendingInteraction = null;
     _runtimePhase = null;
     _optimisticallyResumeAiProcessingAfterInput(
-      metaOverride: meta.merge(
-        RuntimeMeta(
-          contextTitle: contextTitle,
-          targetPath: targetPath,
-          permissionMode: _currentDecisionPermissionMode,
-        ),
-      ),
+      metaOverride: decisionMeta,
     );
     _service.send({
       'action': 'permission_decision',
       'decision': selection.decision,
       if (selection.scope.isNotEmpty) 'scope': selection.scope,
       'permissionMode': _currentDecisionPermissionMode,
-      'resumeSessionId': meta.resumeSessionId,
+      'permissionRequestId': decisionMeta.permissionRequestId,
+      'resumeSessionId': decisionMeta.resumeSessionId,
       'targetPath': targetPath,
-      'contextId': meta.contextId,
+      'contextId': decisionMeta.contextId,
       'contextTitle': contextTitle,
       'promptMessage': promptMessage,
-      'command': meta.command,
-      'cwd': effectiveCwd,
-      'engine': _config.engine,
-      'target': meta.target,
-      'targetType': meta.targetType,
+      'command': decisionMeta.command,
+      'cwd': decisionMeta.cwd.isNotEmpty ? decisionMeta.cwd : effectiveCwd,
+      'engine': decisionMeta.engine.isNotEmpty ? decisionMeta.engine : _config.engine,
+      'target': decisionMeta.target,
+      'targetType': decisionMeta.targetType,
     });
     _pushUser(
         'Permission: ${selection.decision}${selection.scope.isNotEmpty ? ' (${selection.scope})' : ''}',

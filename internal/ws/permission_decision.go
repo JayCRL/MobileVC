@@ -34,18 +34,19 @@ func executePermissionDecision(
 		service.UpdatePermissionMode(effectivePermissionMode)
 	}
 	inputMeta := protocol.RuntimeMeta{
-		Source:          "permission-decision",
-		ResumeSessionID: firstNonEmptyString(permissionEvent.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID),
-		ContextID:       firstNonEmptyString(permissionEvent.ContextID, controller.ActiveMeta.ContextID),
-		ContextTitle:    firstNonEmptyString(permissionEvent.ContextTitle, controller.ActiveMeta.ContextTitle),
-		TargetPath:      firstNonEmptyString(permissionEvent.TargetPath, controller.ActiveMeta.TargetPath),
-		TargetText:      decision,
-		Command:         firstNonEmptyString(permissionEvent.FallbackCommand, projection.Runtime.Command, controller.CurrentCommand, controller.ActiveMeta.Command),
-		Engine:          firstNonEmptyString(permissionEvent.FallbackEngine, controller.ActiveMeta.Engine),
-		CWD:             firstNonEmptyString(permissionEvent.FallbackCWD, controller.ActiveMeta.CWD, projection.Runtime.CWD),
-		Target:          firstNonEmptyString(permissionEvent.FallbackTarget, controller.ActiveMeta.Target),
-		TargetType:      firstNonEmptyString(permissionEvent.FallbackTargetType, controller.ActiveMeta.TargetType),
-		PermissionMode:  effectivePermissionMode,
+		Source:              "permission-decision",
+		ResumeSessionID:     firstNonEmptyString(permissionEvent.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID),
+		ContextID:           firstNonEmptyString(permissionEvent.ContextID, controller.ActiveMeta.ContextID),
+		ContextTitle:        firstNonEmptyString(permissionEvent.ContextTitle, controller.ActiveMeta.ContextTitle),
+		TargetPath:          firstNonEmptyString(permissionEvent.TargetPath, controller.ActiveMeta.TargetPath),
+		TargetText:          decision,
+		Command:             firstNonEmptyString(permissionEvent.FallbackCommand, projection.Runtime.Command, controller.CurrentCommand, controller.ActiveMeta.Command),
+		Engine:              firstNonEmptyString(permissionEvent.FallbackEngine, controller.ActiveMeta.Engine),
+		CWD:                 firstNonEmptyString(permissionEvent.FallbackCWD, controller.ActiveMeta.CWD, projection.Runtime.CWD),
+		Target:              firstNonEmptyString(permissionEvent.FallbackTarget, controller.ActiveMeta.Target),
+		TargetType:          firstNonEmptyString(permissionEvent.FallbackTargetType, controller.ActiveMeta.TargetType),
+		PermissionMode:      effectivePermissionMode,
+		PermissionRequestID: strings.TrimSpace(permissionEvent.PermissionRequestID),
 	}
 	if !isClaudeCommandLike(inputMeta.Command) {
 		if err := service.SendPermissionDecision(ctx, sessionID, decision, inputMeta, emitAndPersist); err == nil {
@@ -68,9 +69,10 @@ func executePermissionDecision(
 	}
 	replayInput := hotSwapApproveContinuation(permissionEvent)
 	targetPath := normalizePermissionGrantPath(inputMeta.TargetPath)
+	permissionRequestID := strings.TrimSpace(inputMeta.PermissionRequestID)
 	grantIssued := false
 	if grantStore != nil && targetPath != "" {
-		grantIssued = grantStore.Issue(sessionID, targetPath, temporaryPermissionGrantTTL)
+		grantIssued = grantStore.Issue(sessionID, targetPath, permissionRequestID, temporaryPermissionGrantTTL)
 	}
 	revokeGrant := func() {
 		if grantIssued {

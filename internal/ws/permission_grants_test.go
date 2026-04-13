@@ -10,13 +10,13 @@ func TestPermissionGrantStoreConsumeIfValid(t *testing.T) {
 	now := time.Date(2026, 4, 12, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return now }
 
-	if !store.Issue("s1", "./README.md", time.Minute) {
+	if !store.Issue("s1", "./README.md", "perm-1", time.Minute) {
 		t.Fatal("expected issue success")
 	}
-	if !store.ConsumeIfValid("s1", "README.md") {
+	if !store.ConsumeIfValid("s1", "README.md", "perm-1") {
 		t.Fatal("expected first consume success")
 	}
-	if store.ConsumeIfValid("s1", "README.md") {
+	if store.ConsumeIfValid("s1", "README.md", "perm-1") {
 		t.Fatal("expected second consume to fail")
 	}
 }
@@ -26,40 +26,40 @@ func TestPermissionGrantStoreRejectsExpiredGrant(t *testing.T) {
 	now := time.Date(2026, 4, 12, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return now }
 
-	if !store.Issue("s1", "README.md", time.Second) {
+	if !store.Issue("s1", "README.md", "perm-1", time.Second) {
 		t.Fatal("expected issue success")
 	}
 	now = now.Add(2 * time.Second)
-	if store.ConsumeIfValid("s1", "README.md") {
+	if store.ConsumeIfValid("s1", "README.md", "perm-1") {
 		t.Fatal("expected expired grant to fail")
 	}
 }
 
 func TestPermissionGrantStoreRejectsDifferentSessionOrPath(t *testing.T) {
 	store := newPermissionGrantStore()
-	if !store.Issue("s1", "README.md", time.Minute) {
+	if !store.Issue("s1", "README.md", "perm-1", time.Minute) {
 		t.Fatal("expected issue success")
 	}
-	if store.ConsumeIfValid("s2", "README.md") {
+	if store.ConsumeIfValid("s2", "README.md", "perm-1") {
 		t.Fatal("expected different session to fail")
 	}
-	if store.ConsumeIfValid("s1", "OTHER.md") {
+	if store.ConsumeIfValid("s1", "OTHER.md", "perm-1") {
 		t.Fatal("expected different path to fail")
 	}
-	if !store.ConsumeIfValid("s1", "README.md") {
+	if !store.ConsumeIfValid("s1", "README.md", "perm-1") {
 		t.Fatal("expected original grant to remain consumable")
 	}
 }
 
 func TestPermissionGrantStorePathIsolationStrictBinding(t *testing.T) {
 	store := newPermissionGrantStore()
-	if !store.Issue("s1", "a.go", time.Minute) {
+	if !store.Issue("s1", "a.go", "perm-a", time.Minute) {
 		t.Fatal("expected issue success")
 	}
-	if store.ConsumeIfValid("s1", "b.go") {
+	if store.ConsumeIfValid("s1", "b.go", "perm-a") {
 		t.Fatal("expected different file path to fail")
 	}
-	if !store.ConsumeIfValid("s1", "a.go") {
+	if !store.ConsumeIfValid("s1", "a.go", "perm-a") {
 		t.Fatal("expected approved path to remain consumable")
 	}
 }
@@ -68,11 +68,24 @@ func TestPermissionGrantStoreTimeoutExpiryAtSixtyOneSeconds(t *testing.T) {
 	store := newPermissionGrantStore()
 	now := time.Date(2026, 4, 12, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return now }
-	if !store.Issue("s1", "a.go", 60*time.Second) {
+	if !store.Issue("s1", "a.go", "perm-a", 60*time.Second) {
 		t.Fatal("expected issue success")
 	}
 	now = now.Add(61 * time.Second)
-	if store.ConsumeIfValid("s1", "a.go") {
+	if store.ConsumeIfValid("s1", "a.go", "perm-a") {
 		t.Fatal("expected grant to expire after 61 seconds")
+	}
+}
+
+func TestPermissionGrantStoreRejectsMismatchedPermissionRequestID(t *testing.T) {
+	store := newPermissionGrantStore()
+	if !store.Issue("s1", "README.md", "perm-1", time.Minute) {
+		t.Fatal("expected issue success")
+	}
+	if store.ConsumeIfValid("s1", "README.md", "perm-2") {
+		t.Fatal("expected mismatched permissionRequestId to fail")
+	}
+	if !store.ConsumeIfValid("s1", "README.md", "perm-1") {
+		t.Fatal("expected original permissionRequestId to remain consumable")
 	}
 }

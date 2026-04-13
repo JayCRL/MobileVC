@@ -19,6 +19,7 @@ class RuntimeMeta {
     this.reasoningEffort = '',
     this.cwd = '',
     this.permissionMode = '',
+    this.permissionRequestId = '',
     this.claudeLifecycle = '',
     this.blockingKind = '',
     this.targetDiff = '',
@@ -46,6 +47,7 @@ class RuntimeMeta {
   final String reasoningEffort;
   final String cwd;
   final String permissionMode;
+  final String permissionRequestId;
   final String claudeLifecycle;
   final String blockingKind;
   final String targetDiff;
@@ -88,6 +90,9 @@ class RuntimeMeta {
       permissionMode: other.permissionMode.isNotEmpty
           ? other.permissionMode
           : permissionMode,
+      permissionRequestId: other.permissionRequestId.isNotEmpty
+          ? other.permissionRequestId
+          : permissionRequestId,
       claudeLifecycle: other.claudeLifecycle.isNotEmpty
           ? other.claudeLifecycle
           : claudeLifecycle,
@@ -122,6 +127,8 @@ class RuntimeMeta {
         if (reasoningEffort.isNotEmpty) 'reasoningEffort': reasoningEffort,
         if (cwd.isNotEmpty) 'cwd': cwd,
         if (permissionMode.isNotEmpty) 'permissionMode': permissionMode,
+        if (permissionRequestId.isNotEmpty)
+          'permissionRequestId': permissionRequestId,
         if (claudeLifecycle.isNotEmpty) 'claudeLifecycle': claudeLifecycle,
         if (blockingKind.isNotEmpty) 'blockingKind': blockingKind,
         if (targetDiff.isNotEmpty) 'targetDiff': targetDiff,
@@ -152,6 +159,7 @@ class RuntimeMeta {
       reasoningEffort: read('reasoningEffort'),
       cwd: read('cwd'),
       permissionMode: read('permissionMode'),
+      permissionRequestId: read('permissionRequestId'),
       claudeLifecycle: read('claudeLifecycle'),
       blockingKind: read('blockingKind'),
       targetDiff: read('targetDiff'),

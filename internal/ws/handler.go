@@ -1228,7 +1228,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid permission decision request: %v", err), ""))
 				continue
 			}
-			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=permission_decision decision=%q permissionMode=%q resumeSessionID=%q targetPath=%q contextID=%q fallbackCWD=%q fallbackCommandPreview=%q promptPreview=%q", connectionID, selectedSessionID, remoteAddr, permissionEvent.Decision, permissionEvent.PermissionMode, permissionEvent.ResumeSessionID, permissionEvent.TargetPath, permissionEvent.ContextID, permissionEvent.FallbackCWD, wsDebugPreview(permissionEvent.FallbackCommand), wsDebugPreview(permissionEvent.PromptMessage))
+							logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=permission_decision decision=%q permissionRequestID=%q permissionMode=%q resumeSessionID=%q targetPath=%q contextID=%q fallbackCWD=%q fallbackCommandPreview=%q promptPreview=%q", connectionID, selectedSessionID, remoteAddr, permissionEvent.Decision, permissionEvent.PermissionRequestID, permissionEvent.PermissionMode, permissionEvent.ResumeSessionID, permissionEvent.TargetPath, permissionEvent.ContextID, permissionEvent.FallbackCWD, wsDebugPreview(permissionEvent.FallbackCommand), wsDebugPreview(permissionEvent.PromptMessage))
 			decision := strings.TrimSpace(strings.ToLower(permissionEvent.Decision))
 			if decision != "approve" && decision != "deny" {
 				logx.Warn("ws", "reject invalid permission decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%q", connectionID, selectedSessionID, remoteAddr, permissionEvent.Decision)
@@ -1752,6 +1752,24 @@ func fallback(value, defaultValue string) string {
 	return value
 }
 
+func permissionDecisionIntent(req protocol.PermissionDecisionRequestEvent) store.PermissionKind {
+	lowerPrompt := strings.ToLower(strings.TrimSpace(req.PromptMessage))
+	lowerCommand := strings.ToLower(strings.TrimSpace(req.FallbackCommand))
+	targetPath := strings.TrimSpace(req.TargetPath)
+	switch {
+	case strings.Contains(lowerPrompt, "network"), strings.Contains(lowerPrompt, "联网"), strings.Contains(lowerPrompt, "网络"):
+		return store.PermissionKindNetwork
+	case strings.Contains(lowerPrompt, "读取"), strings.Contains(lowerPrompt, "查看"), strings.Contains(lowerPrompt, "打开"), strings.Contains(lowerPrompt, " use read "), strings.Contains(lowerPrompt, " use bash "), strings.Contains(lowerPrompt, "lsof"), strings.Contains(lowerPrompt, "ps"):
+		return "read"
+	case strings.Contains(lowerPrompt, "command"), strings.Contains(lowerPrompt, "命令"), (strings.TrimSpace(lowerCommand) != "" && targetPath == ""):
+		return store.PermissionKindShell
+	case strings.Contains(lowerPrompt, "修改文件"), strings.Contains(lowerPrompt, "write"), strings.Contains(lowerPrompt, "edit"), strings.Contains(lowerPrompt, "文件"):
+		return store.PermissionKindWrite
+	default:
+		return store.PermissionKindGeneric
+	}
+}
+
 func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecisionRequestEvent) (string, error) {
 	decision = strings.TrimSpace(strings.ToLower(decision))
 	if decision == "" {
@@ -1765,6 +1783,9 @@ func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecis
 		subject = "刚才请求的操作"
 	}
 	lines := []string{}
+	if req.PermissionRequestID != "" {
+		lines = append(lines, fmt.Sprintf("PermissionRequestID: %s", req.PermissionRequestID))
+	}
 	if req.ResumeSessionID != "" {
 		lines = append(lines, fmt.Sprintf("ResumeSessionID: %s", req.ResumeSessionID))
 	}
@@ -1785,7 +1806,14 @@ func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecis
 	}
 	switch decision {
 	case "approve":
-		return fmt.Sprintf("用户已批准刚才请求的文件修改/写入权限。请在当前已保存的会话上下文中继续刚才被权限拦截的任务。执行要求：先重新读取目标文件的当前内容，再基于最新内容继续刚才的修改；只有在重新读取完成后，才重试刚才被拦截的编辑或写入工具调用。不要再次向用户请求同一权限，直接继续完成即可。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
+		switch permissionDecisionIntent(req) {
+		case "read":
+			return fmt.Sprintf("用户已批准刚才请求的只读/查看权限。请在当前已保存的会话上下文中继续刚才被权限拦截的读取或查看操作，不要执行编辑、写入或其它副作用动作。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
+		case store.PermissionKindShell:
+			return fmt.Sprintf("用户已批准刚才请求的命令执行权限。请在当前已保存的会话上下文中继续刚才被权限拦截的命令执行；请重新发起新的命令调用，不要把该权限解释为文件写入任务。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
+		default:
+			return fmt.Sprintf("用户已批准刚才请求的文件修改/写入权限。请在当前已保存的会话上下文中继续刚才被权限拦截的任务。执行要求：先重新读取目标文件的当前内容，再基于最新内容继续刚才的修改；只有在重新读取完成后，才重试刚才被拦截的编辑或写入工具调用。不要再次向用户请求同一权限，直接继续完成即可。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
+		}
 	case "deny":
 		return fmt.Sprintf("用户拒绝了刚才请求的文件修改/写入权限。请不要继续写入或编辑该目标，并基于当前上下文给出不写文件的替代方案或下一步建议。目标：%s\n%s\n", subject, strings.Join(lines, "\n")), nil
 	default:
@@ -1796,24 +1824,41 @@ func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecis
 func hotSwapApproveContinuation(req protocol.PermissionDecisionRequestEvent) string {
 	targetPath := strings.TrimSpace(req.TargetPath)
 	promptMessage := strings.TrimSpace(req.PromptMessage)
+	intent := permissionDecisionIntent(req)
 
 	promptMessage = strings.ReplaceAll(promptMessage, "\r", " ")
 	promptMessage = strings.ReplaceAll(promptMessage, "\n", " ")
 
-	lines := []string{
-		"我已经批准这次文件修改权限。",
-		"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。",
-		"先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。",
+	lines := []string{}
+	switch intent {
+	case "read":
+		lines = append(lines,
+			"我已经批准这次只读/查看权限。",
+			"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。",
+			"请重新发起新的只读操作，继续刚才被权限拦截的读取、查看或检查步骤；不要执行任何编辑或写入。",
+		)
+	case store.PermissionKindShell:
+		lines = append(lines,
+			"我已经批准这次命令执行权限。",
+			"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。",
+			"请重新发起新的命令调用，继续刚才被权限拦截的执行步骤；不要把这次授权改写成文件编辑任务。",
+		)
+	default:
+		lines = append(lines,
+			"我已经批准这次文件修改权限。",
+			"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。",
+			"先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。",
+		)
 	}
 
 	if targetPath != "" {
 		lines = append(lines, "本次已授权的目标文件：`"+targetPath+"`。")
 	}
 
-	lines = append(lines, "不要再次请求权限，不要只做解释，直接完成这次文件修改。")
+	lines = append(lines, "不要再次请求权限，不要只做解释，直接完成这次已批准的操作。")
 
 	if promptMessage != "" {
-		lines = append(lines, "你上一次请求权限时的原始上下文如下，请按该上下文重新完成写入："+promptMessage)
+		lines = append(lines, "你上一次请求权限时的原始上下文如下，请按该上下文继续处理："+promptMessage)
 	}
 
 	finalPrompt := strings.Join(lines, "  ")
