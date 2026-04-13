@@ -313,6 +313,7 @@ func buildPermissionDecisionFromEvent(
 		ClientEvent:        protocol.ClientEvent{Action: "permission_decision"},
 		Decision:           "approve",
 		PermissionMode:     firstNonEmptyString(meta.PermissionMode, controller.ActiveMeta.PermissionMode, projection.Runtime.PermissionMode),
+		PermissionRequestID: strings.TrimSpace(meta.PermissionRequestID),
 		ResumeSessionID:    firstNonEmptyString(meta.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID),
 		TargetPath:         firstNonEmptyString(meta.TargetPath, controller.ActiveMeta.TargetPath),
 		ContextID:          firstNonEmptyString(meta.ContextID, controller.ActiveMeta.ContextID),
@@ -396,7 +397,7 @@ func maybeConsumeTemporaryPermissionGrant(
 		return false, nil
 	}
 	targetPath := normalizePermissionGrantPath(meta.TargetPath)
-	if targetPath == "" || !grantStore.ConsumeIfValid(sessionID, targetPath) {
+	if targetPath == "" || !grantStore.ConsumeIfValid(sessionID, targetPath, strings.TrimSpace(meta.PermissionRequestID)) {
 		return false, nil
 	}
 	projection := normalizeProjectionSnapshot(store.ProjectionSnapshot{})

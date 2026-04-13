@@ -459,6 +459,13 @@ func (s *Service) SendPermissionDecision(ctx context.Context, sessionID string, 
 	if !responder.HasPendingPermissionRequest() {
 		return runner.ErrNoPendingControlRequest
 	}
+	requestID := strings.TrimSpace(meta.PermissionRequestID)
+	if requestID != "" {
+		currentRequestID := strings.TrimSpace(responder.CurrentPermissionRequestID())
+		if currentRequestID == "" || currentRequestID != requestID {
+			return runner.ErrNoPendingControlRequest
+		}
+	}
 	effectiveMeta := activeMeta
 	if meta.Source != "" || meta.SkillName != "" || meta.ResumeSessionID != "" || meta.ExecutionID != "" || meta.GroupID != "" || meta.GroupTitle != "" || meta.ContextID != "" || meta.ContextTitle != "" || meta.TargetText != "" || meta.TargetPath != "" || meta.PermissionMode != "" {
 		effectiveMeta = protocol.MergeRuntimeMeta(effectiveMeta, meta)
@@ -714,6 +721,7 @@ func (s *Service) prepareExecuteRequest(req ExecuteRequest) ExecuteRequest {
 			prepared.RuntimeMeta.Engine,
 		),
 		PermissionMode: prepared.PermissionMode,
+		PermissionRequestID: prepared.RuntimeMeta.PermissionRequestID,
 		ClaudeLifecycle: firstNonEmptyRuntimeValue(prepared.RuntimeMeta.ClaudeLifecycle, func() string {
 			if prepared.Mode == runner.ModePTY && runnerIsClaudeSession(nil, prepared.Command, prepared.RuntimeMeta.Command) {
 				return "starting"

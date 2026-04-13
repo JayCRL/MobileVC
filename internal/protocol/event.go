@@ -44,27 +44,28 @@ const (
 )
 
 type RuntimeMeta struct {
-	Source          string `json:"source,omitempty"`
-	SkillName       string `json:"skillName,omitempty"`
-	Target          string `json:"target,omitempty"`
-	TargetType      string `json:"targetType,omitempty"`
-	TargetPath      string `json:"targetPath,omitempty"`
-	ResultView      string `json:"resultView,omitempty"`
-	ResumeSessionID string `json:"resumeSessionId,omitempty"`
-	ExecutionID     string `json:"executionId,omitempty"`
-	GroupID         string `json:"groupId,omitempty"`
-	GroupTitle      string `json:"groupTitle,omitempty"`
-	ContextID       string `json:"contextId,omitempty"`
-	ContextTitle    string `json:"contextTitle,omitempty"`
-	TargetText      string `json:"targetText,omitempty"`
-	Command         string `json:"command,omitempty"`
-	Engine          string `json:"engine,omitempty"`
-	Model           string `json:"model,omitempty"`
-	ReasoningEffort string `json:"reasoningEffort,omitempty"`
-	CWD             string `json:"cwd,omitempty"`
-	PermissionMode  string `json:"permissionMode,omitempty"`
-	ClaudeLifecycle string `json:"claudeLifecycle,omitempty"`
-	BlockingKind    string `json:"blockingKind,omitempty"`
+	Source              string `json:"source,omitempty"`
+	SkillName           string `json:"skillName,omitempty"`
+	Target              string `json:"target,omitempty"`
+	TargetType          string `json:"targetType,omitempty"`
+	TargetPath          string `json:"targetPath,omitempty"`
+	ResultView          string `json:"resultView,omitempty"`
+	ResumeSessionID     string `json:"resumeSessionId,omitempty"`
+	ExecutionID         string `json:"executionId,omitempty"`
+	GroupID             string `json:"groupId,omitempty"`
+	GroupTitle          string `json:"groupTitle,omitempty"`
+	ContextID           string `json:"contextId,omitempty"`
+	ContextTitle        string `json:"contextTitle,omitempty"`
+	TargetText          string `json:"targetText,omitempty"`
+	Command             string `json:"command,omitempty"`
+	Engine              string `json:"engine,omitempty"`
+	Model               string `json:"model,omitempty"`
+	ReasoningEffort     string `json:"reasoningEffort,omitempty"`
+	CWD                 string `json:"cwd,omitempty"`
+	PermissionMode      string `json:"permissionMode,omitempty"`
+	PermissionRequestID string `json:"permissionRequestId,omitempty"`
+	ClaudeLifecycle     string `json:"claudeLifecycle,omitempty"`
+	BlockingKind        string `json:"blockingKind,omitempty"`
 }
 
 type Event struct {
@@ -109,19 +110,20 @@ type ReviewDecisionRequestEvent struct {
 
 type PermissionDecisionRequestEvent struct {
 	ClientEvent
-	Decision           string `json:"decision"`
-	Scope              string `json:"scope,omitempty"`
-	PermissionMode     string `json:"permissionMode,omitempty"`
-	ResumeSessionID    string `json:"resumeSessionId,omitempty"`
-	TargetPath         string `json:"targetPath,omitempty"`
-	ContextID          string `json:"contextId,omitempty"`
-	ContextTitle       string `json:"contextTitle,omitempty"`
-	PromptMessage      string `json:"promptMessage,omitempty"`
-	FallbackCommand    string `json:"command,omitempty"`
-	FallbackCWD        string `json:"cwd,omitempty"`
-	FallbackEngine     string `json:"engine,omitempty"`
-	FallbackTarget     string `json:"target,omitempty"`
-	FallbackTargetType string `json:"targetType,omitempty"`
+	Decision            string `json:"decision"`
+	Scope               string `json:"scope,omitempty"`
+	PermissionMode      string `json:"permissionMode,omitempty"`
+	PermissionRequestID string `json:"permissionRequestId,omitempty"`
+	ResumeSessionID     string `json:"resumeSessionId,omitempty"`
+	TargetPath          string `json:"targetPath,omitempty"`
+	ContextID           string `json:"contextId,omitempty"`
+	ContextTitle        string `json:"contextTitle,omitempty"`
+	PromptMessage       string `json:"promptMessage,omitempty"`
+	FallbackCommand     string `json:"command,omitempty"`
+	FallbackCWD         string `json:"cwd,omitempty"`
+	FallbackEngine      string `json:"engine,omitempty"`
+	FallbackTarget      string `json:"target,omitempty"`
+	FallbackTargetType  string `json:"targetType,omitempty"`
 }
 
 type PermissionRuleListRequestEvent struct {
@@ -1230,6 +1232,9 @@ func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
 	}
 	if overlay.PermissionMode != "" {
 		merged.PermissionMode = overlay.PermissionMode
+	}
+	if overlay.PermissionRequestID != "" {
+		merged.PermissionRequestID = overlay.PermissionRequestID
 	}
 	if overlay.ClaudeLifecycle != "" {
 		merged.ClaudeLifecycle = overlay.ClaudeLifecycle
