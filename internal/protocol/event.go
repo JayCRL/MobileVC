@@ -195,6 +195,7 @@ type SkillCatalogRequestEvent struct {
 
 type MemoryRequestEvent struct {
 	ClientEvent
+	CWD  string     `json:"cwd,omitempty"`
 	Item MemoryItem `json:"item,omitempty"`
 }
 
