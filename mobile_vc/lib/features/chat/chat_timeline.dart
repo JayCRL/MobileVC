@@ -112,7 +112,10 @@ class _ChatTimelineState extends State<ChatTimeline> {
     final visiblePrompt = promptCandidate is PromptRequestEvent &&
             _shouldHidePassiveReadyPrompt(promptCandidate)
         ? null
-        : promptCandidate;
+        : promptCandidate is InteractionRequestEvent &&
+                _shouldHidePassiveReadyInteraction(promptCandidate)
+            ? null
+            : promptCandidate;
     final visiblePlanQuestion =
         widget.shouldShowPlanChoices ? widget.pendingPlanQuestion : null;
     final visiblePromptMessage = visiblePrompt is InteractionRequestEvent
@@ -276,6 +279,37 @@ class _ChatTimelineState extends State<ChatTimeline> {
         message.contains('ready for input') ||
         message == 'ready' ||
         message == '等待输入';
+  }
+
+  bool _shouldHidePassiveReadyInteraction(InteractionRequestEvent interaction) {
+    if (interaction.isPermission || interaction.isReview || interaction.isPlan) {
+      return false;
+    }
+    if (interaction.actions.isNotEmpty) {
+      return false;
+    }
+    if (interaction.options.any((option) => option.displayText.isNotEmpty)) {
+      return false;
+    }
+    final title = interaction.title.trim().toLowerCase();
+    final message = interaction.message.trim().toLowerCase();
+    if (title.isEmpty && message.isEmpty) {
+      return true;
+    }
+    final looksPassiveReady = title.contains('等待输入') ||
+        title.contains('可继续输入') ||
+        title.contains('waiting for input') ||
+        title.contains('continue input') ||
+        title.contains('ready for input') ||
+        title == 'ready' ||
+        message.contains('会话已就绪') ||
+        message.contains('可继续输入') ||
+        message.contains('waiting for input') ||
+        message.contains('continue input') ||
+        message.contains('ready for input') ||
+        message == 'ready' ||
+        message == '等待输入';
+    return interaction.isReady || looksPassiveReady;
   }
 
   String _promptRequestTitle(PromptRequestEvent prompt) {

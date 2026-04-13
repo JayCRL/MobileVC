@@ -1788,7 +1788,7 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				r.markInteractiveReady()
 				sendEvent(sink, protocol.ApplyRuntimeMeta(
 					protocol.NewPromptRequestEvent(sessionID, "等待输入", nil),
-					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID, BlockingKind: "ready"},
 				))
 			}
 			if envelope.DurationMs > 0 || envelope.TotalCost > 0 {

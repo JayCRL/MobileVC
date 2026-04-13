@@ -688,6 +688,130 @@ void main() {
       final second = _expectSignal(controller, ActionNeededType.continueInput);
       expect(second.id, greaterThan(firstId));
     });
+    test('session_list 已同步且当前无会话时，首条普通输入会先自动创建会话再续发', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      service.emit(
+        SessionListResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_list_result'},
+          items: const [],
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('pwd');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'session_create');
+
+      service.emit(
+        SessionCreatedEvent(
+          timestamp: _timestamp,
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_created'},
+          summary: const SessionSummary(id: 'session-new', title: '新会话'),
+        ),
+      );
+      await _flushEvents();
+
+      expect(service.sentPayloads.map((item) => item['action']), [
+        'session_create',
+        'session_context_get',
+        'permission_rule_list',
+        'exec',
+      ]);
+      expect(service.sentPayloads.last['cmd'], 'pwd');
+      expect(controller.selectedSessionId, 'session-new');
+    });
+
+    test('session_list 已同步且当前无会话时，首条 claude 输入会先自动创建会话再启动 Claude',
+        () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      service.emit(
+        SessionListResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_list_result'},
+          items: const [],
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('claude 请帮我总结当前问题');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'session_create');
+
+      service.emit(
+        SessionCreatedEvent(
+          timestamp: _timestamp,
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_created'},
+          summary: const SessionSummary(id: 'session-new', title: '新会话'),
+        ),
+      );
+      await _flushEvents();
+
+      expect(service.sentPayloads.map((item) => item['action']), [
+        'session_create',
+        'session_context_get',
+        'permission_rule_list',
+        'exec',
+        'input',
+      ]);
+      expect(service.sentPayloads[3]['cmd'], 'claude --model sonnet');
+      expect(service.sentPayloads[4]['data'], '请帮我总结当前问题\n');
+      expect(controller.selectedSessionId, 'session-new');
+    });
+
+    test('已有选中会话时发送首条输入不会自动创建新会话', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.sentPayloads.clear();
+
+      service.emit(
+        SessionCreatedEvent(
+          timestamp: _timestamp,
+          sessionId: 'conn-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_created'},
+          summary: const SessionSummary(id: 'session-current', title: 'Current'),
+        ),
+      );
+      await _flushEvents();
+      service.sentPayloads.clear();
+
+      controller.sendInputText('pwd');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'exec');
+      expect(service.sentPayloads.single['cmd'], 'pwd');
+    });
   });
 
   group('SessionController Claude turn dispatch', () {
