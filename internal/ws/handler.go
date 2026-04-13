@@ -3314,10 +3314,7 @@ func isSystemBootstrapLog(event protocol.LogEvent) bool {
 func detachedResumeNoticeEvent(sessionID string, event any) *protocol.SessionResumeNoticeEvent {
 	switch e := event.(type) {
 	case protocol.LogEvent:
-		if strings.TrimSpace(e.Source) == "system/bootstrap" {
-			return nil
-		}
-		if !looksLikeAssistantResumeNotice(e) {
+		if !isVisibleAssistantReplyLog(e) {
 			return nil
 		}
 		notice := protocol.NewSessionResumeNoticeEvent(sessionID, "assistant_reply", "info", "MobileVC", strings.TrimSpace(e.Message))
@@ -3339,7 +3336,14 @@ func detachedResumeNoticeEvent(sessionID string, event any) *protocol.SessionRes
 }
 
 func looksLikeAssistantResumeNotice(event protocol.LogEvent) bool {
+	return isVisibleAssistantReplyLog(event)
+}
+
+func isVisibleAssistantReplyLog(event protocol.LogEvent) bool {
 	if strings.EqualFold(strings.TrimSpace(event.Stream), "stderr") {
+		return false
+	}
+	if strings.TrimSpace(event.Source) == "system/bootstrap" {
 		return false
 	}
 	message := strings.TrimSpace(event.Message)
@@ -3534,7 +3538,7 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 		if msg == "" {
 			return snapshot, false
 		}
-		if e.Stream != "stderr" && e.Source != "system/bootstrap" && looksLikeMarkdownMessage(msg) {
+		if isVisibleAssistantReplyLog(e) {
 			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "markdown", Message: e.Message, Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream, ExecutionID: e.ExecutionID, Phase: phase, ExitCode: e.ExitCode, Context: context})
 		} else {
 			previousIndex := len(snapshot.LogEntries) - 1

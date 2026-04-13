@@ -2615,11 +2615,105 @@ void main() {
       expect(service.sentPayloads.single['data'], '继续处理\n');
       expect(controller.awaitInput, isFalse);
       expect(controller.isSessionBusy, isTrue);
+      expect(controller.canStopCurrentRun, isTrue);
+      expect(controller.activityVisible, isTrue);
+      expect(controller.activityBannerVisible, isTrue);
       expect(controller.agentState?.state, 'THINKING');
       expect(controller.agentState?.awaitInput, isFalse);
       expect(controller.agentState?.command, 'codex');
       expect(controller.agentPhaseLabel, '思考中');
+    });
+
+    test('同 executionId 的 WAIT_INPUT 续聊会清空已 settled 状态并恢复 stop/busy/banner', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            engine: 'claude',
+            executionId: 'exec-same-1',
+            claudeLifecycle: 'active',
+          ),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: '处理中',
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            engine: 'claude',
+            executionId: 'exec-same-1',
+            claudeLifecycle: 'active',
+          ),
+          raw: const {'type': 'agent_state'},
+          state: 'THINKING',
+          message: '思考中',
+          command: 'claude',
+        ),
+      );
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            engine: 'claude',
+            executionId: 'exec-same-1',
+            claudeLifecycle: 'active',
+          ),
+          raw: const {'type': 'log'},
+          message: '上一轮回复已完成。',
+          stream: 'stdout',
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 2)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            engine: 'claude',
+            executionId: 'exec-same-1',
+            claudeLifecycle: 'waiting_input',
+          ),
+          raw: const {'type': 'agent_state'},
+          state: 'WAIT_INPUT',
+          message: '等待输入',
+          awaitInput: true,
+          command: 'claude',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.awaitInput, isTrue);
+      expect(controller.isSessionBusy, isFalse);
+      expect(controller.canStopCurrentRun, isFalse);
+      expect(controller.activityBannerVisible, isFalse);
+
+      service.sentPayloads.clear();
+      controller.sendInputText('继续第三轮');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'input');
+      expect(service.sentPayloads.single['data'], '继续第三轮\n');
+      expect(controller.awaitInput, isFalse);
+      expect(controller.isSessionBusy, isTrue);
+      expect(controller.canStopCurrentRun, isTrue);
       expect(controller.activityVisible, isTrue);
+      expect(controller.activityBannerVisible, isTrue);
+      expect(controller.agentState?.state, 'THINKING');
     });
 
     test('新建会话会清空旧 continuation 状态，首条 codex 输入重新走 exec', () async {
@@ -3260,6 +3354,55 @@ void main() {
       );
       expect(controller.notificationSignal?.body, '后台期间有新的回复');
       expect(controller.timeline, isEmpty);
+    });
+
+    test('后台 assistant 通知后恢复历史时，正文会从 history 进入 timeline', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        SessionResumeNoticeEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', engine: 'claude'),
+          raw: const {'type': 'session_resume_notice', 'eventCursor': 3},
+          noticeType: 'assistant_reply',
+          level: 'info',
+          title: 'MobileVC',
+          message: '后台期间有新的回复',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.notificationSignal?.type, AppNotificationType.assistantReply);
+      expect(controller.timeline, isEmpty);
+
+      service.emit(
+        SessionHistoryEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(command: 'claude', engine: 'claude'),
+          raw: const {'type': 'session_history'},
+          summary: const SessionSummary(id: 'session-1', title: '历史会话'),
+          logEntries: const [
+            HistoryLogEntry(
+              kind: 'markdown',
+              message: '我先帮你梳理下根因，再给你一个最稳的修复方案。',
+              stream: 'stdout',
+              timestamp: '2026-04-13T10:20:30Z',
+            ),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      final markdownItem = controller.timeline.singleWhere(
+        (entry) => entry.kind == 'markdown',
+      );
+      expect(markdownItem.body, '我先帮你梳理下根因，再给你一个最稳的修复方案。');
     });
 
     test('system/bootstrap source 的日志不会进入 timeline 或通知', () async {
@@ -5803,7 +5946,60 @@ void main() {
       expect(service.sentPayloads.single['action'], 'review_decision');
       expect(service.sentPayloads.single['decision'], 'accept');
       expect(service.sentPayloads.single['is_review_only'], isTrue);
-      expect(service.sentPayloads.single['is_review_only'], isTrue);
+    });
+
+    test('review prompt 的 revert 会发送非 review-only 决策', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      service.emit(
+        FileDiffEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: RuntimeMeta(
+            contextId: 'diff-revert-1',
+            contextTitle: 'README diff',
+            targetPath: '/workspace/README.md',
+          ),
+          raw: {'type': 'file_diff'},
+          path: '/workspace/README.md',
+          title: 'README diff',
+          diff: '@@ -1 +1 @@',
+          lang: 'markdown',
+        ),
+      );
+      service.emit(
+        PromptRequestEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            contextId: 'diff-revert-1',
+            contextTitle: 'README diff',
+            targetPath: '/workspace/README.md',
+            blockingKind: 'review',
+          ),
+          raw: const {
+            'type': 'prompt_request',
+            'msg': 'Please accept, revert, or revise this diff',
+          },
+          message: 'Please accept, revert, or revise this diff',
+          options: const [
+            PromptOption(value: 'accept', label: '接受'),
+            PromptOption(value: 'revert', label: '撤销'),
+            PromptOption(value: 'revise', label: '继续修改'),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      controller.submitPromptOption('revert');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'review_decision');
+      expect(service.sentPayloads.single['decision'], 'revert');
+      expect(service.sentPayloads.single['is_review_only'], isFalse);
     });
 
     test('review prompt 仍发送 review_decision', () async {
