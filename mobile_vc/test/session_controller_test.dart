@@ -4474,6 +4474,15 @@ void main() {
       addTearDown(controller.disposeController);
 
       service.emit(
+        SkillSyncResultEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'skill_sync_result'},
+          message: 'skill 同步完成',
+        ),
+      );
+      service.emit(
         CatalogSyncStatusEvent(
           timestamp: _timestamp,
           sessionId: 'session-1',
@@ -4532,6 +4541,12 @@ void main() {
       expect(controller.skillSyncStatus, 'skill 同步完成');
       expect(controller.skills.single.syncState, 'synced');
       expect(controller.skills.single.sourceOfTruth, 'claude');
+      expect(
+        controller.timeline
+            .where((item) => item.body.trim() == 'skill 同步完成')
+            .length,
+        1,
+      );
     });
 
     test('消费新的 catalog sync 事件并维护 memory 元数据', () async {
@@ -4659,6 +4674,48 @@ void main() {
 
       expect(service.sentPayloads, hasLength(1));
       expect(service.sentPayloads.single['action'], 'memory_sync_pull');
+      expect(service.sentPayloads.single['cwd'], '.');
+    });
+
+    test('长 assistant 回复在实时日志阶段立即进入 timeline', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(
+        SessionStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            engine: 'claude',
+            executionId: 'exec-long-1',
+          ),
+          raw: const {'type': 'session_state'},
+          state: 'RUNNING',
+          message: 'claude running',
+        ),
+      );
+      await _flushEvents();
+
+      service.emit(
+        LogEvent(
+          timestamp: _timestamp.add(const Duration(seconds: 1)),
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(executionId: 'exec-long-1'),
+          raw: const {'type': 'log'},
+          message: '结论先说：这个问题我已经定位到实时展示链路了。\n\n接下来我会把根因和修复方案一起整理给你。',
+          stream: 'stdout',
+        ),
+      );
+      await _flushEvents();
+
+      expect(
+        controller.timeline.any((item) => item.body.contains('结论先说：这个问题我已经定位到实时展示链路了')),
+        isTrue,
+      );
     });
 
     test('saveMemory 只发送 upsert，等待后端回流最新列表', () async {

@@ -1180,7 +1180,10 @@ func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 	}
 	_ = readUntilType(t, conn, protocol.EventTypeMemoryListResult)
 
-	if err := conn.WriteJSON(protocol.ClientEvent{Action: "memory_sync_pull"}); err != nil {
+	if err := conn.WriteJSON(protocol.MemoryRequestEvent{
+		ClientEvent: protocol.ClientEvent{Action: "memory_sync_pull"},
+		CWD:         projectChild,
+	}); err != nil {
 		t.Fatalf("write memory_sync_pull request: %v", err)
 	}
 	statusEvent := readUntilType(t, conn, protocol.EventTypeCatalogSyncStatus)
@@ -1263,7 +1266,7 @@ func TestHandlerMemorySyncPullUsesCodexMemoryForCodexSession(t *testing.T) {
 		t.Fatalf("save codex projection: %v", err)
 	}
 
-	if err := conn.WriteJSON(protocol.ClientEvent{Action: "memory_sync_pull"}); err != nil {
+	if err := conn.WriteJSON(protocol.MemoryRequestEvent{ClientEvent: protocol.ClientEvent{Action: "memory_sync_pull"}}); err != nil {
 		t.Fatalf("write memory_sync_pull request: %v", err)
 	}
 	_ = readUntilType(t, conn, protocol.EventTypeCatalogSyncStatus)

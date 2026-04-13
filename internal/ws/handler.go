@@ -933,6 +933,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "memory_list":
 			emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
 		case "memory_sync_pull":
+			var req protocol.MemoryRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid memory_sync_pull request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid memory_sync_pull request: %v", err), ""))
+				continue
+			}
 			if h.SessionStore == nil {
 				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
 				continue
@@ -951,7 +957,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emit(protocol.NewCatalogSyncStatusEvent(selectedSessionID, string(store.CatalogDomainMemory), toProtocolCatalogMetadata(snapshot.Meta)))
-			syncCWD := resolveCatalogSyncCWD(h.SessionStore, ctx, selectedSessionID, sessionListFilterCWD)
+			syncCWD := resolveCatalogSyncCWD(h.SessionStore, ctx, selectedSessionID, firstNonEmptyString(req.CWD, sessionListFilterCWD))
+			logx.Info("ws", "memory sync pull: connectionID=%s sessionID=%s remoteAddr=%s syncCWD=%q sourceOfTruth=%s", connectionID, selectedSessionID, remoteAddr, syncCWD, sourceOfTruth)
 			if err := syncExternalMemories(h.SessionStore, ctx, syncCWD, sourceOfTruth); err != nil {
 				snapshot.Meta.SyncState = store.CatalogSyncStateFailed
 				snapshot.Meta.LastError = err.Error()
@@ -2393,6 +2400,7 @@ func loadClaudeProjectMemories(cwd string, now time.Time) ([]store.MemoryItem, e
 	if err != nil {
 		return nil, err
 	}
+	logx.Info("ws", "load claude project memories: cwd=%q memoryDir=%q", cwd, memoryDir)
 	if memoryDir == "" {
 		return nil, nil
 	}
@@ -2448,6 +2456,11 @@ func loadClaudeProjectMemories(cwd string, now time.Time) ([]store.MemoryItem, e
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].ID < items[j].ID
 	})
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	logx.Info("ws", "loaded claude project memories: cwd=%q memoryDir=%q count=%d ids=%v", cwd, memoryDir, len(items), ids)
 	return items, nil
 }
 

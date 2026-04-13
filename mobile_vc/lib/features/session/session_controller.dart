@@ -1887,7 +1887,7 @@ class SessionController extends ChangeNotifier {
   }
 
   void syncMemories() {
-    _service.send({'action': 'memory_sync_pull'});
+    _service.send({'action': 'memory_sync_pull', 'cwd': effectiveCwd});
   }
 
   void requestMemoryList() {
@@ -3792,7 +3792,6 @@ class SessionController extends ChangeNotifier {
       case SkillSyncResultEvent result:
         _skillSyncStatus =
             result.message.isNotEmpty ? result.message : 'skill 同步完成';
-        _pushSystem('session', _skillSyncStatus);
         break;
       case CatalogSyncStatusEvent status:
         if (status.domain == 'skill') {
@@ -4622,8 +4621,9 @@ class SessionController extends ChangeNotifier {
   }
 
   void _handleLogTimeline(LogEvent log) {
+    final mergedMeta = currentMeta.merge(log.runtimeMeta);
     final message = _sanitizeTimelineLogMessage(
-      _sanitizeAiBootstrapLogMessage(log.message, log.runtimeMeta),
+      _sanitizeAiBootstrapLogMessage(log.message, mergedMeta),
     );
     if (message.isEmpty) {
       return;
@@ -4642,16 +4642,16 @@ class SessionController extends ChangeNotifier {
     final kind = _timelineKindForLog(
       message,
       log.stream,
-      meta: log.runtimeMeta,
+      meta: mergedMeta,
     );
     if (kind == null) {
       return;
     }
     if (kind == 'markdown') {
-      final executionKey = _runtimeExecutionKey(log.runtimeMeta);
+      final executionKey = _runtimeExecutionKey(mergedMeta);
       _lastAssistantReplyExecutionKey = executionKey;
       _markTerminalExecutionFinished(
-        log.runtimeMeta,
+        mergedMeta,
         finishedAt: log.timestamp,
       );
       _syncDerivedState();
@@ -4663,7 +4663,7 @@ class SessionController extends ChangeNotifier {
         timestamp: log.timestamp,
         body: message,
         stream: log.stream,
-        meta: log.runtimeMeta,
+        meta: mergedMeta,
       ),
     );
   }
