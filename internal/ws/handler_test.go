@@ -682,6 +682,62 @@ func TestApplyEventToProjectionKeepsBootstrapLogsOutOfMarkdownHistory(t *testing
 	}
 }
 
+func TestAssistantReplyNoticeParityWithProjectionPersistence(t *testing.T) {
+	sessionID := "session-1"
+	logEvent := protocol.NewLogEvent(sessionID, "我先帮你梳理下这个问题的根因，然后把现有判定链路和最稳妥的修复方案完整写给你，避免前后端再次分叉。", "stdout")
+	logEvent.RuntimeMeta = protocol.RuntimeMeta{
+		Command: "claude",
+		Engine:  "claude",
+	}
+
+	notice := detachedResumeNoticeEvent(sessionID, logEvent)
+	if notice == nil {
+		t.Fatal("expected assistant reply notice for visible assistant log")
+	}
+	if notice.NoticeType != "assistant_reply" {
+		t.Fatalf("expected assistant_reply notice, got %#v", notice)
+	}
+
+	updated, applied := applyEventToProjection(store.ProjectionSnapshot{}, logEvent)
+	if !applied {
+		t.Fatal("expected log event to be applied to projection")
+	}
+	if len(updated.LogEntries) != 1 {
+		t.Fatalf("expected one log entry, got %d", len(updated.LogEntries))
+	}
+	entry := updated.LogEntries[0]
+	if entry.Kind != "markdown" {
+		t.Fatalf("expected visible assistant reply to persist as markdown, got %#v", entry)
+	}
+	if !strings.Contains(entry.Message, "避免前后端再次分叉") {
+		t.Fatalf("expected assistant reply body to persist, got %#v", entry)
+	}
+}
+
+func TestTerminalNoiseDoesNotTriggerAssistantReplyNoticeOrMarkdownPersistence(t *testing.T) {
+	sessionID := "session-1"
+	logEvent := protocol.NewLogEvent(sessionID, "2026-04-13 10:20:30 [INFO] build completed", "stdout")
+	logEvent.RuntimeMeta = protocol.RuntimeMeta{
+		Command: "claude",
+		Engine:  "claude",
+	}
+
+	if notice := detachedResumeNoticeEvent(sessionID, logEvent); notice != nil {
+		t.Fatalf("expected terminal-like noise not to trigger assistant notice, got %#v", notice)
+	}
+
+	updated, applied := applyEventToProjection(store.ProjectionSnapshot{}, logEvent)
+	if !applied {
+		t.Fatal("expected log event to be applied to projection")
+	}
+	if len(updated.LogEntries) != 1 {
+		t.Fatalf("expected one log entry, got %d", len(updated.LogEntries))
+	}
+	if updated.LogEntries[0].Kind != "terminal" {
+		t.Fatalf("expected terminal-like noise to stay terminal, got %#v", updated.LogEntries[0])
+	}
+}
+
 func TestSessionResumeReplaysPendingEvents(t *testing.T) {
 	tempStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
@@ -4437,6 +4493,48 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	}
 	if thinking["permissionMode"] != "acceptEdits" {
 		t.Fatalf("expected acceptEdits permission mode, got %#v", thinking)
+	}
+}
+
+func TestHandlerReviewDecisionRevertSendsPromptEvenWhenReviewOnly(t *testing.T) {
+	ptyRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "等待输入", nil))
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return ptyRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "review-revert-session")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty"}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	ptyRunner.WaitStarted(t)
+
+	if err := conn.WriteJSON(protocol.ReviewDecisionRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "review_decision"},
+		Decision:       "revert",
+		ContextID:      "diff:revert-1",
+		ContextTitle:   "最近 Diff",
+		TargetPath:     "internal/ws/handler.go",
+		PermissionMode: "acceptEdits",
+		IsReviewOnly:   true,
+	}); err != nil {
+		t.Fatalf("write review decision request: %v", err)
+	}
+
+	select {
+	case payload := <-ptyRunner.writeCh:
+		got := string(payload)
+		if !strings.Contains(got, "Review decision: REVERT.") ||
+			!strings.Contains(got, "Please drop the change and restore the previous state before proceeding.") {
+			t.Fatalf("unexpected revert review payload: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive revert review payload")
 	}
 }
 

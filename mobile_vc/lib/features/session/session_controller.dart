@@ -2876,6 +2876,7 @@ class SessionController extends ChangeNotifier {
     _pendingPrompt = null;
     _pendingInteraction = null;
     _clearPlanInteractionState();
+    _lastAssistantReplyExecutionKey = '';
     _optimisticallyResumeAiProcessingAfterInput();
     _service.send({
       'action': 'input',
@@ -4033,6 +4034,7 @@ class SessionController extends ChangeNotifier {
     bool pushTimeline = true,
   }) {
     final reviewedDiffId = _diffIdentity(diff);
+    final reviewOnly = normalized != 'revert';
     _activeReviewDiffId = reviewedDiffId;
     final groupId = _groupIdForDiff(diff);
     if (groupId.isNotEmpty) {
@@ -4049,7 +4051,7 @@ class SessionController extends ChangeNotifier {
       'groupId': groupId,
       'groupTitle': diff.groupTitle,
       'permissionMode': _currentDecisionPermissionMode,
-      'is_review_only': true,
+      'is_review_only': reviewOnly,
     });
     if (normalized != 'revise') {
       _pendingPrompt = null;

@@ -593,7 +593,7 @@ func (s *Service) ReviewDecision(ctx context.Context, sessionID string, req Revi
 	meta := req.RuntimeMeta
 	meta.Source = "review-decision"
 	meta.TargetText = decision
-	if req.IsReviewOnly {
+	if req.IsReviewOnly && decision != "revert" {
 		for _, event := range s.controller.OnInputSent(meta) {
 			emit(event)
 		}
