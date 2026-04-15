@@ -103,6 +103,20 @@ class _PermissionDecisionSelection {
   final String scope;
 }
 
+class _PermissionMatchContext {
+  const _PermissionMatchContext({
+    required this.engine,
+    required this.kind,
+    required this.commandHead,
+    required this.targetPath,
+  });
+
+  final String engine;
+  final String kind;
+  final String commandHead;
+  final String targetPath;
+}
+
 class _DeferredFirstInput {
   const _DeferredFirstInput(this.text);
 
@@ -3555,6 +3569,11 @@ class SessionController extends ChangeNotifier {
         _pendingPrompt = prompt;
         _syncRuntimePermissionMode();
         _pushDebug('收到 prompt_request', _debugReviewStateSummary());
+        // 尝试自动应用权限规则
+        if (_maybeAutoApplyPermissionRule(prompt)) {
+          _pushDebug('权限规则自动应用', 'prompt已自动批准');
+          break;
+        }
         break;
       case InteractionRequestEvent interaction:
         _pendingPrompt = null;
@@ -6666,6 +6685,131 @@ String _codexModelLabel(String value) {
       return value.trim().isEmpty ? 'Codex' : value.trim();
   }
 }
+
+  /// 尝试自动应用权限规则
+  bool _maybeAutoApplyPermissionRule(PromptRequestEvent prompt) {
+    // 检查权限规则是否启用
+    if (!_sessionPermissionRulesEnabled && !_persistentPermissionRulesEnabled) {
+      return false;
+    }
+
+    // 构建匹配上下文
+    final matchCtx = _buildPermissionMatchContext(prompt);
+
+    // 先检查会话规则
+    if (_sessionPermissionRulesEnabled) {
+      for (final rule in _sessionPermissionRules) {
+        if (_matchPermissionRule(rule, matchCtx)) {
+          _pushDebug('会话权限规则匹配', 'rule=${rule.displayTitle}');
+          _sendPermissionDecision(
+            prompt,
+            const _PermissionDecisionSelection(decision: 'approve'),
+            promptLabel: '自动应用规则',
+          );
+          return true;
+        }
+      }
+    }
+
+    // 再检查持久规则
+    if (_persistentPermissionRulesEnabled) {
+      for (final rule in _persistentPermissionRules) {
+        if (_matchPermissionRule(rule, matchCtx)) {
+          _pushDebug('持久权限规则匹配', 'rule=${rule.displayTitle}');
+          _sendPermissionDecision(
+            prompt,
+            const _PermissionDecisionSelection(decision: 'approve'),
+            promptLabel: '自动应用规则',
+          );
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /// 构建权限匹配上下文
+  _PermissionMatchContext _buildPermissionMatchContext(PromptRequestEvent prompt) {
+    final command = prompt.runtimeMeta.command.isNotEmpty
+        ? prompt.runtimeMeta.command
+        : currentMeta.command;
+    final targetPath = prompt.runtimeMeta.targetPath.isNotEmpty
+        ? prompt.runtimeMeta.targetPath
+        : currentMeta.targetPath;
+    var engine = prompt.runtimeMeta.engine.isNotEmpty
+        ? prompt.runtimeMeta.engine
+        : currentMeta.engine;
+    if (engine.isEmpty) {
+      engine = 'any';
+    }
+    engine = engine.toLowerCase();
+
+    return _PermissionMatchContext(
+      engine: engine,
+      kind: _classifyPermissionKind(prompt.message, targetPath, command),
+      commandHead: _permissionCommandHead(command),
+      targetPath: targetPath,
+    );
+  }
+
+  /// 分类权限类型
+  String _classifyPermissionKind(String promptMessage, String targetPath, String command) {
+    final lowerPrompt = promptMessage.toLowerCase().trim();
+    final lowerCommand = command.toLowerCase().trim();
+
+    if (lowerPrompt.contains('network') ||
+        lowerPrompt.contains('联网') ||
+        lowerPrompt.contains('网络')) {
+      return 'network';
+    }
+    if (lowerPrompt.contains('command') ||
+        lowerPrompt.contains('命令') ||
+        (lowerCommand.isNotEmpty && targetPath.isEmpty)) {
+      return 'shell';
+    }
+    if (lowerPrompt.contains('修改文件') ||
+        lowerPrompt.contains('write') ||
+        lowerPrompt.contains('edit') ||
+        lowerPrompt.contains('文件')) {
+      return 'write';
+    }
+    return 'generic';
+  }
+
+  /// 提取命令头
+  String _permissionCommandHead(String command) {
+    final fields = command.toLowerCase().trim().split(RegExp(r'\s+'));
+    return fields.isEmpty ? '' : fields[0];
+  }
+
+  /// 匹配权限规则
+  bool _matchPermissionRule(
+    PermissionRule rule,
+    _PermissionMatchContext ctx,
+  ) {
+    if (!rule.enabled) {
+      return false;
+    }
+    if (rule.engine.isNotEmpty &&
+        rule.engine != 'any' &&
+        rule.engine != ctx.engine) {
+      return false;
+    }
+    if (rule.kind.isNotEmpty &&
+        rule.kind != 'generic' &&
+        rule.kind != ctx.kind) {
+      return false;
+    }
+    if (rule.commandHead.isNotEmpty && rule.commandHead != ctx.commandHead) {
+      return false;
+    }
+    if (rule.targetPathPrefix.isNotEmpty &&
+        !ctx.targetPath.startsWith(rule.targetPathPrefix)) {
+      return false;
+    }
+    return true;
+  }
 
 const Set<String> _codexReasoningEffortOptions = <String>{
   'none',
