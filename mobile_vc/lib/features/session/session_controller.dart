@@ -6565,125 +6565,6 @@ class SessionController extends ChangeNotifier {
     }
     return withoutTrailing.substring(0, index);
   }
-}
-
-(String, String) _parseAiModelFromText(String engine, String text) {
-  final normalized = text.trim();
-  if (normalized.isEmpty) {
-    return ('', '');
-  }
-  final lower = normalized.toLowerCase();
-  if (engine == 'claude') {
-    final parsed = parseClaudeModelFromText(normalized);
-    if (parsed != null && parsed.isNotEmpty) {
-      return (parsed, '');
-    }
-    return ('', '');
-  }
-  String model = '';
-  final modelMatch = RegExp(r'(gpt[-\s]?\d(?:\.\d+)?(?:[-\s][a-z0-9]+)?)',
-          caseSensitive: false)
-      .firstMatch(normalized);
-  if (modelMatch != null) {
-    model = modelMatch.group(1)!.toLowerCase().replaceAll(' ', '-');
-  } else if (lower.contains('codex')) {
-    model = 'gpt-5-codex';
-  }
-  String effort = '';
-  final effortMatch = RegExp(
-    r'\b(xhigh|high|medium|low|minimal|none)\b',
-    caseSensitive: false,
-  ).firstMatch(normalized);
-  if (effortMatch != null) {
-    effort = (effortMatch.group(1) ?? '').toLowerCase();
-  }
-  return (model, effort);
-}
-
-String _resolvedAiEngine({
-  required String command,
-  required String engine,
-}) {
-  final normalizedEngine = engine.trim().toLowerCase();
-  if (normalizedEngine == 'codex' || normalizedEngine == 'gemini') {
-    return normalizedEngine;
-  }
-  final normalizedCommand = command.trim().toLowerCase();
-  if (normalizedCommand == 'codex' || normalizedCommand.startsWith('codex ')) {
-    return 'codex';
-  }
-  if (normalizedCommand == 'gemini' ||
-      normalizedCommand.startsWith('gemini ')) {
-    return 'gemini';
-  }
-  return 'claude';
-}
-
-String _resolvedAiModel(String engine, String configured) {
-  final normalized = configured.trim();
-  switch (engine) {
-    case 'codex':
-      final codexModel = _normalizeCodexModel(normalized);
-      return codexModel.isNotEmpty ? codexModel : 'gpt-5-codex';
-    case 'claude':
-      return _normalizeClaudeModel(normalized);
-    default:
-      return normalized;
-  }
-}
-
-String _resolvedAiReasoningEffort(String engine, String configured) {
-  if (engine != 'codex') {
-    return '';
-  }
-  final normalized = configured.trim().toLowerCase();
-  if (_codexReasoningEffortOptions.contains(normalized)) {
-    return normalized;
-  }
-  return 'medium';
-}
-
-String _claudeModelLabel(String value) {
-  return claudeModelDisplayLabel(value);
-}
-
-String _normalizeClaudeModel(String value) {
-  final normalized = normalizeClaudeModelSelection(value).trim();
-  final alias = canonicalClaudeModelAlias(normalized);
-  if (alias != null) {
-    return alias;
-  }
-  if (normalized.toLowerCase().startsWith('claude-')) {
-    return normalized.toLowerCase();
-  }
-  return 'sonnet';
-}
-
-String _normalizeCodexModel(String value) {
-  final normalized = value.trim().toLowerCase();
-  if (normalized.isEmpty) {
-    return '';
-  }
-  if (normalized == 'opus' || normalized == 'sonnet') {
-    return '';
-  }
-  if (normalized.startsWith('gpt') || normalized.contains('codex')) {
-    return normalized;
-  }
-  return '';
-}
-
-String _codexModelLabel(String value) {
-  switch (value.trim()) {
-    case 'gpt-5.4':
-      return 'GPT-5.4';
-    case 'gpt-5-codex':
-      return 'GPT-5-Codex';
-    case 'gpt-5':
-      return 'GPT-5';
-    default:
-      return value.trim().isEmpty ? 'Codex' : value.trim();
-  }
 
   /// 尝试自动应用权限规则
   bool _maybeAutoApplyPermissionRule(PromptRequestEvent prompt) {
@@ -6808,6 +6689,125 @@ String _codexModelLabel(String value) {
       return false;
     }
     return true;
+  }
+}
+
+(String, String) _parseAiModelFromText(String engine, String text) {
+  final normalized = text.trim();
+  if (normalized.isEmpty) {
+    return ('', '');
+  }
+  final lower = normalized.toLowerCase();
+  if (engine == 'claude') {
+    final parsed = parseClaudeModelFromText(normalized);
+    if (parsed != null && parsed.isNotEmpty) {
+      return (parsed, '');
+    }
+    return ('', '');
+  }
+  String model = '';
+  final modelMatch = RegExp(r'(gpt[-\s]?\d(?:\.\d+)?(?:[-\s][a-z0-9]+)?)',
+          caseSensitive: false)
+      .firstMatch(normalized);
+  if (modelMatch != null) {
+    model = modelMatch.group(1)!.toLowerCase().replaceAll(' ', '-');
+  } else if (lower.contains('codex')) {
+    model = 'gpt-5-codex';
+  }
+  String effort = '';
+  final effortMatch = RegExp(
+    r'\b(xhigh|high|medium|low|minimal|none)\b',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (effortMatch != null) {
+    effort = (effortMatch.group(1) ?? '').toLowerCase();
+  }
+  return (model, effort);
+}
+
+String _resolvedAiEngine({
+  required String command,
+  required String engine,
+}) {
+  final normalizedEngine = engine.trim().toLowerCase();
+  if (normalizedEngine == 'codex' || normalizedEngine == 'gemini') {
+    return normalizedEngine;
+  }
+  final normalizedCommand = command.trim().toLowerCase();
+  if (normalizedCommand == 'codex' || normalizedCommand.startsWith('codex ')) {
+    return 'codex';
+  }
+  if (normalizedCommand == 'gemini' ||
+      normalizedCommand.startsWith('gemini ')) {
+    return 'gemini';
+  }
+  return 'claude';
+}
+
+String _resolvedAiModel(String engine, String configured) {
+  final normalized = configured.trim();
+  switch (engine) {
+    case 'codex':
+      final codexModel = _normalizeCodexModel(normalized);
+      return codexModel.isNotEmpty ? codexModel : 'gpt-5-codex';
+    case 'claude':
+      return _normalizeClaudeModel(normalized);
+    default:
+      return normalized;
+  }
+}
+
+String _resolvedAiReasoningEffort(String engine, String configured) {
+  if (engine != 'codex') {
+    return '';
+  }
+  final normalized = configured.trim().toLowerCase();
+  if (_codexReasoningEffortOptions.contains(normalized)) {
+    return normalized;
+  }
+  return 'medium';
+}
+
+String _claudeModelLabel(String value) {
+  return claudeModelDisplayLabel(value);
+}
+
+String _normalizeClaudeModel(String value) {
+  final normalized = normalizeClaudeModelSelection(value).trim();
+  final alias = canonicalClaudeModelAlias(normalized);
+  if (alias != null) {
+    return alias;
+  }
+  if (normalized.toLowerCase().startsWith('claude-')) {
+    return normalized.toLowerCase();
+  }
+  return 'sonnet';
+}
+
+String _normalizeCodexModel(String value) {
+  final normalized = value.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    return '';
+  }
+  if (normalized == 'opus' || normalized == 'sonnet') {
+    return '';
+  }
+  if (normalized.startsWith('gpt') || normalized.contains('codex')) {
+    return normalized;
+  }
+  return '';
+}
+
+String _codexModelLabel(String value) {
+  switch (value.trim()) {
+    case 'gpt-5.4':
+      return 'GPT-5.4';
+    case 'gpt-5-codex':
+      return 'GPT-5-Codex';
+    case 'gpt-5':
+      return 'GPT-5';
+    default:
+      return value.trim().isEmpty ? 'Codex' : value.trim();
   }
 }
 
