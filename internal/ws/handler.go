@@ -1827,47 +1827,9 @@ func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecis
 }
 
 func hotSwapApproveContinuation(req protocol.PermissionDecisionRequestEvent) string {
-	targetPath := strings.TrimSpace(req.TargetPath)
-	promptMessage := strings.TrimSpace(req.PromptMessage)
-	intent := permissionDecisionIntent(req)
-
-	promptMessage = strings.ReplaceAll(promptMessage, "\r", " ")
-	promptMessage = strings.ReplaceAll(promptMessage, "\n", " ")
-
-	lines := []string{}
-	switch intent {
-	case "read":
-		lines = append(lines,
-			"我已经批准这次只读/查看权限。",
-			"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。",
-			"请重新发起新的只读操作，继续刚才被权限拦截的读取、查看或检查步骤；不要执行任何编辑或写入。",
-		)
-	case store.PermissionKindShell:
-		lines = append(lines,
-			"我已经批准这次命令执行权限。",
-			"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。",
-			"请重新发起新的命令调用，继续刚才被权限拦截的执行步骤；不要把这次授权改写成文件编辑任务。",
-		)
-	default:
-		lines = append(lines,
-			"我已经批准这次文件修改权限。",
-			"不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。",
-			"先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。",
-		)
-	}
-
-	if targetPath != "" {
-		lines = append(lines, "本次已授权的目标文件：`"+targetPath+"`。")
-	}
-
-	lines = append(lines, "不要再次请求权限，不要只做解释，直接完成这次已批准的操作。")
-
-	if promptMessage != "" {
-		lines = append(lines, "你上一次请求权限时的原始上下文如下，请按该上下文继续处理："+promptMessage)
-	}
-
-	finalPrompt := strings.Join(lines, "  ")
-	return finalPrompt + "\n"
+	// 热重载后，Claude 会话已恢复，权限已提升
+	// 告诉 Claude 已授权，让它继续执行
+	return "已授权，继续"
 }
 
 func wsDebugPreview(value string) string {
