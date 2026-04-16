@@ -113,6 +113,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	connected = true
 	defer conn.Close()
 
+	// 设置 ping handler，确保及时响应客户端的 ping 消息
+	conn.SetPingHandler(func(appData string) error {
+		// 响应 pong
+		if err := conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(10*time.Second)); err != nil {
+			logx.Warn("ws", "send pong failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+			return err
+		}
+		return nil
+	})
+
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -1091,7 +1101,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				service.UpdatePermissionMode(pm)
 				inputMeta.PermissionMode = pm
 			}
-			logx.Info("ws", "dispatch input: connectionID=%s sessionID=%s remoteAddr=%s action=input permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, inputMeta.PermissionMode, wsDebugPreview(inputData))
+			logx.Info("ws", "dispatch input: connectionID=%s sessionID=%s remoteAddr=%s action=input permissionMode=%q temporaryElevated=%v safePermissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, inputMeta.PermissionMode, snapshot.TemporaryElevated, snapshot.SafePermissionMode, wsDebugPreview(inputData))
 			if snapshot.TemporaryElevated {
 				restoreReq := runtimepkg.ExecuteRequest{
 					Command:        firstNonEmptyString(snapshot.ActiveMeta.Command, controller.CurrentCommand),
