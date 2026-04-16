@@ -210,6 +210,7 @@ class SessionController extends ChangeNotifier {
   final List<MemoryItem> _memoryItems = [];
   final List<PermissionRule> _sessionPermissionRules = [];
   final List<PermissionRule> _persistentPermissionRules = [];
+  final List<String> _debugLogs = [];
   final List<TimelineItem> _timeline = [];
   final List<ReviewGroup> _reviewGroups = [];
   final List<TerminalExecution> _terminalExecutions = [];
@@ -427,6 +428,7 @@ class SessionController extends ChangeNotifier {
       List.unmodifiable(_sessionPermissionRules);
   List<PermissionRule> get persistentPermissionRules =>
       List.unmodifiable(_persistentPermissionRules);
+  List<String> get debugLogs => List.unmodifiable(_debugLogs);
   bool get sessionPermissionRulesEnabled => _sessionPermissionRulesEnabled;
   bool get persistentPermissionRulesEnabled =>
       _persistentPermissionRulesEnabled;
@@ -652,7 +654,12 @@ class SessionController extends ChangeNotifier {
   void _pushDebug(String label, [String? details]) {
     final suffix =
         details == null || details.trim().isEmpty ? '' : ' ${details.trim()}';
-    debugPrint('[session] $label$suffix');
+    final log = '[session] $label$suffix';
+    debugPrint(log);
+    _debugLogs.add('${DateTime.now().toString().substring(11, 19)} $log');
+    if (_debugLogs.length > 200) {
+      _debugLogs.removeAt(0);
+    }
   }
 
   void setActiveReviewGroup(String groupId) {
@@ -982,7 +989,7 @@ class SessionController extends ChangeNotifier {
         final model =
             _resolvedAiModel('claude', _configuredModelForEngine('claude'))
                 .trim();
-        if (model.isNotEmpty) {
+        if (model.isNotEmpty && model != 'default') {
           parts.addAll(['--model', model]);
         }
         return parts.join(' ');
@@ -3569,11 +3576,9 @@ class SessionController extends ChangeNotifier {
         _pendingPrompt = prompt;
         _syncRuntimePermissionMode();
         _pushDebug('收到 prompt_request', _debugReviewStateSummary());
-        // 尝试自动应用权限规则
-        if (_maybeAutoApplyPermissionRule(prompt)) {
-          _pushDebug('权限规则自动应用', 'prompt已自动批准');
-          break;
-        }
+        // 后端会自动检查权限规则并应用，前端只需等待 PermissionAutoAppliedEvent
+        _syncDerivedState();
+        notifyListeners();
         break;
       case InteractionRequestEvent interaction:
         _pendingPrompt = null;
@@ -3812,10 +3817,15 @@ class SessionController extends ChangeNotifier {
           ..addAll(result.persistentRules);
         break;
       case PermissionAutoAppliedEvent result:
+        // 后端已自动应用权限规则，清空 pending 状态
+        _pendingPrompt = null;
+        _pendingInteraction = null;
         if (result.message.trim().isNotEmpty) {
           _pushSystem('session', result.message.trim());
         }
         requestPermissionRuleList();
+        _syncDerivedState();
+        notifyListeners();
         break;
       case SkillSyncResultEvent result:
         _skillSyncStatus =
@@ -6087,41 +6097,12 @@ class SessionController extends ChangeNotifier {
     if (isBypassPermissionsMode) {
       return true;
     }
-    // 如果权限规则匹配，也隐藏卡片（因为会自动批准）
-    if (_wouldAutoApplyPermissionRule(prompt)) {
-      return true;
-    }
+    // 后端会自动检查并应用权限规则，前端不需要预判
+    // 如果后端自动应用了，会收到 PermissionAutoAppliedEvent 并清空 _pendingPrompt
     return false;
   }
 
   /// 检查是否会自动应用权限规则（不实际发送决策）
-  bool _wouldAutoApplyPermissionRule(PromptRequestEvent prompt) {
-    if (!_sessionPermissionRulesEnabled && !_persistentPermissionRulesEnabled) {
-      return false;
-    }
-    final matchCtx = _buildPermissionMatchContext(prompt);
-
-    // 检查会话规则
-    if (_sessionPermissionRulesEnabled) {
-      for (final rule in _sessionPermissionRules) {
-        if (_matchPermissionRule(rule, matchCtx)) {
-          return true;
-        }
-      }
-    }
-
-    // 检查持久规则
-    if (_persistentPermissionRulesEnabled) {
-      for (final rule in _persistentPermissionRules) {
-        if (_matchPermissionRule(rule, matchCtx)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
   String _compactAgentMessage() {
     switch (_connectionStage) {
       case SessionConnectionStage.backgroundSuspended:
@@ -6598,157 +6579,6 @@ class SessionController extends ChangeNotifier {
     return withoutTrailing.substring(0, index);
   }
 
-  /// 尝试自动应用权限规则
-  bool _maybeAutoApplyPermissionRule(PromptRequestEvent prompt) {
-    _pushDebug('尝试自动应用权限规则',
-      'sessionEnabled=$_sessionPermissionRulesEnabled '
-      'persistentEnabled=$_persistentPermissionRulesEnabled '
-      'sessionRules=${_sessionPermissionRules.length} '
-      'persistentRules=${_persistentPermissionRules.length}');
-
-    // 检查权限规则是否启用
-    if (!_sessionPermissionRulesEnabled && !_persistentPermissionRulesEnabled) {
-      _pushDebug('权限规则未启用', '跳过自动应用');
-      return false;
-    }
-
-    // 构建匹配上下文
-    final matchCtx = _buildPermissionMatchContext(prompt);
-    _pushDebug('权限匹配上下文',
-      'engine=${matchCtx.engine} '
-      'kind=${matchCtx.kind} '
-      'commandHead=${matchCtx.commandHead} '
-      'targetPath=${matchCtx.targetPath}');
-
-    // 先检查会话规则
-    if (_sessionPermissionRulesEnabled) {
-      _pushDebug('检查会话规则', '共${_sessionPermissionRules.length}条');
-      for (final rule in _sessionPermissionRules) {
-        _pushDebug('检查规则',
-          'title=${rule.displayTitle} '
-          'enabled=${rule.enabled} '
-          'engine=${rule.engine} '
-          'kind=${rule.kind} '
-          'commandHead=${rule.commandHead}');
-        if (_matchPermissionRule(rule, matchCtx)) {
-          _pushDebug('会话权限规则匹配', 'rule=${rule.displayTitle}');
-          _sendPermissionDecision(
-            prompt,
-            const _PermissionDecisionSelection(decision: 'approve'),
-            promptLabel: '自动应用规则',
-          );
-          return true;
-        }
-      }
-    }
-
-    // 再检查持久规则
-    if (_persistentPermissionRulesEnabled) {
-      _pushDebug('检查持久规则', '共${_persistentPermissionRules.length}条');
-      for (final rule in _persistentPermissionRules) {
-        _pushDebug('检查规则',
-          'title=${rule.displayTitle} '
-          'enabled=${rule.enabled} '
-          'engine=${rule.engine} '
-          'kind=${rule.kind} '
-          'commandHead=${rule.commandHead}');
-        if (_matchPermissionRule(rule, matchCtx)) {
-          _pushDebug('持久权限规则匹配', 'rule=${rule.displayTitle}');
-          _sendPermissionDecision(
-            prompt,
-            const _PermissionDecisionSelection(decision: 'approve'),
-            promptLabel: '自动应用规则',
-          );
-          return true;
-        }
-      }
-    }
-
-    _pushDebug('权限规则未匹配', '无规则匹配当前权限请求');
-    return false;
-  }
-
-  /// 构建权限匹配上下文
-  _PermissionMatchContext _buildPermissionMatchContext(PromptRequestEvent prompt) {
-    final command = prompt.runtimeMeta.command.isNotEmpty
-        ? prompt.runtimeMeta.command
-        : currentMeta.command;
-    final targetPath = prompt.runtimeMeta.targetPath.isNotEmpty
-        ? prompt.runtimeMeta.targetPath
-        : currentMeta.targetPath;
-    var engine = prompt.runtimeMeta.engine.isNotEmpty
-        ? prompt.runtimeMeta.engine
-        : currentMeta.engine;
-    if (engine.isEmpty) {
-      engine = 'any';
-    }
-    engine = engine.toLowerCase();
-
-    return _PermissionMatchContext(
-      engine: engine,
-      kind: _classifyPermissionKind(prompt.message, targetPath, command),
-      commandHead: _permissionCommandHead(command),
-      targetPath: targetPath,
-    );
-  }
-
-  /// 分类权限类型
-  String _classifyPermissionKind(String promptMessage, String targetPath, String command) {
-    final lowerPrompt = promptMessage.toLowerCase().trim();
-    final lowerCommand = command.toLowerCase().trim();
-
-    if (lowerPrompt.contains('network') ||
-        lowerPrompt.contains('联网') ||
-        lowerPrompt.contains('网络')) {
-      return 'network';
-    }
-    if (lowerPrompt.contains('command') ||
-        lowerPrompt.contains('命令') ||
-        (lowerCommand.isNotEmpty && targetPath.isEmpty)) {
-      return 'shell';
-    }
-    if (lowerPrompt.contains('修改文件') ||
-        lowerPrompt.contains('write') ||
-        lowerPrompt.contains('edit') ||
-        lowerPrompt.contains('文件')) {
-      return 'write';
-    }
-    return 'generic';
-  }
-
-  /// 提取命令头
-  String _permissionCommandHead(String command) {
-    final fields = command.toLowerCase().trim().split(RegExp(r'\s+'));
-    return fields.isEmpty ? '' : fields[0];
-  }
-
-  /// 匹配权限规则
-  bool _matchPermissionRule(
-    PermissionRule rule,
-    _PermissionMatchContext ctx,
-  ) {
-    if (!rule.enabled) {
-      return false;
-    }
-    if (rule.engine.isNotEmpty &&
-        rule.engine != 'any' &&
-        rule.engine != ctx.engine) {
-      return false;
-    }
-    if (rule.kind.isNotEmpty &&
-        rule.kind != 'generic' &&
-        rule.kind != ctx.kind) {
-      return false;
-    }
-    if (rule.commandHead.isNotEmpty && rule.commandHead != ctx.commandHead) {
-      return false;
-    }
-    if (rule.targetPathPrefix.isNotEmpty &&
-        !ctx.targetPath.startsWith(rule.targetPathPrefix)) {
-      return false;
-    }
-    return true;
-  }
 }
 
 (String, String) _parseAiModelFromText(String engine, String text) {
@@ -6839,6 +6669,10 @@ String _normalizeClaudeModel(String value) {
   }
   if (normalized.toLowerCase().startsWith('claude-')) {
     return normalized.toLowerCase();
+  }
+  // 保留完整的模型名（如 moka/claude-sonnet-4-6），不强制转换
+  if (normalized.contains('/')) {
+    return normalized;
   }
   return 'sonnet';
 }
