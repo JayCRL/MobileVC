@@ -66,7 +66,8 @@ class _CommandInputBarState extends State<CommandInputBar> {
       widget.isSessionLoading ||
       widget.shouldShowPermissionChoices ||
       widget.shouldShowReviewChoices ||
-      widget.shouldShowPlanChoices;
+      widget.shouldShowPlanChoices ||
+      (!widget.awaitInput && !widget.canStop && widget.isBusy);
 
   bool get _showStopAction => !_inputLocked && !widget.awaitInput && widget.canStop;
 
@@ -82,6 +83,9 @@ class _CommandInputBarState extends State<CommandInputBar> {
     }
     if (widget.shouldShowPlanChoices) {
       return '请先在上方完成计划选择';
+    }
+    if (!widget.awaitInput && !widget.canStop && widget.isBusy) {
+      return '正在停止，请稍候...';
     }
     return '';
   }
