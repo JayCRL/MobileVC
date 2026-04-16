@@ -27,6 +27,10 @@
   快速访问：<a href=”https://www.mobilevc.top”>mobilevc.top</a>
 </p>
 
+<p align=”center”>
+  <strong>社区讨论：</strong><a href=”https://linux.do”>LINUX DO</a>
+</p>
+
 ---
 
 ## 🚀 快速开始
@@ -531,5 +535,27 @@ Not a terminal mirror.
 Not a desktop clone.
 
 **A phone-first workflow that lets you operate your desktop AI coding assistant almost entirely from mobile.**
+
+---
+
+## 📄 开源许可
+
+本项目采用 [MIT License](LICENSE) 开源协议。
+
+这意味着你可以：
+- ✅ 自由使用、复制、修改、合并、发布、分发本软件
+- ✅ 用于商业或非商业目的
+- ✅ 再许可和销售软件副本
+
+唯一的要求是：
+- 📋 在所有副本中保留版权声明和许可声明
+
+详细条款请查看 [LICENSE](LICENSE) 文件。
+
+### 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+如果你想参与开发或有任何建议，欢迎到 [LINUX DO 社区](https://linux.do) 讨论交流。
 
 ---

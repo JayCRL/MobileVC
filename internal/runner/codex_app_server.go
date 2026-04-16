@@ -922,7 +922,7 @@ func codexFileApprovalDecision(permissionMode, decision string) string {
 	if decision == "deny" {
 		return "decline"
 	}
-	if strings.TrimSpace(permissionMode) == "acceptEdits" {
+	if strings.TrimSpace(permissionMode) == "auto" {
 		return "acceptForSession"
 	}
 	return "accept"
@@ -932,7 +932,7 @@ func codexCommandApprovalDecision(permissionMode, decision string) any {
 	if decision == "deny" {
 		return "decline"
 	}
-	if strings.TrimSpace(permissionMode) == "acceptEdits" {
+	if strings.TrimSpace(permissionMode) == "auto" {
 		return "acceptForSession"
 	}
 	return "accept"
@@ -940,7 +940,7 @@ func codexCommandApprovalDecision(permissionMode, decision string) any {
 
 func codexPermissionsApprovalResult(permissionMode, decision string, requested json.RawMessage) map[string]any {
 	scope := "turn"
-	if strings.TrimSpace(permissionMode) == "acceptEdits" {
+	if strings.TrimSpace(permissionMode) == "auto" {
 		scope = "session"
 	}
 	if decision == "deny" || len(requested) == 0 {
