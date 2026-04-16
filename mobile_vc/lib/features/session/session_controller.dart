@@ -6600,17 +6600,36 @@ class SessionController extends ChangeNotifier {
 
   /// 尝试自动应用权限规则
   bool _maybeAutoApplyPermissionRule(PromptRequestEvent prompt) {
+    _pushDebug('尝试自动应用权限规则',
+      'sessionEnabled=$_sessionPermissionRulesEnabled '
+      'persistentEnabled=$_persistentPermissionRulesEnabled '
+      'sessionRules=${_sessionPermissionRules.length} '
+      'persistentRules=${_persistentPermissionRules.length}');
+
     // 检查权限规则是否启用
     if (!_sessionPermissionRulesEnabled && !_persistentPermissionRulesEnabled) {
+      _pushDebug('权限规则未启用', '跳过自动应用');
       return false;
     }
 
     // 构建匹配上下文
     final matchCtx = _buildPermissionMatchContext(prompt);
+    _pushDebug('权限匹配上下文',
+      'engine=${matchCtx.engine} '
+      'kind=${matchCtx.kind} '
+      'commandHead=${matchCtx.commandHead} '
+      'targetPath=${matchCtx.targetPath}');
 
     // 先检查会话规则
     if (_sessionPermissionRulesEnabled) {
+      _pushDebug('检查会话规则', '共${_sessionPermissionRules.length}条');
       for (final rule in _sessionPermissionRules) {
+        _pushDebug('检查规则',
+          'title=${rule.displayTitle} '
+          'enabled=${rule.enabled} '
+          'engine=${rule.engine} '
+          'kind=${rule.kind} '
+          'commandHead=${rule.commandHead}');
         if (_matchPermissionRule(rule, matchCtx)) {
           _pushDebug('会话权限规则匹配', 'rule=${rule.displayTitle}');
           _sendPermissionDecision(
@@ -6625,7 +6644,14 @@ class SessionController extends ChangeNotifier {
 
     // 再检查持久规则
     if (_persistentPermissionRulesEnabled) {
+      _pushDebug('检查持久规则', '共${_persistentPermissionRules.length}条');
       for (final rule in _persistentPermissionRules) {
+        _pushDebug('检查规则',
+          'title=${rule.displayTitle} '
+          'enabled=${rule.enabled} '
+          'engine=${rule.engine} '
+          'kind=${rule.kind} '
+          'commandHead=${rule.commandHead}');
         if (_matchPermissionRule(rule, matchCtx)) {
           _pushDebug('持久权限规则匹配', 'rule=${rule.displayTitle}');
           _sendPermissionDecision(
@@ -6638,6 +6664,7 @@ class SessionController extends ChangeNotifier {
       }
     }
 
+    _pushDebug('权限规则未匹配', '无规则匹配当前权限请求');
     return false;
   }
 
