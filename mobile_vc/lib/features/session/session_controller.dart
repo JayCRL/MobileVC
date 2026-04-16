@@ -1019,7 +1019,8 @@ class SessionController extends ChangeNotifier {
     if (_config.engine.trim().toLowerCase() != normalized) {
       unawaited(saveConfig(_config.copyWith(engine: normalized)));
     }
-    _pendingAiPreferences.remove(normalized);
+    // 不要立即移除 _pendingAiPreferences，等后端确认启动了新模型后再移除
+    // _pendingAiPreferences.remove(normalized);
     notifyListeners();
   }
 
@@ -1772,6 +1773,7 @@ class SessionController extends ChangeNotifier {
           ? 'Codex 模型已切换为 ${_codexModelDisplayLabel(normalizedModel)} · ${normalizedEffort.toUpperCase()}，将对下一次 Codex 启动生效'
           : 'Claude 模型已切换为 ${_claudeModelLabel(normalizedModel)}，将对下一次 Claude 启动生效',
     );
+    notifyListeners();
   }
 
   void requestFileList([String? path]) {

@@ -847,8 +847,8 @@ func (r *PtyRunner) runClaudeResumeInteractive(ctx context.Context, req ExecRequ
 	r.pendingCWD = cwd
 	r.currentDir = cwd
 	r.lazyStart = false
-	r.interactive = false
-	r.awaitingReadyPrompt = true
+	r.interactive = true
+	r.awaitingReadyPrompt = false
 	r.closed = false
 	r.suppressExitError = false
 	r.runGeneration = generation
