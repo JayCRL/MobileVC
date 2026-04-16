@@ -167,6 +167,7 @@ class SessionController extends ChangeNotifier {
   bool _fileListLoading = false;
   bool _fileReading = false;
   bool _canResumeCurrentSession = false;
+  bool _isStopping = false;
   String _connectionMessage = '未连接';
   String _selectedSessionId = '';
   String _selectedSessionTitle = 'MobileVC';
@@ -824,6 +825,10 @@ class SessionController extends ChangeNotifier {
     if (!connected) {
       return false;
     }
+    // 如果正在停止中，不允许再次点击
+    if (_isStopping) {
+      return false;
+    }
     if (_hasRunningTerminalExecution) {
       return true;
     }
@@ -879,11 +884,18 @@ class SessionController extends ChangeNotifier {
   String get agentPhaseLabel => _agentPhaseLabel;
   bool get activityVisible => _activityVisible;
   bool get activityBannerVisible =>
-      _activityVisible || _isClaudePendingReadyForInput;
-  bool get activityBannerAnimated => _activityVisible;
-  String get activityBannerTitle =>
-      _isClaudePendingReadyForInput ? '待输入' : 'AI 助手正在运行中';
+      _activityVisible || _isClaudePendingReadyForInput || _isStopping;
+  bool get activityBannerAnimated => _activityVisible && !_isStopping;
+  String get activityBannerTitle {
+    if (_isStopping) {
+      return '正在停止';
+    }
+    return _isClaudePendingReadyForInput ? '待输入' : 'AI 助手正在运行中';
+  }
   String get activityBannerDetail {
+    if (_isStopping) {
+      return '等待后端确认停止...';
+    }
     if (_isClaudePendingReadyForInput) {
       return 'Claude 已启动，请继续输入';
     }
@@ -3164,6 +3176,10 @@ class SessionController extends ChangeNotifier {
     _agentState = null;
     _sessionState = null;
     _lastAssistantReplyExecutionKey = '';
+
+    // 设置停止中标记，按钮立即变灰，但状态栏继续显示
+    _isStopping = true;
+
     _service.send({'action': 'stop'});
     _syncDerivedState();
     notifyListeners();
@@ -3440,6 +3456,12 @@ class SessionController extends ChangeNotifier {
         _sessionState = state;
         _maybeAutoSyncAiModel(state.runtimeMeta);
         _syncRuntimePermissionMode();
+
+        // 收到 stopped 事件后，清除停止中标记
+        if (state.state.trim().toLowerCase() == 'stopped') {
+          _isStopping = false;
+        }
+
         if (_isLoadingSession &&
             _matchesPendingSessionTarget(state.sessionId)) {
           _finishSessionLoading(sessionId: state.sessionId);
@@ -3455,7 +3477,7 @@ class SessionController extends ChangeNotifier {
         }
         if (_isIdleLikeState(state.state) && !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
-          _pendingPrompt = null;
+        _pendingPrompt = null;
           _runtimePhase = null;
           _agentState = null;
         }
