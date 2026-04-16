@@ -11,6 +11,7 @@ import '../../data/models/session_models.dart';
 import '../../features/adb/adb_debug_page.dart';
 import '../../features/chat/chat_timeline.dart';
 import '../../features/chat/command_input_bar.dart';
+import '../../features/debug/debug_log_viewer.dart';
 import '../../features/diff/diff_viewer_sheet.dart';
 import '../../features/files/file_browser_sheet.dart';
 import '../../features/files/file_viewer_sheet.dart';
@@ -810,6 +811,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
                         .setPermissionRulesEnabled('persistent', value),
                     onToggleRule: controller.setPermissionRuleEnabled,
                     onDeleteRule: controller.deletePermissionRule,
+                    onOpenDebugLog: () => _openDebugLog(context),
                   );
                 },
               ),
@@ -817,6 +819,19 @@ class _SessionHomePageState extends State<SessionHomePage> {
           ),
         );
       },
+    );
+  }
+
+  Future<void> _openDebugLog(BuildContext context) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (context) => ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) {
+            return DebugLogViewer(logs: controller.debugLogs);
+          },
+        ),
+      ),
     );
   }
 

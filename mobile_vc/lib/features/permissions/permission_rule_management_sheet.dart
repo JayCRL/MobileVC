@@ -13,6 +13,7 @@ class PermissionRuleManagementSheet extends StatelessWidget {
     required this.onSetPersistentEnabled,
     required this.onToggleRule,
     required this.onDeleteRule,
+    this.onOpenDebugLog,
   });
 
   final bool sessionEnabled;
@@ -23,6 +24,7 @@ class PermissionRuleManagementSheet extends StatelessWidget {
   final ValueChanged<bool> onSetPersistentEnabled;
   final void Function(PermissionRule rule, bool enabled) onToggleRule;
   final ValueChanged<PermissionRule> onDeleteRule;
+  final VoidCallback? onOpenDebugLog;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +46,10 @@ class PermissionRuleManagementSheet extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           child: Column(
             children: [
-              _HeaderCard(totalRules: total),
+              _HeaderCard(
+                totalRules: total,
+                onOpenDebugLog: onOpenDebugLog,
+              ),
               const SizedBox(height: 12),
               Expanded(
                 child: ListView(
@@ -80,9 +85,13 @@ class PermissionRuleManagementSheet extends StatelessWidget {
 }
 
 class _HeaderCard extends StatelessWidget {
-  const _HeaderCard({required this.totalRules});
+  const _HeaderCard({
+    required this.totalRules,
+    this.onOpenDebugLog,
+  });
 
   final int totalRules;
+  final VoidCallback? onOpenDebugLog;
 
   @override
   Widget build(BuildContext context) {
@@ -135,6 +144,12 @@ class _HeaderCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onOpenDebugLog != null)
+                IconButton(
+                  onPressed: onOpenDebugLog,
+                  icon: const Icon(Icons.bug_report_outlined),
+                  tooltip: '查看调试日志',
+                ),
             ],
           ),
         ],
