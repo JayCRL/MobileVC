@@ -497,7 +497,7 @@ func (s *Service) SendPermissionDecision(ctx context.Context, sessionID string, 
 }
 
 func (s *Service) HotSwapApproveWithTemporaryElevation(ctx context.Context, sessionID string, req ExecuteRequest, continuation string, emit func(any)) error {
-	restartReq, safePermissionMode, err := s.buildHotSwapStreamRequest(sessionID, req, "acceptEdits")
+	restartReq, safePermissionMode, err := s.buildHotSwapStreamRequest(sessionID, req, "auto")
 	if err != nil {
 		return err
 	}
@@ -520,7 +520,7 @@ func (s *Service) HotSwapApproveWithTemporaryElevation(ctx context.Context, sess
 }
 
 func (s *Service) HotSwapApproveFromResume(ctx context.Context, sessionID string, req ExecuteRequest, continuation string, emit func(any)) error {
-	restartReq, safePermissionMode, err := s.buildDetachedHotSwapStreamRequest(req, "acceptEdits")
+	restartReq, safePermissionMode, err := s.buildDetachedHotSwapStreamRequest(req, "auto")
 	if err != nil {
 		return err
 	}
