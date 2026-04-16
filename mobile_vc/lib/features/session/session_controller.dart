@@ -6087,6 +6087,38 @@ class SessionController extends ChangeNotifier {
     if (isBypassPermissionsMode) {
       return true;
     }
+    // 如果权限规则匹配，也隐藏卡片（因为会自动批准）
+    if (_wouldAutoApplyPermissionRule(prompt)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// 检查是否会自动应用权限规则（不实际发送决策）
+  bool _wouldAutoApplyPermissionRule(PromptRequestEvent prompt) {
+    if (!_sessionPermissionRulesEnabled && !_persistentPermissionRulesEnabled) {
+      return false;
+    }
+    final matchCtx = _buildPermissionMatchContext(prompt);
+
+    // 检查会话规则
+    if (_sessionPermissionRulesEnabled) {
+      for (final rule in _sessionPermissionRules) {
+        if (_matchPermissionRule(rule, matchCtx)) {
+          return true;
+        }
+      }
+    }
+
+    // 检查持久规则
+    if (_persistentPermissionRulesEnabled) {
+      for (final rule in _persistentPermissionRules) {
+        if (_matchPermissionRule(rule, matchCtx)) {
+          return true;
+        }
+      }
+    }
+
     return false;
   }
 
