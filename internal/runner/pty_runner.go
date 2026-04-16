@@ -1226,17 +1226,88 @@ func extractToolTarget(toolName string, rawInput json.RawMessage) string {
 	if err := json.Unmarshal(rawInput, &input); err != nil {
 		return ""
 	}
-	keys := []string{"file_path", "path", "pattern", "command", "query", "url"}
+
+	// 优先提取明确的路径字段（不包括 command）
+	pathKeys := []string{"file_path", "path", "notebook_path"}
 	if isFileMutationTool(toolName) {
-		keys = []string{"file_path", "path", "notebook_path", "cell_id", "pattern", "command", "query", "url"}
+		pathKeys = []string{"file_path", "path", "notebook_path", "cell_id"}
 	}
-	for _, key := range keys {
+
+	// 先尝试从路径字段提取
+	for _, key := range pathKeys {
 		if v, ok := input[key]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				return s
+				return strings.TrimSpace(s)
 			}
 		}
 	}
+
+	// 如果没有路径字段，尝试从 command 字段中提取路径
+	if commandVal, ok := input["command"]; ok {
+		if commandStr, ok := commandVal.(string); ok && commandStr != "" {
+			// 尝试从 command 中提取路径部分
+			if extracted := extractPathFromCommand(commandStr); extracted != "" {
+				return extracted
+			}
+		}
+	}
+
+	// 最后尝试其他字段
+	fallbackKeys := []string{"pattern", "query", "url"}
+	for _, key := range fallbackKeys {
+		if v, ok := input[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+
+	return ""
+}
+
+// extractPathFromCommand 从命令字符串中提取路径部分
+// 例如: "mkdir test_dir" -> "test_dir"
+//      "mkdir -p /path/to/dir" -> "/path/to/dir"
+//      "touch /path/to/file.txt" -> "/path/to/file.txt"
+func extractPathFromCommand(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+
+	// 常见的命令前缀
+	commandPrefixes := []string{
+		"mkdir ", "touch ", "rm ", "mv ", "cp ", "cat ", "ls ",
+		"chmod ", "chown ", "ln ", "cd ", "pwd",
+	}
+
+	for _, prefix := range commandPrefixes {
+		if strings.HasPrefix(command, prefix) {
+			// 提取命令后的所有参数
+			args := strings.TrimSpace(command[len(prefix):])
+			if args == "" {
+				return ""
+			}
+
+			// 分割参数
+			parts := strings.Fields(args)
+			if len(parts) == 0 {
+				return ""
+			}
+
+			// 跳过选项参数（以 - 开头），找到第一个路径参数
+			for _, part := range parts {
+				if !strings.HasPrefix(part, "-") {
+					return part
+				}
+			}
+
+			// 如果全是选项，返回空
+			return ""
+		}
+	}
+
+	// 如果不是已知命令，返回空（说明不需要 targetPath）
 	return ""
 }
 
@@ -1711,9 +1782,30 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				}
 			}
 			promptChoices := promptOptions(promptMessage)
-			promptMeta := protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID}
+			r.mu.Lock()
+			command := r.pendingReq.Command
+			cwd := r.currentDir
+			engine := r.pendingReq.Engine
+			permMode := r.permissionMode
+			r.mu.Unlock()
+			promptMeta := protocol.RuntimeMeta{
+				ResumeSessionID: envelope.SessionID,
+				Command:         command,
+				CWD:             cwd,
+				Engine:          engine,
+				PermissionMode:  permMode,
+			}
 			if looksLikePermissionPrompt(promptMessage, promptChoices) {
 				promptMeta.BlockingKind = "permission"
+				// 提取 targetPath 用于权限匹配
+				if strings.EqualFold(strings.TrimSpace(envelope.Request.Subtype), "can_use_tool") {
+					toolName := strings.TrimSpace(envelope.Request.ToolName)
+					target := strings.TrimSpace(extractToolTarget(toolName, envelope.Request.Input))
+					if target != "" {
+						promptMeta.TargetPath = target
+						promptMeta.PermissionRequestID = requestID
+					}
+				}
 			}
 			if requestID != "" {
 				r.markInteractiveReady()
@@ -1722,10 +1814,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 					r.pendingPromptOptions = append([]string(nil), promptChoices...)
 				}
 				r.mu.Unlock()
-				sendEvent(sink, protocol.ApplyRuntimeMeta(
+				event := protocol.ApplyRuntimeMeta(
 					protocol.NewPromptRequestEvent(sessionID, promptMessage, promptChoices),
 					promptMeta,
-				))
+				)
+				logx.Info("pty", "sending PromptRequestEvent: sessionID=%s requestID=%s message=%q", sessionID, requestID, promptMessage)
+				sendEvent(sink, event)
 			}
 		case "assistant":
 			for _, block := range envelope.Message.Content {

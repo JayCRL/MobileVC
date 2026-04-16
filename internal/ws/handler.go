@@ -397,6 +397,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sessionRuntimeSvc = sessionRuntime.service
 		}
 		emitSessionEvent := func(event any) {
+			logx.Info("ws", "emitSessionEvent called: sessionID=%s eventType=%T hasSessionRuntime=%v", runtimeSessionID, event, sessionRuntime != nil)
 			if sessionRuntime != nil {
 				sessionRuntime.emit(event)
 				return
@@ -410,14 +411,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				consumed, err := maybeConsumeTemporaryPermissionGrant(autoApplyCtx, h.SessionStore, runtimeSessionID, event, sessionRuntimeSvc, h.permissionGrants, emitAndPersistFor(runtimeSessionID))
 				autoApplyCancel()
 				if err == nil && consumed {
+					logx.Info("ws", "permission event consumed by temporary grant: sessionID=%s", runtimeSessionID)
 					return
 				}
 				autoApplyCtx, autoApplyCancel = sessionProjectionContext()
 				applied, err := maybeAutoApplyPermissionEvent(autoApplyCtx, h.SessionStore, runtimeSessionID, event, sessionRuntimeSvc, emitSessionEvent, emitAndPersistFor(runtimeSessionID))
 				autoApplyCancel()
 				if err == nil && applied {
+					logx.Info("ws", "permission event auto-applied: sessionID=%s", runtimeSessionID)
 					return
 				}
+				logx.Info("ws", "permission event forwarding to client: sessionID=%s eventType=%T", runtimeSessionID, event)
 			}
 			switch e := event.(type) {
 			case protocol.CatalogAuthoringResultEvent:
@@ -459,6 +463,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emitSessionEvent(protocol.NewErrorEvent(runtimeSessionID, "未知 catalog authoring domain", ""))
 				return
 			default:
+				logx.Info("ws", "default event handler: sessionID=%s eventType=%T", runtimeSessionID, event)
 				event = prepareSessionEventForResume(sessionRuntime, runtimeSessionID, event)
 				emitSessionEvent(event)
 				h.sendPushNotificationIfNeeded(ctx, runtimeSessionID, event)

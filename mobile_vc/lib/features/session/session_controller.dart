@@ -6684,7 +6684,6 @@ String _codexModelLabel(String value) {
     default:
       return value.trim().isEmpty ? 'Codex' : value.trim();
   }
-}
 
   /// 尝试自动应用权限规则
   bool _maybeAutoApplyPermissionRule(PromptRequestEvent prompt) {
@@ -6810,6 +6809,7 @@ String _codexModelLabel(String value) {
     }
     return true;
   }
+}
 
 const Set<String> _codexReasoningEffortOptions = <String>{
   'none',

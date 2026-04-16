@@ -1,0 +1,18 @@
+2026/04/16 08:48:18 [INFO][bootstrap] ========================================
+2026/04/16 08:48:18 [INFO][bootstrap] MobileVC backend dev
+2026/04/16 08:48:18 [INFO][bootstrap] build metadata: commit=unknown buildDate=unknown
+2026/04/16 08:48:18 [INFO][bootstrap] ========================================
+2026/04/16 08:48:18 [INFO][bootstrap] Starting MobileVC
+2026/04/16 08:48:18 [INFO][bootstrap] Loading configuration
+2026/04/16 08:48:18 [INFO][bootstrap] Configuration summary: port=8001 authToken=configured runtime.defaultCommand=claude runtime.defaultMode=pty runtime.debug=false workspaceRoot=. projection.enhanced=true projection.step=true projection.diff=true projection.prompt=true tts.enabled=false tts.provider=chattts-http tts.url=http://127.0.0.1:9966 tts.timeout=30s tts.maxTextLength=200 tts.format=wav
+2026/04/16 08:48:18 [INFO][bootstrap] Initializing session store
+2026/04/16 08:48:18 [INFO][bootstrap] Session store ready: driver=file dir=/Users/wust_lh/.mobilevc/sessions
+2026/04/16 08:48:18 [INFO][bootstrap] Initializing push service
+2026/04/16 08:48:18 [INFO][bootstrap] APNs not configured, push notifications disabled
+2026/04/16 08:48:18 [INFO][bootstrap] Preparing websocket handler
+2026/04/16 08:48:18 [INFO][bootstrap] WebSocket handler ready
+2026/04/16 08:48:18 [INFO][bootstrap] TTS handler disabled
+2026/04/16 08:48:18 [INFO][bootstrap] Registering routes
+2026/04/16 08:48:18 [INFO][bootstrap] Registered routes: /ws, /healthz, /version, /download, /
+2026/04/16 08:48:18 [INFO][bootstrap] Starting HTTP server
+2026/04/16 08:48:18 [INFO][bootstrap] Ready: addr=:8001 health=http://localhost:8001/healthz version=http://localhost:8001/version ws=ws://localhost:8001/ws?token=<redacted> startup=1ms
