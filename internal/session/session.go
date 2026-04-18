@@ -369,6 +369,11 @@ func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {
 		c.claudeLifecycle = "active"
 	}
 	c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
+	if meta.Source == "permission-decision" && strings.TrimSpace(strings.ToLower(meta.TargetText)) == "deny" {
+		c.currentState = ControllerStateWaitInput
+		c.activeMeta.BlockingKind = "ready"
+		return []any{c.newAgentStateEvent("已拒绝权限，可继续输入", true)}
+	}
 	c.currentState = ControllerStateThinking
 	message := "思考中"
 	if meta.Source == "permission-decision" {

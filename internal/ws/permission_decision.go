@@ -58,6 +58,11 @@ func executePermissionDecision(
 		}
 	}
 	if decision == "deny" {
+		if err := service.SendPermissionDecision(ctx, sessionID, decision, inputMeta, emitAndPersist); err == nil {
+			return nil
+		} else if !errors.Is(err, runner.ErrNoPendingControlRequest) && !errors.Is(err, runner.ErrInputNotSupported) {
+			return err
+		}
 		prompt, err := buildPermissionDecisionPrompt(decision, permissionEvent)
 		if err != nil {
 			return err

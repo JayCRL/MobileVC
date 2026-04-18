@@ -86,7 +86,7 @@ func TestManagerFinishIfCurrentIgnoresSupersededRunner(t *testing.T) {
 		t.Fatalf("start first runner: %v", err)
 	}
 	mgr.closeActive()
-	if err := mgr.start("s1", second, nil, protocol.RuntimeMeta{Command: "claude --resume resume-new", PermissionMode: "acceptEdits", ResumeSessionID: "resume-new"}); err != nil {
+	if err := mgr.start("s1", second, nil, protocol.RuntimeMeta{Command: "claude --resume resume-new", PermissionMode: "auto", ResumeSessionID: "resume-new"}); err != nil {
 		t.Fatalf("start second runner: %v", err)
 	}
 
@@ -173,8 +173,8 @@ func TestExecuteSupersededRunnerDoesNotEmitFinishedState(t *testing.T) {
 		Command:        "claude --resume resume-new --print",
 		CWD:            "/tmp",
 		Mode:           runner.ModePTY,
-		PermissionMode: "acceptEdits",
-		RuntimeMeta:    protocol.RuntimeMeta{Command: "claude --resume resume-new --print", CWD: "/tmp", PermissionMode: "acceptEdits", ResumeSessionID: "resume-new"},
+		PermissionMode: "auto",
+		RuntimeMeta:    protocol.RuntimeMeta{Command: "claude --resume resume-new --print", CWD: "/tmp", PermissionMode: "auto", ResumeSessionID: "resume-new"},
 	}, emit); err != nil {
 		t.Fatalf("execute second: %v", err)
 	}
@@ -354,8 +354,8 @@ func TestHotSwapApproveWithTemporaryElevationRestartsWithResumeAndContinuation(t
 	}
 	waitSignal(t, first.closed, "old runner close")
 	waitSignal(t, second.started, "new runner start")
-	if second.lastReq.PermissionMode != "acceptEdits" {
-		t.Fatalf("expected acceptEdits, got %#v", second.lastReq)
+	if second.lastReq.PermissionMode != "auto" {
+		t.Fatalf("expected auto, got %#v", second.lastReq)
 	}
 	if !strings.Contains(second.lastReq.Command, "--resume resume-123") {
 		t.Fatalf("expected resume command, got %q", second.lastReq.Command)
@@ -398,7 +398,7 @@ func TestRestoreSafePermissionModeBeforeInputRestartsAndSendsUserInput(t *testin
 			return newHotSwapStubRunner("resume-234", true)
 		},
 	})
-	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude --resume resume-234", CWD: "/tmp", PermissionMode: "acceptEdits", ResumeSessionID: "resume-234"}); err != nil {
+	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude --resume resume-234", CWD: "/tmp", PermissionMode: "auto", ResumeSessionID: "resume-234"}); err != nil {
 		t.Fatalf("start manager: %v", err)
 	}
 	svc.manager.updateResumeSessionID("resume-234")
@@ -655,7 +655,7 @@ func TestBuildDetachedHotSwapStreamRequestForCodexDoesNotAppendClaudeFlags(t *te
 			ResumeSessionID: "resume-codex-123",
 			PermissionMode:  "default",
 		},
-	}, "acceptEdits")
+	}, "auto")
 	if err != nil {
 		t.Fatalf("buildDetachedHotSwapStreamRequest: %v", err)
 	}
@@ -679,7 +679,7 @@ func TestRestoreSafePermissionModeBeforeInputPropagatesWriteFailure(t *testing.T
 		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
 		NewPtyRunner:  func() runner.Runner { return second },
 	})
-	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "acceptEdits", ResumeSessionID: "resume-456"}); err != nil {
+	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "auto", ResumeSessionID: "resume-456"}); err != nil {
 		t.Fatalf("start manager: %v", err)
 	}
 	svc.manager.updateResumeSessionID("resume-456")
