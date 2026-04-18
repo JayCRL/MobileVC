@@ -1222,9 +1222,9 @@ func TestPtyRunnerClaudeSessionIDPrefersManagedSessionIDAndFallsBackToStreamSess
 }
 
 func TestPtyRunnerResumeCommandAddsPermissionMode(t *testing.T) {
-	cmd := appendPermissionModeToCommand("claude --resume resume-xyz", "acceptEdits")
-	if !strings.Contains(cmd, "--permission-mode acceptEdits") {
-		t.Fatalf("expected acceptEdits permission mode in resume command, got %q", cmd)
+	cmd := appendPermissionModeToCommand("claude --resume resume-xyz", "auto")
+	if !strings.Contains(cmd, "--permission-mode auto") {
+		t.Fatalf("expected auto permission mode in resume command, got %q", cmd)
 	}
 	if strings.Count(cmd, "--permission-mode") != 1 {
 		t.Fatalf("expected single permission mode flag, got %q", cmd)
@@ -1236,7 +1236,7 @@ func TestPtyRunnerResumeCommandAddsPermissionMode(t *testing.T) {
 }
 
 func TestNewClaudeStreamCommandPreservesResumeAndPermissionMode(t *testing.T) {
-	cmd := newClaudeStreamCommand(context.Background(), "claude --resume resume-xyz", "resume-xyz", "acceptEdits")
+	cmd := newClaudeStreamCommand(context.Background(), "claude --resume resume-xyz", "resume-xyz", "auto")
 	joined := strings.Join(cmd.Args, " ")
 	if strings.Count(joined, "--resume") != 1 {
 		t.Fatalf("expected single --resume, got %q", joined)
@@ -1247,8 +1247,8 @@ func TestNewClaudeStreamCommandPreservesResumeAndPermissionMode(t *testing.T) {
 	if !strings.Contains(joined, "resume-xyz") {
 		t.Fatalf("expected resume id value, got %q", joined)
 	}
-	if !strings.Contains(joined, "--permission-mode acceptEdits") {
-		t.Fatalf("expected acceptEdits permission mode, got %q", joined)
+	if !strings.Contains(joined, "--permission-mode auto") {
+		t.Fatalf("expected auto permission mode, got %q", joined)
 	}
 }
 
@@ -1273,12 +1273,12 @@ func TestPtyRunnerLazyStartUsesRuntimeMetaResumeSessionID(t *testing.T) {
 	runner := NewPtyRunner()
 	runner.mu.Lock()
 	runner.lazyStart = true
-	runner.permissionMode = "acceptEdits"
+	runner.permissionMode = "auto"
 	runner.pendingReq = ExecRequest{
 		SessionID:      "s-resume-meta",
 		Command:        "claude",
 		Mode:           ModePTY,
-		PermissionMode: "acceptEdits",
+		PermissionMode: "auto",
 		RuntimeMeta:    protocol.RuntimeMeta{ResumeSessionID: "resume-meta-xyz"},
 	}
 	runner.pendingCWD = "/tmp"
@@ -1503,7 +1503,7 @@ func TestCodexAppSessionCoalescesAssistantDeltasBeforePrompt(t *testing.T) {
 func TestCodexAppSessionWritePermissionResponseEncodesJSONRPCResult(t *testing.T) {
 	buf := &nopWriteCloser{}
 	runner := NewPtyRunner()
-	runner.permissionMode = "acceptEdits"
+	runner.permissionMode = "auto"
 	app := &codexAppSession{
 		runner:    runner,
 		sessionID: "s-codex-permission",
