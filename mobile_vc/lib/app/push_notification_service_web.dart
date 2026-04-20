@@ -18,6 +18,9 @@ class WebPushNotificationService implements PushNotificationService {
   void onTokenRefresh(void Function(String token) callback) {}
 
   @override
+  void onRegistrationError(void Function(String message) callback) {}
+
+  @override
   void onMessageReceived(
       void Function(Map<String, dynamic> message) callback) {}
 

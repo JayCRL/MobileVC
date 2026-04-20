@@ -474,10 +474,12 @@ func (s *codexAppSession) handleNotification(message codexRPCMessage) {
 	case "item/agentMessage/delta":
 		var payload codexAgentDeltaNotification
 		if err := json.Unmarshal(message.Params, &payload); err == nil {
+			meta := s.runtimeMeta("active")
+			meta.Source = "codex/assistant"
 			for _, chunk := range s.appendAssistantDelta(payload.Delta) {
 				sendEvent(s.sink, protocol.ApplyRuntimeMeta(
 					protocol.NewLogEvent(s.sessionID, chunk, "stdout"),
-					s.runtimeMeta("active"),
+					meta,
 				))
 			}
 		}
@@ -569,9 +571,11 @@ func (s *codexAppSession) handleTurnCompleted(raw json.RawMessage) {
 		return
 	}
 	for _, chunk := range s.flushAssistantDelta() {
+		meta := s.runtimeMeta("active")
+		meta.Source = "codex/assistant"
 		sendEvent(s.sink, protocol.ApplyRuntimeMeta(
 			protocol.NewLogEvent(s.sessionID, chunk, "stdout"),
-			s.runtimeMeta("active"),
+			meta,
 		))
 	}
 	s.clearActiveTurnID(payload.Turn.ID)
@@ -598,9 +602,11 @@ func (s *codexAppSession) handleItemEvent(raw json.RawMessage, status string) {
 	}
 	if status == "done" && itemType == "agentMessage" {
 		for _, chunk := range s.flushAssistantDelta() {
+			meta := s.runtimeMeta("active")
+			meta.Source = "codex/assistant"
 			sendEvent(s.sink, protocol.ApplyRuntimeMeta(
 				protocol.NewLogEvent(s.sessionID, chunk, "stdout"),
-				s.runtimeMeta("active"),
+				meta,
 			))
 		}
 		return

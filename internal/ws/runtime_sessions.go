@@ -9,8 +9,9 @@ import (
 	runtimepkg "mobilevc/internal/runtime"
 )
 
-const defaultRuntimeSessionReleaseAfter = 5 * time.Minute
+const defaultRuntimeSessionReleaseAfter = 15 * time.Minute
 const defaultRuntimeSessionPendingLimit = 64
+const defaultRuntimeSessionSinkBufferSize = 256
 
 type runtimeSession struct {
 	mu            sync.RWMutex
@@ -19,6 +20,10 @@ type runtimeSession struct {
 	releaseTimer  *time.Timer
 	pendingCursor int64
 	pendingEvents []any
+
+	sinkCh  chan any
+	sinkMu  sync.Mutex
+	sinkRef int
 }
 
 func newRuntimeSession(service *runtimepkg.Service) *runtimeSession {
@@ -62,6 +67,28 @@ func (s *runtimeSession) emit(event any) {
 	s.mu.RUnlock()
 	for _, listener := range listeners {
 		listener(event)
+	}
+}
+
+func (s *runtimeSession) EnsureBufferedSink() func(event any) {
+	s.sinkMu.Lock()
+	defer s.sinkMu.Unlock()
+	if s.sinkCh == nil {
+		s.sinkCh = make(chan any, defaultRuntimeSessionSinkBufferSize)
+		go func() {
+			for event := range s.sinkCh {
+				s.emit(event)
+			}
+		}()
+	}
+	return func(event any) {
+		if event == nil {
+			return
+		}
+		select {
+		case s.sinkCh <- event:
+		default:
+		}
 	}
 }
 
@@ -142,6 +169,7 @@ func (r *runtimeSessionRegistry) Attach(sessionID, listenerID string, listener f
 	defer r.mu.Unlock()
 	entry := r.ensureLocked(sessionID)
 	entry.setListener(listenerID, listener)
+	entry.EnsureBufferedSink()
 	if entry.releaseTimer != nil {
 		entry.releaseTimer.Stop()
 		entry.releaseTimer = nil

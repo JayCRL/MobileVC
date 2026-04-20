@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const SOURCE_DIR = path.join(ROOT, 'web');
+const SOURCE_DIR = path.join(ROOT, 'mobile_vc', 'build', 'web');
 const TARGET_DIR = path.join(ROOT, 'cmd', 'server', 'web');
 
 syncDir(SOURCE_DIR, TARGET_DIR);

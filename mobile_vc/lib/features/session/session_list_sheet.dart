@@ -158,6 +158,9 @@ class SessionListSheet extends StatelessWidget {
 }
 
 String _sourceLabel(SessionSummary item) {
+  if (item.source == 'claude-native') {
+    return '电脑 Claude';
+  }
   if (item.external || item.source == 'codex-native') {
     return '电脑 Codex';
   }
