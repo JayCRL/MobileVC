@@ -235,6 +235,7 @@ type Service struct {
 	deps       Dependencies
 	execMu     sync.Mutex
 	execWG     sync.WaitGroup
+	sink       runner.EventSink
 }
 
 func NewService(sessionID string, deps Dependencies) *Service {
@@ -260,6 +261,18 @@ func (s *Service) Cleanup() {
 	s.manager.closeActive()
 	s.execMu.Unlock()
 	s.execWG.Wait()
+}
+
+func (s *Service) SetSink(sink runner.EventSink) {
+	s.execMu.Lock()
+	defer s.execMu.Unlock()
+	s.sink = sink
+}
+
+func (s *Service) ClearSink() {
+	s.execMu.Lock()
+	defer s.execMu.Unlock()
+	s.sink = nil
 }
 
 func (s *Service) StopActive(sessionID string, emit func(any)) error {
@@ -289,6 +302,7 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 	runCtx, runCancel := context.WithCancel(context.Background())
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
+	capturedSink := s.sink
 	if err := s.manager.start(sessionID, selected, runCancel, preparedReq.RuntimeMeta); err != nil {
 		runCancel()
 		return err
@@ -312,6 +326,10 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 				}
 			}
 		}()
+		runnerSink := capturedSink
+		if runnerSink == nil {
+			runnerSink = emit
+		}
 		err := selected.Run(runCtx, runner.ExecRequest{
 			SessionID:      sessionID,
 			Command:        preparedReq.Command,
@@ -348,9 +366,9 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 				*m = mappedMeta
 			})
 			mappedEvent := protocol.ApplyRuntimeMeta(event, mappedMeta)
-			emit(mappedEvent)
+			runnerSink(mappedEvent)
 			for _, mapped := range s.controller.OnRunnerEvent(mappedEvent) {
-				emit(mapped)
+				runnerSink(mapped)
 			}
 		})
 		if err != nil {

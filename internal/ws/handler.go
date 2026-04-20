@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"mobilevc/internal/adb"
+	"mobilevc/internal/claudesync"
 	"mobilevc/internal/codexsync"
 	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
@@ -133,6 +134,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	runtimeSvc := newDetachedRuntimeService()
+	var runtimeSession *runtimeSession // nil for detached service, set when Attach() succeeds
 	writeCh := make(chan any, 128)
 	writeErrCh := make(chan error, 1)
 	var writerWG sync.WaitGroup
@@ -335,6 +337,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if previousSessionID == nextSessionID && nextSessionID != "" {
 			if entry := h.runtimeSessions.Attach(nextSessionID, connectionID, emit); entry != nil {
 				runtimeSvc = entry.service
+				runtimeSession = entry
 			}
 			selectedSessionID = nextSessionID
 			return
@@ -347,10 +350,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		selectedSessionID = nextSessionID
 		if nextSessionID == "" {
 			runtimeSvc = newDetachedRuntimeService()
+			runtimeSession = nil
 			return
 		}
 		if entry := h.runtimeSessions.Attach(nextSessionID, connectionID, emit); entry != nil {
 			runtimeSvc = entry.service
+			runtimeSession = entry
 			return
 		}
 		runtimeSvc = newDetachedRuntimeService()
@@ -625,8 +630,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
+			augmentedEntries := append([]store.SnapshotLogEntry(nil), record.Projection.LogEntries...)
 			switchRuntimeSession(record.Summary.ID)
 			record.Projection = buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+			if preferAugmentedLogEntries(augmentedEntries, record.Projection.LogEntries) {
+				record.Projection.LogEntries = augmentedEntries
+			}
 			record.Summary.Runtime = record.Projection.Runtime
 			emit(newSessionHistoryEventFromRecord(record))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
@@ -668,9 +677,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
+			augmentedEntries := append([]store.SnapshotLogEntry(nil), record.Projection.LogEntries...)
 			switchRuntimeSession(record.Summary.ID)
 			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
 			projection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+			if preferAugmentedLogEntries(augmentedEntries, projection.LogEntries) {
+				projection.LogEntries = augmentedEntries
+			}
 			record.Projection = projection
 			record.Summary.Runtime = projection.Runtime
 			runtimeAlive := runtimeSvc != nil && runtimeSvc.IsRunning()
@@ -1029,6 +1042,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			logx.Info("ws", "dispatch exec: connectionID=%s sessionID=%s remoteAddr=%s action=exec mode=%s cwd=%q permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, mode, reqEvent.CWD, reqEvent.PermissionMode, wsDebugPreview(reqEvent.Command))
+			if runtimeSession != nil {
+				service.SetSink(runtimeSession.EnsureBufferedSink())
+			}
 			err = service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
 				Command:        reqEvent.Command,
 				CWD:            reqEvent.CWD,
@@ -1879,7 +1895,8 @@ func readProjectionFromSessionStore(sessionStore store.Store, ctx context.Contex
 		logx.Warn("ws", "read projection from session store failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
 		return store.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
 	}
-	return record.Projection
+	augmented := augmentLocalClaudeRecordFromNative(ctx, record)
+	return augmented.Projection
 }
 
 func withRuntimeSnapshot(snapshot store.ProjectionSnapshot, svc *runtimepkg.Service) store.ProjectionSnapshot {
@@ -2314,6 +2331,17 @@ func isCodexRuntime(runtime store.SessionRuntime) bool {
 	}
 	head := strings.ToLower(strings.TrimSpace(commandHead(runtime.Command)))
 	return head == "codex" || strings.HasSuffix(head, "/codex") || strings.HasSuffix(head, `\codex`) || head == "codex.exe"
+}
+
+func isClaudeRuntime(runtime store.SessionRuntime) bool {
+	if strings.EqualFold(strings.TrimSpace(runtime.Source), "claude-native") {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(runtime.Engine), "claude") {
+		return true
+	}
+	head := strings.ToLower(strings.TrimSpace(commandHead(runtime.Command)))
+	return head == "claude" || strings.HasSuffix(head, "/claude") || strings.HasSuffix(head, `\claude`) || head == "claude.exe"
 }
 
 func commandHead(command string) string {
@@ -3263,6 +3291,10 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord, hasActiveRunn
 			strings.TrimSpace(runtimeMeta.ClaudeLifecycle) == "" {
 			return nil
 		}
+		if strings.TrimSpace(runtimeMeta.ClaudeLifecycle) == "" &&
+			strings.TrimSpace(runtimeMeta.ResumeSessionID) != "" {
+			runtimeMeta.ClaudeLifecycle = "waiting_input"
+		}
 		message = firstNonEmptyString(message, "会话已暂停，可继续对话")
 	default:
 		if strings.TrimSpace(message) == "" {
@@ -3378,8 +3410,14 @@ func isVisibleAssistantReplyLog(event protocol.LogEvent) bool {
 	if strings.EqualFold(strings.TrimSpace(event.Stream), "stderr") {
 		return false
 	}
-	if strings.TrimSpace(event.Source) == "system/bootstrap" {
+	source := strings.TrimSpace(event.Source)
+	if source == "system/bootstrap" {
 		return false
+	}
+	// 带显式 assistant 标签的日志（由 pty_runner / codex_app_server 设置），
+	// 不再依赖启发式长度 / 样式判断，避免短回复被误过滤导致 session 恢复丢失。
+	if source == "claude/assistant" || source == "codex/assistant" {
+		return strings.TrimSpace(event.Message) != ""
 	}
 	message := strings.TrimSpace(event.Message)
 	if message == "" {
@@ -3435,6 +3473,9 @@ func runtimeEngineFromMeta(meta protocol.RuntimeMeta) string {
 	case command == "codex", strings.HasPrefix(command, "codex "):
 		return "codex"
 	default:
+		if meta.ResumeSessionID != "" {
+			return "claude"
+		}
 		return ""
 	}
 }
@@ -4133,17 +4174,89 @@ func dedupeCodexThreadSummaries(items []store.SessionSummary) []store.SessionSum
 	return deduped
 }
 
+func isExternalClaudeSummary(item store.SessionSummary) bool {
+	if item.External && strings.EqualFold(strings.TrimSpace(item.Source), "claude-native") {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(item.Source), "claude-native") {
+		return true
+	}
+	if claudesync.IsMirrorSessionID(item.ID) {
+		return true
+	}
+	return false
+}
+
+func summaryClaudeSessionID(item store.SessionSummary) string {
+	if claudesync.IsMirrorSessionID(item.ID) {
+		return claudesync.SessionIDFromMirror(item.ID)
+	}
+	if isClaudeRuntime(item.Runtime) {
+		if resumeID := strings.TrimSpace(item.Runtime.ResumeSessionID); resumeID != "" {
+			return resumeID
+		}
+	}
+	return ""
+}
+
+func resolveTrackedClaudeSessionID(ctx context.Context, sessionStore store.Store, item store.SessionSummary) string {
+	if sid := summaryClaudeSessionID(item); sid != "" {
+		return sid
+	}
+	if sessionStore == nil || strings.TrimSpace(item.ID) == "" {
+		return ""
+	}
+	record, err := sessionStore.GetSession(ctx, item.ID)
+	if err != nil {
+		return ""
+	}
+	if resumeID := strings.TrimSpace(record.Projection.Runtime.ResumeSessionID); resumeID != "" && isClaudeRuntime(record.Projection.Runtime) {
+		return resumeID
+	}
+	if isClaudeRuntime(record.Projection.Runtime) {
+		if resumeID := strings.TrimSpace(record.Projection.Controller.ResumeSession); resumeID != "" {
+			return resumeID
+		}
+	}
+	if claudesync.IsMirrorSessionID(record.Projection.Controller.SessionID) {
+		return claudesync.SessionIDFromMirror(record.Projection.Controller.SessionID)
+	}
+	return ""
+}
+
+func trackedMobileVCClaudeSessions(ctx context.Context, sessionStore store.Store, items []store.SessionSummary) map[string]struct{} {
+	tracked := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if isExternalClaudeSummary(item) {
+			continue
+		}
+		if !isClaudeRuntime(item.Runtime) {
+			continue
+		}
+		if sid := resolveTrackedClaudeSessionID(ctx, sessionStore, item); sid != "" {
+			tracked[sid] = struct{}{}
+		}
+	}
+	return tracked
+}
+
 func mergeSessionSummaries(ctx context.Context, sessionStore store.Store, items []store.SessionSummary, filterCWD string) ([]store.SessionSummary, error) {
 	filteredStoreItems := filterStoreSessionsByCWD(items, filterCWD)
 	trackedThreads := trackedMobileVCCodexThreads(ctx, sessionStore, filteredStoreItems)
+	trackedClaudeSessions := trackedMobileVCClaudeSessions(ctx, sessionStore, filteredStoreItems)
 	if normalizeSessionCWD(filterCWD) == "" {
-		if len(trackedThreads) == 0 {
+		if len(trackedThreads) == 0 && len(trackedClaudeSessions) == 0 {
 			return dedupeCodexThreadSummaries(filteredStoreItems), nil
 		}
 		filtered := make([]store.SessionSummary, 0, len(filteredStoreItems))
 		for _, item := range filteredStoreItems {
 			if isExternalCodexSummary(item) {
 				if _, ok := trackedThreads[summaryCodexThreadID(item)]; ok {
+					continue
+				}
+			}
+			if isExternalClaudeSummary(item) {
+				if _, ok := trackedClaudeSessions[summaryClaudeSessionID(item)]; ok {
 					continue
 				}
 			}
@@ -4155,11 +4268,21 @@ func mergeSessionSummaries(ctx context.Context, sessionStore store.Store, items 
 	if err != nil {
 		return nil, err
 	}
-	merged := make([]store.SessionSummary, 0, len(filteredStoreItems)+len(nativeThreads))
-	seen := make(map[string]struct{}, len(filteredStoreItems)+len(nativeThreads))
+	nativeClaude, err := claudesync.ListNativeSessions(ctx, filterCWD)
+	if err != nil {
+		logx.Warn("ws", "list claude native sessions failed: cwd=%q err=%v", filterCWD, err)
+		nativeClaude = nil
+	}
+	merged := make([]store.SessionSummary, 0, len(filteredStoreItems)+len(nativeThreads)+len(nativeClaude))
+	seen := make(map[string]struct{}, len(filteredStoreItems)+len(nativeThreads)+len(nativeClaude))
 	for _, item := range filteredStoreItems {
 		if isExternalCodexSummary(item) {
 			if _, ok := trackedThreads[summaryCodexThreadID(item)]; ok {
+				continue
+			}
+		}
+		if isExternalClaudeSummary(item) {
+			if _, ok := trackedClaudeSessions[summaryClaudeSessionID(item)]; ok {
 				continue
 			}
 		}
@@ -4188,6 +4311,22 @@ func mergeSessionSummaries(ctx context.Context, sessionStore store.Store, items 
 		merged = append(merged, record.Summary)
 		seen[record.Summary.ID] = struct{}{}
 	}
+	for _, native := range nativeClaude {
+		if _, ok := trackedClaudeSessions[strings.TrimSpace(native.SessionID)]; ok {
+			continue
+		}
+		record := claudesync.MirrorRecord(native)
+		if _, ok := seen[record.Summary.ID]; ok {
+			continue
+		}
+		if sessionStore != nil {
+			if stored, getErr := sessionStore.GetSession(ctx, record.Summary.ID); getErr == nil {
+				record = stored
+			}
+		}
+		merged = append(merged, record.Summary)
+		seen[record.Summary.ID] = struct{}{}
+	}
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].UpdatedAt.After(merged[j].UpdatedAt)
 	})
@@ -4198,8 +4337,31 @@ func loadSessionRecord(ctx context.Context, sessionStore store.Store, sessionID 
 	if sessionStore == nil {
 		return store.SessionRecord{}, fmt.Errorf("session store unavailable")
 	}
+	if claudesync.IsMirrorSessionID(sessionID) {
+		existing, existingErr := sessionStore.GetSession(ctx, sessionID)
+		native, nativeErr := claudesync.FindNativeSession(ctx, sessionID)
+		if nativeErr == nil {
+			record := claudesync.MirrorRecord(native)
+			if existingErr == nil && len(existing.Projection.LogEntries) > len(record.Projection.LogEntries) {
+				record.Projection.LogEntries = existing.Projection.LogEntries
+			}
+			if _, upsertErr := sessionStore.UpsertSession(ctx, record); upsertErr != nil {
+				logx.Warn("ws", "upsert claude mirror session failed: sessionID=%s err=%v", sessionID, upsertErr)
+			}
+			return sessionStore.GetSession(ctx, sessionID)
+		}
+		if existingErr == nil && existing.Summary.ID != "" {
+			logx.Warn("ws", "claude sync failed but using cached record: sessionID=%s nativeErr=%v", sessionID, nativeErr)
+			return existing, nil
+		}
+		return store.SessionRecord{}, fmt.Errorf("claude session not found and no valid cache: %w", nativeErr)
+	}
 	if !codexsync.IsMirrorSessionID(sessionID) {
-		return sessionStore.GetSession(ctx, sessionID)
+		record, err := sessionStore.GetSession(ctx, sessionID)
+		if err != nil {
+			return record, err
+		}
+		return augmentLocalClaudeRecordFromNative(ctx, record), nil
 	}
 	existing, existingErr := sessionStore.GetSession(ctx, sessionID)
 	thread, nativeErr := codexsync.FindNativeThread(ctx, sessionID)
@@ -4218,6 +4380,70 @@ func loadSessionRecord(ctx context.Context, sessionStore store.Store, sessionID 
 		return existing, nil
 	}
 	return store.SessionRecord{}, fmt.Errorf("codex session not found and no valid cache: %w", nativeErr)
+}
+
+func preferAugmentedLogEntries(augmented, current []store.SnapshotLogEntry) bool {
+	if len(augmented) > len(current) {
+		return true
+	}
+	aMd, cMd := 0, 0
+	for _, e := range augmented {
+		if e.Kind == "markdown" {
+			aMd++
+		}
+	}
+	for _, e := range current {
+		if e.Kind == "markdown" {
+			cMd++
+		}
+	}
+	return aMd > cMd
+}
+
+func augmentLocalClaudeRecordFromNative(ctx context.Context, record store.SessionRecord) store.SessionRecord {
+	if !isClaudeRuntime(record.Projection.Runtime) {
+		return record
+	}
+	resumeID := strings.TrimSpace(record.Projection.Runtime.ResumeSessionID)
+	if resumeID == "" {
+		resumeID = strings.TrimSpace(record.Projection.Controller.ResumeSession)
+	}
+	if resumeID == "" {
+		return record
+	}
+	hasMarkdown := false
+	hasUser := false
+	for _, entry := range record.Projection.LogEntries {
+		switch entry.Kind {
+		case "markdown":
+			hasMarkdown = true
+		case "user":
+			hasUser = true
+		}
+	}
+	if hasMarkdown {
+		return record
+	}
+	if !hasUser {
+		return record
+	}
+	native, err := claudesync.FindNativeSession(ctx, resumeID)
+	if err != nil {
+		return record
+	}
+	if len(native.LogEntries) == 0 {
+		return record
+	}
+	logx.Info("ws", "augment local claude record from native jsonl: sessionID=%s resumeID=%s nativeEntries=%d", record.Summary.ID, resumeID, len(native.LogEntries))
+	augmented := record
+	augmented.Projection.LogEntries = append([]store.SnapshotLogEntry(nil), native.LogEntries...)
+	if augmented.Summary.EntryCount < len(augmented.Projection.LogEntries) {
+		augmented.Summary.EntryCount = len(augmented.Projection.LogEntries)
+	}
+	if trimmed := strings.TrimSpace(native.LastAssistantText); trimmed != "" && strings.TrimSpace(augmented.Summary.LastPreview) == "" {
+		augmented.Summary.LastPreview = trimmed
+	}
+	return augmented
 }
 
 func mergeCodexMirrorRecord(fresh store.SessionRecord, existing store.SessionRecord) store.SessionRecord {

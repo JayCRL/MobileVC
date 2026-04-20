@@ -168,6 +168,9 @@ class SessionController extends ChangeNotifier {
   bool _fileReading = false;
   bool _canResumeCurrentSession = false;
   bool _isStopping = false;
+  bool _isHotSwapping = false;
+  Timer? _hotSwapTimeoutTimer;
+  static const Duration _hotSwapTimeout = Duration(seconds: 10);
   String _connectionMessage = '未连接';
   String _selectedSessionId = '';
   String _selectedSessionTitle = 'MobileVC';
@@ -884,11 +887,18 @@ class SessionController extends ChangeNotifier {
   String get agentPhaseLabel => _agentPhaseLabel;
   bool get activityVisible => _activityVisible;
   bool get activityBannerVisible =>
-      _activityVisible || _isClaudePendingReadyForInput || _isStopping;
-  bool get activityBannerAnimated => _activityVisible && !_isStopping;
+      _activityVisible ||
+      _isClaudePendingReadyForInput ||
+      _isStopping ||
+      _isHotSwapping;
+  bool get activityBannerAnimated =>
+      (_activityVisible || _isHotSwapping) && !_isStopping;
   String get activityBannerTitle {
     if (_isStopping) {
       return '正在停止';
+    }
+    if (_isHotSwapping) {
+      return '权限已授权，正在继续…';
     }
     return _isClaudePendingReadyForInput ? '待输入' : 'AI 助手正在运行中';
   }
@@ -896,8 +906,20 @@ class SessionController extends ChangeNotifier {
     if (_isStopping) {
       return '等待后端确认停止...';
     }
+    if (_isHotSwapping) {
+      final carry = _currentStepSummary.trim();
+      return carry.isNotEmpty ? carry : '正在切换 runner…';
+    }
     if (_isClaudePendingReadyForInput) {
       return 'Claude 已启动，请继续输入';
+    }
+    final stepSummary = _currentStepSummary.trim();
+    if (stepSummary.isNotEmpty) {
+      return stepSummary;
+    }
+    final fromAgent = _detailFromAgentState();
+    if (fromAgent.isNotEmpty) {
+      return fromAgent;
     }
     final label = _activityToolLabel.trim();
     if (label.isEmpty) {
@@ -1147,6 +1169,7 @@ class SessionController extends ChangeNotifier {
     _stopAdbRefreshPolling();
     _adbWebRtcStartTimeout?.cancel();
     _reconnectTimer?.cancel();
+    _hotSwapTimeoutTimer?.cancel();
     await _subscription?.cancel();
     await _adbWebRtc.dispose();
     await _service.dispose();
@@ -1455,6 +1478,7 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
+    _endHotSwap();
     _activeReviewDiffId = '';
     _agentPhaseLabel = '未连接';
     _resetActionNeededTracking();
@@ -1653,6 +1677,7 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
+    _endHotSwap();
     _resetRuntimeProcessState();
     _sessionPermissionRules.clear();
     _persistentPermissionRules.clear();
@@ -1682,6 +1707,7 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
+    _endHotSwap();
     _currentDiff = null;
     _latestError = null;
     _recentDiffs.clear();
@@ -3498,7 +3524,7 @@ class SessionController extends ChangeNotifier {
             finishedAt: agent.timestamp,
           );
         }
-        if (_isIdleLikeState(agent.state) && !_shouldPreserveBlockingPrompt()) {
+        if ((_isIdleLikeState(agent.state) || agent.awaitInput) && !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
           _pendingPrompt = null;
           _runtimePhase = null;
@@ -3844,6 +3870,8 @@ class SessionController extends ChangeNotifier {
         // 后端已自动应用权限规则，清空 pending 状态
         _pendingPrompt = null;
         _pendingInteraction = null;
+        // 授权后后端会 hot swap runner，标记 sticky 避免 banner 闪断
+        _beginHotSwap();
         if (result.message.trim().isNotEmpty) {
           _pushSystem('session', result.message.trim());
         }
@@ -5723,6 +5751,63 @@ class SessionController extends ChangeNotifier {
     return index == -1 ? normalized : normalized.substring(index + 1);
   }
 
+  static const Map<String, String> _toolVerbs = {
+    'read': '正在读取',
+    'write': '正在写入',
+    'edit': '正在修改',
+    'bash': '正在执行命令',
+    'grep': '正在搜索',
+    'glob': '正在查找文件',
+    'taskcreate': '正在派发子任务',
+    'taskupdate': '正在更新任务',
+    'tasklist': '正在整理任务',
+    'taskget': '正在查看任务',
+    'webfetch': '正在抓取网页',
+    'websearch': '正在联网搜索',
+    'agent': '正在派发子代理',
+    'skill': '正在调用 skill',
+    'lsp': '正在查询 LSP',
+    'notebookedit': '正在编辑 notebook',
+  };
+
+  String _verbFromTool(String tool) {
+    final trimmed = tool.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    final key = trimmed.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
+    return _toolVerbs[key] ?? '';
+  }
+
+  String _detailFromAgentState() {
+    final agent = _agentState;
+    if (agent == null) {
+      return '';
+    }
+    final step = agent.step.trim();
+    if (step.isNotEmpty) {
+      return step;
+    }
+    final verb = _verbFromTool(agent.tool);
+    final target = _toolLabelFromPath(agent.runtimeMeta.targetPath);
+    final commandHead = _toolLabelFromCommand(agent.command);
+    final detail = target.isNotEmpty
+        ? target
+        : commandHead.isNotEmpty
+            ? commandHead
+            : '';
+    if (verb.isNotEmpty && detail.isNotEmpty) {
+      return '$verb · $detail';
+    }
+    if (verb.isNotEmpty) {
+      return verb;
+    }
+    if (detail.isNotEmpty) {
+      return detail;
+    }
+    return '';
+  }
+
   String _summaryFromHistoryContext(HistoryContext? context) {
     if (context == null) {
       return '';
@@ -5790,6 +5875,28 @@ class SessionController extends ChangeNotifier {
     _runtimePermissionMode = '';
   }
 
+  void _beginHotSwap() {
+    _hotSwapTimeoutTimer?.cancel();
+    _isHotSwapping = true;
+    _hotSwapTimeoutTimer = Timer(_hotSwapTimeout, () {
+      if (!_isHotSwapping) {
+        return;
+      }
+      _isHotSwapping = false;
+      _hotSwapTimeoutTimer = null;
+      notifyListeners();
+    });
+  }
+
+  void _endHotSwap() {
+    if (!_isHotSwapping && _hotSwapTimeoutTimer == null) {
+      return;
+    }
+    _hotSwapTimeoutTimer?.cancel();
+    _hotSwapTimeoutTimer = null;
+    _isHotSwapping = false;
+  }
+
   void _syncDerivedState() {
     _clearPendingAiLaunchIfIdle();
     _syncRuntimePermissionMode();
@@ -5829,11 +5936,23 @@ class SessionController extends ChangeNotifier {
                 ? _agentState!.tool
                 : _toolLabelFromCommand(_agentState?.command ?? '');
       }
-    } else {
+    } else if (!_isHotSwapping) {
       _activityStartedAt = null;
       _activityToolLabel = '';
     }
     _activityVisible = active;
+    // hot swap 期间一旦后端的新 runner 给出活跃信号，立即解除 sticky。
+    if (_isHotSwapping &&
+        (active ||
+            agentState == 'RUNNING_TOOL' ||
+            agentState == 'RUNNING' ||
+            agentState == 'THINKING' ||
+            agentState == 'RECOVERING' ||
+            sessionState == 'RUNNING_TOOL' ||
+            sessionState == 'RUNNING' ||
+            sessionState == 'THINKING')) {
+      _endHotSwap();
+    }
     if (_currentStepSummary.isEmpty && _currentStep != null) {
       _currentStepSummary = _summaryFromHistoryContext(_currentStep);
     }

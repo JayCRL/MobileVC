@@ -147,6 +147,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 			r.interactive = false
 			r.runGeneration = generation
 			r.pendingReq = req
+			r.lastAssistantTextKey = ""
 			r.pendingCWD = cwd
 			r.currentDir = cwd
 			r.sink = sink
@@ -164,6 +165,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.interactive = false
 		r.awaitingReadyPrompt = true
 		r.pendingReq = req
+		r.lastAssistantTextKey = ""
 		r.pendingCWD = cwd
 		r.currentDir = cwd
 		r.sink = sink
@@ -198,6 +200,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 			r.permissionMode = req.PermissionMode
 			r.interactive = false
 			r.pendingReq = req
+			r.lastAssistantTextKey = ""
 			r.pendingCWD = cwd
 			r.currentDir = cwd
 			r.sink = sink
@@ -216,6 +219,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.interactive = false
 		r.awaitingReadyPrompt = true
 		r.pendingReq = req
+		r.lastAssistantTextKey = ""
 		r.pendingCWD = cwd
 		r.currentDir = cwd
 		r.sink = sink
@@ -844,6 +848,7 @@ func (r *PtyRunner) runClaudeResumeInteractive(ctx context.Context, req ExecRequ
 	r.closer = interactive.closer
 	r.cmd = cmd
 	r.pendingReq = req
+	r.lastAssistantTextKey = ""
 	r.pendingCWD = cwd
 	r.currentDir = cwd
 	r.lazyStart = false
@@ -986,6 +991,7 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 		r.writer = streamWriter
 		r.closer = stdin
 		r.pendingReq = req
+		r.lastAssistantTextKey = ""
 		r.pendingCWD = cwd
 		r.permissionMode = permMode
 		r.runGeneration = generation
@@ -1158,6 +1164,7 @@ func (r *PtyRunner) startCodexAppServerOnFirstInput(ctx context.Context, req Exe
 	r.writer = writer
 	r.closer = app.stdin
 	r.pendingReq = req
+	r.lastAssistantTextKey = ""
 	r.pendingCWD = cwd
 	r.mu.Unlock()
 
@@ -1774,9 +1781,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 							r.markInteractiveReady()
 						}
 					} else {
+						r.mu.Lock()
+						engine := r.pendingReq.Engine
+						r.mu.Unlock()
 						sendEvent(sink, protocol.ApplyRuntimeMeta(
 							protocol.NewLogEvent(sessionID, text, "stdout"),
-							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID, Engine: engine},
 						))
 					}
 				}
@@ -1839,9 +1849,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 							continue
 						}
 						var event any = protocol.NewLogEvent(sessionID, text, "stdout")
+						r.mu.Lock()
+						engine := r.pendingReq.Engine
+						r.mu.Unlock()
 						sendEvent(sink, protocol.ApplyRuntimeMeta(
 							event,
-							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+							protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID, Engine: engine, Source: "claude/assistant"},
 						))
 					}
 				}
@@ -1881,9 +1894,12 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 				logx.Info("pty", "claude result text: sessionID=%s preview=%q", sessionID, ptyDebugPreview(text))
 				r.tryEmitCatalogAuthoringResult(sessionID, text, sink)
 				if r.shouldEmitResultText(text) {
+					r.mu.Lock()
+					engine := r.pendingReq.Engine
+					r.mu.Unlock()
 					sendEvent(sink, protocol.ApplyRuntimeMeta(
 						protocol.NewLogEvent(sessionID, text, "stdout"),
-						protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID},
+						protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID, Engine: engine},
 					))
 				}
 			}
@@ -1974,11 +1990,13 @@ func (r *PtyRunner) shouldEmitResultText(text string) bool {
 		return false
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if normalized == r.lastAssistantTextKey {
-		return false
+	if r.lastAssistantTextKey == normalized {
+		r.lastAssistantTextKey = ""
 	}
-	r.lastAssistantTextKey = normalized
+	defer func() {
+		r.lastAssistantTextKey = normalized
+	}()
+	r.mu.Unlock()
 	return true
 }
 

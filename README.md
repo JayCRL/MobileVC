@@ -140,6 +140,26 @@ MobileVC 解决的不是”怎么远程看见电脑”，而是：
 
 ## ✨ 新功能
 
+### v0.1.15 (2026-04-21)
+
+#### 🔁 原生 Claude CLI 会话接入
+- ✅ 扫描 `~/.claude/projects/<cwd>/*.jsonl`，把终端里 `claude` / `claude --resume` 开过的会话作为"电脑 Claude"条目出现在 App 会话列表
+- ✅ 点击可直接 resume，历史输入 / assistant 回复从 jsonl 自动还原
+- ✅ 已被 MobileVC 本地跟踪过的会话自动去重，不会重复出现
+- ✅ 同一 sessionId 跨多个 jsonl 文件按 mtime 聚合
+
+#### 🩹 历史 Claude 会话补偿
+- ✅ 恢复旧 MobileVC 会话时，如本地 projection 只有用户消息没有 assistant 回复，自动从原生 jsonl 补齐历史，解决"恢复后看不到 AI 回复"的问题
+- ✅ assistant 短回复（"好的"、"明白"等）不再被启发式过滤丢掉
+
+#### 🎨 Diff 查看器
+- ✅ Word-level 字符级高亮：配对的 -/+ 行只强调真正变化的字符
+- ✅ 长连续 unchanged 区段可折叠展开
+- ✅ 单栏布局，窄屏友好
+
+#### 🌐 嵌入 Web 同步
+- ✅ `npm run sync:web` 的源改为 `mobile_vc/build/web/`，直接使用最新 Flutter Web 构建产物（先前的中间目录 `./web/` 已废弃）
+
 ### v0.1.13 (2026-04-10)
 
 #### 🌐 Flutter Web 完整集成
