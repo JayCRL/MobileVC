@@ -96,27 +96,103 @@ func EncodeCWDToProjectDir(cwd string) string {
 
 // ListNativeSessions 列出 cwdFilter 对应目录下所有原生 Claude 会话。
 // cwdFilter 为空时不扫（遵循 codexsync 语义），避免跨项目扫描耗时。
+//
+// Claude CLI 自己不 resolve symlink（用 Node process.cwd() 原样编码），
+// 而这里的 normalizePath 会 filepath.EvalSymlinks。在 Windows 下 EvalSymlinks
+// 走 GetFinalPathNameByHandle 可能做 canonical 化（盘符大小写、\\?\ 前缀、
+// junction 展开），得到的编码目录名会跟 Claude CLI 实际存的不一致。
+// 这里对多个候选路径都各试一次，任一目录命中即聚合结果。
 func ListNativeSessions(ctx context.Context, cwdFilter string) ([]NativeSession, error) {
-	normalizedFilter := normalizePath(cwdFilter)
-	if normalizedFilter == "" {
+	candidates := candidateProjectCWDs(cwdFilter)
+	if len(candidates) == 0 {
 		return []NativeSession{}, nil
 	}
 	projectsDir, err := ClaudeProjectsDir()
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(projectsDir, EncodeCWDToProjectDir(normalizedFilter))
-	info, err := os.Stat(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []NativeSession{}, nil
+	seenDir := map[string]struct{}{}
+	seenSession := map[string]struct{}{}
+	var aggregated []NativeSession
+	for _, cwd := range candidates {
+		encoded := EncodeCWDToProjectDir(cwd)
+		if encoded == "" {
+			continue
 		}
-		return nil, fmt.Errorf("stat claude projects dir failed: %w", err)
+		dir := filepath.Join(projectsDir, encoded)
+		if _, ok := seenDir[dir]; ok {
+			continue
+		}
+		seenDir[dir] = struct{}{}
+		info, err := os.Stat(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("stat claude projects dir failed: %w", err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		sessions, scanErr := scanDir(ctx, dir, cwd)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		for _, s := range sessions {
+			if _, ok := seenSession[s.SessionID]; ok {
+				continue
+			}
+			seenSession[s.SessionID] = struct{}{}
+			aggregated = append(aggregated, s)
+		}
 	}
-	if !info.IsDir() {
+	if aggregated == nil {
 		return []NativeSession{}, nil
 	}
-	return scanDir(ctx, dir, normalizedFilter)
+	sort.Slice(aggregated, func(i, j int) bool {
+		return aggregated[i].UpdatedAt.After(aggregated[j].UpdatedAt)
+	})
+	return aggregated, nil
+}
+
+// candidateProjectCWDs 对同一个 cwd 产出可能的目录候选。
+// Claude CLI 存储目录名基于 Node process.cwd() 原样编码，不解析 symlink，
+// 但我们过去只用 normalizePath 的结果（EvalSymlinks 后）去匹配。
+// 在 Windows（或存在 symlink 的场景下）两边容易不一致，这里把原样输入、
+// filepath.Abs、filepath.EvalSymlinks 的结果都纳入候选。
+func candidateProjectCWDs(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	out := make([]string, 0, 4)
+	seen := map[string]struct{}{}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		cleaned := strings.TrimSuffix(filepath.Clean(v), string(filepath.Separator))
+		if cleaned == "" {
+			return
+		}
+		if _, ok := seen[cleaned]; ok {
+			return
+		}
+		seen[cleaned] = struct{}{}
+		out = append(out, cleaned)
+	}
+	add(trimmed)
+	if abs, err := filepath.Abs(trimmed); err == nil {
+		add(abs)
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+			add(resolved)
+		}
+	}
+	if resolved, err := filepath.EvalSymlinks(trimmed); err == nil {
+		add(resolved)
+	}
+	return out
 }
 
 // FindNativeSession 在所有项目目录中按 sessionID 查找。
