@@ -1,6 +1,6 @@
 {
   "name": "@justprove/mobilevc-server-win32-x64",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Precompiled MobileVC server binary for win32-x64",
   "license": "MIT",
   "os": [
