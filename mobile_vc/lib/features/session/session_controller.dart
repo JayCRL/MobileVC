@@ -1223,6 +1223,9 @@ class SessionController extends ChangeNotifier {
       _service.send(
           {'action': 'fs_list', if (nextPath.isNotEmpty) 'path': nextPath});
     }
+    if (_connected && !samePath) {
+      requestSessionList();
+    }
     notifyListeners();
   }
 
