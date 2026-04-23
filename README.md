@@ -74,6 +74,15 @@ mobilevc config          # 重新配置
 mobilevc stop            # 停止服务
 ```
 
+## 文档导航
+
+- 项目总索引：[PROJECT_INDEX.md](PROJECT_INDEX.md)
+- 当前代码事实索引：[CONTEXT.md](CONTEXT.md)
+- 版本记录：[CHANGELOG.md](CHANGELOG.md)
+- 架构蓝图：[blueprint.md](blueprint.md)
+- 推送配置：[PUSH_INTEGRATION_CHECKLIST.md](PUSH_INTEGRATION_CHECKLIST.md)
+- 安装页/发布脚本：`mobile_vc/scripts/`
+
 ---
 
 ## 从源码构建（开发者）
@@ -138,57 +147,35 @@ MobileVC 解决的不是”怎么远程看见电脑”，而是：
 
 ---
 
-## ✨ 新功能
+## 当前代码态
 
-### v0.1.15 (2026-04-21)
+当前主线版本：`0.1.18`  
+整理基线：`2026-04-23` 当前工作区
 
-#### 🔁 原生 Claude CLI 会话接入
-- ✅ 扫描 `~/.claude/projects/<cwd>/*.jsonl`，把终端里 `claude` / `claude --resume` 开过的会话作为"电脑 Claude"条目出现在 App 会话列表
-- ✅ 点击可直接 resume，历史输入 / assistant 回复从 jsonl 自动还原
-- ✅ 已被 MobileVC 本地跟踪过的会话自动去重，不会重复出现
-- ✅ 同一 sessionId 跨多个 jsonl 文件按 mtime 聚合
+### 会话链路
 
-#### 🩹 历史 Claude 会话补偿
-- ✅ 恢复旧 MobileVC 会话时，如本地 projection 只有用户消息没有 assistant 回复，自动从原生 jsonl 补齐历史，解决"恢复后看不到 AI 回复"的问题
-- ✅ assistant 短回复（"好的"、"明白"等）不再被启发式过滤丢掉
+- 已接入原生 Claude CLI 会话：扫描 `~/.claude/projects/<cwd>/*.jsonl`，在会话列表显示为“电脑 Claude”，可直接 resume
+- 已接入原生 Codex 会话：读取 `~/.codex/state_5.sqlite` 和 `~/.codex/history.jsonl`，在会话列表显示为“电脑 Codex”
+- 连接或重连时，如果当前已经选中 session，会自动补发 `session_resume`，并带上 `lastSeenEventCursor` / `lastKnownRuntimeState`
+- 切换工作目录时会自动刷新 `session_list`，会话列表跟随当前 cwd
+- 历史会话恢复时，可从原生 Claude jsonl 补齐缺失的 assistant 回复
 
-#### 🎨 Diff 查看器
-- ✅ Word-level 字符级高亮：配对的 -/+ 行只强调真正变化的字符
-- ✅ 长连续 unchanged 区段可折叠展开
-- ✅ 单栏布局，窄屏友好
+### 权限、审核与通知
 
-#### 🌐 嵌入 Web 同步
-- ✅ `npm run sync:web` 的源改为 `mobile_vc/build/web/`，直接使用最新 Flutter Web 构建产物（先前的中间目录 `./web/` 已废弃）
+- 权限规则自动应用已经收敛到后端，前端只负责展示结果
+- Claude 权限批准链路支持临时 grant，减少 hot swap 后重复弹窗
+- continuation 采用官方 `permission-model-auto`
+- Diff 查看器支持字符级高亮和 unchanged block 折叠
+- 停止中的 UI 有独立 `_isStopping` 状态，banner / 按钮 / 输入框语义一致
+- 推送链路已覆盖 APNs、前后台补发和 action-needed 去重
 
-### v0.1.13 (2026-04-10)
+### Web 与发布工具
 
-#### 🌐 Flutter Web 完整集成
-- ✅ Flutter Web 构建产物完整嵌入 Go 二进制
-- ✅ 启动后端即可直接访问 Web 版（无需单独构建）
-- ✅ 修复 JavaScript MIME 类型问题
-- ✅ Web 端移除 Firebase 依赖（移动端保留推送功能）
-- ✅ 二进制包含完整 Flutter Web 运行时（~38MB）
+- `npm run sync:web` 会把 `mobile_vc/build/web/` 同步到 `cmd/server/web/`
+- Go 后端实际嵌入的是 `cmd/server/web/`，不再以根目录 `web/` 作为当前 source of truth
+- 安装页与发布脚本位于 `mobile_vc/scripts/`，当前仓库已跟踪 iOS OTA、TestFlight 和安装页渲染流程
 
-### v0.1.12 (2026-04-09)
-
-#### 🎉 iOS APNs 推送通知
-- ✅ 完整的 APNs 推送集成
-- ✅ 支持 Token 和证书两种认证方式
-- ✅ 自动在权限请求和代码审核时推送
-- ✅ 异步推送，不阻塞主流程
-- 📖 详细配置指南：[PUSH_INTEGRATION_CHECKLIST.md](PUSH_INTEGRATION_CHECKLIST.md)
-
-#### 🌐 Flutter Web 支持
-- ✅ Web 端迁移到 Flutter Web
-- ✅ 与移动端代码共享
-- ✅ 完整的 MobileVC 功能
-- ✅ 响应式设计，支持桌面和移动浏览器
-- 📖 迁移说明：[WEB_MIGRATION_COMPLETE.md](WEB_MIGRATION_COMPLETE.md)
-
-#### 🔧 其他改进
-- ✅ 修复会话衔接和 Flutter 端无感重连
-- ✅ 规范化 session cwd symlink 路径
-- ✅ 添加 AI 编程工作流 skill
+详细变更历史见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -510,22 +497,29 @@ flutter test
 ## 项目结构
 
 ```text
+bin/               # npm 启动器
 cmd/server/        # Go 服务入口
+cmd/server/web/    # 当前嵌入到 Go 二进制的 Flutter Web 产物
 internal/          # 后端编排、运行时、协议、存储
-web/               # 浏览器工作台
 mobile_vc/         # Flutter 客户端
+mobile_vc/scripts/ # iOS OTA / TestFlight / Android 安装页脚本
+packages/          # npm 预编译后端二进制包
+scripts/           # 仓库级构建脚本
 sidecar/chattts/   # 可选 TTS 侧车
 ```
 
+说明：根目录 `web/` 和 `web.backup/` 只保留历史产物/备份语义，当前嵌入链路以 `cmd/server/web/` 为准。
+
 ---
 
-## 最近更新（2026-04-04）
+## 发布与安装页脚本
 
-- Review 流程更稳：审核按钮会优先绑定当前真正待处理的 diff，等待 review 输入时不会因为时间线刷新或打开文件切换而丢失审核提示；`accept / revert / revise` 也会发送显式文本指令，而不是依赖数字选项猜测。
-- 可直接停止当前运行：当会话仍在执行、但还没进入等待输入态时，输入栏主按钮会切换成 `Stop`，可从手机端直接终止当前运行。
-- 后台保活补强：在 iOS / Android 上，只要 app 已退到后台且当前会话仍在忙碌，客户端会自动申请一小段后台保活时间，尽量把最后一轮回复、权限或 review 提醒送达。
-- 通知链路更完整：Android 初始化时会主动请求通知权限；从 `inactive` 恢复到前台时，如果中途有权限、回复或 action-needed 信号，也会补发并做去重，避免漏提醒或重复提醒。
-- 会话时间线继续瘦身：终端日志流会自动剥离 `Wall time` 报头、空的 `Output:` 包裹、ANSI/结构化日志和重复性噪音，只保留真正需要你关注的 stderr/stdout 内容。
+- `mobile_vc/scripts/build_ios_ota.sh`：生成 iPhone OTA IPA，并可选直接上传安装页
+- `mobile_vc/scripts/build_ios_testflight.sh`：TestFlight 打包/上传辅助脚本
+- `mobile_vc/scripts/update_install_page_testflight.sh`：更新安装页上的 TestFlight 信息
+- `mobile_vc/scripts/render_install_page.py`：统一渲染安装页 `index.html`
+
+更完整的文档导航见 [PROJECT_INDEX.md](PROJECT_INDEX.md)。
 
 ---
 

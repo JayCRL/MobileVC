@@ -1,52 +1,65 @@
 # Changelog
 
-## [1.1.0] - 2026-04-09
+这份变更记录按仓库对外分发的 npm 包版本维护，当前主线版本为 `0.1.18`。
 
-### Added
-- 🎉 **iOS APNs 推送通知支持**
-  - 完整的 APNs 推送集成
-  - 支持 Token 和证书两种认证方式
-  - 自动在权限请求和代码审核时推送通知
-  - 异步推送，不阻塞主流程
-  - 详细配置指南：`PUSH_INTEGRATION_CHECKLIST.md`
-
-- 🌐 **Flutter Web 支持**
-  - Web 端迁移到 Flutter Web
-  - 与移动端代码共享
-  - 完整的 MobileVC 功能
-  - 响应式设计，支持桌面和移动浏览器
-  - 迁移说明：`WEB_MIGRATION_COMPLETE.md`
-
-- 📦 **推送服务架构**
-  - `internal/push/service.go` - 推送服务接口和 APNs 实现
-  - `internal/ws/push_helper.go` - 推送辅助函数
-  - `internal/store` - Push token 存储
-  - Flutter 端推送服务抽象层
+## [0.1.18] - 2026-04-21
 
 ### Fixed
-- 🔧 修复会话衔接和 Flutter 端无感重连
-- 🔧 规范化 session cwd symlink 路径
-- 🔧 修复 symlink 等价 cwd 会话过滤
+
+- Flutter `switchWorkingDirectory(...)` 在 cwd 变化后会主动刷新 `session_list`，避免会话列表停留在旧目录。
+- 后台断开再重连时，如果当前已有选中 session，会自动补发 `session_resume`，并携带 `lastSeenEventCursor` / `lastKnownRuntimeState`。
+
+## [0.1.17] - 2026-04-21
+
+### Fixed
+
+- Claude 原生会话扫描在 Windows 和 symlink 场景下增加 cwd 候选路径回退，降低 `~/.claude/projects/...` 漏匹配概率。
+- 会同时尝试原始路径、绝对路径和 `EvalSymlinks` 结果来匹配 Claude CLI 的项目目录编码。
+
+## [0.1.16] - 2026-04-21
 
 ### Changed
-- 📝 更新 README，添加快速开始和新功能说明
-- 📝 添加完整的推送集成文档
-- 📝 添加 Web 迁移文档
 
-### Dependencies
-- ➕ 添加 `github.com/sideshow/apns2` v0.25.0
-- ➕ Flutter 添加 `firebase_core` 和 `firebase_messaging`
+- 版本整理发布，无额外功能差异；用于承接 `0.1.15` 之后的包版本对齐。
 
-## [1.0.0] - 2026-03-31
+## [0.1.15] - 2026-04-21
 
 ### Added
-- 🎉 初始版本发布
-- 📱 手机直接接管 AI 助手会话
-- 🔐 权限确认与 Plan Mode 支持
-- 📝 代码审查与 Diff 管理
-- 📂 文件浏览与下载
-- 🔧 Skill / Memory / Session Context 管理
-- 📊 终端日志查看
-- 🔄 会话恢复与历史管理
-- 📱 ADB 设备管理
-- 🔄 Codex 线程同步
+
+- 接入原生 Claude CLI 会话镜像：扫描 `~/.claude/projects/<cwd>/*.jsonl`，在 MobileVC 会话列表展示为“电脑 Claude”。
+- 恢复旧 MobileVC 会话时，可从原生 Claude jsonl 补齐缺失的 assistant 回复历史。
+
+### Changed
+
+- `npm run sync:web` 的同步源切换到 `mobile_vc/build/web/`，目标为 `cmd/server/web/`。
+- Diff 查看器支持字符级高亮和 unchanged block 折叠，窄屏可读性更好。
+
+## [0.1.13] - 2026-04-10
+
+### Added
+
+- Flutter Web 构建产物完整嵌入 Go 二进制，启动后端即可直接访问 Web 工作台。
+- Web 端与移动端共享主要 UI/状态管理逻辑。
+
+### Fixed
+
+- 修复 JavaScript MIME 类型问题。
+- Web 端移除 Firebase 依赖，移动端保留推送功能。
+
+## [0.1.12] - 2026-04-09
+
+### Added
+
+- iOS APNs 推送通知支持。
+- Flutter Web 迁移完成。
+- 推送服务接口、APNs 实现和对应存储链路落地。
+
+### Fixed
+
+- 修复会话衔接和 Flutter 端无感重连。
+- 规范化 session cwd symlink 路径。
+
+### Docs
+
+- 更新 `README.md`。
+- 新增 `PUSH_INTEGRATION_CHECKLIST.md` 和 Web 迁移文档。
