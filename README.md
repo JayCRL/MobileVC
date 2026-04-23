@@ -1,34 +1,34 @@
 # 📱 MobileVC — 手机就是你的 AI 编程助手控制台
 
-<p align=”center”>
-  <img src=”mobile_vc/lib/logo-2.png” alt=”MobileVC logo” width=”220” />
+<p align="center">
+  <img src="mobile_vc/lib/logo-2.png" alt="MobileVC logo" width="220" />
 </p>
 
-<p align=”center”>
+<p align="center">
   <strong>摆脱键盘和鼠标的束缚，用手机随时接管电脑上的 AI 编程助手（Claude / Codex）。</strong>
 </p>
 
-<p align=”center”>
+<p align="center">
   <em>MobileVC 把 AI 助手会话中的等待、审批、审核和继续执行，变成一套专为移动端设计的操作闭环。</em>
 </p>
 
-<p align=”center”>
-  <img src=”https://img.shields.io/badge/Go-1.21-blue” />
-  <img src=”https://img.shields.io/badge/Flutter-3.13-blue” />
-  <img src=”https://img.shields.io/badge/License-MIT-green” />
-  <img src=”https://img.shields.io/npm/v/mobilevc” />
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.21-blue" />
+  <img src="https://img.shields.io/badge/Flutter-3.13-blue" />
+  <img src="https://img.shields.io/badge/License-MIT-green" />
+  <img src="https://img.shields.io/npm/v/mobilevc" />
 </p>
 
-<p align=”center”>
-  <strong>官网：</strong><a href=”https://www.mobilevc.top”>https://www.mobilevc.top</a>
+<p align="center">
+  <strong>官网：</strong><a href="https://www.mobilevc.top">https://www.mobilevc.top</a>
 </p>
 
-<p align=”center”>
-  快速访问：<a href=”https://www.mobilevc.top”>mobilevc.top</a>
+<p align="center">
+  快速访问：<a href="https://www.mobilevc.top">mobilevc.top</a>
 </p>
 
-<p align=”center”>
-  <strong>社区讨论：</strong><a href=”https://linux.do”>LINUX DO</a>
+<p align="center">
+  <strong>社区讨论：</strong><a href="https://linux.do">LINUX DO</a>
 </p>
 
 ---
