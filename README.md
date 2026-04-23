@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/Go-1.21-blue" />
   <img src="https://img.shields.io/badge/Flutter-3.13-blue" />
   <img src="https://img.shields.io/badge/License-MIT-green" />
-  <img src="https://img.shields.io/npm/v/mobilevc" />
+  <img src="https://img.shields.io/npm/v/%40justprove%2Fmobilevc" />
 </p>
 
 <p align="center">
