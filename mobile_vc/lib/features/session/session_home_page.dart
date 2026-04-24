@@ -320,6 +320,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
               hostController.text = scanned.host;
               portController.text = scanned.port;
               tokenController.text = scanned.token;
+              cwdController.text = scanned.cwd;
               iceHostController.text = scanned.adbIceHostOverride;
               iceUsernameController.text = scanned.adbIceUsername;
               iceCredentialController.text = scanned.adbIceCredential;

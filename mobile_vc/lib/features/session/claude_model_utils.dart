@@ -19,7 +19,7 @@ final RegExp _claudePinnedModelPattern = RegExp(
 
 String normalizeClaudeModelSelection(
   String value, {
-  String fallback = 'sonnet',
+  String fallback = 'default',
 }) {
   final trimmed = value.trim();
   if (trimmed.isEmpty) {
@@ -38,7 +38,7 @@ String normalizeClaudeModelSelection(
 String claudeModelDisplayLabel(String value) {
   final trimmed = value.trim();
   if (trimmed.isEmpty) {
-    return 'Sonnet';
+    return 'Default';
   }
   switch (canonicalClaudeModelAlias(trimmed)) {
     case 'default':

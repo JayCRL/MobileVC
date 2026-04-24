@@ -250,7 +250,7 @@ async function runStart(options = {}) {
     if (isStateConfigMatch(existingState, config)) {
       console.log(message(language, 'alreadyRunning', existingState.pid, existingState.port));
       if (options.guided) {
-        await printLanQr(language, existingState.port, existingState.authToken);
+        await printLanQr(language, existingState.port, existingState.authToken, process.cwd());
       }
       return;
     }
@@ -278,6 +278,7 @@ async function runStart(options = {}) {
     ...process.env,
     PORT: String(config.port),
     AUTH_TOKEN: String(config.authToken),
+    RUNTIME_WORKSPACE_ROOT: process.cwd(),
   };
 
   fs.appendFileSync(logPath, `launcher starting binary=${binaryInfo.binaryPath} target=${platformTarget}\n`);
@@ -319,7 +320,7 @@ async function runStart(options = {}) {
   if (!await checkHealth(state.port)) {
     throw new Error(message(language, 'startupFailed'));
   }
-  await printLanQr(language, state.port, state.authToken);
+  await printLanQr(language, state.port, state.authToken, state.cwd || process.cwd());
 }
 
 async function runStatus() {
@@ -540,6 +541,7 @@ function buildStateSkeleton(config, language, binaryInfo, platformTarget, prefli
     pid: null,
     port: String(config.port),
     authToken: String(config.authToken),
+    cwd: process.cwd(),
     language,
     startedAt: null,
     logPath,
@@ -836,9 +838,9 @@ function message(language, key, ...args) {
   return typeof value === 'function' ? value(...args) : value;
 }
 
-async function printLanQr(language, port, authToken = '') {
+async function printLanQr(language, port, authToken = '', cwd = process.cwd()) {
   const host = await detectLanHost();
-  const localUrl = buildLaunchUrl('127.0.0.1', port, authToken);
+  const localUrl = buildLaunchUrl('127.0.0.1', port, authToken, cwd);
   console.log('');
   console.log(`${message(language, 'localAccess')}: ${localUrl}`);
 
@@ -847,7 +849,7 @@ async function printLanQr(language, port, authToken = '') {
     return;
   }
 
-  const url = buildLaunchUrl(host, port, authToken);
+  const url = buildLaunchUrl(host, port, authToken, cwd);
   console.log(`${message(language, 'lanAccess')}: ${url}`);
   console.log('');
   console.log(message(language, 'qrTitle'));
@@ -869,10 +871,14 @@ function widenQrLine(line) {
   return Array.from(String(line || '')).map((char) => char.repeat(2)).join('');
 }
 
-function buildLaunchUrl(host, port, authToken = '') {
+function buildLaunchUrl(host, port, authToken = '', cwd = '') {
   const url = new URL(`http://${host}:${port}/`);
   if (authToken) {
     url.searchParams.set('token', authToken);
+  }
+  const normalizedCwd = String(cwd || '').trim();
+  if (normalizedCwd) {
+    url.searchParams.set('cwd', normalizedCwd);
   }
   return url.toString();
 }

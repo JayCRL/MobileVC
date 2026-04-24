@@ -256,10 +256,12 @@ class AppConfig {
     final token = (uri.queryParameters['token'] ?? fallback.token).trim();
     final ice =
         (uri.queryParameters['ice'] ?? fallback.adbIceServersJson).trim();
+    final cwd = (uri.queryParameters['cwd'] ?? fallback.cwd).trim();
     return fallback.copyWith(
       host: uri.host.trim(),
       port: port,
       token: token,
+      cwd: cwd,
       adbIceServersJson: ice,
     );
   }

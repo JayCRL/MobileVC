@@ -150,6 +150,8 @@ class SessionController extends ChangeNotifier {
 
   static const _prefsKey = 'mobilevc.app_config';
   static const int _maxForegroundReconnectAttempts = 4;
+  static const Duration _connectionHealthInterval = Duration(seconds: 10);
+  static const Duration _connectionSilenceTimeout = Duration(seconds: 45);
   final MobileVcWsService _service;
   final AdbWebRtcService _adbWebRtc = AdbWebRtcService();
 
@@ -163,6 +165,8 @@ class SessionController extends ChangeNotifier {
   bool _autoReconnectEnabled = false;
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
+  Timer? _connectionHealthTimer;
+  DateTime? _lastServerEventAt;
   final Map<String, int> _sessionEventCursors = <String, int>{};
   bool _fileListLoading = false;
   bool _fileReading = false;
@@ -1131,6 +1135,7 @@ class SessionController extends ChangeNotifier {
       );
     }
     _subscription = _service.events.listen(_handleEvent);
+    _startConnectionHealthMonitor();
     _syncDerivedState();
     notifyListeners();
     _pushDebug('initialize end');
@@ -1169,6 +1174,7 @@ class SessionController extends ChangeNotifier {
     _stopAdbRefreshPolling();
     _adbWebRtcStartTimeout?.cancel();
     _reconnectTimer?.cancel();
+    _connectionHealthTimer?.cancel();
     _hotSwapTimeoutTimer?.cancel();
     await _subscription?.cancel();
     await _adbWebRtc.dispose();
@@ -1369,6 +1375,7 @@ class SessionController extends ChangeNotifier {
       requestSessionContext();
       requestPermissionRuleList();
       requestReviewState();
+      _requestSessionResume(reason: silently ? 'reconnect' : 'connect');
       _sendCachedPushTokenIfPossible();
       _restorePendingNotificationSessionIfNeeded();
     } catch (error) {
@@ -1436,6 +1443,7 @@ class SessionController extends ChangeNotifier {
     _terminalExecutions.clear();
     _resetRuntimeProcessState();
     _sessionEventCursors.clear();
+    _lastServerEventAt = null;
     _canResumeCurrentSession = false;
     _resumeRuntimeMeta = const RuntimeMeta();
     _pendingAiLaunchEngine = '';
@@ -1527,7 +1535,31 @@ class SessionController extends ChangeNotifier {
   }
 
   void resumeConnectionIfNeeded() {
+    if (_connected && !_connecting) {
+      _requestSessionResume(reason: 'foreground');
+      return;
+    }
     _scheduleReconnect(immediate: true);
+  }
+
+  void _requestSessionResume({String reason = ''}) {
+    final sessionId = _selectedSessionId.trim();
+    if (!_connected || _connecting || sessionId.isEmpty) {
+      return;
+    }
+    final lastSeenCursor = _sessionEventCursors[sessionId] ?? 0;
+    final runtimeState = (_agentState?.state ?? _sessionState?.state ?? '').trim();
+    _connectionStage = SessionConnectionStage.catchingUp;
+    _service.send({
+      'action': 'session_resume',
+      'sessionId': sessionId,
+      'cwd': effectiveCwd,
+      if (reason.trim().isNotEmpty) 'reason': reason.trim(),
+      if (lastSeenCursor > 0) 'lastSeenEventCursor': lastSeenCursor,
+      if (runtimeState.isNotEmpty) 'lastKnownRuntimeState': runtimeState,
+    });
+    _syncDerivedState();
+    notifyListeners();
   }
 
   Future<void> restoreSessionFromNotification(String sessionId) async {
@@ -3315,6 +3347,7 @@ class SessionController extends ChangeNotifier {
   }
 
   void _handleEvent(AppEvent event) async {
+    _lastServerEventAt = DateTime.now();
     _trackSessionEventCursor(event);
     switch (event) {
       case SessionCreatedEvent created:
@@ -3573,7 +3606,9 @@ class SessionController extends ChangeNotifier {
         _fileListLoading = false;
         _fileReading = false;
         final errorMessage = error.message.trim();
-        if (error.code == 'ws_closed' || error.code == 'ws_stream_error') {
+        if (error.code == 'ws_closed' ||
+            error.code == 'ws_stream_error' ||
+            error.code == 'ws_send_error') {
           _handleUnexpectedSocketDisconnect(errorMessage);
           break;
         }
@@ -6147,6 +6182,27 @@ class SessionController extends ChangeNotifier {
     _shouldSuppressNextActionNeededSignal = suppressNextSignal;
   }
 
+  void _startConnectionHealthMonitor() {
+    _connectionHealthTimer?.cancel();
+    _connectionHealthTimer = Timer.periodic(_connectionHealthInterval, (_) {
+      if (!_connected || _connecting || !_autoReconnectEnabled) {
+        return;
+      }
+      final lastSeen = _lastServerEventAt;
+      if (lastSeen != null &&
+          DateTime.now().difference(lastSeen) > _connectionSilenceTimeout) {
+        unawaited(_service.disconnect());
+        _handleUnexpectedSocketDisconnect('Connection timed out, reconnecting...');
+        return;
+      }
+      _service.send({
+        'action': 'ping',
+        'sessionId': _selectedSessionId.trim(),
+        'ts': DateTime.now().millisecondsSinceEpoch,
+      });
+    });
+  }
+
   void _trackSessionEventCursor(AppEvent event) {
     final sessionId = event.sessionId.trim();
     if (sessionId.isEmpty) {
@@ -6820,7 +6876,7 @@ String _normalizeClaudeModel(String value) {
   if (normalized.contains('/')) {
     return normalized;
   }
-  return 'sonnet';
+  return 'default';
 }
 
 String _normalizeCodexModel(String value) {

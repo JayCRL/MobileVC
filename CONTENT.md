@@ -1,223 +1,92 @@
-# 项目核心逻辑文档
+# MobileVC Current Logic Notes
 
-## 权限授予与会话恢复机制
+Last updated: 2026-04-24
 
-### 问题背景
+This document summarizes important runtime logic in the current codebase.
 
-当 Claude 进程自然结束时，如果用户在此时批准权限请求，会话无法恢复，Flutter 端显示"Claude 空闲中"。
+## Connection and Resume
 
-### 根本原因
+Flutter owns connection state in `SessionController`:
 
-权限请求发送给前端时，`RuntimeMeta` 中缺少 `Command` 字段，导致权限批准后无法识别这是 Claude 会话，从而无法触发会话恢复逻辑。
+- Initializes `MobileVcWsService` event subscription.
+- Opens the WebSocket with `connect()`.
+- Bootstraps runtime/session/catalog state after connect.
+- Starts a periodic connection health monitor.
+- Tracks `eventCursor` per session.
+- Sends `session_resume` after connect/reconnect/foreground recovery when a session is selected.
 
-### 完整流程
+Server support lives in `internal/ws/handler.go` and `internal/ws/runtime_sessions.go`:
 
-#### 1. Claude 输出权限请求（后端解析阶段）
+- `session_resume` reloads persisted session projection/history.
+- It emits recovery state when a runtime is still alive.
+- It replays pending runtime events after `lastSeenEventCursor`.
+- It returns `session_resume_result` with latest cursor, runtime state, and replay count.
 
-**文件：** `internal/runner/pty_runner.go:1753-1809`
+## Heartbeat and Stale Socket Handling
 
-当 Claude 输出 JSON 格式的 `control_request` 时：
+Flutter:
 
-```go
-case "control_request":
-    requestID := strings.TrimSpace(envelope.RequestID)
-    if requestID != "" {
-        r.mu.Lock()
-        r.pendingControlRequestID = requestID  // 缓存 request ID
-        r.mu.Unlock()
-    }
-    
-    // 构造 promptMeta，包含完整的运行时元信息
-    r.mu.Lock()
-    command := r.pendingReq.Command
-    cwd := r.currentDir
-    engine := r.pendingReq.Engine
-    permMode := r.permissionMode
-    r.mu.Unlock()
-    
-    promptMeta := protocol.RuntimeMeta{
-        ResumeSessionID: envelope.SessionID,
-        Command:         command,           // ← 关键：必须包含 command
-        CWD:             cwd,
-        Engine:          engine,
-        PermissionMode:  permMode,
-    }
-    
-    // 发送权限请求事件给前端
-    sendEvent(sink, protocol.ApplyRuntimeMeta(
-        protocol.NewPromptRequestEvent(sessionID, promptMessage, promptChoices),
-        promptMeta,
-    ))
-```
+- Sends `action=ping` every health interval while connected.
+- Treats any incoming event as proof of life.
+- If silence exceeds the timeout, closes the service and calls reconnect handling.
+- Treats `ws_closed`, `ws_stream_error`, and `ws_send_error` as recoverable socket failures.
 
-**关键点：**
-- `promptMeta` 必须包含 `Command` 字段
-- `Command` 来自 `r.pendingReq.Command`，即当前运行的 Claude 命令
-- 这个 `Command` 会通过 WebSocket 发送给前端
+Go backend:
 
-#### 2. 前端接收并缓存权限请求
+- Handles `ping` by emitting a lightweight `pong` JSON event.
+- Sets a write deadline before each WebSocket JSON write.
 
-**文件：** `mobile_vc/lib/features/session/session_controller.dart:2857, 2989`
+## Launcher QR and CWD
 
-前端收到权限请求后，缓存 `runtimeMeta`：
+`bin/mobilevc.js` is the npm launcher.
 
-```dart
-// 缓存权限请求的元信息
-_pendingPermissionMeta = RuntimeMeta.fromJson(event['runtimeMeta']);
+Current behavior:
 
-// 其中包含：
-// - command: "claude ..."
-// - resumeSessionId: "f54a6ce7-..."
-// - cwd: "/path/to/project"
-// - engine: "claude"
-// - permissionMode: "prompt"
-```
+- `mobilevc start` uses the current shell directory as workspace CWD.
+- It passes `RUNTIME_WORKSPACE_ROOT=process.cwd()` to the backend.
+- It stores `cwd` in launcher state.
+- It includes `cwd` in printed local/LAN URLs and QR codes.
+- If the backend is already running, guided QR printing still uses the current invocation directory.
 
-#### 3. 用户批准权限，前端发送决策
+Flutter side:
 
-**文件：** `mobile_vc/lib/features/session/session_controller.dart:2857, 2989`
+- `AppConfig.fromLaunchUri(...)` parses `cwd` from QR URLs.
+- The connection sheet writes `scanned.cwd` into the CWD input field.
+- Saving the connection config persists that CWD for subsequent session operations.
 
-用户点击批准后，前端发送权限决策：
+## AI Command Defaults
 
-```dart
-{
-  'type': 'permission_decision',
-  'sessionId': sessionId,
-  'decision': 'approve',
-  'command': decisionMeta.command,        // ← 从缓存的 meta 中获取
-  'resumeSessionId': decisionMeta.resumeSessionId,
-  'cwd': decisionMeta.cwd,
-  'engine': decisionMeta.engine,
-  'permissionMode': decisionMeta.permissionMode,
-}
-```
+Claude:
 
-#### 4. 后端接收权限决策并执行
+- Empty model config normalizes to `default`.
+- `default` means no `--model` flag.
+- Default command is plain `claude`.
 
-**文件：** `internal/ws/permission_decision.go:43-106`
+Codex:
 
-后端收到权限决策后，提取 `command` 字段：
+- Empty model config normalizes to `gpt-5-codex`.
+- Empty reasoning effort normalizes to `medium`.
+- Default command includes `-m gpt-5-codex --config model_reasoning_effort=medium`.
 
-```go
-// 从多个来源提取 command（优先级从高到低）
-inputMeta := protocol.RuntimeMeta{
-    Command: firstNonEmptyString(
-        permissionEvent.FallbackCommand,    // ← 前端发送的 command
-        projection.Runtime.Command,          // 当前投影的 command
-        controller.CurrentCommand,           // 控制器的 command
-        controller.ActiveMeta.Command,       // 活动元信息的 command
-    ),
-    // ... 其他字段
-}
+## Session Lists and Native Histories
 
-// 检查是否是 Claude 命令
-if !isClaudeCommandLike(inputMeta.Command) {
-    // 如果不是 Claude 命令，尝试发送给当前运行的进程
-    if err := service.SendPermissionDecision(...); err == nil {
-        return nil
-    } else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-        // 如果没有活动进程，继续往下走，尝试从 resume 恢复
-    } else {
-        return err
-    }
-}
+MobileVC session list merges:
 
-// 尝试在当前运行的会话中热重启
-currentRunner := service.CurrentRunner()
-if currentRunner != nil {
-    if err := service.HotSwapApproveWithTemporaryElevation(...); err == nil || !errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-        return err
-    }
-}
+- File-store MobileVC sessions.
+- Native Claude sessions from `~/.claude/projects/<cwd>/*.jsonl`.
+- Native Codex sessions from `~/.codex/state_5.sqlite` and `~/.codex/history.jsonl`.
 
-// 检查是否可以从 resume 恢复
-if !service.CanHotSwapClaudeSession(req) || !service.HasResumeSession(req) {
-    return runtimepkg.ErrNoActiveRunner
-}
+CWD matching attempts normalized path variants to reduce mismatch across Windows, symlinks, and absolute/relative paths.
 
-// 从 resume 恢复会话
-return service.HotSwapApproveFromResume(ctx, sessionID, req, replayInput, emitAndPersist)
-```
+## Permission and Review
 
-**关键逻辑：**
-1. 如果 `inputMeta.Command` 为空或不是 Claude 命令，会先尝试 `SendPermissionDecision`
-2. 如果发送失败且错误是 `ErrNoActiveRunner`，会继续尝试从 resume 恢复
-3. 如果 `currentRunner` 不为 nil，优先在当前会话中热重启
-4. 如果 `currentRunner` 为 nil，检查是否可以从 resume 恢复
-5. 最后调用 `HotSwapApproveFromResume` 恢复会话
+- Backend-side permission rules can auto-apply decisions.
+- Temporary permission grants reduce duplicate prompts during Claude hot-swap/resume.
+- Review state and diffs are stored in session projection.
+- Flutter focuses on presenting pending state and sending explicit user decisions.
 
-#### 5. 会话恢复检查
+## Known Edge Cases
 
-**文件：** `internal/runtime/manager.go:650-665`
-
-```go
-// 检查是否可以热重启 Claude 会话
-func (s *Service) CanHotSwapClaudeSession(req ExecuteRequest) bool {
-    currentRunner, activeMeta, currentSessionID := s.manager.current()
-    if req.Mode != runner.ModePTY {
-        return false
-    }
-    if currentRunner != nil && currentSessionID != "" {
-        return runnerIsClaudeSession(currentRunner, req.Command, activeMeta.Command)
-    }
-    // 即使 currentRunner 为 nil，也检查历史元信息
-    return runnerIsClaudeSession(nil, req.Command, activeMeta.Command, s.manager.snapshot().ActiveMeta.Command)
-}
-
-// 检查是否有可恢复的会话
-func (s *Service) HasResumeSession(req ExecuteRequest) bool {
-    currentRunner, activeMeta, _ := s.manager.current()
-    resumeSessionID := resolveResumeSessionID(currentRunner, req.RuntimeMeta, activeMeta, s.manager.snapshot().ActiveMeta, protocol.RuntimeMeta{ResumeSessionID: s.manager.snapshot().ResumeSessionID})
-    return strings.TrimSpace(resumeSessionID) != ""
-}
-```
-
-**关键点：**
-- `CanHotSwapClaudeSession` 需要 `req.Command` 不为空，才能识别这是 Claude 会话
-- `HasResumeSession` 需要 `req.RuntimeMeta.ResumeSessionID` 不为空
-- 两个条件都满足时，才能成功恢复会话
-
-### 修复方案
-
-**修改文件：** `internal/runner/pty_runner.go:1784-1797`
-
-在构造 `promptMeta` 时，添加完整的运行时元信息：
-
-```go
-// 修改前（缺少 Command 等字段）
-promptMeta := protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID}
-
-// 修改后（包含完整信息）
-r.mu.Lock()
-command := r.pendingReq.Command
-cwd := r.currentDir
-engine := r.pendingReq.Engine
-permMode := r.permissionMode
-r.mu.Unlock()
-
-promptMeta := protocol.RuntimeMeta{
-    ResumeSessionID: envelope.SessionID,
-    Command:         command,
-    CWD:             cwd,
-    Engine:          engine,
-    PermissionMode:  permMode,
-}
-```
-
-### 效果
-
-修复后，即使 Claude 进程在权限批准时已经结束：
-1. 前端发送的权限决策包含完整的 `command` 字段
-2. 后端能正确识别这是 Claude 命令（`isClaudeCommandLike` 返回 true）
-3. `CanHotSwapClaudeSession` 和 `HasResumeSession` 检查通过
-4. 成功调用 `HotSwapApproveFromResume` 恢复会话
-5. Claude 会话继续执行，不会显示"空闲中"
-
-### 相关文件
-
-- `internal/runner/pty_runner.go` - PTY Runner 实现，解析 Claude 输出
-- `internal/ws/permission_decision.go` - 权限决策处理
-- `internal/runtime/manager.go` - 会话管理和恢复
-- `internal/protocol/event.go` - 事件和元信息定义
-- `mobile_vc/lib/features/session/session_controller.dart` - 前端会话控制器
-- `mobile_vc/lib/data/models/runtime_meta.dart` - 前端运行时元信息模型
+- Pending replay buffer is bounded; extremely high-frequency long tasks can still evict older replay events.
+- If a client has an old saved CWD, it must re-scan a current QR or manually update the connection path.
+- Generated Flutter Web artifacts under `cmd/server/web/` are build output, not source.

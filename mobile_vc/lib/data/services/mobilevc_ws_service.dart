@@ -122,7 +122,31 @@ class MobileVcWsService {
   }
 
   void send(Map<String, dynamic> payload) {
-    _channel?.sink.add(jsonEncode(payload));
+    final channel = _channel;
+    if (channel == null) {
+      return;
+    }
+    try {
+      channel.sink.add(jsonEncode(payload));
+    } catch (error, stackTrace) {
+      _channel = null;
+      _subscription = null;
+      _events.add(
+        ErrorEvent(
+          timestamp: DateTime.now(),
+          sessionId: (payload['sessionId'] ?? '').toString(),
+          runtimeMeta: const RuntimeMeta(),
+          raw: <String, dynamic>{
+            'type': 'error',
+            'code': 'ws_send_error',
+            'msg': 'WebSocket send failed: $error',
+            'stack': stackTrace.toString(),
+          },
+          code: 'ws_send_error',
+          message: 'WebSocket send failed: $error',
+        ),
+      );
+    }
   }
 
   Future<void> dispose() async {

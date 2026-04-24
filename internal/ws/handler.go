@@ -159,6 +159,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if !ok {
 					return
 				}
+				if err := conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+					logx.Error("ws", "set websocket write deadline failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+					select {
+					case writeErrCh <- err:
+					default:
+					}
+					return
+				}
 				if err := conn.WriteJSON(event); err != nil {
 					logx.Error("ws", "write websocket event failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 					select {
@@ -593,6 +601,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			emit(protocol.NewSessionCreatedEvent(selectedSessionID, toProtocolSummary(created)))
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "session selected"))
 			emitSessionList(req.CWD)
+		case "ping":
+			emit(map[string]any{
+				"type":      "pong",
+				"sessionId": selectedSessionID,
+				"ts":        time.Now().UTC().Format(time.RFC3339Nano),
+			})
 		case "session_list":
 			var req protocol.SessionListRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {
@@ -1259,7 +1273,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid permission decision request: %v", err), ""))
 				continue
 			}
-							logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=permission_decision decision=%q permissionRequestID=%q permissionMode=%q resumeSessionID=%q targetPath=%q contextID=%q fallbackCWD=%q fallbackCommandPreview=%q promptPreview=%q", connectionID, selectedSessionID, remoteAddr, permissionEvent.Decision, permissionEvent.PermissionRequestID, permissionEvent.PermissionMode, permissionEvent.ResumeSessionID, permissionEvent.TargetPath, permissionEvent.ContextID, permissionEvent.FallbackCWD, wsDebugPreview(permissionEvent.FallbackCommand), wsDebugPreview(permissionEvent.PromptMessage))
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=permission_decision decision=%q permissionRequestID=%q permissionMode=%q resumeSessionID=%q targetPath=%q contextID=%q fallbackCWD=%q fallbackCommandPreview=%q promptPreview=%q", connectionID, selectedSessionID, remoteAddr, permissionEvent.Decision, permissionEvent.PermissionRequestID, permissionEvent.PermissionMode, permissionEvent.ResumeSessionID, permissionEvent.TargetPath, permissionEvent.ContextID, permissionEvent.FallbackCWD, wsDebugPreview(permissionEvent.FallbackCommand), wsDebugPreview(permissionEvent.PromptMessage))
 			decision := strings.TrimSpace(strings.ToLower(permissionEvent.Decision))
 			if decision != "approve" && decision != "deny" {
 				logx.Warn("ws", "reject invalid permission decision: connectionID=%s sessionID=%s remoteAddr=%s decision=%q", connectionID, selectedSessionID, remoteAddr, permissionEvent.Decision)
