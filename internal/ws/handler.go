@@ -3258,7 +3258,6 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 	)
 }
 
-
 func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.SessionDeltaKnown, sessionRuntime *runtimeSession) protocol.SessionDeltaEvent {
 	projection := normalizeProjectionSnapshot(record.Projection)
 	allEntries := make([]protocol.HistoryLogEntry, 0, len(projection.LogEntries))
@@ -3491,7 +3490,6 @@ func shouldEmitTransientResumeThinkingEvent(service *runtimepkg.Service, req run
 	}
 	return true
 }
-
 
 func buildTaskSnapshotEvent(sessionID string, service *runtimepkg.Service, sessionRuntime *runtimeSession, reason string, syncing bool) *protocol.TaskSnapshotEvent {
 	sessionID = strings.TrimSpace(sessionID)
@@ -4491,7 +4489,7 @@ func mergeSessionSummaries(ctx context.Context, sessionStore store.Store, items 
 	}
 	nativeThreads, err := codexsync.ListNativeThreads(ctx, filterCWD)
 	if err != nil {
-		return nil, err
+		nativeThreads = nil
 	}
 	nativeClaude, err := claudesync.ListNativeSessions(ctx, filterCWD)
 	if err != nil {
