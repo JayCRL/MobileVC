@@ -74,14 +74,18 @@ mobilevc config          # 重新配置
 mobilevc stop            # 停止服务
 ```
 
-## 文档导航
+## Documentation
 
-- 项目总索引：[PROJECT_INDEX.md](PROJECT_INDEX.md)
-- 当前代码事实索引：[CONTEXT.md](CONTEXT.md)
-- 版本记录：[CHANGELOG.md](CHANGELOG.md)
-- 架构蓝图：[blueprint.md](blueprint.md)
-- 推送配置：[PUSH_INTEGRATION_CHECKLIST.md](PUSH_INTEGRATION_CHECKLIST.md)
-- 安装页/发布脚本：`mobile_vc/scripts/`
+The root directory now keeps only entry-point docs and release notes. Topic docs live under `docs/`:
+
+- Documentation index: [docs/README.md](docs/README.md)
+- Project index: [docs/project-index.md](docs/project-index.md)
+- Architecture blueprint: [docs/architecture/blueprint.md](docs/architecture/blueprint.md)
+- Current logic notes: [docs/architecture/current-logic.md](docs/architecture/current-logic.md)
+- Push setup checklist: [docs/guides/push-integration-checklist.md](docs/guides/push-integration-checklist.md)
+- Web embed path: [docs/guides/web-embed-path.md](docs/guides/web-embed-path.md)
+- Flutter Web blank screen: [docs/troubleshooting/flutter-web-blank-screen.md](docs/troubleshooting/flutter-web-blank-screen.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -519,7 +523,7 @@ sidecar/chattts/   # 可选 TTS 侧车
 - `mobile_vc/scripts/update_install_page_testflight.sh`：更新安装页上的 TestFlight 信息
 - `mobile_vc/scripts/render_install_page.py`：统一渲染安装页 `index.html`
 
-更完整的文档导航见 [PROJECT_INDEX.md](PROJECT_INDEX.md)。
+更完整的文档导航见 [docs/project-index.md](docs/project-index.md)。
 
 ---
 

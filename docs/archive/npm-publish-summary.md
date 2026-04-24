@@ -1,5 +1,9 @@
 # 📦 MobileVC 发布总结
 
+> Archive note: this document is kept for historical context. Prefer current docs from [docs/README.md](../README.md).
+
+
+
 ## ✅ 已发布的包
 
 ### 主包

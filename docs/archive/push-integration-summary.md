@@ -1,5 +1,9 @@
 # iOS APNs 推送集成完成总结
 
+> Archive note: this document is kept for historical context. Prefer current docs from [docs/README.md](../README.md).
+
+
+
 ## ✅ 已完成的工作
 
 ### 1. Go 后端完整实现
