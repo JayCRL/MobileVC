@@ -12,10 +12,11 @@ const path = require('path');
 const http = require('http');
 const os = require('os');
 
-const FLUTTER_DIR = path.join(__dirname, 'mobile_vc');
+const ROOT_DIR = path.resolve(__dirname, '..');
+const FLUTTER_DIR = path.join(ROOT_DIR, 'mobile_vc');
 const WEB_OUTPUT_TMP = path.join(os.tmpdir(), 'mobilevc-web-build');
-const WEB_TARGET = path.join(__dirname, 'cmd', 'server', 'web');
-const BACKEND_BINARY = path.join(__dirname, 'server');
+const WEB_TARGET = path.join(ROOT_DIR, 'cmd', 'server', 'web');
+const BACKEND_BINARY = path.join(ROOT_DIR, 'server');
 const DEFAULT_PORT = process.env.PORT || '8001';
 const AUTH_TOKEN = process.env.AUTH_TOKEN || 'test-token-12345';
 
