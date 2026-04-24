@@ -168,6 +168,8 @@ class SessionController extends ChangeNotifier {
   Timer? _connectionHealthTimer;
   DateTime? _lastServerEventAt;
   final Map<String, int> _sessionEventCursors = <String, int>{};
+  final Map<String, SessionDeltaKnown> _sessionDeltaKnown =
+      <String, SessionDeltaKnown>{};
   bool _fileListLoading = false;
   bool _fileReading = false;
   bool _canResumeCurrentSession = false;
@@ -1375,7 +1377,8 @@ class SessionController extends ChangeNotifier {
       requestSessionContext();
       requestPermissionRuleList();
       requestReviewState();
-      _requestSessionResume(reason: silently ? 'reconnect' : 'connect');
+      requestTaskSnapshot();
+      _requestSessionDelta(reason: silently ? 'reconnect' : 'connect');
       _sendCachedPushTokenIfPossible();
       _restorePendingNotificationSessionIfNeeded();
     } catch (error) {
@@ -1443,6 +1446,7 @@ class SessionController extends ChangeNotifier {
     _terminalExecutions.clear();
     _resetRuntimeProcessState();
     _sessionEventCursors.clear();
+    _sessionDeltaKnown.clear();
     _lastServerEventAt = null;
     _canResumeCurrentSession = false;
     _resumeRuntimeMeta = const RuntimeMeta();
@@ -1536,7 +1540,8 @@ class SessionController extends ChangeNotifier {
 
   void resumeConnectionIfNeeded() {
     if (_connected && !_connecting) {
-      _requestSessionResume(reason: 'foreground');
+      requestTaskSnapshot();
+      _requestSessionDelta(reason: 'foreground');
       return;
     }
     _scheduleReconnect(immediate: true);
@@ -1560,6 +1565,39 @@ class SessionController extends ChangeNotifier {
     });
     _syncDerivedState();
     notifyListeners();
+  }
+
+  void _requestSessionDelta({String reason = ''}) {
+    final sessionId = _selectedSessionId.trim();
+    if (!_connected || _connecting || sessionId.isEmpty) {
+      return;
+    }
+    _connectionStage = SessionConnectionStage.catchingUp;
+    _service.send({
+      'action': 'session_delta_get',
+      'sessionId': sessionId,
+      'cwd': effectiveCwd,
+      if (reason.trim().isNotEmpty) 'reason': reason.trim(),
+      'known': _currentSessionDeltaKnown(sessionId).toJson(),
+    });
+    _syncDerivedState();
+    notifyListeners();
+  }
+
+  SessionDeltaKnown _currentSessionDeltaKnown(String sessionId) {
+    final normalized = sessionId.trim();
+    final known = _sessionDeltaKnown[normalized];
+    if (known != null) {
+      return known;
+    }
+    return SessionDeltaKnown(
+      eventCursor: _sessionEventCursors[normalized] ?? 0,
+      logEntryCount: 0,
+      diffCount: 0,
+      terminalExecutionCount: 0,
+      terminalStdoutLength: _terminalStdout.length,
+      terminalStderrLength: _terminalStderr.length,
+    );
   }
 
   Future<void> restoreSessionFromNotification(String sessionId) async {
@@ -2054,6 +2092,17 @@ class SessionController extends ChangeNotifier {
 
   void requestReviewState() {
     _service.send({'action': 'review_state_get'});
+  }
+
+  void requestTaskSnapshot() {
+    if (!_connected || _connecting) {
+      return;
+    }
+    _service.send({
+      'action': 'task_snapshot_get',
+      'sessionId': _selectedSessionId.trim(),
+      'cwd': effectiveCwd,
+    });
   }
 
   Future<void> prepareAdbDebug() async {
@@ -3438,6 +3487,14 @@ class SessionController extends ChangeNotifier {
           ..clear()
           ..addAll(history.terminalExecutions);
         _restoreTerminalLogs(history.rawTerminalByStream);
+        _sessionDeltaKnown[resolvedHistorySummary.id] = SessionDeltaKnown(
+          eventCursor: _sessionEventCursors[resolvedHistorySummary.id] ?? 0,
+          logEntryCount: history.logEntries.length,
+          diffCount: history.diffs.length,
+          terminalExecutionCount: history.terminalExecutions.length,
+          terminalStdoutLength: _terminalStdout.length,
+          terminalStderrLength: _terminalStderr.length,
+        );
         _syncActiveTerminalExecution();
         _resetRuntimeProcessState();
         requestRuntimeProcessList();
@@ -3503,6 +3560,9 @@ class SessionController extends ChangeNotifier {
         final targetCwd = restoredCwd.isNotEmpty ? restoredCwd : _config.cwd;
         await switchWorkingDirectory(targetCwd);
         break;
+      case SessionDeltaEvent delta:
+        _handleSessionDelta(delta);
+        break;
       case SessionResumeResultEvent result:
         if (result.sessionId.trim().isNotEmpty) {
           final previous = _sessionEventCursors[result.sessionId.trim()] ?? 0;
@@ -3549,6 +3609,9 @@ class SessionController extends ChangeNotifier {
             state.message.isNotEmpty ? state.message : state.state;
         _syncDerivedState();
         _handleSessionStateTimeline(state);
+        break;
+      case TaskSnapshotEvent snapshot:
+        _handleTaskSnapshot(snapshot);
         break;
       case AgentStateEvent agent:
         _agentState = agent;
@@ -4239,6 +4302,89 @@ class SessionController extends ChangeNotifier {
 
     _activeReviewGroupId = '';
     _activeReviewDiffId = '';
+  }
+
+  void _handleSessionDelta(SessionDeltaEvent delta) {
+    if (delta.requiresFullSync) {
+      _requestSessionResume(reason: 'delta_base_mismatch');
+      return;
+    }
+    _connectionStage = SessionConnectionStage.ready;
+    _connectionMessage = 'Syncing latest progress...';
+    _autoSessionRequested = false;
+    _autoSessionCreating = false;
+    final resolvedSummary =
+        _resolvedHistorySummary(delta.summary, delta.appendLogEntries);
+    if (resolvedSummary.id.trim().isNotEmpty) {
+      _selectedSessionId = resolvedSummary.id;
+      _selectedSessionTitle = sessionDisplayTitle(resolvedSummary);
+      _upsertSession(resolvedSummary);
+    }
+    _sessionContext = delta.sessionContext;
+    _skillCatalogMeta = delta.skillCatalogMeta;
+    _memoryCatalogMeta = delta.memoryCatalogMeta;
+    _runtimePermissionMode = delta.resumeRuntimeMeta.permissionMode.trim();
+    _canResumeCurrentSession = delta.canResume;
+    _resumeRuntimeMeta = delta.resumeRuntimeMeta;
+    if (delta.latest.eventCursor > 0) {
+      final sessionId = delta.sessionId.trim();
+      final previous = _sessionEventCursors[sessionId] ?? 0;
+      if (delta.latest.eventCursor > previous) {
+        _sessionEventCursors[sessionId] = delta.latest.eventCursor;
+      }
+    }
+    if (delta.sessionId.trim().isNotEmpty) {
+      _sessionDeltaKnown[delta.sessionId.trim()] = delta.latest;
+    }
+    for (final entry in delta.appendLogEntries) {
+      _appendTimelineItem(
+        _timelineFromHistory(entry, delta.resumeRuntimeMeta),
+        emitNotifications: false,
+      );
+    }
+    for (final diff in delta.upsertDiffs) {
+      _mergeRecentDiff(diff);
+    }
+    if (delta.reviewGroups.isNotEmpty || delta.activeReviewGroup != null) {
+      _reviewGroups
+        ..clear()
+        ..addAll(delta.reviewGroups.map(_normalizeReviewGroup));
+      _activeReviewGroupId = delta.activeReviewGroup?.id ?? '';
+      _syncReviewGroupsFromRecentDiffs();
+      _syncActiveReviewSelection();
+    }
+    _currentStep = delta.currentStep ?? _currentStep;
+    _currentStepSummary = _summaryFromHistoryContext(_currentStep);
+    _latestError = delta.latestError ?? _latestError;
+    _mergeTerminalExecutions(delta.terminalExecutions);
+    _appendTerminalLogs(delta.rawTerminalByStream);
+    if (delta.currentDiff != null) {
+      final current = _normalizeHistoryDiff(delta.currentDiff!);
+      _mergeRecentDiff(current);
+      _currentDiff = FileDiffEvent(
+        timestamp: DateTime.now(),
+        sessionId: delta.sessionId,
+        runtimeMeta: delta.resumeRuntimeMeta.merge(
+          RuntimeMeta(
+            contextId: current.id,
+            contextTitle: current.title,
+            targetPath: current.path,
+            targetDiff: current.diff,
+            targetTitle: current.title,
+            executionId: current.executionId,
+            groupId: current.groupId,
+            groupTitle: current.groupTitle,
+          ),
+        ),
+        raw: const {},
+        path: current.path,
+        title: current.title,
+        diff: current.diff,
+        lang: current.lang,
+      );
+    }
+    _syncDerivedState();
+    notifyListeners();
   }
 
   void _restoreTimelineFromHistory(
@@ -6182,6 +6328,62 @@ class SessionController extends ChangeNotifier {
     _shouldSuppressNextActionNeededSignal = suppressNextSignal;
   }
 
+  void _handleTaskSnapshot(TaskSnapshotEvent snapshot) {
+    final sessionId = snapshot.sessionId.trim();
+    if (sessionId.isNotEmpty && sessionId != _selectedSessionId.trim()) {
+      return;
+    }
+    if (sessionId.isNotEmpty && snapshot.latestCursor > 0) {
+      final previous = _sessionEventCursors[sessionId] ?? 0;
+      if (snapshot.latestCursor > previous) {
+        _sessionEventCursors[sessionId] = snapshot.latestCursor;
+      }
+    }
+    final state = snapshot.state.trim().isEmpty ? 'IDLE' : snapshot.state.trim();
+    final meta = snapshot.runtimeMeta.merge(
+      RuntimeMeta(
+        command: snapshot.command,
+        cwd: snapshot.runtimeMeta.cwd.trim().isNotEmpty
+            ? snapshot.runtimeMeta.cwd
+            : effectiveCwd,
+      ),
+    );
+    _agentState = AgentStateEvent(
+      timestamp: snapshot.timestamp,
+      sessionId: snapshot.sessionId,
+      runtimeMeta: meta,
+      raw: snapshot.raw,
+      state: state,
+      message: snapshot.message,
+      awaitInput: snapshot.awaitInput,
+      command: snapshot.command,
+      step: snapshot.step,
+      tool: snapshot.tool,
+    );
+    if (snapshot.runtimeAlive) {
+      _connectionStage = snapshot.syncing
+          ? SessionConnectionStage.catchingUp
+          : SessionConnectionStage.ready;
+      _connectionMessage = snapshot.syncing
+          ? 'Syncing latest progress...'
+          : 'Session is live';
+    } else if (_connected && _connectionStage != SessionConnectionStage.catchingUp) {
+      _connectionStage = SessionConnectionStage.ready;
+      _connectionMessage = snapshot.message.isNotEmpty
+          ? snapshot.message
+          : 'Session ready';
+    }
+    _syncStepSummary(
+      message: snapshot.step.isNotEmpty ? snapshot.step : snapshot.message,
+      status: state,
+      tool: snapshot.tool,
+      command: snapshot.command,
+      targetPath: snapshot.runtimeMeta.targetPath,
+    );
+    _syncDerivedState();
+    notifyListeners();
+  }
+
   void _startConnectionHealthMonitor() {
     _connectionHealthTimer?.cancel();
     _connectionHealthTimer = Timer.periodic(_connectionHealthInterval, (_) {
@@ -6374,6 +6576,34 @@ class SessionController extends ChangeNotifier {
       message,
       timestamp: timestamp,
     );
+  }
+
+  void _mergeTerminalExecutions(List<TerminalExecution> incoming) {
+    for (final next in incoming) {
+      final normalizedId = next.executionId.trim();
+      if (normalizedId.isEmpty) {
+        continue;
+      }
+      final index = _terminalExecutions
+          .indexWhere((item) => item.executionId == normalizedId);
+      if (index == -1) {
+        _terminalExecutions.add(next);
+      } else {
+        _terminalExecutions[index] = next;
+      }
+    }
+    _syncActiveTerminalExecution();
+  }
+
+  void _appendTerminalLogs(Map<String, String> rawTerminalByStream) {
+    final stdout = rawTerminalByStream['stdout'] ?? '';
+    final stderr = rawTerminalByStream['stderr'] ?? '';
+    if (stdout.isNotEmpty) {
+      _terminalStdout += stdout;
+    }
+    if (stderr.isNotEmpty) {
+      _terminalStderr += stderr;
+    }
   }
 
   void _restoreTerminalLogs(Map<String, String> rawTerminalByStream) {

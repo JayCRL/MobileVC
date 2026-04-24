@@ -3,6 +3,14 @@ import 'package:flutter/foundation.dart';
 import 'runtime_meta.dart';
 import 'session_models.dart';
 
+DateTime? _tryReadTimestamp(dynamic value) {
+  if (value == null) {
+    return null;
+  }
+  final parsed = DateTime.tryParse(value.toString());
+  return parsed?.toLocal();
+}
+
 DateTime _readTimestamp(Map<String, dynamic> json) {
   final value = json['timestamp']?.toString();
   return DateTime.tryParse(value ?? '')?.toLocal() ?? DateTime.now();
@@ -557,6 +565,56 @@ class RuntimePhaseEvent extends AppEvent {
       );
 }
 
+class TaskSnapshotEvent extends AppEvent {
+  const TaskSnapshotEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.state = '',
+    this.message = '',
+    this.runtimeAlive = false,
+    this.awaitInput = false,
+    this.command = '',
+    this.step = '',
+    this.tool = '',
+    this.latestCursor = 0,
+    this.lastOutputAt,
+    this.syncing = false,
+  }) : super(type: 'task_snapshot');
+
+  final String state;
+  final String message;
+  final bool runtimeAlive;
+  final bool awaitInput;
+  final String command;
+  final String step;
+  final String tool;
+  final int latestCursor;
+  final DateTime? lastOutputAt;
+  final bool syncing;
+
+  factory TaskSnapshotEvent.fromJson(Map<String, dynamic> json) =>
+      TaskSnapshotEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        state: (json['state'] ?? '').toString(),
+        message: (json['msg'] ?? '').toString(),
+        runtimeAlive: json['runtimeAlive'] == true,
+        awaitInput: json['awaitInput'] == true,
+        command: (json['command'] ?? '').toString(),
+        step: (json['step'] ?? '').toString(),
+        tool: (json['tool'] ?? '').toString(),
+        latestCursor: (json['latestCursor'] as num?)?.toInt() ??
+            int.tryParse((json['latestCursor'] ?? '').toString()) ??
+            0,
+        lastOutputAt: _tryReadTimestamp(json['lastOutputAt']),
+        syncing: json['syncing'] == true,
+      );
+}
+
 class AgentStateEvent extends AppEvent {
   const AgentStateEvent({
     required super.timestamp,
@@ -955,6 +1013,162 @@ class SessionHistoryEvent extends AppEvent {
             ? RuntimeMeta.fromJson(
                 json['resumeRuntimeMeta'] as Map<String, dynamic>)
             : const RuntimeMeta(),
+      );
+}
+
+class SessionDeltaKnown {
+  const SessionDeltaKnown({
+    this.eventCursor = 0,
+    this.logEntryCount = 0,
+    this.diffCount = 0,
+    this.terminalExecutionCount = 0,
+    this.terminalStdoutLength = 0,
+    this.terminalStderrLength = 0,
+  });
+
+  final int eventCursor;
+  final int logEntryCount;
+  final int diffCount;
+  final int terminalExecutionCount;
+  final int terminalStdoutLength;
+  final int terminalStderrLength;
+
+  Map<String, Object> toJson() => {
+        'eventCursor': eventCursor,
+        'logEntryCount': logEntryCount,
+        'diffCount': diffCount,
+        'terminalExecutionCount': terminalExecutionCount,
+        'terminalStdoutLength': terminalStdoutLength,
+        'terminalStderrLength': terminalStderrLength,
+      };
+
+  factory SessionDeltaKnown.fromJson(Map<String, dynamic> json) =>
+      SessionDeltaKnown(
+        eventCursor: (json['eventCursor'] as num?)?.toInt() ??
+            int.tryParse((json['eventCursor'] ?? '').toString()) ??
+            0,
+        logEntryCount: (json['logEntryCount'] as num?)?.toInt() ?? 0,
+        diffCount: (json['diffCount'] as num?)?.toInt() ?? 0,
+        terminalExecutionCount:
+            (json['terminalExecutionCount'] as num?)?.toInt() ?? 0,
+        terminalStdoutLength:
+            (json['terminalStdoutLength'] as num?)?.toInt() ?? 0,
+        terminalStderrLength:
+            (json['terminalStderrLength'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class SessionDeltaEvent extends AppEvent {
+  const SessionDeltaEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    required this.summary,
+    this.base = const SessionDeltaKnown(),
+    this.latest = const SessionDeltaKnown(),
+    this.appendLogEntries = const [],
+    this.upsertDiffs = const [],
+    this.currentDiff,
+    this.reviewGroups = const [],
+    this.activeReviewGroup,
+    this.currentStep,
+    this.latestError,
+    this.sessionContext = const SessionContext(),
+    this.skillCatalogMeta = const CatalogMetadata(domain: 'skill'),
+    this.memoryCatalogMeta = const CatalogMetadata(domain: 'memory'),
+    this.rawTerminalByStream = const {},
+    this.terminalExecutions = const [],
+    this.canResume = false,
+    this.resumeRuntimeMeta = const RuntimeMeta(),
+    this.requiresFullSync = false,
+  }) : super(type: 'session_delta');
+
+  final SessionSummary summary;
+  final SessionDeltaKnown base;
+  final SessionDeltaKnown latest;
+  final List<HistoryLogEntry> appendLogEntries;
+  final List<HistoryContext> upsertDiffs;
+  final HistoryContext? currentDiff;
+  final List<ReviewGroup> reviewGroups;
+  final ReviewGroup? activeReviewGroup;
+  final HistoryContext? currentStep;
+  final HistoryContext? latestError;
+  final SessionContext sessionContext;
+  final CatalogMetadata skillCatalogMeta;
+  final CatalogMetadata memoryCatalogMeta;
+  final Map<String, String> rawTerminalByStream;
+  final List<TerminalExecution> terminalExecutions;
+  final bool canResume;
+  final RuntimeMeta resumeRuntimeMeta;
+  final bool requiresFullSync;
+
+  factory SessionDeltaEvent.fromJson(Map<String, dynamic> json) =>
+      SessionDeltaEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        summary: SessionSummary.fromJson(
+            (json['summary'] as Map<String, dynamic>?) ?? {}),
+        base: json['base'] is Map<String, dynamic>
+            ? SessionDeltaKnown.fromJson(json['base'] as Map<String, dynamic>)
+            : const SessionDeltaKnown(),
+        latest: json['latest'] is Map<String, dynamic>
+            ? SessionDeltaKnown.fromJson(json['latest'] as Map<String, dynamic>)
+            : const SessionDeltaKnown(),
+        appendLogEntries: ((json['appendLogEntries'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(HistoryLogEntry.fromJson)
+            .toList(),
+        upsertDiffs: ((json['upsertDiffs'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(HistoryContext.fromJson)
+            .toList(),
+        currentDiff: json['currentDiff'] is Map<String, dynamic>
+            ? HistoryContext.fromJson(
+                json['currentDiff'] as Map<String, dynamic>)
+            : null,
+        reviewGroups: ((json['reviewGroups'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ReviewGroup.fromJson)
+            .toList(),
+        activeReviewGroup: json['activeReviewGroup'] is Map<String, dynamic>
+            ? ReviewGroup.fromJson(
+                json['activeReviewGroup'] as Map<String, dynamic>)
+            : null,
+        currentStep: json['currentStep'] is Map<String, dynamic>
+            ? HistoryContext.fromJson(
+                json['currentStep'] as Map<String, dynamic>)
+            : null,
+        latestError: json['latestError'] is Map<String, dynamic>
+            ? HistoryContext.fromJson(
+                json['latestError'] as Map<String, dynamic>)
+            : null,
+        sessionContext: json['sessionContext'] is Map<String, dynamic>
+            ? SessionContext.fromJson(
+                json['sessionContext'] as Map<String, dynamic>)
+            : const SessionContext(),
+        skillCatalogMeta: json['skillCatalogMeta'] is Map<String, dynamic>
+            ? CatalogMetadata.fromJson(
+                json['skillCatalogMeta'] as Map<String, dynamic>)
+            : const CatalogMetadata(domain: 'skill'),
+        memoryCatalogMeta: json['memoryCatalogMeta'] is Map<String, dynamic>
+            ? CatalogMetadata.fromJson(
+                json['memoryCatalogMeta'] as Map<String, dynamic>)
+            : const CatalogMetadata(domain: 'memory'),
+        rawTerminalByStream: ((json['rawTerminalByStream'] as Map?) ?? const {})
+            .map((key, value) => MapEntry(key.toString(), value.toString())),
+        terminalExecutions: ((json['terminalExecutions'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(TerminalExecution.fromJson)
+            .toList(),
+        canResume: json['canResume'] == true,
+        resumeRuntimeMeta: json['resumeRuntimeMeta'] is Map<String, dynamic>
+            ? RuntimeMeta.fromJson(
+                json['resumeRuntimeMeta'] as Map<String, dynamic>)
+            : const RuntimeMeta(),
+        requiresFullSync: json['requiresFullSync'] == true,
       );
 }
 
