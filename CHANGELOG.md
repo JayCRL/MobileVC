@@ -15,7 +15,9 @@ This changelog tracks repository-facing npm package changes. Current package ver
 ### Added
 
 - Application-level Flutter -> server `ping` / server -> Flutter `pong` health checks.
-- Foreground/connect/reconnect `session_resume` requests with `lastSeenEventCursor` and `lastKnownRuntimeState`.
+- Foreground/connect/reconnect task snapshots plus `session_delta_get` requests with known event/history/diff/terminal cursors.
+- `task_snapshot` events that let Flutter keep the running task card continuous after background/foreground transitions.
+- Recovery now prioritizes `session_delta_get` incremental backend sync; the short pending buffer remains for blocking prompt/interaction replay only, and full `session_resume` is fallback.
 
 ## [0.1.18] - 2026-04-21
 

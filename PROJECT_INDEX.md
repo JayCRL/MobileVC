@@ -19,8 +19,8 @@ Scope: current repository state. If this document conflicts with code, treat cod
 - `SessionController` is the Flutter state hub: `mobile_vc/lib/features/session/session_controller.dart`.
 - Native Flutter uses a WebSocket ping interval; the app now also sends application-level `ping` events and expects server `pong` events.
 - If the Flutter client receives no server events for about 45 seconds, it treats the connection as stale, disconnects, and enters auto-reconnect.
-- On connect/reconnect/foreground recovery, Flutter sends `session_resume` for the selected session with `lastSeenEventCursor` and `lastKnownRuntimeState`.
-- The Go server handles `session_resume` in `internal/ws/handler.go`, replays pending events from `runtimeSession.pendingSince(...)`, emits session history/review state, and returns `session_resume_result`.
+- On connect/reconnect/foreground recovery, Flutter requests `task_snapshot_get` and `session_delta_get` for the selected session.
+- The Go server handles `task_snapshot_get` and heartbeat snapshots, then handles `session_delta_get` for incremental projection/history/terminal output updates. `session_resume` remains the full-sync fallback when delta cursors/counts no longer match.
 - Server WebSocket writes now use a write deadline to avoid long-lived stuck writes on broken mobile/network connections.
 
 ### Launcher, QR, and Workspace CWD
@@ -87,6 +87,6 @@ Scope: current repository state. If this document conflicts with code, treat cod
 
 ## Current Known Gaps
 
-- `runtimeSession` pending replay buffer is still limited (`defaultRuntimeSessionPendingLimit`), so extremely high-frequency long-task output can still evict old events.
+- Runtime continuity is now based on direct backend snapshot/projection sync, not log replay caching. Only blocking prompt/interaction events remain in the short pending buffer.
 - Some historical docs are version-specific release notes and may intentionally describe older npm versions.
 - Several large generated/build artifacts are present; avoid treating `cmd/server/web/main.dart.js` as source.

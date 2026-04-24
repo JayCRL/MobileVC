@@ -20,6 +20,7 @@ type runtimeSession struct {
 	releaseTimer  *time.Timer
 	pendingCursor int64
 	pendingEvents []any
+	lastOutputAt time.Time
 
 	sinkCh  chan any
 	sinkMu  sync.Mutex
@@ -59,6 +60,10 @@ func (s *runtimeSession) listenerCount() int {
 }
 
 func (s *runtimeSession) emit(event any) {
+	s.mu.Lock()
+	s.lastOutputAt = time.Now()
+	s.mu.Unlock()
+
 	s.mu.RLock()
 	listeners := make([]func(any), 0, len(s.listeners))
 	for _, listener := range s.listeners {
@@ -100,11 +105,19 @@ func (s *runtimeSession) appendPending(event any) any {
 	defer s.mu.Unlock()
 	s.pendingCursor++
 	event = protocol.ApplyEventCursor(event, s.pendingCursor)
+	s.lastOutputAt = time.Now()
 	s.pendingEvents = append(s.pendingEvents, event)
 	if len(s.pendingEvents) > defaultRuntimeSessionPendingLimit {
 		s.pendingEvents = append([]any(nil), s.pendingEvents[len(s.pendingEvents)-defaultRuntimeSessionPendingLimit:]...)
 	}
 	return event
+}
+
+
+func (s *runtimeSession) lastOutputTime() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastOutputAt
 }
 
 func (s *runtimeSession) latestCursor() int64 {

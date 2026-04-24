@@ -13,13 +13,12 @@ Flutter owns connection state in `SessionController`:
 - Bootstraps runtime/session/catalog state after connect.
 - Starts a periodic connection health monitor.
 - Tracks `eventCursor` per session.
-- Sends `session_resume` after connect/reconnect/foreground recovery when a session is selected.
+- Requests `task_snapshot_get` and `session_delta_get` after connect/reconnect/foreground recovery when a session is selected.
 
 Server support lives in `internal/ws/handler.go` and `internal/ws/runtime_sessions.go`:
 
-- `session_resume` reloads persisted session projection/history.
-- It emits recovery state when a runtime is still alive.
-- It replays pending runtime events after `lastSeenEventCursor`.
+- `session_delta_get` reloads the authoritative backend projection and returns only new history entries, updated diffs, terminal output suffixes, review/context metadata, and task snapshot state.
+- `session_resume` reloads persisted session projection/history as the full-sync fallback. Blocking prompt/interaction events may still be replayed after `lastSeenEventCursor`.
 - It returns `session_resume_result` with latest cursor, runtime state, and replay count.
 
 ## Heartbeat and Stale Socket Handling
@@ -33,7 +32,7 @@ Flutter:
 
 Go backend:
 
-- Handles `ping` by emitting a lightweight `pong` JSON event.
+- Handles `ping` by emitting a lightweight `pong` JSON event plus a `task_snapshot` for the current session.
 - Sets a write deadline before each WebSocket JSON write.
 
 ## Launcher QR and CWD
@@ -87,6 +86,6 @@ CWD matching attempts normalized path variants to reduce mismatch across Windows
 
 ## Known Edge Cases
 
-- Pending replay buffer is bounded; extremely high-frequency long tasks can still evict older replay events.
+- The short pending buffer is only for blocking prompt/interaction replay; progress continuity should come from direct projection/history sync and task snapshots.
 - If a client has an old saved CWD, it must re-scan a current QR or manually update the connection path.
 - Generated Flutter Web artifacts under `cmd/server/web/` are build output, not source.

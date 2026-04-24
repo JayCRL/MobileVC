@@ -16,6 +16,7 @@ const (
 	EventTypeSessionState             = "session_state"
 	EventTypeAgentState               = "agent_state"
 	EventTypeRuntimePhase             = "runtime_phase"
+	EventTypeTaskSnapshot             = "task_snapshot"
 	EventTypeFSListResult             = "fs_list_result"
 	EventTypeFSReadResult             = "fs_read_result"
 	EventTypeStepUpdate               = "step_update"
@@ -26,6 +27,7 @@ const (
 	EventTypeSessionCreated           = "session_created"
 	EventTypeSessionListResult        = "session_list_result"
 	EventTypeSessionHistory           = "session_history"
+	EventTypeSessionDelta             = "session_delta"
 	EventTypeReviewState              = "review_state"
 	EventTypeSkillCatalogResult       = "skill_catalog_result"
 	EventTypeMemoryListResult         = "memory_list_result"
@@ -395,6 +397,23 @@ type SessionResumeRequestEvent struct {
 	LastKnownRuntimeState string `json:"lastKnownRuntimeState,omitempty"`
 }
 
+type SessionDeltaKnown struct {
+	EventCursor            int64 `json:"eventCursor,omitempty"`
+	LogEntryCount          int   `json:"logEntryCount,omitempty"`
+	DiffCount              int   `json:"diffCount,omitempty"`
+	TerminalExecutionCount int   `json:"terminalExecutionCount,omitempty"`
+	TerminalStdoutLength   int   `json:"terminalStdoutLength,omitempty"`
+	TerminalStderrLength   int   `json:"terminalStderrLength,omitempty"`
+}
+
+type SessionDeltaRequestEvent struct {
+	ClientEvent
+	SessionID string            `json:"sessionId"`
+	CWD       string            `json:"cwd,omitempty"`
+	Reason    string            `json:"reason,omitempty"`
+	Known     SessionDeltaKnown `json:"known,omitempty"`
+}
+
 type SessionDeleteRequestEvent struct {
 	ClientEvent
 	SessionID string `json:"sessionId"`
@@ -515,6 +534,28 @@ type SessionHistoryEvent struct {
 	MemoryCatalogMeta   CatalogMetadata     `json:"memoryCatalogMeta,omitempty"`
 	CanResume           bool                `json:"canResume,omitempty"`
 	ResumeRuntimeMeta   RuntimeMeta         `json:"resumeRuntimeMeta,omitempty"`
+}
+
+type SessionDeltaEvent struct {
+	Event
+	Summary             SessionSummary      `json:"summary"`
+	Base                SessionDeltaKnown   `json:"base,omitempty"`
+	Latest              SessionDeltaKnown   `json:"latest,omitempty"`
+	AppendLogEntries    []HistoryLogEntry   `json:"appendLogEntries,omitempty"`
+	UpsertDiffs         []HistoryContext    `json:"upsertDiffs,omitempty"`
+	CurrentDiff         *HistoryContext     `json:"currentDiff,omitempty"`
+	ReviewGroups        []ReviewGroup       `json:"reviewGroups,omitempty"`
+	ActiveReviewGroup   *ReviewGroup        `json:"activeReviewGroup,omitempty"`
+	CurrentStep         *HistoryContext     `json:"currentStep,omitempty"`
+	LatestError         *HistoryContext     `json:"latestError,omitempty"`
+	RawTerminalByStream map[string]string   `json:"rawTerminalByStream,omitempty"`
+	TerminalExecutions  []TerminalExecution `json:"terminalExecutions,omitempty"`
+	SessionContext      SessionContext      `json:"sessionContext,omitempty"`
+	SkillCatalogMeta    CatalogMetadata     `json:"skillCatalogMeta,omitempty"`
+	MemoryCatalogMeta   CatalogMetadata     `json:"memoryCatalogMeta,omitempty"`
+	CanResume           bool                `json:"canResume,omitempty"`
+	ResumeRuntimeMeta   RuntimeMeta         `json:"resumeRuntimeMeta,omitempty"`
+	RequiresFullSync    bool                `json:"requiresFullSync,omitempty"`
 }
 
 type SessionResumeResultEvent struct {
@@ -722,6 +763,20 @@ type RuntimePhaseEvent struct {
 
 func (e RuntimePhaseEvent) GetRuntimeMeta() RuntimeMeta { return e.RuntimeMeta }
 
+type TaskSnapshotEvent struct {
+	Event
+	State        string    `json:"state"`
+	Message      string    `json:"msg,omitempty"`
+	RuntimeAlive bool      `json:"runtimeAlive"`
+	AwaitInput   bool      `json:"awaitInput,omitempty"`
+	Command      string    `json:"command,omitempty"`
+	Step         string    `json:"step,omitempty"`
+	Tool         string    `json:"tool,omitempty"`
+	LatestCursor int64     `json:"latestCursor,omitempty"`
+	LastOutputAt time.Time `json:"lastOutputAt,omitempty"`
+	Syncing      bool      `json:"syncing,omitempty"`
+}
+
 type StepUpdateEvent struct {
 	Event
 	Message string `json:"msg,omitempty"`
@@ -927,6 +982,23 @@ func NewRuntimePhaseEvent(sessionID, phase, kind, message string) RuntimePhaseEv
 	}
 }
 
+func NewTaskSnapshotEvent(sessionID, state, message string, runtimeAlive, awaitInput bool, command, step, tool string, latestCursor int64, lastOutputAt time.Time, meta RuntimeMeta) TaskSnapshotEvent {
+	event := TaskSnapshotEvent{
+		Event:        NewBaseEvent(EventTypeTaskSnapshot, sessionID),
+		State:        state,
+		Message:      message,
+		RuntimeAlive: runtimeAlive,
+		AwaitInput:   awaitInput,
+		Command:      command,
+		Step:         step,
+		Tool:         tool,
+		LatestCursor: latestCursor,
+		LastOutputAt: lastOutputAt,
+	}
+	event.RuntimeMeta = MergeRuntimeMeta(event.RuntimeMeta, meta)
+	return event
+}
+
 func NewStepUpdateEvent(sessionID, message, status, target, tool, command string) StepUpdateEvent {
 	return StepUpdateEvent{
 		Event:   NewBaseEvent(EventTypeStepUpdate, sessionID),
@@ -1000,6 +1072,30 @@ func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries
 		MemoryCatalogMeta:   memoryCatalogMeta,
 		CanResume:           canResume,
 		ResumeRuntimeMeta:   resumeRuntimeMeta,
+	}
+}
+
+func NewSessionDeltaEvent(sessionID string, summary SessionSummary, base, latest SessionDeltaKnown, appendLogEntries []HistoryLogEntry, upsertDiffs []HistoryContext, currentDiff *HistoryContext, reviewGroups []ReviewGroup, activeReviewGroup *ReviewGroup, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, terminalExecutions []TerminalExecution, sessionContext SessionContext, skillCatalogMeta, memoryCatalogMeta CatalogMetadata, canResume bool, resumeRuntimeMeta RuntimeMeta, requiresFullSync bool) SessionDeltaEvent {
+	return SessionDeltaEvent{
+		Event:               NewBaseEvent(EventTypeSessionDelta, sessionID),
+		Summary:             summary,
+		Base:                base,
+		Latest:              latest,
+		AppendLogEntries:    appendLogEntries,
+		UpsertDiffs:         upsertDiffs,
+		CurrentDiff:         currentDiff,
+		ReviewGroups:        reviewGroups,
+		ActiveReviewGroup:   activeReviewGroup,
+		CurrentStep:         currentStep,
+		LatestError:         latestError,
+		RawTerminalByStream: rawTerminalByStream,
+		TerminalExecutions:  terminalExecutions,
+		SessionContext:      sessionContext,
+		SkillCatalogMeta:    skillCatalogMeta,
+		MemoryCatalogMeta:   memoryCatalogMeta,
+		CanResume:           canResume,
+		ResumeRuntimeMeta:   resumeRuntimeMeta,
+		RequiresFullSync:    requiresFullSync,
 	}
 }
 
@@ -1323,6 +1419,9 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 	case RuntimePhaseEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
+	case TaskSnapshotEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
 	case StepUpdateEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
@@ -1342,6 +1441,9 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case SessionHistoryEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case SessionDeltaEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
 	case SessionResumeResultEvent:
@@ -1426,6 +1528,9 @@ func ApplyEventCursor(event any, cursor int64) any {
 	case RuntimePhaseEvent:
 		e.EventCursor = cursor
 		return e
+	case TaskSnapshotEvent:
+		e.EventCursor = cursor
+		return e
 	case StepUpdateEvent:
 		e.EventCursor = cursor
 		return e
@@ -1445,6 +1550,9 @@ func ApplyEventCursor(event any, cursor int64) any {
 		e.EventCursor = cursor
 		return e
 	case SessionHistoryEvent:
+		e.EventCursor = cursor
+		return e
+	case SessionDeltaEvent:
 		e.EventCursor = cursor
 		return e
 	case SessionResumeResultEvent:

@@ -10,13 +10,14 @@ This file tracks remaining improvement areas after the latest reconnect, QR CWD,
 - Flutter scan parsing now applies QR `cwd` to the connection config.
 - The launcher passes `RUNTIME_WORKSPACE_ROOT=process.cwd()` to the backend.
 - Claude empty/default model now resolves to `default` and launches as plain `claude`.
-- Flutter sends application-level WebSocket `ping` events and handles server `pong` events.
-- Flutter sends `session_resume` on connect/reconnect/foreground recovery when a session is selected.
+- Flutter sends application-level WebSocket `ping` events and handles server `pong` plus `task_snapshot` events.
+- Flutter requests `task_snapshot_get` and sends `session_delta_get` on connect/reconnect/foreground recovery when a session is selected.
 - Server WebSocket writes have a deadline to avoid stuck writer goroutines on broken mobile connections.
+- Runtime continuity now prioritizes `session_delta_get` incremental backend sync instead of using the pending buffer as a general log cache.
 
-## 1. Increase Replay Robustness
+## 1. Improve Direct Sync Robustness
 
-- `runtimeSession` still uses a bounded pending buffer. Consider increasing the limit or switching to a time/size-based ring buffer.
+- Keep `runtimeSession` pending buffer focused on blocking prompts/interactions. For progress continuity, improve direct projection/history sync and task snapshots instead of caching large logs in memory.
 - Consider persisting critical prompt/interaction events into session projection so replay survives process restarts.
 - Add lightweight event sequence diagnostics in debug logs to compare client cursor vs server cursor.
 

@@ -39,21 +39,21 @@ Important current behavior: if a backend is already running, QR generation still
 1. Opens WebSocket via `MobileVcWsService.connect(...)`.
 2. Marks connected state and bootstraps runtime/session data.
 3. Switches to configured CWD and requests runtime info, skill catalog, memory list, session list, ADB status, session context, permission rules, and review state.
-4. If a session is already selected, sends `session_resume` with:
+4. Requests `task_snapshot_get` to immediately calibrate whether the desktop task is still running.
+5. If a session is already selected, sends `session_delta_get` with:
    - `sessionId`
    - `cwd`
    - `reason`
-   - `lastSeenEventCursor`
-   - `lastKnownRuntimeState`
+   - known event/history/diff/terminal cursors
 
 `resumeConnectionIfNeeded()`:
 
-- If the socket is still considered connected, it sends `session_resume` directly.
+- If the socket is still considered connected, it sends `session_delta_get` directly.
 - Otherwise it schedules foreground reconnect.
 
 Health monitor:
 
-- Periodically sends `action=ping`.
+- Periodically sends `action=ping`; the server replies with `pong` and a `task_snapshot` when a session is selected.
 - Any incoming event refreshes the last-seen timestamp.
 - If no event arrives within the silence timeout, Flutter closes the stale channel and enters reconnect.
 
@@ -61,10 +61,12 @@ Health monitor:
 
 `internal/ws/handler.go` handles these relevant actions:
 
-- `ping`: replies with a lightweight `pong` event.
+- `ping`: replies with a lightweight `pong` event and emits `task_snapshot` for the current session.
 - `session_list`: returns MobileVC sessions merged with native Claude/Codex mirrors.
 - `session_load`: loads persisted projection/history and attaches the runtime session.
-- `session_resume`: loads projection, emits recovery state/history/review state, replays pending runtime events since the client cursor, and returns `session_resume_result`.
+- `task_snapshot_get`: emits a service-authoritative task snapshot for UI continuity.
+- `session_delta_get`: rebuilds projection/history from backend state and returns only new history entries, updated diffs, terminal output suffixes, review/context metadata, and task snapshot state.
+- `session_resume`: full-sync fallback that rebuilds projection/history, emits review state and task snapshot, optionally replays only blocking prompt/interaction events, and returns `session_resume_result`.
 - `exec`: starts a command/AI runner.
 - `input`: sends input to active PTY or resumes a managed Claude session.
 - `permission_decision` / `review_decision`: continue permission/review flows.
@@ -81,9 +83,9 @@ Server writer behavior:
 - Active listeners receive live events.
 - Prompt/interaction events get an event cursor and are buffered.
 - Detached sessions can accumulate resume notices.
-- `pendingSince(cursor)` is used by `session_resume` to replay missed events.
+- `pendingSince(cursor)` is intentionally limited to blocking prompt/interaction events. General progress continuity comes from `session_delta_get` plus `task_snapshot`, not cached log replay.
 
-Known limitation: the pending buffer is bounded; very long/high-frequency output can evict old pending events.
+Design choice: the pending buffer is not used as a general log cache. Flutter recovery should directly sync backend projection/history increments and task snapshot.
 
 ## 6. AI Command Defaults
 
@@ -113,6 +115,7 @@ The UI display model for empty Claude config is `Default`.
 - Updates agent/session/runtime state.
 - Restores history/projections.
 - Maintains timelines, diffs, terminal logs, review state, pending prompts, notifications, and derived activity banners.
+- Handles `task_snapshot` as the service-authoritative running/waiting/idle signal for the selected session.
 - Treats `ws_closed`, `ws_stream_error`, and `ws_send_error` as unexpected socket disconnects when auto reconnect is enabled.
 
 ## 9. Files Worth Updating Together

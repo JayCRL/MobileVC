@@ -21,6 +21,8 @@ class MobileVcMapper {
         return SessionStateEvent.fromJson(json);
       case 'runtime_phase':
         return RuntimePhaseEvent.fromJson(json);
+      case 'task_snapshot':
+        return TaskSnapshotEvent.fromJson(json);
       case 'agent_state':
         return AgentStateEvent.fromJson(json);
       case 'fs_list_result':
@@ -43,6 +45,8 @@ class MobileVcMapper {
         return SessionListResultEvent.fromJson(json);
       case 'session_history':
         return SessionHistoryEvent.fromJson(json);
+      case 'session_delta':
+        return SessionDeltaEvent.fromJson(json);
       case 'session_resume_result':
         return SessionResumeResultEvent.fromJson(json);
       case 'session_resume_notice':

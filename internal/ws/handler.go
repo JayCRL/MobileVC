@@ -607,6 +607,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"sessionId": selectedSessionID,
 				"ts":        time.Now().UTC().Format(time.RFC3339Nano),
 			})
+			if snapshot := buildTaskSnapshotEvent(selectedSessionID, runtimeSvc, runtimeSession, "heartbeat", false); snapshot != nil {
+				emit(*snapshot)
+			}
+		case "task_snapshot_get":
+			if snapshot := buildTaskSnapshotEvent(selectedSessionID, runtimeSvc, runtimeSession, "sync", true); snapshot != nil {
+				emit(*snapshot)
+			}
 		case "session_list":
 			var req protocol.SessionListRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {
@@ -672,6 +679,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			platform := strings.TrimSpace(req.Platform)
 			logx.Info("ws", "register push token: connectionID=%s sessionID=%s remoteAddr=%s requestedSessionID=%s resolvedSessionID=%s platform=%s token=%s", connectionID, selectedSessionID, remoteAddr, req.SessionID, targetSessionID, platform, token)
 			h.handleRegisterPushToken(ctx, targetSessionID, token, platform, emit)
+		case "session_delta_get":
+			var req protocol.SessionDeltaRequestEvent
+			if err := json.Unmarshal(payload, &req); err != nil {
+				logx.Warn("ws", "invalid session_delta_get request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid session_delta_get request: %v", err), ""))
+				continue
+			}
+			if h.SessionStore == nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, "session store unavailable", ""))
+				continue
+			}
+			targetSessionID := strings.TrimSpace(req.SessionID)
+			if targetSessionID == "" {
+				targetSessionID = strings.TrimSpace(selectedSessionID)
+			}
+			record, err := loadSessionRecord(ctx, h.SessionStore, targetSessionID)
+			if err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+				continue
+			}
+			switchRuntimeSession(record.Summary.ID)
+			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
+			projection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+			record.Projection = projection
+			record.Summary.Runtime = projection.Runtime
+			emit(newSessionDeltaEventFromRecord(record, req.Known, sessionRuntime))
+			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
+			if snapshot := buildTaskSnapshotEvent(record.Summary.ID, runtimeSvc, sessionRuntime, "delta", true); snapshot != nil {
+				emit(*snapshot)
+			}
 		case "session_resume":
 			var req protocol.SessionResumeRequestEvent
 			if err := json.Unmarshal(payload, &req); err != nil {
@@ -719,6 +756,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					emit(pendingEvent)
 				}
 				latestCursor = sessionRuntime.latestCursor()
+			}
+			if snapshot := buildTaskSnapshotEvent(record.Summary.ID, runtimeSvc, sessionRuntime, "resume", true); snapshot != nil {
+				emit(*snapshot)
 			}
 			emit(protocol.NewSessionResumeResultEvent(
 				record.Summary.ID,
@@ -3218,6 +3258,114 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 	)
 }
 
+
+func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.SessionDeltaKnown, sessionRuntime *runtimeSession) protocol.SessionDeltaEvent {
+	projection := normalizeProjectionSnapshot(record.Projection)
+	allEntries := make([]protocol.HistoryLogEntry, 0, len(projection.LogEntries))
+	for _, entry := range projection.LogEntries {
+		allEntries = append(allEntries, protocol.HistoryLogEntry{
+			Kind:        entry.Kind,
+			Message:     entry.Message,
+			Label:       entry.Label,
+			Timestamp:   entry.Timestamp,
+			Stream:      entry.Stream,
+			Text:        entry.Text,
+			ExecutionID: entry.ExecutionID,
+			Phase:       entry.Phase,
+			ExitCode:    entry.ExitCode,
+			Context:     toHistoryContext(entry.Context),
+		})
+	}
+	startLog := known.LogEntryCount
+	if startLog < 0 || startLog > len(allEntries) {
+		startLog = 0
+	}
+	appendEntries := append([]protocol.HistoryLogEntry(nil), allEntries[startLog:]...)
+
+	allDiffs := fromDiffContexts(projection.Diffs)
+	startDiff := known.DiffCount
+	if startDiff < 0 || startDiff > len(allDiffs) {
+		startDiff = 0
+	}
+	upsertDiffs := append([]protocol.HistoryContext(nil), allDiffs[startDiff:]...)
+	if startDiff == len(allDiffs) && (projection.CurrentDiff != nil || len(projection.ReviewGroups) > 0 || projection.ActiveReviewGroup != nil) {
+		upsertDiffs = append([]protocol.HistoryContext(nil), allDiffs...)
+	}
+
+	rawTerminalByStream := make(map[string]string)
+	stdout := projection.RawTerminalByStream["stdout"]
+	stderr := projection.RawTerminalByStream["stderr"]
+	stdoutStart := known.TerminalStdoutLength
+	if stdoutStart < 0 || stdoutStart > len(stdout) {
+		stdoutStart = 0
+	}
+	stderrStart := known.TerminalStderrLength
+	if stderrStart < 0 || stderrStart > len(stderr) {
+		stderrStart = 0
+	}
+	if stdoutStart < len(stdout) {
+		rawTerminalByStream["stdout"] = stdout[stdoutStart:]
+	}
+	if stderrStart < len(stderr) {
+		rawTerminalByStream["stderr"] = stderr[stderrStart:]
+	}
+
+	executions := make([]protocol.TerminalExecution, 0, len(projection.TerminalExecutions))
+	for _, item := range projection.TerminalExecutions {
+		executions = append(executions, protocol.TerminalExecution{
+			ExecutionID: item.ExecutionID,
+			Command:     item.Command,
+			CWD:         item.CWD,
+			StartedAt:   item.StartedAt,
+			FinishedAt:  item.FinishedAt,
+			ExitCode:    item.ExitCode,
+			Stdout:      item.Stdout,
+			Stderr:      item.Stderr,
+		})
+	}
+	resumeMeta := protocol.RuntimeMeta{
+		ResumeSessionID: projection.Runtime.ResumeSessionID,
+		Command:         projection.Runtime.Command,
+		Engine:          projection.Runtime.Engine,
+		CWD:             projection.Runtime.CWD,
+		PermissionMode:  projection.Runtime.PermissionMode,
+		ClaudeLifecycle: normalizeProjectionLifecycle(projection.Runtime.ClaudeLifecycle, projection.Runtime.ResumeSessionID),
+	}
+	latestCursor := int64(0)
+	if sessionRuntime != nil {
+		latestCursor = sessionRuntime.latestCursor()
+	}
+	latest := protocol.SessionDeltaKnown{
+		EventCursor:            latestCursor,
+		LogEntryCount:          len(allEntries),
+		DiffCount:              len(allDiffs),
+		TerminalExecutionCount: len(executions),
+		TerminalStdoutLength:   len(stdout),
+		TerminalStderrLength:   len(stderr),
+	}
+	return protocol.NewSessionDeltaEvent(
+		record.Summary.ID,
+		toProtocolSummary(record.Summary),
+		known,
+		latest,
+		appendEntries,
+		upsertDiffs,
+		fromDiffContext(projection.CurrentDiff),
+		fromReviewGroups(projection.ReviewGroups),
+		fromReviewGroup(projection.ActiveReviewGroup),
+		toHistoryContext(projection.CurrentStep),
+		toHistoryContext(projection.LatestError),
+		rawTerminalByStream,
+		executions,
+		toProtocolSessionContext(projection.SessionContext),
+		toProtocolCatalogMetadata(projection.SkillCatalogMeta),
+		toProtocolCatalogMetadata(projection.MemoryCatalogMeta),
+		strings.TrimSpace(resumeMeta.ResumeSessionID) != "",
+		resumeMeta,
+		(startLog == 0 && known.LogEntryCount > 0) || (stdoutStart == 0 && known.TerminalStdoutLength > 0) || (stderrStart == 0 && known.TerminalStderrLength > 0),
+	)
+}
+
 func restoredAgentStateEventFromRecord(record store.SessionRecord, hasActiveRunner bool) *protocol.AgentStateEvent {
 	projection := normalizeProjectionSnapshot(record.Projection)
 	runtimeMeta := protocol.MergeRuntimeMeta(projection.Controller.ActiveMeta, protocol.RuntimeMeta{
@@ -3342,6 +3490,69 @@ func shouldEmitTransientResumeThinkingEvent(service *runtimepkg.Service, req run
 		return false
 	}
 	return true
+}
+
+
+func buildTaskSnapshotEvent(sessionID string, service *runtimepkg.Service, sessionRuntime *runtimeSession, reason string, syncing bool) *protocol.TaskSnapshotEvent {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || service == nil {
+		return nil
+	}
+	snapshot := service.RuntimeSnapshot()
+	controller := service.ControllerSnapshot()
+	runtimeAlive := snapshot.Running && strings.TrimSpace(snapshot.ActiveSession) == sessionID
+	meta := protocol.MergeRuntimeMeta(controller.ActiveMeta, snapshot.ActiveMeta)
+	if strings.TrimSpace(meta.Command) == "" {
+		meta.Command = strings.TrimSpace(firstNonEmptyString(controller.CurrentCommand, snapshot.ActiveMeta.Command))
+	}
+	if strings.TrimSpace(meta.CWD) == "" {
+		meta.CWD = strings.TrimSpace(snapshot.ActiveMeta.CWD)
+	}
+	if strings.TrimSpace(meta.ResumeSessionID) == "" {
+		meta.ResumeSessionID = strings.TrimSpace(firstNonEmptyString(controller.ResumeSession, snapshot.ResumeSessionID))
+	}
+	if strings.TrimSpace(meta.ClaudeLifecycle) == "" {
+		meta.ClaudeLifecycle = strings.TrimSpace(firstNonEmptyString(controller.ClaudeLifecycle, snapshot.ClaudeLifecycle))
+	}
+	state := "IDLE"
+	message := "Task idle"
+	awaitInput := false
+	if runtimeAlive {
+		state = "RUNNING"
+		message = "Task running on desktop"
+		if snapshot.CanAcceptInteractiveInput || strings.EqualFold(strings.TrimSpace(snapshot.ClaudeLifecycle), "waiting_input") {
+			state = "WAIT_INPUT"
+			message = "Task waiting for input"
+			awaitInput = true
+		}
+	} else if strings.TrimSpace(meta.ResumeSessionID) != "" || strings.EqualFold(strings.TrimSpace(snapshot.ClaudeLifecycle), "resumable") {
+		state = "IDLE"
+		message = "Task resumable"
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		message = fmt.Sprintf("%s (%s)", message, reason)
+	}
+	latestCursor := int64(0)
+	lastOutputAt := time.Time{}
+	if sessionRuntime != nil {
+		latestCursor = sessionRuntime.latestCursor()
+		lastOutputAt = sessionRuntime.lastOutputTime()
+	}
+	event := protocol.NewTaskSnapshotEvent(
+		sessionID,
+		state,
+		message,
+		runtimeAlive,
+		awaitInput,
+		meta.Command,
+		controller.LastStep,
+		controller.LastTool,
+		latestCursor,
+		lastOutputAt,
+		meta,
+	)
+	event.Syncing = syncing
+	return &event
 }
 
 func prepareSessionEventForResume(sessionRuntime *runtimeSession, sessionID string, event any) any {
