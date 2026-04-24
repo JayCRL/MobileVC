@@ -6,8 +6,8 @@ Scope: current repository state. If this document conflicts with code, treat cod
 ## Start Here
 
 - `README.md`: user-facing overview, install/start commands, and current capabilities.
-- `PROJECT_INDEX.md`: repository map and current implementation status.
-- `blueprint.md`: architecture blueprint for Flutter -> Go WebSocket -> runtime/session flows.
+- `docs/project-index.md`: repository map and current implementation status.
+- `docs/architecture/blueprint.md`: architecture blueprint for Flutter -> Go WebSocket -> runtime/session flows.
 - `CHANGELOG.md`: npm-oriented change history. Current package version is `0.1.18`.
 - `CLAUDE.md`: repository collaboration/build/publish notes.
 

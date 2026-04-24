@@ -1,5 +1,9 @@
 # 📦 npm 发布总结 v0.1.12
 
+> Archive note: this document is kept for historical context. Prefer current docs from [docs/README.md](../README.md).
+
+
+
 ## ✅ 已发布
 
 ### 主包

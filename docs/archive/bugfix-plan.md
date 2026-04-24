@@ -1,5 +1,9 @@
 # Bugfix Plan Archive
 
+> Archive note: this document is kept for historical context. Prefer current docs from [docs/README.md](../README.md).
+
+
+
 Last updated: 2026-04-24
 
 This file is now an archive of previously investigated session-management issues. Current source-of-truth implementation notes live in:

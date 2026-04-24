@@ -1,5 +1,9 @@
 # Web 端迁移完成
 
+> Archive note: this document is kept for historical context. Prefer current docs from [docs/README.md](../README.md).
+
+
+
 ## ✅ 已完成
 
 ### 1. Flutter Web 构建
