@@ -205,10 +205,10 @@ class EventCard extends StatelessWidget {
           radius: 22,
         ),
       'markdown' => _EventCardStyle(
-          background: Colors.white,
+          background: scheme.surfaceContainerLowest,
           border: scheme.outlineVariant.withValues(alpha: 0.55),
           titleColor: scheme.onSurface,
-          bodyColor: const Color(0xFF0F172A),
+          bodyColor: scheme.onSurface,
           subtitleColor: scheme.onSurfaceVariant,
           iconBackground: scheme.primaryContainer,
           iconColor: scheme.primary,
@@ -227,7 +227,7 @@ class EventCard extends StatelessWidget {
           radius: 22,
         ),
       'terminal' || 'log' => _EventCardStyle(
-          background: Colors.white,
+          background: scheme.surfaceContainerLowest,
           border: scheme.outlineVariant.withValues(alpha: 0.7),
           titleColor: scheme.onSurface,
           bodyColor: scheme.onSurface,
@@ -249,7 +249,7 @@ class EventCard extends StatelessWidget {
           radius: 18,
         ),
       _ => _EventCardStyle(
-          background: Colors.white,
+          background: scheme.surfaceContainerLowest,
           border: scheme.outlineVariant.withValues(alpha: 0.7),
           titleColor: scheme.onSurface,
           bodyColor: scheme.onSurface,

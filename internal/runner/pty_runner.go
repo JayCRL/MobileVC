@@ -180,6 +180,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.mu.Lock()
 		r.writer = &claudeShellOnceWriter{runner: r}
 		r.mu.Unlock()
+		sendLazyReadyPrompt(sink, req)
 
 		select {
 		case <-ctx.Done():
@@ -215,7 +216,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		generation := r.nextRunGeneration()
 		r.mu.Lock()
 		r.runCtx = ctx
-		r.lazyStart = true
+		r.lazyStart = false
 		r.interactive = false
 		r.awaitingReadyPrompt = true
 		r.pendingReq = req
@@ -231,9 +232,57 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.mu.Unlock()
 		defer r.clearGeneration(generation)
 
+		startMeta := protocol.MergeRuntimeMeta(req.RuntimeMeta, protocol.RuntimeMeta{
+			Command:         req.Command,
+			Engine:          "claude",
+			CWD:             req.CWD,
+			PermissionMode:  req.PermissionMode,
+			ClaudeLifecycle: "starting",
+		})
+
+		sendEvent(sink, protocol.ApplyRuntimeMeta(
+			protocol.NewAgentStateEvent(req.SessionID, string(session.ControllerStateThinking), "检查环境...", false, req.Command, "", ""),
+			startMeta,
+		))
+
+		go func() {
+			err := r.runClaudeStream(ctx, req, cwd, sink)
+			r.mu.Lock()
+			r.processErr = err
+			r.mu.Unlock()
+			close(r.processDone)
+		}()
+
+		for {
+			r.mu.Lock()
+			ready := r.interactive && r.writer != nil && !r.closed
+			r.mu.Unlock()
+			if ready {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-r.processDone:
+				r.mu.Lock()
+				err := r.processErr
+				r.mu.Unlock()
+				return err
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+
 		r.mu.Lock()
-		r.writer = &claudeShellOnceWriter{runner: r}
+		r.awaitingReadyPrompt = false
 		r.mu.Unlock()
+
+		sendEvent(sink, protocol.ApplyRuntimeMeta(
+			protocol.NewPromptRequestEvent(req.SessionID, "等待输入", nil),
+			protocol.MergeRuntimeMeta(startMeta, protocol.RuntimeMeta{
+				ClaudeLifecycle: "waiting_input",
+				BlockingKind:    "ready",
+			}),
+		))
 
 		select {
 		case <-ctx.Done():
@@ -392,6 +441,39 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
 	}
 
 	return errors.New("no active pty session")
+}
+
+func sendLazyReadyPrompt(sink EventSink, req ExecRequest) {
+	engine := strings.TrimSpace(req.RuntimeMeta.Engine)
+	if engine == "" {
+		engine = lazyReadyEngine(req.Command)
+	}
+	meta := protocol.MergeRuntimeMeta(req.RuntimeMeta, protocol.RuntimeMeta{
+		Command:         req.Command,
+		Engine:          engine,
+		CWD:             req.CWD,
+		PermissionMode:  req.PermissionMode,
+		BlockingKind:    "ready",
+		ClaudeLifecycle: "waiting_input",
+	})
+	sendEvent(
+		sink,
+		protocol.ApplyRuntimeMeta(
+			protocol.NewPromptRequestEvent(req.SessionID, "等待输入", nil),
+			meta,
+		),
+	)
+}
+
+func lazyReadyEngine(command string) string {
+	switch {
+	case isCodexCommandName(command):
+		return "codex"
+	case isClaudeCommandName(command):
+		return "claude"
+	default:
+		return ""
+	}
 }
 
 func (r *PtyRunner) CanAcceptInteractiveInput() bool {
@@ -1274,8 +1356,9 @@ func extractToolTarget(toolName string, rawInput json.RawMessage) string {
 
 // extractPathFromCommand 从命令字符串中提取路径部分
 // 例如: "mkdir test_dir" -> "test_dir"
-//      "mkdir -p /path/to/dir" -> "/path/to/dir"
-//      "touch /path/to/file.txt" -> "/path/to/file.txt"
+//
+//	"mkdir -p /path/to/dir" -> "/path/to/dir"
+//	"touch /path/to/file.txt" -> "/path/to/file.txt"
 func extractPathFromCommand(command string) string {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -1992,6 +2075,8 @@ func (r *PtyRunner) shouldEmitResultText(text string) bool {
 	r.mu.Lock()
 	if r.lastAssistantTextKey == normalized {
 		r.lastAssistantTextKey = ""
+		r.mu.Unlock()
+		return false
 	}
 	defer func() {
 		r.lastAssistantTextKey = normalized

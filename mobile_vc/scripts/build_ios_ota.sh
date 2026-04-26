@@ -262,6 +262,8 @@ cat > "$EXPORT_OPTIONS_PLIST" <<EOF
   <string>release-testing</string>
   <key>signingStyle</key>
   <string>automatic</string>
+  <key>signingCertificate</key>
+  <string>Apple Distribution</string>
   <key>stripSwiftSymbols</key>
   <true/>
   <key>teamID</key>
@@ -272,7 +274,7 @@ cat > "$EXPORT_OPTIONS_PLIST" <<EOF
 </plist>
 EOF
 
-log "archiving signed app"
+log "archiving unsigned app"
 if ! xcodebuild \
   -workspace "$PROJECT_ROOT/ios/Runner.xcworkspace" \
   -scheme Runner \
@@ -280,10 +282,10 @@ if ! xcodebuild \
   -destination generic/platform=iOS \
   -archivePath "$ARCHIVE_PATH" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
-  DEVELOPMENT_TEAM="$TEAM_ID" \
-  CODE_SIGN_STYLE=Automatic \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY="" \
   FLUTTER_BUILD_NUMBER="$BUILD_NUMBER" \
-  -allowProvisioningUpdates \
   archive >"$ARCHIVE_LOG" 2>&1; then
   tail -n 200 "$ARCHIVE_LOG" >&2 || true
   die "archive failed, see $ARCHIVE_LOG"

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../features/session/session_controller.dart';
 import '../features/session/session_home_page.dart';
@@ -29,10 +30,13 @@ class MobileVcApp extends StatefulWidget {
 }
 
 class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
+  static const _darkModePrefsKey = 'mobilevc.dark_mode_enabled';
+
   late final SessionController _controller;
   late final AppNotificationCoordinator _notificationCoordinator;
   late final BackgroundKeepAliveService _backgroundKeepAliveService;
   late final PushNotificationService _pushNotificationService;
+  bool _darkModeEnabled = false;
 
   @override
   void initState() {
@@ -53,6 +57,7 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
 
   Future<void> _startApp() async {
     debugPrint('[startup] app init start');
+    unawaited(_loadThemeMode());
     try {
       debugPrint('[startup] controller init start');
       await _controller.initialize();
@@ -70,6 +75,36 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
     });
 
     debugPrint('[startup] app init end');
+  }
+
+  Future<void> _loadThemeMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool(_darkModePrefsKey) ?? false;
+      if (!mounted || enabled == _darkModeEnabled) {
+        return;
+      }
+      setState(() {
+        _darkModeEnabled = enabled;
+      });
+    } catch (error, stack) {
+      debugPrint('[startup] theme mode load failed: $error');
+      debugPrintStack(stackTrace: stack, label: '[startup] theme mode stack');
+    }
+  }
+
+  Future<void> _toggleThemeMode() async {
+    final next = !_darkModeEnabled;
+    setState(() {
+      _darkModeEnabled = next;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_darkModePrefsKey, next);
+    } catch (error, stack) {
+      debugPrint('[settings] theme mode save failed: $error');
+      debugPrintStack(stackTrace: stack, label: '[settings] theme mode stack');
+    }
   }
 
   Future<void> _initializeNotifications() async {
@@ -193,7 +228,13 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
           title: 'MobileVC',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.light(),
-          home: SessionHomePage(controller: _controller),
+          darkTheme: AppTheme.dark(),
+          themeMode: _darkModeEnabled ? ThemeMode.dark : ThemeMode.light,
+          home: SessionHomePage(
+            controller: _controller,
+            darkModeEnabled: _darkModeEnabled,
+            onToggleTheme: _toggleThemeMode,
+          ),
         );
       },
     );

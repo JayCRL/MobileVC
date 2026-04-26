@@ -9,6 +9,7 @@ const (
 	EventTypeLog                      = "log"
 	EventTypeProgress                 = "progress"
 	EventTypeError                    = "error"
+	EventTypeClientActionAck          = "client_action_ack"
 	EventTypePromptRequest            = "prompt_request"
 	EventTypeInteractionRequest       = "interaction_request"
 	EventTypeSessionResumeResult      = "session_resume_result"
@@ -79,7 +80,9 @@ type Event struct {
 }
 
 type ClientEvent struct {
-	Action string `json:"action"`
+	Action         string `json:"action"`
+	SessionID      string `json:"sessionId,omitempty"`
+	ClientActionID string `json:"clientActionId,omitempty"`
 }
 
 type ExecRequestEvent struct {
@@ -95,6 +98,7 @@ type InputRequestEvent struct {
 	ClientEvent
 	Data           string `json:"data"`
 	PermissionMode string `json:"permissionMode,omitempty"`
+	RuntimeMeta
 }
 
 type ReviewDecisionRequestEvent struct {
@@ -533,6 +537,7 @@ type SessionHistoryEvent struct {
 	SkillCatalogMeta    CatalogMetadata     `json:"skillCatalogMeta,omitempty"`
 	MemoryCatalogMeta   CatalogMetadata     `json:"memoryCatalogMeta,omitempty"`
 	CanResume           bool                `json:"canResume,omitempty"`
+	RuntimeAlive        bool                `json:"runtimeAlive,omitempty"`
 	ResumeRuntimeMeta   RuntimeMeta         `json:"resumeRuntimeMeta,omitempty"`
 }
 
@@ -554,6 +559,7 @@ type SessionDeltaEvent struct {
 	SkillCatalogMeta    CatalogMetadata     `json:"skillCatalogMeta,omitempty"`
 	MemoryCatalogMeta   CatalogMetadata     `json:"memoryCatalogMeta,omitempty"`
 	CanResume           bool                `json:"canResume,omitempty"`
+	RuntimeAlive        bool                `json:"runtimeAlive,omitempty"`
 	ResumeRuntimeMeta   RuntimeMeta         `json:"resumeRuntimeMeta,omitempty"`
 	RequiresFullSync    bool                `json:"requiresFullSync,omitempty"`
 }
@@ -700,6 +706,14 @@ type ErrorEvent struct {
 	TargetPath string `json:"targetPath,omitempty"`
 	Step       string `json:"step,omitempty"`
 	Command    string `json:"command,omitempty"`
+}
+
+type ClientActionAckEvent struct {
+	Event
+	Action         string `json:"action,omitempty"`
+	ClientActionID string `json:"clientActionId,omitempty"`
+	Status         string `json:"status,omitempty"`
+	Duplicate      bool   `json:"duplicate,omitempty"`
 }
 
 type PromptRequestEvent struct {
@@ -935,6 +949,16 @@ func NewErrorEvent(sessionID, message, stack string) ErrorEvent {
 	}
 }
 
+func NewClientActionAckEvent(sessionID, action, clientActionID, status string, duplicate bool) ClientActionAckEvent {
+	return ClientActionAckEvent{
+		Event:          NewBaseEvent(EventTypeClientActionAck, sessionID),
+		Action:         action,
+		ClientActionID: clientActionID,
+		Status:         status,
+		Duplicate:      duplicate,
+	}
+}
+
 func NewPromptRequestEvent(sessionID, message string, options []string) PromptRequestEvent {
 	return PromptRequestEvent{
 		Event:   NewBaseEvent(EventTypePromptRequest, sessionID),
@@ -1054,7 +1078,7 @@ func NewSessionListResultEvent(sessionID string, items []SessionSummary) Session
 	}
 }
 
-func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries []HistoryLogEntry, diffs []HistoryContext, currentDiff *HistoryContext, reviewGroups []ReviewGroup, activeReviewGroup *ReviewGroup, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, terminalExecutions []TerminalExecution, sessionContext SessionContext, skillCatalogMeta, memoryCatalogMeta CatalogMetadata, canResume bool, resumeRuntimeMeta RuntimeMeta) SessionHistoryEvent {
+func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries []HistoryLogEntry, diffs []HistoryContext, currentDiff *HistoryContext, reviewGroups []ReviewGroup, activeReviewGroup *ReviewGroup, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, terminalExecutions []TerminalExecution, sessionContext SessionContext, skillCatalogMeta, memoryCatalogMeta CatalogMetadata, canResume, runtimeAlive bool, resumeRuntimeMeta RuntimeMeta) SessionHistoryEvent {
 	return SessionHistoryEvent{
 		Event:               NewBaseEvent(EventTypeSessionHistory, sessionID),
 		Summary:             summary,
@@ -1071,11 +1095,12 @@ func NewSessionHistoryEvent(sessionID string, summary SessionSummary, logEntries
 		SkillCatalogMeta:    skillCatalogMeta,
 		MemoryCatalogMeta:   memoryCatalogMeta,
 		CanResume:           canResume,
+		RuntimeAlive:        runtimeAlive,
 		ResumeRuntimeMeta:   resumeRuntimeMeta,
 	}
 }
 
-func NewSessionDeltaEvent(sessionID string, summary SessionSummary, base, latest SessionDeltaKnown, appendLogEntries []HistoryLogEntry, upsertDiffs []HistoryContext, currentDiff *HistoryContext, reviewGroups []ReviewGroup, activeReviewGroup *ReviewGroup, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, terminalExecutions []TerminalExecution, sessionContext SessionContext, skillCatalogMeta, memoryCatalogMeta CatalogMetadata, canResume bool, resumeRuntimeMeta RuntimeMeta, requiresFullSync bool) SessionDeltaEvent {
+func NewSessionDeltaEvent(sessionID string, summary SessionSummary, base, latest SessionDeltaKnown, appendLogEntries []HistoryLogEntry, upsertDiffs []HistoryContext, currentDiff *HistoryContext, reviewGroups []ReviewGroup, activeReviewGroup *ReviewGroup, currentStep, latestError *HistoryContext, rawTerminalByStream map[string]string, terminalExecutions []TerminalExecution, sessionContext SessionContext, skillCatalogMeta, memoryCatalogMeta CatalogMetadata, canResume, runtimeAlive bool, resumeRuntimeMeta RuntimeMeta, requiresFullSync bool) SessionDeltaEvent {
 	return SessionDeltaEvent{
 		Event:               NewBaseEvent(EventTypeSessionDelta, sessionID),
 		Summary:             summary,
@@ -1094,6 +1119,7 @@ func NewSessionDeltaEvent(sessionID string, summary SessionSummary, base, latest
 		SkillCatalogMeta:    skillCatalogMeta,
 		MemoryCatalogMeta:   memoryCatalogMeta,
 		CanResume:           canResume,
+		RuntimeAlive:        runtimeAlive,
 		ResumeRuntimeMeta:   resumeRuntimeMeta,
 		RequiresFullSync:    requiresFullSync,
 	}

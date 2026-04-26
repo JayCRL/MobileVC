@@ -60,6 +60,16 @@ type rolloutEventPayload struct {
 	Message string `json:"message"`
 }
 
+type rolloutResponseItemPayload struct {
+	Type    string                   `json:"type"`
+	Role    string                   `json:"role"`
+	Content []rolloutResponseContent `json:"content"`
+}
+
+type rolloutResponseContent struct {
+	Text string `json:"text"`
+}
+
 type nativeRolloutSnapshot struct {
 	LogEntries      []store.SnapshotLogEntry
 	ControllerState session.ControllerState
@@ -357,51 +367,55 @@ func loadRollout(path string) (nativeRolloutSnapshot, error) {
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 2*1024*1024)
 	taskOpen := false
+	seenMessages := map[string]struct{}{}
 	for scanner.Scan() {
 		var line rolloutEnvelope
 		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
 			continue
 		}
-		if strings.TrimSpace(line.Type) != "event_msg" {
-			continue
-		}
-		var payload rolloutEventPayload
-		if err := json.Unmarshal(line.Payload, &payload); err != nil {
-			continue
-		}
 		timestamp := normalizeRolloutTimestamp(line.Timestamp)
-		switch strings.TrimSpace(payload.Type) {
-		case "task_started":
-			taskOpen = true
-			snapshot.ControllerState = session.ControllerStateThinking
-			snapshot.ClaudeLifecycle = "active"
-		case "task_complete", "turn_aborted":
-			taskOpen = false
-			snapshot.ControllerState = session.ControllerStateIdle
-			snapshot.ClaudeLifecycle = "resumable"
-		case "user_message":
-			message := strings.TrimSpace(payload.Message)
-			if !isMeaningfulPromptText(message) {
+		switch strings.TrimSpace(line.Type) {
+		case "event_msg":
+			var payload rolloutEventPayload
+			if err := json.Unmarshal(line.Payload, &payload); err != nil {
 				continue
 			}
-			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{
-				Kind:      "user",
-				Label:     "历史输入",
-				Message:   message,
-				Text:      message,
-				Timestamp: timestamp,
-			})
-		case "agent_message":
-			message := strings.TrimSpace(payload.Message)
-			if message == "" {
+			switch strings.TrimSpace(payload.Type) {
+			case "task_started":
+				taskOpen = true
+				snapshot.ControllerState = session.ControllerStateThinking
+				snapshot.ClaudeLifecycle = "active"
+			case "task_complete", "turn_aborted":
+				taskOpen = false
+				snapshot.ControllerState = session.ControllerStateIdle
+				snapshot.ClaudeLifecycle = "resumable"
+			case "user_message":
+				message := strings.TrimSpace(payload.Message)
+				if !isMeaningfulPromptText(message) {
+					continue
+				}
+				appendNativeUserMessage(&snapshot, seenMessages, message, timestamp)
+			case "agent_message":
+				appendNativeAssistantMessage(&snapshot, seenMessages, payload.Message, timestamp)
+			}
+		case "response_item":
+			var payload rolloutResponseItemPayload
+			if err := json.Unmarshal(line.Payload, &payload); err != nil {
 				continue
 			}
-			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{
-				Kind:      "markdown",
-				Message:   message,
-				Text:      message,
-				Timestamp: timestamp,
-			})
+			if strings.TrimSpace(payload.Type) != "message" {
+				continue
+			}
+			message := strings.TrimSpace(responseItemText(payload.Content))
+			switch strings.TrimSpace(payload.Role) {
+			case "user":
+				if !isMeaningfulPromptText(message) {
+					continue
+				}
+				appendNativeUserMessage(&snapshot, seenMessages, message, timestamp)
+			case "assistant":
+				appendNativeAssistantMessage(&snapshot, seenMessages, message, timestamp)
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -412,6 +426,58 @@ func loadRollout(path string) (nativeRolloutSnapshot, error) {
 		snapshot.ClaudeLifecycle = "active"
 	}
 	return snapshot, nil
+}
+
+func appendNativeUserMessage(snapshot *nativeRolloutSnapshot, seen map[string]struct{}, message, timestamp string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return
+	}
+	key := nativeMessageKey("user", message, timestamp)
+	if _, ok := seen[key]; ok {
+		return
+	}
+	seen[key] = struct{}{}
+	snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{
+		Kind:      "user",
+		Label:     "历史输入",
+		Message:   message,
+		Text:      message,
+		Timestamp: timestamp,
+	})
+}
+
+func appendNativeAssistantMessage(snapshot *nativeRolloutSnapshot, seen map[string]struct{}, message, timestamp string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return
+	}
+	key := nativeMessageKey("assistant", message, timestamp)
+	if _, ok := seen[key]; ok {
+		return
+	}
+	seen[key] = struct{}{}
+	snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{
+		Kind:      "markdown",
+		Message:   message,
+		Text:      message,
+		Timestamp: timestamp,
+	})
+}
+
+func nativeMessageKey(role, message, timestamp string) string {
+	return strings.Join([]string{strings.TrimSpace(role), strings.TrimSpace(message), strings.TrimSpace(timestamp)}, "\x1f")
+}
+
+func responseItemText(items []rolloutResponseContent) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		text := strings.TrimSpace(item.Text)
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func normalizeRolloutTimestamp(value string) string {

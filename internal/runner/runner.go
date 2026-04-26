@@ -354,7 +354,7 @@ func extractCodexInitialPrompt(command string) string {
 	var remaining []string
 	for i := start; i < len(fields); i++ {
 		switch fields[i] {
-		case "--resume", "-m", "--model":
+		case "--resume", "-m", "--model", "-c", "--config":
 			i++
 			continue
 		}

@@ -230,6 +230,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	emit := func(event any) {
 		runtimepkg.Enqueue(ctx, writeCh, event)
 	}
+	ackClientAction := func(sessionID, action string, client protocol.ClientEvent) bool {
+		clientActionID := strings.TrimSpace(client.ClientActionID)
+		if clientActionID == "" {
+			return true
+		}
+		targetSessionID := strings.TrimSpace(sessionID)
+		if targetSessionID == "" {
+			targetSessionID = strings.TrimSpace(selectedSessionID)
+		}
+		sessionRuntime := h.runtimeSessions.Ensure(targetSessionID)
+		accepted := true
+		if sessionRuntime != nil {
+			accepted = sessionRuntime.markClientAction(clientActionID)
+		}
+		emit(protocol.NewClientActionAckEvent(targetSessionID, action, clientActionID, "accepted", !accepted))
+		return accepted
+	}
 
 	adbRTC := newADBWebRTCBridge(func() string {
 		return selectedSessionID
@@ -493,6 +510,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				snapshot, ok := applyEventToProjection(buildProjectionSnapshotForService(runtimeSessionID, sessionRuntimeSvc), event)
 				if ok {
 					persistProjectionFor(runtimeSessionID, snapshot)
+					if sessionRuntime != nil {
+						sessionRuntime.markPersisted(eventCursorFromEvent(event))
+					}
 				}
 			}
 		}
@@ -521,7 +541,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					logx.Warn("ws", "initial session history restore skipped: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
 				} else {
-					emit(newSessionHistoryEventFromRecord(record))
+					emit(newSessionHistoryEventFromRecord(record, sessionRecordRuntimeAlive(record, runtimeSvc)))
 					emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
 				}
 			}
@@ -651,16 +671,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
-			augmentedEntries := append([]store.SnapshotLogEntry(nil), record.Projection.LogEntries...)
+			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
 			switchRuntimeSession(record.Summary.ID)
-			record.Projection = buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
-			if preferAugmentedLogEntries(augmentedEntries, record.Projection.LogEntries) {
-				record.Projection.LogEntries = augmentedEntries
+			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+			if codexsync.IsMirrorSessionID(record.Summary.ID) {
+				record.Projection = mergeProjectionWithOptionalRuntime(augmentedProjection, runtimeProjection, runtimeSvc, record.Summary.ID)
+			} else {
+				record.Projection = runtimeProjection
+				if preferAugmentedLogEntries(augmentedProjection.LogEntries, record.Projection.LogEntries) {
+					record.Projection.LogEntries = augmentedProjection.LogEntries
+				}
 			}
 			record.Summary.Runtime = record.Projection.Runtime
-			emit(newSessionHistoryEventFromRecord(record))
+			loadRuntimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
+			if restored := restoredAgentStateEventFromRecord(record, loadRuntimeAlive); restored != nil {
+				emit(*restored)
+			}
+			emit(newSessionHistoryEventFromRecord(record, loadRuntimeAlive))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
-			if restored := restoredAgentStateEventFromRecord(record, runtimeSvc.IsRunning()); restored != nil {
+			if restored := restoredAgentStateEventFromRecord(record, loadRuntimeAlive); restored != nil && !loadRuntimeAlive {
 				emit(*restored)
 			}
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
@@ -701,10 +730,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			switchRuntimeSession(record.Summary.ID)
 			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
-			projection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
-			record.Projection = projection
-			record.Summary.Runtime = projection.Runtime
-			emit(newSessionDeltaEventFromRecord(record, req.Known, sessionRuntime))
+			freshProjection := normalizeProjectionSnapshot(record.Projection)
+			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+			if codexsync.IsMirrorSessionID(record.Summary.ID) {
+				record.Projection = mergeProjectionWithOptionalRuntime(freshProjection, runtimeProjection, runtimeSvc, record.Summary.ID)
+			} else {
+				record.Projection = runtimeProjection
+			}
+			record.Summary.Runtime = record.Projection.Runtime
+			runtimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
+			emit(newSessionDeltaEventFromRecord(record, req.Known, sessionRuntime, runtimeAlive))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
 			if snapshot := buildTaskSnapshotEvent(record.Summary.ID, runtimeSvc, sessionRuntime, "delta", true); snapshot != nil {
 				emit(*snapshot)
@@ -728,20 +763,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
-			augmentedEntries := append([]store.SnapshotLogEntry(nil), record.Projection.LogEntries...)
+			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
 			switchRuntimeSession(record.Summary.ID)
 			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
-			projection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
-			if preferAugmentedLogEntries(augmentedEntries, projection.LogEntries) {
-				projection.LogEntries = augmentedEntries
+			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+			projection := runtimeProjection
+			if codexsync.IsMirrorSessionID(record.Summary.ID) {
+				projection = mergeProjectionWithOptionalRuntime(augmentedProjection, runtimeProjection, runtimeSvc, record.Summary.ID)
+			} else if preferAugmentedLogEntries(augmentedProjection.LogEntries, projection.LogEntries) {
+				projection.LogEntries = augmentedProjection.LogEntries
 			}
 			record.Projection = projection
 			record.Summary.Runtime = projection.Runtime
-			runtimeAlive := runtimeSvc != nil && runtimeSvc.IsRunning()
+			runtimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
 			if runtimeAlive {
 				emit(buildResumeRecoveryStateEvent(record.Summary.ID, runtimeSvc, projection, req.LastKnownRuntimeState))
 			}
-			emit(newSessionHistoryEventFromRecord(record))
+			emit(newSessionHistoryEventFromRecord(record, runtimeAlive))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
 			restoredState := ""
 			if restored := restoredAgentStateEventFromRecord(record, runtimeAlive); restored != nil {
@@ -751,7 +789,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			replayedCount := 0
 			latestCursor := int64(0)
 			if sessionRuntime != nil {
-				for _, pendingEvent := range sessionRuntime.pendingSince(req.LastSeenEventCursor) {
+				effectiveCursor := req.LastSeenEventCursor
+				if persisted := sessionRuntime.persistedCursor.Load(); persisted > effectiveCursor {
+					effectiveCursor = persisted
+				}
+				for _, pendingEvent := range sessionRuntime.pendingSince(effectiveCursor) {
 					replayedCount++
 					emit(pendingEvent)
 				}
@@ -821,9 +863,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			record.Projection = buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
 			record.Summary.Runtime = record.Projection.Runtime
-			emit(newSessionHistoryEventFromRecord(record))
+			emit(newSessionHistoryEventFromRecord(record, sessionRecordRuntimeAlive(record, runtimeSvc)))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
-			if restored := restoredAgentStateEventFromRecord(record, runtimeSvc.IsRunning()); restored != nil {
+			if restored := restoredAgentStateEventFromRecord(record, sessionRecordRuntimeAlive(record, runtimeSvc)); restored != nil {
 				emit(*restored)
 			}
 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
@@ -1081,11 +1123,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, "cmd is required", ""))
 				continue
 			}
-			if strings.TrimSpace(selectedSessionID) == "" || selectedSessionID == connectionID {
+			sessionID := strings.TrimSpace(firstNonEmptyString(reqEvent.SessionID, selectedSessionID))
+			if sessionID == "" || sessionID == connectionID {
 				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
 				continue
 			}
-			sessionID := selectedSessionID
+			if sessionID != strings.TrimSpace(selectedSessionID) {
+				switchRuntimeSession(sessionID)
+			}
+			if !ackClientAction(sessionID, "exec", reqEvent.ClientEvent) {
+				logx.Info("ws", "duplicate client action ignored: connectionID=%s sessionID=%s remoteAddr=%s action=exec clientActionID=%s", connectionID, sessionID, remoteAddr, reqEvent.ClientActionID)
+				continue
+			}
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
 			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, reqEvent.Command, "命令", connectionID, remoteAddr)
@@ -1097,7 +1146,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			logx.Info("ws", "dispatch exec: connectionID=%s sessionID=%s remoteAddr=%s action=exec mode=%s cwd=%q permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, mode, reqEvent.CWD, reqEvent.PermissionMode, wsDebugPreview(reqEvent.Command))
 			if runtimeSession != nil {
-				service.SetSink(runtimeSession.EnsureBufferedSink())
+				service.SetSink(runtimeSession.EnsureBufferedSinkWithProcessor(emitAndPersist))
 			}
 			err = service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
 				Command:        reqEvent.Command,
@@ -1137,14 +1186,44 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, "input data is required", ""))
 				continue
 			}
-			if strings.TrimSpace(selectedSessionID) == "" || selectedSessionID == connectionID {
+			sessionID := strings.TrimSpace(firstNonEmptyString(inputEvent.SessionID, selectedSessionID))
+			if sessionID == "" || sessionID == connectionID {
 				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
 				continue
 			}
-			sessionID := selectedSessionID
+			if sessionID != strings.TrimSpace(selectedSessionID) {
+				switchRuntimeSession(sessionID)
+			}
+			if !ackClientAction(sessionID, "input", inputEvent.ClientEvent) {
+				logx.Info("ws", "duplicate client action ignored: connectionID=%s sessionID=%s remoteAddr=%s action=input clientActionID=%s", connectionID, sessionID, remoteAddr, inputEvent.ClientActionID)
+				continue
+			}
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
-			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
+			if shouldTreatInputAsAICommand(inputEvent.Data) {
+				command := strings.TrimSpace(inputEvent.Data)
+				logx.Info("ws", "promote input to exec: connectionID=%s sessionID=%s remoteAddr=%s action=input command=%q", connectionID, sessionID, remoteAddr, command)
+				appendUserProjectionEntry(h.SessionStore, ctx, sessionID, command, "命令", connectionID, remoteAddr)
+				if runtimeSession != nil {
+					service.SetSink(runtimeSession.EnsureBufferedSinkWithProcessor(emitAndPersist))
+				}
+				if err := service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
+					Command:        command,
+					CWD:            firstNonEmptyString(inputEvent.CWD, "/"),
+					Mode:           runner.ModePTY,
+					PermissionMode: firstNonEmptyString(inputEvent.PermissionMode, "default"),
+					RuntimeMeta: protocol.RuntimeMeta{
+						Source:         "input-promoted-exec",
+						Command:        command,
+						CWD:            firstNonEmptyString(inputEvent.CWD, "/"),
+						PermissionMode: firstNonEmptyString(inputEvent.PermissionMode, "default"),
+					},
+				}, emitAndPersist); err != nil {
+					logx.Error("ws", "promoted input execute failed: connectionID=%s sessionID=%s remoteAddr=%s command=%q err=%v", connectionID, sessionID, remoteAddr, command, err)
+					emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+				}
+				continue
+			}
 			service.RecordUserInput(inputEvent.Data)
 			controller := service.ControllerSnapshot()
 			projection := buildProjectionSnapshotFor(sessionID)
@@ -1199,6 +1278,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 					logx.Warn("ws", "restore safe permission mode before input failed: connectionID=%s sessionID=%s remoteAddr=%s action=input err=%v", connectionID, sessionID, remoteAddr, err)
 					emit(protocol.NewErrorEvent(sessionID, message, ""))
+				} else {
+					appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
 				}
 				continue
 			}
@@ -1297,6 +1378,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				logx.Warn("ws", "service send input failed: connectionID=%s sessionID=%s remoteAddr=%s action=input err=%v", connectionID, sessionID, remoteAddr, err)
 				emit(protocol.NewErrorEvent(sessionID, message, ""))
+			} else {
+				appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
 			}
 		case "stop":
 			if strings.TrimSpace(selectedSessionID) == "" || selectedSessionID == connectionID {
@@ -1764,7 +1847,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				sessionContext = record.Projection.SessionContext
 			}
-			sessionID := selectedSessionID
+			sessionID := strings.TrimSpace(firstNonEmptyString(slashReq.SessionID, selectedSessionID))
+			if sessionID == "" || sessionID == connectionID {
+				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
+				continue
+			}
+			if sessionID != strings.TrimSpace(selectedSessionID) {
+				switchRuntimeSession(sessionID)
+			}
+			if !ackClientAction(sessionID, "slash_command", slashReq.ClientEvent) {
+				logx.Info("ws", "duplicate client action ignored: connectionID=%s sessionID=%s remoteAddr=%s action=slash_command clientActionID=%s", connectionID, sessionID, remoteAddr, slashReq.ClientActionID)
+				continue
+			}
 			service := runtimeSvc
 			emitAndPersist := emitAndPersistFor(sessionID)
 			if err := handleSlashCommand(ctx, sessionID, slashReq, sessionContext, service, h.SkillLauncher, emitAndPersist); err != nil {
@@ -2003,6 +2097,38 @@ func withRuntimeSnapshot(snapshot store.ProjectionSnapshot, svc *runtimepkg.Serv
 		Source:          firstNonEmptyString(snapshot.Runtime.Source, "mobilevc"),
 	}
 	return snapshot
+}
+
+func mergeProjectionWithOptionalRuntime(base store.ProjectionSnapshot, runtimeProjection store.ProjectionSnapshot, svc *runtimepkg.Service, sessionID string) store.ProjectionSnapshot {
+	base = normalizeProjectionSnapshot(base)
+	runtimeProjection = normalizeProjectionSnapshot(runtimeProjection)
+	if svc == nil {
+		return base
+	}
+	runtimeSnapshot := svc.RuntimeSnapshot()
+	runtimeActiveForSession := runtimeSnapshot.Running && strings.TrimSpace(runtimeSnapshot.ActiveSession) == strings.TrimSpace(sessionID)
+	if !runtimeActiveForSession {
+		return base
+	}
+	merged := mergeCodexMirrorProjection(base, runtimeProjection)
+	merged.LogEntries = mergeSnapshotLogEntries(base.LogEntries, runtimeProjection.LogEntries)
+	return normalizeProjectionSnapshot(merged)
+}
+
+func sessionRecordRuntimeAlive(record store.SessionRecord, svc *runtimepkg.Service) bool {
+	if svc != nil {
+		snapshot := svc.RuntimeSnapshot()
+		if snapshot.Running && strings.TrimSpace(snapshot.ActiveSession) == strings.TrimSpace(record.Summary.ID) {
+			return true
+		}
+	}
+	if !codexsync.IsMirrorSessionID(record.Summary.ID) && !claudesync.IsMirrorSessionID(record.Summary.ID) {
+		return false
+	}
+	projection := normalizeProjectionSnapshot(record.Projection)
+	state := strings.TrimSpace(string(projection.Controller.State))
+	lifecycle := strings.TrimSpace(projection.Runtime.ClaudeLifecycle)
+	return isBusyRuntimeState(state) || lifecycle == "active" || lifecycle == "starting"
 }
 
 func toProtocolSummary(item store.SessionSummary) protocol.SessionSummary {
@@ -3199,7 +3325,7 @@ func pickActiveReviewGroup(groups []session.ReviewGroup) *session.ReviewGroup {
 	return nil
 }
 
-func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.SessionHistoryEvent {
+func newSessionHistoryEventFromRecord(record store.SessionRecord, runtimeAlive bool) protocol.SessionHistoryEvent {
 	projection := normalizeProjectionSnapshot(record.Projection)
 	entries := make([]protocol.HistoryLogEntry, 0, len(projection.LogEntries))
 	for _, entry := range projection.LogEntries {
@@ -3254,12 +3380,17 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
 		toProtocolCatalogMetadata(projection.SkillCatalogMeta),
 		toProtocolCatalogMetadata(projection.MemoryCatalogMeta),
 		canResume,
+		runtimeAlive,
 		resumeMeta,
 	)
 }
 
-func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.SessionDeltaKnown, sessionRuntime *runtimeSession) protocol.SessionDeltaEvent {
+func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.SessionDeltaKnown, sessionRuntime *runtimeSession, runtimeAlive bool) protocol.SessionDeltaEvent {
 	projection := normalizeProjectionSnapshot(record.Projection)
+	latestCursor := int64(0)
+	if sessionRuntime != nil {
+		latestCursor = sessionRuntime.latestCursor()
+	}
 	allEntries := make([]protocol.HistoryLogEntry, 0, len(projection.LogEntries))
 	for _, entry := range projection.LogEntries {
 		allEntries = append(allEntries, protocol.HistoryLogEntry{
@@ -3276,6 +3407,9 @@ func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.S
 		})
 	}
 	startLog := known.LogEntryCount
+	if latestCursor > 0 && known.EventCursor >= latestCursor {
+		startLog = len(allEntries)
+	}
 	if startLog < 0 || startLog > len(allEntries) {
 		startLog = 0
 	}
@@ -3283,6 +3417,9 @@ func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.S
 
 	allDiffs := fromDiffContexts(projection.Diffs)
 	startDiff := known.DiffCount
+	if latestCursor > 0 && known.EventCursor >= latestCursor {
+		startDiff = len(allDiffs)
+	}
 	if startDiff < 0 || startDiff > len(allDiffs) {
 		startDiff = 0
 	}
@@ -3295,10 +3432,16 @@ func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.S
 	stdout := projection.RawTerminalByStream["stdout"]
 	stderr := projection.RawTerminalByStream["stderr"]
 	stdoutStart := known.TerminalStdoutLength
+	if latestCursor > 0 && known.EventCursor >= latestCursor {
+		stdoutStart = len(stdout)
+	}
 	if stdoutStart < 0 || stdoutStart > len(stdout) {
 		stdoutStart = 0
 	}
 	stderrStart := known.TerminalStderrLength
+	if latestCursor > 0 && known.EventCursor >= latestCursor {
+		stderrStart = len(stderr)
+	}
 	if stderrStart < 0 || stderrStart > len(stderr) {
 		stderrStart = 0
 	}
@@ -3330,10 +3473,6 @@ func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.S
 		PermissionMode:  projection.Runtime.PermissionMode,
 		ClaudeLifecycle: normalizeProjectionLifecycle(projection.Runtime.ClaudeLifecycle, projection.Runtime.ResumeSessionID),
 	}
-	latestCursor := int64(0)
-	if sessionRuntime != nil {
-		latestCursor = sessionRuntime.latestCursor()
-	}
 	latest := protocol.SessionDeltaKnown{
 		EventCursor:            latestCursor,
 		LogEntryCount:          len(allEntries),
@@ -3360,6 +3499,7 @@ func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.S
 		toProtocolCatalogMetadata(projection.SkillCatalogMeta),
 		toProtocolCatalogMetadata(projection.MemoryCatalogMeta),
 		strings.TrimSpace(resumeMeta.ResumeSessionID) != "",
+		runtimeAlive,
 		resumeMeta,
 		(startLog == 0 && known.LogEntryCount > 0) || (stdoutStart == 0 && known.TerminalStdoutLength > 0) || (stderrStart == 0 && known.TerminalStderrLength > 0),
 	)
@@ -3415,12 +3555,12 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord, hasActiveRunn
 			state = session.ControllerStateIdle
 		}
 	}
-	if !hasActiveRunner {
+	if !hasActiveRunner && !isExternalNativeActiveRecord(record) {
 		switch state {
 		case session.ControllerStateThinking, session.ControllerStateRunningTool:
 			if strings.TrimSpace(runtimeMeta.ResumeSessionID) != "" {
-				state = session.ControllerStateWaitInput
-				runtimeMeta.ClaudeLifecycle = "waiting_input"
+				state = session.ControllerStateIdle
+				runtimeMeta.ClaudeLifecycle = "resumable"
 			} else {
 				state = session.ControllerStateIdle
 				runtimeMeta.ClaudeLifecycle = ""
@@ -3473,6 +3613,21 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord, hasActiveRunn
 	)
 	event.RuntimeMeta = runtimeMeta
 	return &event
+}
+
+func isExternalNativeActiveRecord(record store.SessionRecord) bool {
+	if !codexsync.IsMirrorSessionID(record.Summary.ID) && !claudesync.IsMirrorSessionID(record.Summary.ID) {
+		return false
+	}
+	projection := normalizeProjectionSnapshot(record.Projection)
+	state := strings.TrimSpace(string(projection.Controller.State))
+	lifecycle := strings.TrimSpace(firstNonEmptyString(
+		projection.Controller.ClaudeLifecycle,
+		projection.Controller.ActiveMeta.ClaudeLifecycle,
+		projection.Runtime.ClaudeLifecycle,
+		record.Summary.Runtime.ClaudeLifecycle,
+	))
+	return isBusyRuntimeState(state) || lifecycle == "active" || lifecycle == "starting"
 }
 
 func shouldEmitTransientResumeThinkingEvent(service *runtimepkg.Service, req runtimepkg.ExecuteRequest) bool {
@@ -3558,10 +3713,7 @@ func prepareSessionEventForResume(sessionRuntime *runtimeSession, sessionID stri
 	if sessionRuntime == nil || strings.TrimSpace(sessionID) == "" {
 		return event
 	}
-	switch event.(type) {
-	case protocol.PromptRequestEvent, protocol.InteractionRequestEvent:
-		event = sessionRuntime.appendPending(event)
-	}
+	event = sessionRuntime.appendPending(event)
 	if sessionRuntime.listenerCount() == 0 {
 		if notice := detachedResumeNoticeEvent(sessionID, event); notice != nil {
 			sessionRuntime.appendPending(*notice)
@@ -3595,10 +3747,22 @@ func isSystemBootstrapLog(event protocol.LogEvent) bool {
 	if strings.HasPrefix(message, "using ") && strings.Contains(message, " mode") {
 		return true
 	}
-	return strings.Contains(message, "reasoning effort") ||
+	if strings.Contains(message, "reasoning effort") ||
 		strings.Contains(message, "model set to") ||
 		strings.Contains(message, "how can i help you") ||
-		strings.Contains(message, "what would you like to work on next")
+		strings.Contains(message, "what would you like to work on next") {
+		return true
+	}
+	// 检查原始消息中的中文启动引导关键词
+	raw := strings.TrimSpace(event.Message)
+	if strings.Contains(raw, "设置模型") ||
+		strings.Contains(raw, "推理强度") ||
+		strings.Contains(raw, "模型强度") ||
+		strings.Contains(raw, "模型已设") ||
+		strings.Contains(raw, "Codex 会话") {
+		return true
+	}
+	return false
 }
 
 func detachedResumeNoticeEvent(sessionID string, event any) *protocol.SessionResumeNoticeEvent {
@@ -3838,6 +4002,10 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 			return snapshot, false
 		}
 		if isVisibleAssistantReplyLog(e) {
+			snapshot.LogEntries = removeSupersededAssistantLogEntry(
+				snapshot.LogEntries,
+				e,
+			)
 			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "markdown", Message: e.Message, Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream, ExecutionID: e.ExecutionID, Phase: phase, ExitCode: e.ExitCode, Context: context})
 		} else {
 			previousIndex := len(snapshot.LogEntries) - 1
@@ -3925,6 +4093,67 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
 	default:
 		return snapshot, false
 	}
+}
+
+func removeSupersededAssistantLogEntry(entries []store.SnapshotLogEntry, event protocol.LogEvent) []store.SnapshotLogEntry {
+	message := strings.TrimSpace(event.Message)
+	if message == "" || len(entries) == 0 {
+		return entries
+	}
+	normalizedMessage := normalizeAssistantReplyForDedupe(message)
+	eventStream := strings.TrimSpace(event.Stream)
+	eventExecutionID := strings.TrimSpace(event.ExecutionID)
+	remove := make(map[int]bool)
+	found := false
+	for index := len(entries) - 1; index >= 0; index-- {
+		entry := entries[index]
+		if eventExecutionID != "" && strings.TrimSpace(entry.ExecutionID) != "" && strings.TrimSpace(entry.ExecutionID) != eventExecutionID {
+			if found {
+				break
+			}
+			continue
+		}
+		if eventStream != "" && strings.TrimSpace(entry.Stream) != "" && strings.TrimSpace(entry.Stream) != eventStream {
+			if found {
+				break
+			}
+			continue
+		}
+		if entry.Kind != "terminal" && entry.Kind != "markdown" {
+			if found {
+				break
+			}
+			continue
+		}
+		previous := strings.TrimSpace(firstNonEmptyString(entry.Message, entry.Text))
+		if previous == "" {
+			continue
+		}
+		normalizedPrevious := normalizeAssistantReplyForDedupe(previous)
+		if normalizedPrevious == normalizedMessage ||
+			strings.HasPrefix(normalizedMessage, normalizedPrevious) ||
+			strings.Contains(normalizedMessage, normalizedPrevious) {
+			remove[index] = true
+			found = true
+			continue
+		}
+		break
+	}
+	if len(remove) == 0 {
+		return entries
+	}
+	next := entries[:0]
+	for index, entry := range entries {
+		if remove[index] {
+			continue
+		}
+		next = append(next, entry)
+	}
+	return next
+}
+
+func normalizeAssistantReplyForDedupe(text string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 }
 
 func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.ProjectionSnapshot {
@@ -4670,16 +4899,29 @@ func augmentLocalClaudeRecordFromNative(ctx context.Context, record store.Sessio
 }
 
 func mergeCodexMirrorRecord(fresh store.SessionRecord, existing store.SessionRecord) store.SessionRecord {
-	fresh.Projection = mergeCodexMirrorProjection(fresh.Projection, existing.Projection)
+	fresh.Projection = preserveCodexMirrorLocalSettings(fresh.Projection, existing.Projection)
 	fresh.Summary.CreatedAt = laterNonZeroTime(fresh.Summary.CreatedAt, existing.Summary.CreatedAt)
 	fresh.Summary.UpdatedAt = laterNonZeroTime(fresh.Summary.UpdatedAt, existing.Summary.UpdatedAt)
-	fresh.Summary.Runtime = mergeStoreSessionRuntime(fresh.Summary.Runtime, fresh.Projection.Runtime)
+	fresh.Summary.Runtime = mergeStoreSessionRuntime(store.SessionRuntime{}, fresh.Projection.Runtime)
 	if fresh.Summary.Runtime.Source == "" {
 		fresh.Summary.Runtime.Source = "codex-native"
 	}
 	fresh.Summary.Source = firstNonEmptyString(fresh.Summary.Source, existing.Summary.Source, "codex-native")
 	fresh.Summary.External = true
 	return fresh
+}
+
+func preserveCodexMirrorLocalSettings(fresh store.ProjectionSnapshot, existing store.ProjectionSnapshot) store.ProjectionSnapshot {
+	fresh = normalizeProjectionSnapshot(fresh)
+	existing = normalizeProjectionSnapshot(existing)
+	fresh.SessionContext = existing.SessionContext
+	fresh.PermissionRulesEnabled = existing.PermissionRulesEnabled
+	if len(existing.PermissionRules) > 0 {
+		fresh.PermissionRules = existing.PermissionRules
+	}
+	fresh.SkillCatalogMeta = existing.SkillCatalogMeta
+	fresh.MemoryCatalogMeta = existing.MemoryCatalogMeta
+	return normalizeProjectionSnapshot(fresh)
 }
 
 func mergeCodexMirrorProjection(fresh store.ProjectionSnapshot, existing store.ProjectionSnapshot) store.ProjectionSnapshot {
@@ -4852,6 +5094,22 @@ func mergeTerminalExecutions(base []store.TerminalExecution, overlay []store.Ter
 		merged = append(merged, item)
 	}
 	return merged
+}
+
+func shouldTreatInputAsAICommand(data string) bool {
+	fields := strings.Fields(strings.TrimSpace(data))
+	if len(fields) == 0 {
+		return false
+	}
+	if len(fields) > 1 {
+		return false
+	}
+	switch strings.ToLower(fields[0]) {
+	case "codex", "claude", "gemini":
+		return true
+	default:
+		return false
+	}
 }
 
 func firstNonNilInt(values ...*int) *int {

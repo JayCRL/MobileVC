@@ -121,13 +121,28 @@ class MobileVcWsService {
     await previousChannel?.sink.close();
   }
 
-  void send(Map<String, dynamic> payload) {
+  bool send(Map<String, dynamic> payload) {
     final channel = _channel;
     if (channel == null) {
-      return;
+      _events.add(
+        ErrorEvent(
+          timestamp: DateTime.now(),
+          sessionId: (payload['sessionId'] ?? '').toString(),
+          runtimeMeta: const RuntimeMeta(),
+          raw: const <String, dynamic>{
+            'type': 'error',
+            'code': 'ws_not_connected',
+            'msg': 'WebSocket is not connected',
+          },
+          code: 'ws_not_connected',
+          message: 'WebSocket is not connected',
+        ),
+      );
+      return false;
     }
     try {
       channel.sink.add(jsonEncode(payload));
+      return true;
     } catch (error, stackTrace) {
       _channel = null;
       _subscription = null;
@@ -146,6 +161,7 @@ class MobileVcWsService {
           message: 'WebSocket send failed: $error',
         ),
       );
+      return false;
     }
   }
 

@@ -3,6 +3,7 @@ package ws
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mobilevc/internal/protocol"
@@ -10,8 +11,8 @@ import (
 )
 
 const defaultRuntimeSessionReleaseAfter = 15 * time.Minute
-const defaultRuntimeSessionPendingLimit = 64
-const defaultRuntimeSessionSinkBufferSize = 256
+const defaultRuntimeSessionPendingLimit = 512
+const defaultRuntimeSessionSinkBufferSize = 1024
 
 type runtimeSession struct {
 	mu            sync.RWMutex
@@ -20,11 +21,15 @@ type runtimeSession struct {
 	releaseTimer  *time.Timer
 	pendingCursor int64
 	pendingEvents []any
-	lastOutputAt time.Time
+	lastOutputAt  time.Time
+	clientActions map[string]time.Time
+
+	persistedCursor atomic.Int64
 
 	sinkCh  chan any
 	sinkMu  sync.Mutex
 	sinkRef int
+	sinkFn  func(any)
 }
 
 func newRuntimeSession(service *runtimepkg.Service) *runtimeSession {
@@ -32,6 +37,7 @@ func newRuntimeSession(service *runtimepkg.Service) *runtimeSession {
 		service:       service,
 		listeners:     make(map[string]func(any)),
 		pendingEvents: make([]any, 0, defaultRuntimeSessionPendingLimit),
+		clientActions: make(map[string]time.Time),
 	}
 }
 
@@ -76,13 +82,20 @@ func (s *runtimeSession) emit(event any) {
 }
 
 func (s *runtimeSession) EnsureBufferedSink() func(event any) {
+	return s.EnsureBufferedSinkWithProcessor(nil)
+}
+
+func (s *runtimeSession) EnsureBufferedSinkWithProcessor(processor func(any)) func(event any) {
 	s.sinkMu.Lock()
 	defer s.sinkMu.Unlock()
+	if processor != nil {
+		s.sinkFn = processor
+	}
 	if s.sinkCh == nil {
 		s.sinkCh = make(chan any, defaultRuntimeSessionSinkBufferSize)
 		go func() {
 			for event := range s.sinkCh {
-				s.emit(event)
+				s.emitBufferedEvent(event)
 			}
 		}()
 	}
@@ -92,9 +105,20 @@ func (s *runtimeSession) EnsureBufferedSink() func(event any) {
 		}
 		select {
 		case s.sinkCh <- event:
-		default:
+		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+func (s *runtimeSession) emitBufferedEvent(event any) {
+	s.sinkMu.Lock()
+	processor := s.sinkFn
+	s.sinkMu.Unlock()
+	if processor != nil {
+		processor(event)
+		return
+	}
+	s.emit(event)
 }
 
 func (s *runtimeSession) appendPending(event any) any {
@@ -113,6 +137,12 @@ func (s *runtimeSession) appendPending(event any) any {
 	return event
 }
 
+func (s *runtimeSession) markPersisted(cursor int64) {
+	if cursor <= 0 {
+		return
+	}
+	s.persistedCursor.Store(cursor)
+}
 
 func (s *runtimeSession) lastOutputTime() time.Time {
 	s.mu.RLock()
@@ -140,6 +170,41 @@ func (s *runtimeSession) pendingSince(cursor int64) []any {
 		items = append(items, event)
 	}
 	return items
+}
+
+func (s *runtimeSession) markClientAction(clientActionID string) bool {
+	clientActionID = strings.TrimSpace(clientActionID)
+	if clientActionID == "" {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clientActions == nil {
+		s.clientActions = make(map[string]time.Time)
+	}
+	if _, exists := s.clientActions[clientActionID]; exists {
+		return false
+	}
+	now := time.Now()
+	s.clientActions[clientActionID] = now
+	if len(s.clientActions) > defaultRuntimeSessionPendingLimit*4 {
+		cutoff := now.Add(-2 * time.Hour)
+		for id, seenAt := range s.clientActions {
+			if seenAt.Before(cutoff) {
+				delete(s.clientActions, id)
+			}
+		}
+	}
+	if len(s.clientActions) > defaultRuntimeSessionPendingLimit*4 {
+		target := defaultRuntimeSessionPendingLimit * 2
+		for id := range s.clientActions {
+			delete(s.clientActions, id)
+			if len(s.clientActions) <= target {
+				break
+			}
+		}
+	}
+	return true
 }
 
 type runtimeSessionRegistry struct {

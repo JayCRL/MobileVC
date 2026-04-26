@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"mobilevc/internal/adapter"
 	"mobilevc/internal/logx"
@@ -65,11 +66,14 @@ type codexAppSession struct {
 	pending map[string]chan codexRPCResponse
 	readErr error
 
-	threadID        string
-	activeTurnID    string
-	lastDiff        string
-	assistantBuffer strings.Builder
-	pendingApproval *codexPendingApproval
+	threadID          string
+	activeTurnID      string
+	lastDiff          string
+	assistantBuffer   strings.Builder
+	lastAssistantText string
+	assistantEmitted  string
+	pendingApproval   *codexPendingApproval
+	readyPromptSeq    uint64
 }
 
 type codexPendingApproval struct {
@@ -410,6 +414,7 @@ func (s *codexAppSession) readLoop(ctx context.Context, reader io.Reader) {
 			logx.Warn("pty", "codex app-server json parse failed: sessionID=%s err=%v preview=%q", s.sessionID, err, ptyDebugPreview(line))
 			return nil
 		}
+		logx.Info("pty", "codex app-server rpc received: sessionID=%s id=%s method=%q hasResult=%t hasError=%t paramsPreview=%q resultPreview=%q", s.sessionID, strings.TrimSpace(string(message.ID)), message.Method, len(message.Result) > 0, message.Error != nil, ptyDebugPreview(string(message.Params)), ptyDebugPreview(string(message.Result)))
 		switch {
 		case len(message.ID) > 0 && message.Method == "":
 			s.resolvePending(message)
@@ -459,10 +464,7 @@ func (s *codexAppSession) handleNotification(message codexRPCMessage) {
 	case "thread/status/changed":
 		var payload codexThreadStatusNotification
 		if err := json.Unmarshal(message.Params, &payload); err == nil && strings.EqualFold(payload.Status.Type, "idle") && s.activeTurn() == "" {
-			sendEvent(s.sink, protocol.ApplyRuntimeMeta(
-				protocol.NewPromptRequestEvent(s.sessionID, "", nil),
-				s.runtimeMeta("waiting_input"),
-			))
+			s.emitReadyPromptAfterReply()
 		}
 	case "turn/started":
 		var payload codexTurnNotification
@@ -474,19 +476,16 @@ func (s *codexAppSession) handleNotification(message codexRPCMessage) {
 	case "item/agentMessage/delta":
 		var payload codexAgentDeltaNotification
 		if err := json.Unmarshal(message.Params, &payload); err == nil {
-			meta := s.runtimeMeta("active")
-			meta.Source = "codex/assistant"
 			for _, chunk := range s.appendAssistantDelta(payload.Delta) {
-				sendEvent(s.sink, protocol.ApplyRuntimeMeta(
-					protocol.NewLogEvent(s.sessionID, chunk, "stdout"),
-					meta,
-				))
+				s.emitAssistantChunk(chunk)
 			}
 		}
 	case "item/started":
 		s.handleItemEvent(message.Params, "running")
 	case "item/completed":
 		s.handleItemEvent(message.Params, "done")
+	case "rawResponseItem/completed":
+		s.handleRawResponseItemCompleted(message.Params)
 	case "turn/diff/updated":
 		var payload codexTurnDiffNotification
 		if err := json.Unmarshal(message.Params, &payload); err == nil {
@@ -571,12 +570,7 @@ func (s *codexAppSession) handleTurnCompleted(raw json.RawMessage) {
 		return
 	}
 	for _, chunk := range s.flushAssistantDelta() {
-		meta := s.runtimeMeta("active")
-		meta.Source = "codex/assistant"
-		sendEvent(s.sink, protocol.ApplyRuntimeMeta(
-			protocol.NewLogEvent(s.sessionID, chunk, "stdout"),
-			meta,
-		))
+		s.emitAssistantChunk(chunk)
 	}
 	s.clearActiveTurnID(payload.Turn.ID)
 	if payload.Turn.Error != nil && strings.TrimSpace(payload.Turn.Error.Message) != "" {
@@ -585,10 +579,7 @@ func (s *codexAppSession) handleTurnCompleted(raw json.RawMessage) {
 			s.runtimeMeta("active"),
 		))
 	}
-	sendEvent(s.sink, protocol.ApplyRuntimeMeta(
-		protocol.NewPromptRequestEvent(s.sessionID, "", nil),
-		s.runtimeMeta("waiting_input"),
-	))
+	s.emitReadyPromptAfterReply()
 }
 
 func (s *codexAppSession) handleItemEvent(raw json.RawMessage, status string) {
@@ -601,13 +592,12 @@ func (s *codexAppSession) handleItemEvent(raw json.RawMessage, status string) {
 		return
 	}
 	if status == "done" && itemType == "agentMessage" {
-		for _, chunk := range s.flushAssistantDelta() {
-			meta := s.runtimeMeta("active")
-			meta.Source = "codex/assistant"
-			sendEvent(s.sink, protocol.ApplyRuntimeMeta(
-				protocol.NewLogEvent(s.sessionID, chunk, "stdout"),
-				meta,
-			))
+		if text := codexItemText(payload.Item); text != "" {
+			s.emitAssistantCompletedText(text)
+		} else {
+			for _, chunk := range s.flushAssistantDelta() {
+				s.emitAssistantChunk(chunk)
+			}
 		}
 		return
 	}
@@ -619,6 +609,135 @@ func (s *codexAppSession) handleItemEvent(raw json.RawMessage, status string) {
 		protocol.NewStepUpdateEvent(s.sessionID, message, status, target, itemType, ""),
 		s.runtimeMeta("active"),
 	))
+}
+
+func (s *codexAppSession) handleRawResponseItemCompleted(raw json.RawMessage) {
+	var payload codexItemNotification
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return
+	}
+	text := codexItemText(payload.Item)
+	if text == "" {
+		return
+	}
+	s.emitAssistantCompletedText(text)
+}
+
+func (s *codexAppSession) emitAssistantChunk(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	s.mu.Lock()
+	if text == s.lastAssistantText {
+		s.mu.Unlock()
+		return
+	}
+	if s.lastAssistantText != "" && strings.Contains(text, s.lastAssistantText) && len([]rune(text)) <= len([]rune(s.lastAssistantText))*2+16 {
+		s.lastAssistantText = text
+		s.mu.Unlock()
+		return
+	}
+	s.lastAssistantText = text
+	s.assistantEmitted += text
+	s.mu.Unlock()
+	meta := s.runtimeMeta("active")
+	meta.Source = "codex/assistant"
+	sendEvent(s.sink, protocol.ApplyRuntimeMeta(
+		protocol.NewLogEvent(s.sessionID, text, "stdout"),
+		meta,
+	))
+}
+
+func (s *codexAppSession) emitAssistantCompletedText(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	s.mu.Lock()
+	emitted := strings.TrimSpace(s.assistantEmitted)
+	s.assistantBuffer.Reset()
+	if emitted != "" {
+		if text == emitted {
+			s.lastAssistantText = text
+			s.assistantEmitted = text
+			s.mu.Unlock()
+			return
+		}
+		if strings.HasPrefix(text, emitted) {
+			text = strings.TrimSpace(strings.TrimPrefix(text, emitted))
+			if text == "" {
+				s.lastAssistantText = emitted
+				s.assistantEmitted = emitted
+				s.mu.Unlock()
+				return
+			}
+		}
+	}
+	s.mu.Unlock()
+	s.emitAssistantChunk(text)
+}
+
+func (s *codexAppSession) emitReadyPromptAfterReply() {
+	sessionID := s.sessionID
+	sink := s.sink
+	meta := s.runtimeMeta("waiting_input")
+	s.mu.Lock()
+	s.readyPromptSeq++
+	seq := s.readyPromptSeq
+	s.mu.Unlock()
+	go func() {
+		timer := time.NewTimer(350 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-s.runner.commandContext().Done():
+			return
+		case <-timer.C:
+		}
+		s.mu.Lock()
+		if seq != s.readyPromptSeq {
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+		emitCodexReadyPrompt(sessionID, sink, meta)
+	}()
+}
+
+func (s *codexAppSession) emitReadyPrompt() {
+	emitCodexReadyPrompt(s.sessionID, s.sink, s.runtimeMeta("waiting_input"))
+}
+
+func emitCodexReadyPrompt(sessionID string, sink EventSink, meta protocol.RuntimeMeta) {
+	sendEvent(sink, protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent(sessionID, "", nil),
+		meta,
+	))
+}
+
+func codexItemText(item map[string]any) string {
+	for _, key := range []string{"text", "message", "content", "output_text"} {
+		if text := strings.TrimSpace(asString(item[key])); text != "" {
+			return text
+		}
+	}
+	if content, ok := item["content"].([]any); ok {
+		var parts []string
+		for _, entry := range content {
+			entryMap, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			for _, key := range []string{"text", "content", "output_text"} {
+				if text := strings.TrimSpace(asString(entryMap[key])); text != "" {
+					parts = append(parts, text)
+					break
+				}
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	}
+	return ""
 }
 
 func (s *codexAppSession) handleDiffUpdate(turnID, diff string) {
@@ -788,7 +907,13 @@ func (s *codexAppSession) setThreadID(threadID string) {
 func (s *codexAppSession) setActiveTurnID(turnID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.activeTurnID = strings.TrimSpace(turnID)
+	trimmed := strings.TrimSpace(turnID)
+	if trimmed != "" && trimmed != s.activeTurnID {
+		s.assistantBuffer.Reset()
+		s.lastAssistantText = ""
+		s.assistantEmitted = ""
+	}
+	s.activeTurnID = trimmed
 }
 
 func (s *codexAppSession) clearActiveTurnID(turnID string) {
@@ -867,7 +992,7 @@ func (s *codexAppSession) appendAssistantDelta(delta string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.assistantBuffer.WriteString(delta)
-	return codexDrainAssistantChunks(&s.assistantBuffer, false)
+	return nil
 }
 
 func (s *codexAppSession) flushAssistantDelta() []string {

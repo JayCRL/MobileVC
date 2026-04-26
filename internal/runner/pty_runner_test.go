@@ -999,39 +999,33 @@ func TestPtyRunnerClaudeLazyStartExposesSessionStateBeforeInput(t *testing.T) {
 		})
 	}()
 
+	// With eager start, the runner should emit an AgentStateEvent immediately
+	// instead of deferring process launch until first input.
 	deadline := time.After(3 * time.Second)
-	for {
-		runner.mu.Lock()
-		sawWriter := runner.writer != nil && runner.lazyStart && !runner.closed
-		interactive := runner.interactive
-		runner.mu.Unlock()
-		if sawWriter {
-			if interactive {
-				t.Fatal("expected runner to remain non-interactive before first input")
-			}
-			break
-		}
+	gotStartupEvent := false
+	for !gotStartupEvent {
 		select {
-		case <-eventsCh:
+		case event := <-eventsCh:
+			if e, ok := event.(protocol.AgentStateEvent); ok &&
+				strings.Contains(e.Message, "检查环境") {
+				gotStartupEvent = true
+			}
 		case err := <-errCh:
 			if err != nil && !errors.Is(err, context.Canceled) {
-				t.Fatalf("lazy-start runner failed: %v", err)
+				t.Fatalf("runner failed: %v", err)
 			}
-		case <-time.After(20 * time.Millisecond):
+			return
 		case <-deadline:
-			t.Fatal("did not expose lazy-start input handle")
+			t.Fatal("did not receive startup AgentStateEvent from eager start")
 		}
 	}
 
+	// Verify the runner is NOT in lazy-start mode (process starts immediately)
 	runner.mu.Lock()
 	lazyStart := runner.lazyStart
-	interactive := runner.interactive
 	runner.mu.Unlock()
-	if !lazyStart {
-		t.Fatal("expected runner to remain in lazy-start mode before first input")
-	}
-	if interactive {
-		t.Fatal("expected runner to remain non-interactive before first input")
+	if lazyStart {
+		t.Fatal("expected runner to start eagerly (not lazyStart) after exec")
 	}
 
 	cancel()
@@ -1369,6 +1363,15 @@ func TestExtractCodexInitialPromptStripsResumeAndModelFlags(t *testing.T) {
 	}
 }
 
+func TestExtractCodexInitialPromptStripsConfigFlags(t *testing.T) {
+	if got := extractCodexInitialPrompt("codex -m gpt-5.5 --config model_reasoning_effort=medium"); got != "" {
+		t.Fatalf("unexpected codex initial prompt: %q", got)
+	}
+	if got := extractCodexInitialPrompt("codex -m gpt-5.5 --config model_reasoning_effort=medium 你好"); got != "你好" {
+		t.Fatalf("unexpected codex initial prompt: %q", got)
+	}
+}
+
 func TestExtractCodexReasoningEffortFlagSupportsConfigOverride(t *testing.T) {
 	got := extractCodexReasoningEffortFlag(
 		`codex -m gpt-5.4 --config model_reasoning_effort="xhigh"`,
@@ -1445,11 +1448,11 @@ func TestCodexAppSessionTurnStartPassesReasoningEffort(t *testing.T) {
 
 func TestCodexAppSessionCoalescesAssistantDeltasBeforePrompt(t *testing.T) {
 	runner := NewPtyRunner()
-	var events []any
+	eventsCh := make(chan any, 8)
 	app := &codexAppSession{
 		runner:    runner,
 		sessionID: "s-codex-delta",
-		sink:      func(event any) { events = append(events, event) },
+		sink:      func(event any) { eventsCh <- event },
 	}
 	app.setThreadID("thread-123")
 
@@ -1480,15 +1483,35 @@ func TestCodexAppSessionCoalescesAssistantDeltasBeforePrompt(t *testing.T) {
 
 	var logs []protocol.LogEvent
 	var prompts []protocol.PromptRequestEvent
-	for _, event := range events {
-		switch v := event.(type) {
-		case protocol.LogEvent:
-			logs = append(logs, v)
-		case protocol.PromptRequestEvent:
-			prompts = append(prompts, v)
+	deadline := time.After(800 * time.Millisecond)
+collect:
+	for len(prompts) == 0 {
+		select {
+		case event := <-eventsCh:
+			switch v := event.(type) {
+			case protocol.LogEvent:
+				logs = append(logs, v)
+			case protocol.PromptRequestEvent:
+				prompts = append(prompts, v)
+			}
+		case <-deadline:
+			break collect
 		}
 	}
-
+	for {
+		select {
+		case event := <-eventsCh:
+			switch v := event.(type) {
+			case protocol.LogEvent:
+				logs = append(logs, v)
+			case protocol.PromptRequestEvent:
+				prompts = append(prompts, v)
+			}
+		default:
+			goto done
+		}
+	}
+done:
 	if len(logs) != 1 {
 		t.Fatalf("expected a single coalesced log, got %#v", logs)
 	}
@@ -1546,7 +1569,7 @@ func TestCodexShouldIgnoreStderrKeepsPlainUserFacingErrors(t *testing.T) {
 
 func TestCodexAppSessionReadLoopHandlesLongJSONLines(t *testing.T) {
 	hugeDelta := strings.Repeat("x", 2*1024*1024)
-	params, err := json.Marshal(map[string]any{
+	deltaParams, err := json.Marshal(map[string]any{
 		"threadId": "thread-123",
 		"turnId":   "turn-1",
 		"itemId":   "item-1",
@@ -1555,10 +1578,30 @@ func TestCodexAppSessionReadLoopHandlesLongJSONLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
-	message, err := json.Marshal(codexRPCMessage{
+	deltaMessage, err := json.Marshal(codexRPCMessage{
 		JSONRPC: "2.0",
 		Method:  "item/agentMessage/delta",
-		Params:  params,
+		Params:  deltaParams,
+	})
+	if err != nil {
+		t.Fatalf("marshal rpc message: %v", err)
+	}
+	completedParams, err := json.Marshal(map[string]any{
+		"threadId": "thread-123",
+		"turnId":   "turn-1",
+		"item": map[string]any{
+			"type": "agentMessage",
+			"id":   "item-1",
+			"text": hugeDelta,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	completedMessage, err := json.Marshal(codexRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "item/completed",
+		Params:  completedParams,
 	})
 	if err != nil {
 		t.Fatalf("marshal rpc message: %v", err)
@@ -1576,7 +1619,7 @@ func TestCodexAppSessionReadLoopHandlesLongJSONLines(t *testing.T) {
 		pending: make(map[string]chan codexRPCResponse),
 	}
 
-	app.readLoop(context.Background(), strings.NewReader(string(message)+"\n"))
+	app.readLoop(context.Background(), strings.NewReader(string(deltaMessage)+"\n"+string(completedMessage)+"\n"))
 
 	if len(logs) != 1 {
 		t.Fatalf("expected a single log event, got %d", len(logs))

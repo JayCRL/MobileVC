@@ -5,13 +5,43 @@ class AppTheme {
     const seed = Color(0xFF2563EB);
     final scheme =
         ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.light);
-    const scaffoldBackground = Color(0xFFF4F7FB);
-    const surface = Colors.white;
-    final outline = scheme.outlineVariant.withValues(alpha: 0.72);
+    return _build(
+      scheme: scheme,
+      scaffoldBackground: const Color(0xFFF4F7FB),
+      surface: Colors.white,
+      snackBarBackground: const Color(0xFF0F172A),
+      snackBarForeground: Colors.white,
+      outlineAlpha: 0.72,
+    );
+  }
 
+  static ThemeData dark() {
+    const seed = Color(0xFF60A5FA);
+    final scheme =
+        ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.dark);
+    return _build(
+      scheme: scheme,
+      scaffoldBackground: const Color(0xFF0B1120),
+      surface: const Color(0xFF111827),
+      snackBarBackground: const Color(0xFFE5E7EB),
+      snackBarForeground: const Color(0xFF0F172A),
+      outlineAlpha: 0.36,
+    );
+  }
+
+  static ThemeData _build({
+    required ColorScheme scheme,
+    required Color scaffoldBackground,
+    required Color surface,
+    required Color snackBarBackground,
+    required Color snackBarForeground,
+    required double outlineAlpha,
+  }) {
+    final outline = scheme.outlineVariant.withValues(alpha: outlineAlpha);
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
+      brightness: scheme.brightness,
       scaffoldBackgroundColor: scaffoldBackground,
       dividerColor: outline,
       appBarTheme: AppBarTheme(
@@ -82,8 +112,8 @@ class AppTheme {
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF0F172A),
-        contentTextStyle: const TextStyle(color: Colors.white),
+        backgroundColor: snackBarBackground,
+        contentTextStyle: TextStyle(color: snackBarForeground),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),
     );

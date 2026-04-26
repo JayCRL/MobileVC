@@ -123,6 +123,41 @@ class _DeferredFirstInput {
   final String text;
 }
 
+class _PendingOutboundAction {
+  const _PendingOutboundAction({
+    required this.payload,
+    required this.userText,
+    required this.label,
+    required this.createdAt,
+    required this.clientActionId,
+    this.displayed = false,
+    this.sendAttempts = 0,
+  });
+
+  final Map<String, dynamic> payload;
+  final String userText;
+  final String label;
+  final DateTime createdAt;
+  final String clientActionId;
+  final bool displayed;
+  final int sendAttempts;
+
+  _PendingOutboundAction copyWith({
+    Map<String, dynamic>? payload,
+    bool? displayed,
+    int? sendAttempts,
+  }) =>
+      _PendingOutboundAction(
+        payload: payload ?? this.payload,
+        userText: userText,
+        label: label,
+        createdAt: createdAt,
+        clientActionId: clientActionId,
+        displayed: displayed ?? this.displayed,
+        sendAttempts: sendAttempts ?? this.sendAttempts,
+      );
+}
+
 @visibleForTesting
 bool shouldPreserveAdbFailureStatus(String status) {
   final normalized = status.trim().toLowerCase();
@@ -152,6 +187,8 @@ class SessionController extends ChangeNotifier {
   static const int _maxForegroundReconnectAttempts = 4;
   static const Duration _connectionHealthInterval = Duration(seconds: 10);
   static const Duration _connectionSilenceTimeout = Duration(seconds: 45);
+  static const Duration _observedSessionSyncInterval = Duration(seconds: 3);
+  static const Duration _outboundAckRetryDelay = Duration(seconds: 6);
   final MobileVcWsService _service;
   final AdbWebRtcService _adbWebRtc = AdbWebRtcService();
 
@@ -166,13 +203,23 @@ class SessionController extends ChangeNotifier {
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
   Timer? _connectionHealthTimer;
+  Timer? _observedSessionSyncTimer;
+  Timer? _pendingOutboundRetryTimer;
   DateTime? _lastServerEventAt;
+  final List<_PendingOutboundAction> _pendingOutboundActions =
+      <_PendingOutboundAction>[];
+  int _clientActionSequence = 0;
   final Map<String, int> _sessionEventCursors = <String, int>{};
   final Map<String, SessionDeltaKnown> _sessionDeltaKnown =
       <String, SessionDeltaKnown>{};
   bool _fileListLoading = false;
   bool _fileReading = false;
   bool _canResumeCurrentSession = false;
+  bool _sessionRuntimeAlive = false;
+  bool _selectedSessionExternalNative = false;
+  bool _continueSameSessionEnabled = false;
+  String _continuedSameSessionId = '';
+  DateTime? _lastContinuationInputAt;
   bool _isStopping = false;
   bool _isHotSwapping = false;
   Timer? _hotSwapTimeoutTimer;
@@ -576,6 +623,36 @@ class SessionController extends ChangeNotifier {
   bool get hasCompactContextSelection =>
       _skills.isNotEmpty || _memoryItems.isNotEmpty;
   bool get isLoadingSession => _isLoadingSession;
+  bool get isObservingRemoteActiveSession =>
+      _selectedSessionExternalNative && !_continueSameSessionEnabled;
+  bool get isSessionReadOnly => isObservingRemoteActiveSession;
+  String get sessionReadOnlyHint =>
+      isSessionReadOnly ? '电脑端原生会话正在运行，手机端当前为观察模式' : '';
+  String get sessionObservationTitle =>
+      _continueSameSessionEnabled ? '已在手机继续同一会话' : '观察模式';
+  String get sessionObservationDetail => _continueSameSessionEnabled
+      ? '请避免同时在电脑端原生终端输入，防止上下文交错。'
+      : '正在同步电脑端进度。点击继续后，手机会向同一个会话发送输入。';
+  bool get shouldShowSessionObservationBanner =>
+      _selectedSessionId.trim().isNotEmpty &&
+      _sessionRuntimeAlive &&
+      _selectedSessionExternalNative &&
+      !hasPendingPermissionPrompt &&
+      !shouldShowReviewChoices &&
+      !hasPendingPlanPrompt &&
+      !hasPendingPlanQuestions;
+  bool get canContinueSameSession =>
+      shouldShowSessionObservationBanner && !_continueSameSessionEnabled;
+
+  bool get canSendToContinuedSameSession =>
+      _continueSameSessionEnabled &&
+      _selectedSessionId.trim().isNotEmpty &&
+      _continuedSameSessionId == _selectedSessionId.trim();
+
+  bool get _hasRecentContinuationInput {
+    final sentAt = _lastContinuationInputAt;
+    return sentAt != null && DateTime.now().difference(sentAt).inSeconds < 8;
+  }
 
   List<TimelineItem> get timeline => List.unmodifiable(_timeline);
   List<ReviewGroup> get reviewGroups => List.unmodifiable(_reviewGroups);
@@ -893,13 +970,20 @@ class SessionController extends ChangeNotifier {
   String get agentPhaseLabel => _agentPhaseLabel;
   bool get activityVisible => _activityVisible;
   bool get activityBannerVisible =>
+      isObservingRemoteActiveSession ||
       _activityVisible ||
       _isClaudePendingReadyForInput ||
       _isStopping ||
       _isHotSwapping;
   bool get activityBannerAnimated =>
-      (_activityVisible || _isHotSwapping) && !_isStopping;
+      !isObservingRemoteActiveSession &&
+      (_activityVisible || _isHotSwapping) &&
+      !_isStopping &&
+      !_hasRecentContinuationInput;
   String get activityBannerTitle {
+    if (isObservingRemoteActiveSession) {
+      return '观察模式';
+    }
     if (_isStopping) {
       return '正在停止';
     }
@@ -908,7 +992,11 @@ class SessionController extends ChangeNotifier {
     }
     return _isClaudePendingReadyForInput ? '待输入' : 'AI 助手正在运行中';
   }
+
   String get activityBannerDetail {
+    if (isObservingRemoteActiveSession) {
+      return _sessionRuntimeAlive ? '正在同步电脑端原生会话进度' : '电脑端原生会话只读预览';
+    }
     if (_isStopping) {
       return '等待后端确认停止...';
     }
@@ -934,7 +1022,8 @@ class SessionController extends ChangeNotifier {
     return '调用工具 · $label';
   }
 
-  bool get activityBannerShowsElapsed => _activityVisible;
+  bool get activityBannerShowsElapsed =>
+      !isObservingRemoteActiveSession && _activityVisible;
   DateTime? get activityStartedAt => _activityStartedAt;
   int get activityElapsedSeconds {
     final startedAt = _activityStartedAt;
@@ -1010,10 +1099,13 @@ class SessionController extends ChangeNotifier {
     switch (normalizedEngine) {
       case 'codex':
         parts.add('codex');
-        parts.addAll([
-          '-m',
-          _resolvedAiModel('codex', _configuredModelForEngine('codex')),
-        ]);
+        final model = _resolvedAiModel(
+          'codex',
+          _configuredModelForEngine('codex'),
+        );
+        if (model.isNotEmpty) {
+          parts.addAll(['-m', model]);
+        }
         final effort = _resolvedAiReasoningEffort(
           'codex',
           _configuredReasoningEffortForEngine('codex'),
@@ -1073,12 +1165,18 @@ class SessionController extends ChangeNotifier {
   }
 
   void _syncPendingAiLaunchFromRuntime() {
-    if (_pendingAiLaunchEngine.isEmpty || _pendingAiLaunchAwaitingFirstInput) {
+    if (_pendingAiLaunchEngine.isEmpty) {
       return;
     }
     final meta = currentMeta;
     final hasRuntimeOwnership = meta.command.trim().isNotEmpty ||
         meta.claudeLifecycle.trim().isNotEmpty;
+    if (hasRuntimeOwnership && _pendingAiLaunchAwaitingFirstInput) {
+      _pendingAiLaunchAwaitingFirstInput = false;
+    }
+    if (_pendingAiLaunchAwaitingFirstInput) {
+      return;
+    }
     final becameIdle = _isIdleLikeState(_agentState?.state ?? '') ||
         _isIdleLikeState(_sessionState?.state ?? '');
     if (hasRuntimeOwnership || becameIdle) {
@@ -1174,10 +1272,12 @@ class SessionController extends ChangeNotifier {
 
   Future<void> disposeController() async {
     _stopAdbRefreshPolling();
+    _stopObservedSessionSync();
     _adbWebRtcStartTimeout?.cancel();
     _reconnectTimer?.cancel();
     _connectionHealthTimer?.cancel();
     _hotSwapTimeoutTimer?.cancel();
+    _pendingOutboundRetryTimer?.cancel();
     await _subscription?.cancel();
     await _adbWebRtc.dispose();
     await _service.dispose();
@@ -1253,6 +1353,123 @@ class SessionController extends ChangeNotifier {
     });
   }
 
+  bool _sendUserVisibleAction(
+    Map<String, dynamic> payload, {
+    required String userText,
+    required String label,
+    bool queueOnFailure = true,
+  }) {
+    final clientActionId = _nextClientActionId();
+    final outboundPayload = Map<String, dynamic>.from(payload)
+      ..['clientActionId'] = clientActionId;
+    final sessionId = _selectedSessionId.trim();
+    if (sessionId.isNotEmpty &&
+        (outboundPayload['sessionId'] ?? '').toString().trim().isEmpty) {
+      outboundPayload['sessionId'] = sessionId;
+    }
+    final pendingAction = _PendingOutboundAction(
+      payload: outboundPayload,
+      userText: userText,
+      label: label,
+      createdAt: DateTime.now(),
+      clientActionId: clientActionId,
+    );
+    final sent = _service.send(outboundPayload);
+    if (sent) {
+      _pendingOutboundActions.add(
+        pendingAction.copyWith(displayed: true, sendAttempts: 1),
+      );
+      _schedulePendingOutboundRetry();
+      return true;
+    }
+    if (queueOnFailure) {
+      _pendingOutboundActions.add(pendingAction);
+      _pushSystem('session', '网络暂不可用，消息已排队，恢复连接后自动发送');
+      _scheduleReconnect(immediate: true);
+      _schedulePendingOutboundRetry();
+    } else {
+      _pushSystem('error', '消息发送失败：WebSocket 未连接或写入失败');
+    }
+    return false;
+  }
+
+  String _nextClientActionId() {
+    _clientActionSequence += 1;
+    return '${DateTime.now().microsecondsSinceEpoch}-$_clientActionSequence';
+  }
+
+  void _flushPendingOutboundActions() {
+    if (!_connected || _connecting || _pendingOutboundActions.isEmpty) {
+      return;
+    }
+    final pending = List<_PendingOutboundAction>.from(_pendingOutboundActions);
+    _pendingOutboundActions.clear();
+    var flushed = 0;
+    var newlyDisplayed = 0;
+    for (final action in pending) {
+      final sent = _service.send(action.payload);
+      if (!sent) {
+        _pendingOutboundActions
+          ..add(action)
+          ..addAll(pending.skip(flushed + 1));
+        _scheduleReconnect(immediate: true);
+        _schedulePendingOutboundRetry();
+        return;
+      }
+      flushed++;
+      if (!action.displayed) {
+        _pushUser(action.userText, action.label);
+        newlyDisplayed++;
+      }
+      _pendingOutboundActions.add(
+        action.copyWith(
+          displayed: true,
+          sendAttempts: action.sendAttempts + 1,
+        ),
+      );
+    }
+    if (newlyDisplayed > 0) {
+      _pushSystem('session', '已自动补发 $newlyDisplayed 条排队消息');
+    }
+    if (flushed > 0) {
+      _schedulePendingOutboundRetry();
+    }
+  }
+
+  void _handleClientActionAck(ClientActionAckEvent ack) {
+    final clientActionId = ack.clientActionId.trim();
+    if (clientActionId.isEmpty || _pendingOutboundActions.isEmpty) {
+      return;
+    }
+    final before = _pendingOutboundActions.length;
+    _pendingOutboundActions
+        .removeWhere((action) => action.clientActionId == clientActionId);
+    if (_pendingOutboundActions.length != before) {
+      _schedulePendingOutboundRetry();
+    }
+  }
+
+  void _schedulePendingOutboundRetry() {
+    _pendingOutboundRetryTimer?.cancel();
+    if (_pendingOutboundActions.isEmpty) {
+      return;
+    }
+    _pendingOutboundRetryTimer =
+        Timer(_outboundAckRetryDelay, _retryPendingOutboundActions);
+  }
+
+  void _retryPendingOutboundActions() {
+    if (_pendingOutboundActions.isEmpty) {
+      return;
+    }
+    if (!_connected || _connecting) {
+      _scheduleReconnect(immediate: true);
+      _schedulePendingOutboundRetry();
+      return;
+    }
+    _flushPendingOutboundActions();
+  }
+
   void setDevicePushToken(String token) {
     final normalized = token.trim();
     if (normalized.isEmpty || _devicePushToken == normalized) {
@@ -1267,6 +1484,9 @@ class SessionController extends ChangeNotifier {
     _appInForeground = isForeground;
     if (_appInForeground && !previous) {
       _scheduleReconnect(immediate: true);
+      _syncObservedSessionPolling();
+    } else if (!_appInForeground) {
+      _stopObservedSessionSync();
     }
   }
 
@@ -1378,9 +1598,14 @@ class SessionController extends ChangeNotifier {
       requestPermissionRuleList();
       requestReviewState();
       requestTaskSnapshot();
-      _requestSessionDelta(reason: silently ? 'reconnect' : 'connect');
+      if (_selectedSessionId.trim().isNotEmpty) {
+        _requestSessionResume(reason: silently ? 'reconnect' : 'connect');
+      } else {
+        _requestSessionDelta(reason: silently ? 'reconnect' : 'connect');
+      }
       _sendCachedPushTokenIfPossible();
       _restorePendingNotificationSessionIfNeeded();
+      _flushPendingOutboundActions();
     } catch (error) {
       _connected = false;
       if (silently && _autoReconnectEnabled) {
@@ -1424,6 +1649,7 @@ class SessionController extends ChangeNotifier {
     _reconnecting = false;
     _reconnectAttempt = 0;
     _cancelReconnectTimer();
+    _stopObservedSessionSync();
     _stopAdbRefreshPolling();
     await _adbWebRtc.stop();
     await _service.disconnect();
@@ -1433,9 +1659,15 @@ class SessionController extends ChangeNotifier {
     _selectedSessionTitle = 'MobileVC';
     _connectionMessage = '已断开';
     _clearDeferredFirstInput();
+    _pendingOutboundActions.clear();
     _sessionListSyncedSinceConnect = false;
     _fileListLoading = false;
     _fileReading = false;
+    _sessionRuntimeAlive = false;
+    _selectedSessionExternalNative = false;
+    _continueSameSessionEnabled = false;
+    _continuedSameSessionId = '';
+    _lastContinuationInputAt = null;
     _currentDirectoryPath = '';
     _currentDirectoryItems.clear();
     _openedFile = null;
@@ -1541,7 +1773,10 @@ class SessionController extends ChangeNotifier {
   void resumeConnectionIfNeeded() {
     if (_connected && !_connecting) {
       requestTaskSnapshot();
+      _requestSessionResume(reason: 'foreground');
       _requestSessionDelta(reason: 'foreground');
+      _flushPendingOutboundActions();
+      _syncObservedSessionPolling();
       return;
     }
     _scheduleReconnect(immediate: true);
@@ -1553,7 +1788,8 @@ class SessionController extends ChangeNotifier {
       return;
     }
     final lastSeenCursor = _sessionEventCursors[sessionId] ?? 0;
-    final runtimeState = (_agentState?.state ?? _sessionState?.state ?? '').trim();
+    final runtimeState =
+        (_agentState?.state ?? _sessionState?.state ?? '').trim();
     _connectionStage = SessionConnectionStage.catchingUp;
     _service.send({
       'action': 'session_resume',
@@ -1572,7 +1808,6 @@ class SessionController extends ChangeNotifier {
     if (!_connected || _connecting || sessionId.isEmpty) {
       return;
     }
-    _connectionStage = SessionConnectionStage.catchingUp;
     _service.send({
       'action': 'session_delta_get',
       'sessionId': sessionId,
@@ -1580,6 +1815,41 @@ class SessionController extends ChangeNotifier {
       if (reason.trim().isNotEmpty) 'reason': reason.trim(),
       'known': _currentSessionDeltaKnown(sessionId).toJson(),
     });
+  }
+
+  void _syncObservedSessionPolling() {
+    if (!_connected ||
+        _connecting ||
+        !_appInForeground ||
+        _selectedSessionId.trim().isEmpty ||
+        (!_sessionRuntimeAlive && !_selectedSessionExternalNative)) {
+      _stopObservedSessionSync();
+      return;
+    }
+    if (_observedSessionSyncTimer != null) {
+      return;
+    }
+    _observedSessionSyncTimer = Timer.periodic(
+      _observedSessionSyncInterval,
+      (_) => _requestSessionDelta(reason: 'observe_active_session'),
+    );
+  }
+
+  void _stopObservedSessionSync() {
+    _observedSessionSyncTimer?.cancel();
+    _observedSessionSyncTimer = null;
+  }
+
+  void continueSameSessionFromPhone() {
+    if (!canContinueSameSession) {
+      return;
+    }
+    _continueSameSessionEnabled = true;
+    _continuedSameSessionId = _selectedSessionId.trim();
+    _pushSystem(
+      'session',
+      '已在手机继续同一会话。电脑端原生终端仍可输入，请避免两端同时输入。',
+    );
     _syncDerivedState();
     notifyListeners();
   }
@@ -1818,6 +2088,15 @@ class SessionController extends ChangeNotifier {
     return normalized == targetId;
   }
 
+  bool _eventTargetsCurrentSession(String sessionId) {
+    final normalized = sessionId.trim();
+    if (normalized.isEmpty) {
+      return _selectedSessionId.trim().isEmpty;
+    }
+    final selected = _selectedSessionId.trim();
+    return selected.isEmpty || normalized == selected;
+  }
+
   void _finishSessionLoading({String sessionId = ''}) {
     if (!_isLoadingSession) {
       return;
@@ -1853,7 +2132,10 @@ class SessionController extends ChangeNotifier {
       _pushSystem('session', '当前模式暂不支持快捷切换模型');
       return;
     }
-    final normalizedModel = _resolvedAiModel(engine, model);
+    final normalizedModel =
+        engine == 'codex' && model.trim().toLowerCase() == 'default'
+            ? ''
+            : _resolvedAiModel(engine, model);
     final normalizedEffort =
         _resolvedAiReasoningEffort(engine, reasoningEffort);
     _pendingAiPreferences[engine] = _PendingAiPreference(
@@ -1869,7 +2151,7 @@ class SessionController extends ChangeNotifier {
     _pushSystem(
       'session',
       engine == 'codex'
-          ? 'Codex 模型已切换为 ${_codexModelDisplayLabel(normalizedModel)} · ${normalizedEffort.toUpperCase()}，将对下一次 Codex 启动生效'
+          ? 'Codex 模型已切换为 ${normalizedModel.isEmpty ? 'Default' : _codexModelDisplayLabel(normalizedModel)} · ${normalizedEffort.toUpperCase()}，将对下一次 Codex 启动生效'
           : 'Claude 模型已切换为 ${_claudeModelLabel(normalizedModel)}，将对下一次 Claude 启动生效',
     );
     notifyListeners();
@@ -2524,14 +2806,23 @@ class SessionController extends ChangeNotifier {
       ),
     );
     _lastAssistantReplyExecutionKey = '';
-    _service.send({
+    final launchPayload = {
       'action': 'exec',
       'cmd': preferredCommand,
       'cwd': effectiveCwd,
       'mode': 'pty',
       ...mergedMeta.toJson(),
       'permissionMode': _config.permissionMode,
-    });
+    };
+    final launchSent = _sendUserVisibleAction(
+      launchPayload,
+      userText: preferredCommand,
+      label: '命令',
+      queueOnFailure: true,
+    );
+    if (!launchSent) {
+      return;
+    }
     if (value.isEmpty) {
       _pendingAiLaunchAwaitingFirstInput = true;
       return;
@@ -2562,17 +2853,27 @@ class SessionController extends ChangeNotifier {
         permissionMode: _config.permissionMode,
       ),
     );
-    _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
-    _syncDerivedState();
-    _pushUser(value, label);
-    _lastAssistantReplyExecutionKey = '';
-    _service.send({
+    final payload = {
       'action': 'input',
       'data': '$value\n',
       'cwd': effectiveCwd,
       ...mergedMeta.toJson(),
       'permissionMode': _config.permissionMode,
-    });
+    };
+    final sent = _sendUserVisibleAction(
+      payload,
+      userText: value,
+      label: label,
+    );
+    if (!sent) {
+      return;
+    }
+    _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
+    _lastContinuationInputAt = DateTime.now();
+    _sessionRuntimeAlive = true;
+    _syncDerivedState();
+    _pushUser(value, label);
+    _lastAssistantReplyExecutionKey = '';
   }
 
   void continueWithCurrentFile([String text = '基于当前文件继续处理']) {
@@ -2676,6 +2977,18 @@ class SessionController extends ChangeNotifier {
       _pushSystem('session', '请先在上方完成计划选择');
       return;
     }
+    final lower = value.toLowerCase();
+    final isAiCommand = _isAiCommand(lower);
+    if (isAiCommand) {
+      _clearPendingAiLaunch();
+      _continueSameSessionEnabled = false;
+      _continuedSameSessionId = '';
+    }
+    if (canSendToContinuedSameSession) {
+      _resetActionNeededTracking();
+      _submitClaudeContinuation(value, label: '回复');
+      return;
+    }
     if (awaitInput) {
       _markActionNeededHandled();
       _submitAwaitingPrompt(value);
@@ -2685,8 +2998,6 @@ class SessionController extends ChangeNotifier {
       _handleSlashCommand(value);
       return;
     }
-    final lower = value.toLowerCase();
-    final isAiCommand = _isAiCommand(lower);
     if (_shouldAutoCreateSessionOnFirstInput()) {
       _deferFirstInputAndCreateSession(value);
       return;
@@ -2728,14 +3039,17 @@ class SessionController extends ChangeNotifier {
     }
     _clearPendingAiLaunch();
     _lastAssistantReplyExecutionKey = '';
-    _service.send({
+    final payload = {
       'action': 'exec',
       'cmd': value,
       'cwd': effectiveCwd,
       'mode': 'pty',
       ...currentMeta.toJson(),
       'permissionMode': _config.permissionMode,
-    });
+    };
+    if (!_sendUserVisibleAction(payload, userText: value, label: '命令')) {
+      return;
+    }
     _pushUser(value, '命令');
   }
 
@@ -3001,7 +3315,9 @@ class SessionController extends ChangeNotifier {
         'promptMessage': interaction.message,
         'command': decisionMeta.command,
         'cwd': decisionMeta.cwd.isNotEmpty ? decisionMeta.cwd : effectiveCwd,
-        'engine': decisionMeta.engine.isNotEmpty ? decisionMeta.engine : _config.engine,
+        'engine': decisionMeta.engine.isNotEmpty
+            ? decisionMeta.engine
+            : _config.engine,
         'target': decisionMeta.target,
         'targetType': decisionMeta.targetType,
       });
@@ -3024,12 +3340,15 @@ class SessionController extends ChangeNotifier {
     _pendingInteraction = null;
     _clearPlanInteractionState();
     _lastAssistantReplyExecutionKey = '';
-    _optimisticallyResumeAiProcessingAfterInput();
-    _service.send({
+    final payload = {
       'action': 'input',
       'data': '$value\n',
       'permissionMode': _config.permissionMode,
-    });
+    };
+    if (!_sendUserVisibleAction(payload, userText: value, label: promptLabel)) {
+      return;
+    }
+    _optimisticallyResumeAiProcessingAfterInput();
     _pushUser(value, promptLabel);
     _syncDerivedState();
     notifyListeners();
@@ -3108,12 +3427,12 @@ class SessionController extends ChangeNotifier {
         ? promptSnapshot!.message
         : _runtimePhase?.message;
     final decisionMeta = currentMeta.merge(promptMeta).merge(
-      RuntimeMeta(
-        contextTitle: contextTitle,
-        targetPath: targetPath,
-        permissionMode: _currentDecisionPermissionMode,
-      ),
-    );
+          RuntimeMeta(
+            contextTitle: contextTitle,
+            targetPath: targetPath,
+            permissionMode: _currentDecisionPermissionMode,
+          ),
+        );
     _pendingPrompt = null;
     _pendingInteraction = null;
     _runtimePhase = null;
@@ -3133,7 +3452,8 @@ class SessionController extends ChangeNotifier {
       'promptMessage': promptMessage,
       'command': decisionMeta.command,
       'cwd': decisionMeta.cwd.isNotEmpty ? decisionMeta.cwd : effectiveCwd,
-      'engine': decisionMeta.engine.isNotEmpty ? decisionMeta.engine : _config.engine,
+      'engine':
+          decisionMeta.engine.isNotEmpty ? decisionMeta.engine : _config.engine,
       'target': decisionMeta.target,
       'targetType': decisionMeta.targetType,
     });
@@ -3383,14 +3703,17 @@ class SessionController extends ChangeNotifier {
         break;
       default:
         final meta = currentMeta;
-        _service.send({
+        final payload = {
           'action': 'slash_command',
           'command': raw,
           'cwd': effectiveCwd,
           'engine': _config.engine,
           ...meta.toJson(),
           'permissionMode': _config.permissionMode,
-        });
+        };
+        if (!_sendUserVisibleAction(payload, userText: raw, label: 'Slash')) {
+          return;
+        }
         _pushUser(raw, 'Slash');
     }
   }
@@ -3399,6 +3722,9 @@ class SessionController extends ChangeNotifier {
     _lastServerEventAt = DateTime.now();
     _trackSessionEventCursor(event);
     switch (event) {
+      case ClientActionAckEvent ack:
+        _handleClientActionAck(ack);
+        break;
       case SessionCreatedEvent created:
         _connectionStage = SessionConnectionStage.ready;
         _connectionMessage = '已连接';
@@ -3406,6 +3732,8 @@ class SessionController extends ChangeNotifier {
         _autoSessionCreating = false;
         _selectedSessionId = created.summary.id;
         _selectedSessionTitle = sessionDisplayTitle(created.summary);
+        _selectedSessionExternalNative =
+            _isExternalNativeSession(created.summary);
         _sendCachedPushTokenIfPossible();
         _resetNewSessionState();
         _upsertSession(created.summary);
@@ -3455,6 +3783,8 @@ class SessionController extends ChangeNotifier {
             _resolvedHistorySummary(history.summary, history.logEntries);
         _selectedSessionId = resolvedHistorySummary.id;
         _selectedSessionTitle = sessionDisplayTitle(resolvedHistorySummary);
+        _selectedSessionExternalNative =
+            _isExternalNativeSession(resolvedHistorySummary);
         _sendCachedPushTokenIfPossible();
         _sessionContext = history.sessionContext;
         _skillCatalogMeta = history.skillCatalogMeta;
@@ -3483,6 +3813,10 @@ class SessionController extends ChangeNotifier {
         _latestError = history.latestError;
         _canResumeCurrentSession = history.canResume;
         _resumeRuntimeMeta = history.resumeRuntimeMeta;
+        _sessionRuntimeAlive = history.runtimeAlive;
+        _continueSameSessionEnabled = false;
+        _continuedSameSessionId = '';
+        _lastContinuationInputAt = null;
         _terminalExecutions
           ..clear()
           ..addAll(history.terminalExecutions);
@@ -3559,11 +3893,15 @@ class SessionController extends ChangeNotifier {
         final restoredCwd = history.resumeRuntimeMeta.cwd.trim();
         final targetCwd = restoredCwd.isNotEmpty ? restoredCwd : _config.cwd;
         await switchWorkingDirectory(targetCwd);
+        _requestSessionDelta(reason: 'history_loaded');
         break;
       case SessionDeltaEvent delta:
         _handleSessionDelta(delta);
         break;
       case SessionResumeResultEvent result:
+        if (!_eventTargetsCurrentSession(result.sessionId)) {
+          break;
+        }
         if (result.sessionId.trim().isNotEmpty) {
           final previous = _sessionEventCursors[result.sessionId.trim()] ?? 0;
           if (result.latestCursor > previous) {
@@ -3572,12 +3910,29 @@ class SessionController extends ChangeNotifier {
         }
         _connectionStage = SessionConnectionStage.ready;
         _connectionMessage = '已连接';
+        _sessionRuntimeAlive = result.runtimeAlive;
+        if (!result.runtimeAlive && !canSendToContinuedSameSession) {
+          _continueSameSessionEnabled = false;
+          _continuedSameSessionId = '';
+        }
+        _syncObservedSessionPolling();
         break;
       case SessionResumeNoticeEvent notice:
         _emitResumeNotification(notice);
         break;
       case SessionStateEvent state:
+        if (!_eventTargetsCurrentSession(state.sessionId)) {
+          break;
+        }
         _sessionState = state;
+        if (_isIdleLikeState(state.state) ||
+            state.state.trim().toLowerCase() == 'stopped') {
+          _sessionRuntimeAlive = false;
+          if (!canSendToContinuedSameSession) {
+            _continueSameSessionEnabled = false;
+            _continuedSameSessionId = '';
+          }
+        }
         _maybeAutoSyncAiModel(state.runtimeMeta);
         _syncRuntimePermissionMode();
 
@@ -3601,20 +3956,44 @@ class SessionController extends ChangeNotifier {
         }
         if (_isIdleLikeState(state.state) && !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
-        _pendingPrompt = null;
+          _pendingPrompt = null;
           _runtimePhase = null;
           _agentState = null;
         }
         _connectionMessage =
             state.message.isNotEmpty ? state.message : state.state;
         _syncDerivedState();
+        _syncObservedSessionPolling();
         _handleSessionStateTimeline(state);
         break;
       case TaskSnapshotEvent snapshot:
-        _handleTaskSnapshot(snapshot);
+        if (!_eventTargetsCurrentSession(snapshot.sessionId)) {
+          break;
+        }
+        final ignoredAsStale = _handleTaskSnapshot(snapshot);
+        if (!ignoredAsStale) {
+          _sessionRuntimeAlive =
+              snapshot.runtimeAlive || _hasRecentContinuationInput;
+          if (!snapshot.runtimeAlive &&
+              !_hasRecentContinuationInput &&
+              !canSendToContinuedSameSession) {
+            _continueSameSessionEnabled = false;
+            _continuedSameSessionId = '';
+          }
+        }
+        _syncObservedSessionPolling();
         break;
       case AgentStateEvent agent:
+        if (!_eventTargetsCurrentSession(agent.sessionId)) {
+          break;
+        }
         _agentState = agent;
+        final agentStateName = agent.state.trim().toUpperCase();
+        _sessionRuntimeAlive = agentStateName == 'THINKING' ||
+            agentStateName == 'RECOVERING' ||
+            agentStateName == 'RUNNING' ||
+            agentStateName == 'RUNNING_TOOL' ||
+            _hasRecentContinuationInput;
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
         if (_isIdleLikeState(agent.state) || agent.awaitInput) {
@@ -3623,7 +4002,8 @@ class SessionController extends ChangeNotifier {
             finishedAt: agent.timestamp,
           );
         }
-        if ((_isIdleLikeState(agent.state) || agent.awaitInput) && !_shouldPreserveBlockingPrompt()) {
+        if ((_isIdleLikeState(agent.state) || agent.awaitInput) &&
+            !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
           _pendingPrompt = null;
           _runtimePhase = null;
@@ -3636,6 +4016,7 @@ class SessionController extends ChangeNotifier {
           targetPath: agent.runtimeMeta.targetPath,
         );
         _syncDerivedState();
+        _syncObservedSessionPolling();
         break;
       case RuntimePhaseEvent runtimePhase:
         _runtimePhase = runtimePhase;
@@ -3950,6 +4331,20 @@ class SessionController extends ChangeNotifier {
           ..addAll(result.items);
         _isSavingMemory = false;
         break;
+      case CatalogAuthoringResultEvent result:
+        if (result.skill != null) {
+          _upsertSkillDefinition(result.skill!);
+          _isSavingSkill = false;
+        }
+        if (result.memory != null) {
+          _upsertMemoryItem(result.memory!);
+          _isSavingMemory = false;
+        }
+        final message = result.message.trim();
+        if (message.isNotEmpty) {
+          _pushSystem('catalog', message);
+        }
+        break;
       case SessionContextResultEvent result:
         _sessionContext = result.sessionContext;
         _pendingSessionContextTarget = null;
@@ -4108,6 +4503,8 @@ class SessionController extends ChangeNotifier {
         if (!state.running && !state.connected) {
           _adbWebRtcStarting = false;
         }
+        break;
+      case PongEvent _:
         break;
       case UnknownEvent unknown:
         _pushSystem('system', '收到未识别事件：${unknown.type}');
@@ -4318,6 +4715,8 @@ class SessionController extends ChangeNotifier {
     if (resolvedSummary.id.trim().isNotEmpty) {
       _selectedSessionId = resolvedSummary.id;
       _selectedSessionTitle = sessionDisplayTitle(resolvedSummary);
+      _selectedSessionExternalNative =
+          _isExternalNativeSession(resolvedSummary);
       _upsertSession(resolvedSummary);
     }
     _sessionContext = delta.sessionContext;
@@ -4326,6 +4725,13 @@ class SessionController extends ChangeNotifier {
     _runtimePermissionMode = delta.resumeRuntimeMeta.permissionMode.trim();
     _canResumeCurrentSession = delta.canResume;
     _resumeRuntimeMeta = delta.resumeRuntimeMeta;
+    _sessionRuntimeAlive = delta.runtimeAlive || _hasRecentContinuationInput;
+    if (!delta.runtimeAlive &&
+        !_hasRecentContinuationInput &&
+        !canSendToContinuedSameSession) {
+      _continueSameSessionEnabled = false;
+      _continuedSameSessionId = '';
+    }
     if (delta.latest.eventCursor > 0) {
       final sessionId = delta.sessionId.trim();
       final previous = _sessionEventCursors[sessionId] ?? 0;
@@ -4520,6 +4926,42 @@ class SessionController extends ChangeNotifier {
     }
   }
 
+  void _upsertSkillDefinition(SkillDefinition skill) {
+    final name = skill.name.trim();
+    if (name.isEmpty) {
+      return;
+    }
+    final index = _skills.indexWhere((item) => item.name == name);
+    if (index == -1) {
+      _skills.insert(0, skill);
+    } else {
+      _skills[index] = skill;
+    }
+  }
+
+  void _upsertMemoryItem(MemoryItem memory) {
+    final id = memory.id.trim();
+    if (id.isEmpty) {
+      return;
+    }
+    final index = _memoryItems.indexWhere((item) => item.id == id);
+    if (index == -1) {
+      _memoryItems.insert(0, memory);
+    } else {
+      _memoryItems[index] = memory;
+    }
+  }
+
+  bool _isExternalNativeSession(SessionSummary summary) {
+    final source = summary.source.trim().toLowerCase();
+    final runtimeSource = summary.runtime.source.trim().toLowerCase();
+    return summary.external ||
+        source == 'codex-native' ||
+        source == 'claude-native' ||
+        runtimeSource == 'codex-native' ||
+        runtimeSource == 'claude-native';
+  }
+
   SessionSummary _resolvedHistorySummary(
     SessionSummary summary,
     List<HistoryLogEntry> entries,
@@ -4673,6 +5115,15 @@ class SessionController extends ChangeNotifier {
     if (!_shouldKeepTimelineItem(item)) {
       return;
     }
+    if (_timeline.any((previous) => previous.id == item.id)) {
+      return;
+    }
+    if (_isDuplicateUserTimelineItem(item)) {
+      return;
+    }
+    if (_isDuplicateAssistantTimelineItem(item)) {
+      return;
+    }
     if (_shouldMergeIntoPreviousTimelineItem(item)) {
       final previous = _timeline.removeLast();
       final mergedItem = TimelineItem(
@@ -4700,6 +5151,45 @@ class SessionController extends ChangeNotifier {
     if (emitNotifications) {
       _emitTimelineNotification(item);
     }
+  }
+
+  bool _isDuplicateUserTimelineItem(TimelineItem item) {
+    if (item.kind != 'user') {
+      return false;
+    }
+    final body = item.body.trim();
+    if (body.isEmpty) {
+      return false;
+    }
+    for (final previous in _timeline.reversed.take(6)) {
+      if (previous.kind == 'user' && previous.body.trim() == body) {
+        final gap = item.timestamp.difference(previous.timestamp).abs();
+        if (gap.inSeconds <= 12) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool _isDuplicateAssistantTimelineItem(TimelineItem item) {
+    if (item.kind != 'markdown' && item.kind != 'session') {
+      return false;
+    }
+    final body = item.body.trim();
+    if (body.isEmpty) {
+      return false;
+    }
+    // 3 秒内出现相同内容的 assistant 回复或 session 消息视为重复
+    for (final previous in _timeline.reversed.take(10)) {
+      if (previous.body.trim() == body) {
+        final gap = item.timestamp.difference(previous.timestamp).abs();
+        if (gap.inSeconds <= 3) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   String _mergedTimelineKind(TimelineItem previous, TimelineItem next) {
@@ -4924,11 +5414,13 @@ class SessionController extends ChangeNotifier {
     if (kind == 'markdown') {
       final executionKey = _runtimeExecutionKey(mergedMeta);
       _lastAssistantReplyExecutionKey = executionKey;
+      _lastContinuationInputAt = null;
       _markTerminalExecutionFinished(
         mergedMeta,
         finishedAt: log.timestamp,
       );
       _syncDerivedState();
+      _syncObservedSessionPolling();
     }
     _pushTimelineItem(
       TimelineItem(
@@ -5372,7 +5864,8 @@ class SessionController extends ChangeNotifier {
       return false;
     }
     if (looksLikeSessionNoiseText(trimmed) ||
-        looksLikeSessionBootstrapCommand(trimmed)) {
+        looksLikeSessionBootstrapCommand(trimmed) ||
+        looksLikeSessionPlaceholderTitle(trimmed)) {
       return true;
     }
     final lower = trimmed.toLowerCase();
@@ -6100,17 +6593,17 @@ class SessionController extends ChangeNotifier {
         hasPendingPermissionPrompt ||
         shouldShowReviewChoices ||
         hasPendingPlanQuestions;
+    final hasRealRunningSignal = agentState == 'THINKING' ||
+        agentState == 'RECOVERING' ||
+        sessionState == 'THINKING' ||
+        sessionState == 'RUNNING' ||
+        agentState == 'RUNNING_TOOL' ||
+        sessionState == 'RUNNING_TOOL';
     final active = _connected &&
         !hasBlockingPrompt &&
         !_isClaudePendingReadyForInput &&
-        (((_connectionStage == SessionConnectionStage.catchingUp ||
-                    agentState == 'THINKING' ||
-                    agentState == 'RECOVERING' ||
-                    sessionState == 'THINKING' ||
-                    sessionState == 'RUNNING') &&
-                !assistantReplySettled) ||
-            agentState == 'RUNNING_TOOL' ||
-            sessionState == 'RUNNING_TOOL');
+        hasRealRunningSignal &&
+        !assistantReplySettled;
     if (active) {
       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
       if (_activityToolLabel.isEmpty) {
@@ -6328,10 +6821,13 @@ class SessionController extends ChangeNotifier {
     _shouldSuppressNextActionNeededSignal = suppressNextSignal;
   }
 
-  void _handleTaskSnapshot(TaskSnapshotEvent snapshot) {
+  bool _handleTaskSnapshot(TaskSnapshotEvent snapshot) {
     final sessionId = snapshot.sessionId.trim();
     if (sessionId.isNotEmpty && sessionId != _selectedSessionId.trim()) {
-      return;
+      return true;
+    }
+    if (_shouldIgnoreStaleSnapshotAfterInput(snapshot)) {
+      return true;
     }
     if (sessionId.isNotEmpty && snapshot.latestCursor > 0) {
       final previous = _sessionEventCursors[sessionId] ?? 0;
@@ -6339,7 +6835,16 @@ class SessionController extends ChangeNotifier {
         _sessionEventCursors[sessionId] = snapshot.latestCursor;
       }
     }
-    final state = snapshot.state.trim().isEmpty ? 'IDLE' : snapshot.state.trim();
+    final state =
+        snapshot.state.trim().isEmpty ? 'IDLE' : snapshot.state.trim();
+    if (!snapshot.runtimeAlive && _isIdleLikeState(state)) {
+      _agentState = null;
+      _sessionRuntimeAlive = false;
+      _lastContinuationInputAt = null;
+      _syncDerivedState();
+      notifyListeners();
+      return false;
+    }
     final meta = snapshot.runtimeMeta.merge(
       RuntimeMeta(
         command: snapshot.command,
@@ -6364,24 +6869,48 @@ class SessionController extends ChangeNotifier {
       _connectionStage = snapshot.syncing
           ? SessionConnectionStage.catchingUp
           : SessionConnectionStage.ready;
-      _connectionMessage = snapshot.syncing
-          ? 'Syncing latest progress...'
-          : 'Session is live';
-    } else if (_connected && _connectionStage != SessionConnectionStage.catchingUp) {
+      _connectionMessage =
+          snapshot.syncing ? 'Syncing latest progress...' : 'Session is live';
+    } else if (_connected &&
+        _connectionStage != SessionConnectionStage.catchingUp) {
       _connectionStage = SessionConnectionStage.ready;
-      _connectionMessage = snapshot.message.isNotEmpty
-          ? snapshot.message
-          : 'Session ready';
+      _connectionMessage =
+          snapshot.message.isNotEmpty ? snapshot.message : 'Session ready';
     }
-    _syncStepSummary(
-      message: snapshot.step.isNotEmpty ? snapshot.step : snapshot.message,
-      status: state,
-      tool: snapshot.tool,
-      command: snapshot.command,
-      targetPath: snapshot.runtimeMeta.targetPath,
-    );
+    if (!_isHeartbeatIdleSnapshot(snapshot, state)) {
+      _syncStepSummary(
+        message: snapshot.step.isNotEmpty ? snapshot.step : snapshot.message,
+        status: state,
+        tool: snapshot.tool,
+        command: snapshot.command,
+        targetPath: snapshot.runtimeMeta.targetPath,
+      );
+    }
     _syncDerivedState();
     notifyListeners();
+    return false;
+  }
+
+  bool _shouldIgnoreStaleSnapshotAfterInput(TaskSnapshotEvent snapshot) {
+    if (!_hasRecentContinuationInput) {
+      return false;
+    }
+    final state = snapshot.state.trim().toLowerCase();
+    final lifecycle = snapshot.runtimeMeta.claudeLifecycle.trim().toLowerCase();
+    return snapshot.awaitInput ||
+        state == 'wait_input' ||
+        state == 'idle' ||
+        lifecycle == 'waiting_input' ||
+        lifecycle == 'resumable';
+  }
+
+  bool _isHeartbeatIdleSnapshot(TaskSnapshotEvent snapshot, String state) {
+    final normalizedState = state.trim().toLowerCase();
+    final message = snapshot.message.trim().toLowerCase();
+    final step = snapshot.step.trim().toLowerCase();
+    return !snapshot.runtimeAlive &&
+        normalizedState == 'idle' &&
+        (message.contains('heartbeat') || step.contains('heartbeat'));
   }
 
   void _startConnectionHealthMonitor() {
@@ -6394,7 +6923,8 @@ class SessionController extends ChangeNotifier {
       if (lastSeen != null &&
           DateTime.now().difference(lastSeen) > _connectionSilenceTimeout) {
         unawaited(_service.disconnect());
-        _handleUnexpectedSocketDisconnect('Connection timed out, reconnecting...');
+        _handleUnexpectedSocketDisconnect(
+            'Connection timed out, reconnecting...');
         return;
       }
       _service.send({
@@ -6423,6 +6953,18 @@ class SessionController extends ChangeNotifier {
     final previous = _sessionEventCursors[sessionId] ?? 0;
     if (cursor > previous) {
       _sessionEventCursors[sessionId] = cursor;
+      // 同步更新 delta known 的游标，避免轮询重复拉取已收内容
+      final known = _sessionDeltaKnown[sessionId];
+      if (known != null && cursor > known.eventCursor) {
+        _sessionDeltaKnown[sessionId] = SessionDeltaKnown(
+          eventCursor: cursor,
+          logEntryCount: known.logEntryCount,
+          diffCount: known.diffCount,
+          terminalExecutionCount: known.terminalExecutionCount,
+          terminalStdoutLength: known.terminalStdoutLength,
+          terminalStderrLength: known.terminalStderrLength,
+        );
+      }
     }
   }
 
@@ -6865,7 +7407,10 @@ class SessionController extends ChangeNotifier {
       command: meta.command.isNotEmpty ? meta.command : currentMeta.command,
       engine: meta.engine.isNotEmpty ? meta.engine : currentMeta.engine,
     );
-    if (!(engine == 'claude' || engine == 'codex')) {
+    if (engine == 'codex') {
+      return;
+    }
+    if (engine != 'claude') {
       return;
     }
 
@@ -6960,7 +7505,9 @@ class SessionController extends ChangeNotifier {
   ) {
     switch (engine) {
       case 'codex':
-        return '${_codexModelDisplayLabel(model)} · ${_resolvedAiReasoningEffort('codex', reasoningEffort).toUpperCase()}';
+        final label =
+            model.trim().isEmpty ? 'Default' : _codexModelDisplayLabel(model);
+        return '$label · ${_resolvedAiReasoningEffort('codex', reasoningEffort).toUpperCase()}';
       case 'claude':
         return _claudeModelLabel(model);
       case 'gemini':
@@ -7010,7 +7557,6 @@ class SessionController extends ChangeNotifier {
     }
     return withoutTrailing.substring(0, index);
   }
-
 }
 
 (String, String) _parseAiModelFromText(String engine, String text) {
@@ -7069,8 +7615,11 @@ String _resolvedAiModel(String engine, String configured) {
   final normalized = configured.trim();
   switch (engine) {
     case 'codex':
+      if (normalized.isEmpty || normalized.toLowerCase() == 'default') {
+        return '';
+      }
       final codexModel = _normalizeCodexModel(normalized);
-      return codexModel.isNotEmpty ? codexModel : 'gpt-5-codex';
+      return codexModel;
     case 'claude':
       return _normalizeClaudeModel(normalized);
     default:

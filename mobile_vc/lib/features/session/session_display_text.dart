@@ -121,6 +121,10 @@ bool looksLikeSessionPlaceholderTitle(String text) {
   return normalized == 'session' ||
       normalized == 'new session' ||
       normalized == 'history' ||
+      normalized == 'codex会话' ||
+      normalized == 'codex 会话' ||
+      normalized == 'claude会话' ||
+      normalized == 'claude 会话' ||
       RegExp(r'^session(?:[-_\s][a-z0-9]+)?$').hasMatch(normalized);
 }
 

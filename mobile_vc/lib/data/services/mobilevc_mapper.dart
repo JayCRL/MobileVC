@@ -7,6 +7,10 @@ class MobileVcMapper {
   AppEvent mapEvent(Map<String, dynamic> json) {
     final type = (json['type'] ?? '').toString();
     switch (type) {
+      case 'pong':
+        return PongEvent.fromJson(json);
+      case 'client_action_ack':
+        return ClientActionAckEvent.fromJson(json);
       case 'log':
         return LogEvent.fromJson(json);
       case 'progress':
@@ -57,6 +61,8 @@ class MobileVcMapper {
         return SkillCatalogResultEvent.fromJson(json);
       case 'memory_list_result':
         return MemoryListResultEvent.fromJson(json);
+      case 'catalog_authoring_result':
+        return CatalogAuthoringResultEvent.fromJson(json);
       case 'session_context_result':
         return SessionContextResultEvent.fromJson(json);
       case 'permission_rule_list_result':

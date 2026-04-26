@@ -42,6 +42,52 @@ class UnknownEvent extends AppEvent {
   });
 }
 
+class PongEvent extends AppEvent {
+  const PongEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+  }) : super(type: 'pong');
+
+  factory PongEvent.fromJson(Map<String, dynamic> json) => PongEvent(
+        timestamp: _tryReadTimestamp(json['ts']) ?? _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+      );
+}
+
+class ClientActionAckEvent extends AppEvent {
+  const ClientActionAckEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.action = '',
+    this.clientActionId = '',
+    this.status = '',
+    this.duplicate = false,
+  }) : super(type: 'client_action_ack');
+
+  final String action;
+  final String clientActionId;
+  final String status;
+  final bool duplicate;
+
+  factory ClientActionAckEvent.fromJson(Map<String, dynamic> json) =>
+      ClientActionAckEvent(
+        timestamp: _tryReadTimestamp(json['ts']) ?? _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        action: (json['action'] ?? '').toString(),
+        clientActionId: (json['clientActionId'] ?? '').toString(),
+        status: (json['status'] ?? '').toString(),
+        duplicate: json['duplicate'] == true,
+      );
+}
+
 class LogEvent extends AppEvent {
   const LogEvent({
     required super.timestamp,
@@ -935,6 +981,7 @@ class SessionHistoryEvent extends AppEvent {
     this.rawTerminalByStream = const {},
     this.terminalExecutions = const [],
     this.canResume = false,
+    this.runtimeAlive = false,
     this.resumeRuntimeMeta = const RuntimeMeta(),
   }) : super(type: 'session_history');
 
@@ -952,6 +999,7 @@ class SessionHistoryEvent extends AppEvent {
   final Map<String, String> rawTerminalByStream;
   final List<TerminalExecution> terminalExecutions;
   final bool canResume;
+  final bool runtimeAlive;
   final RuntimeMeta resumeRuntimeMeta;
 
   factory SessionHistoryEvent.fromJson(Map<String, dynamic> json) =>
@@ -1009,6 +1057,7 @@ class SessionHistoryEvent extends AppEvent {
             .map(TerminalExecution.fromJson)
             .toList(),
         canResume: json['canResume'] == true,
+        runtimeAlive: json['runtimeAlive'] == true,
         resumeRuntimeMeta: json['resumeRuntimeMeta'] is Map<String, dynamic>
             ? RuntimeMeta.fromJson(
                 json['resumeRuntimeMeta'] as Map<String, dynamic>)
@@ -1080,6 +1129,7 @@ class SessionDeltaEvent extends AppEvent {
     this.rawTerminalByStream = const {},
     this.terminalExecutions = const [],
     this.canResume = false,
+    this.runtimeAlive = false,
     this.resumeRuntimeMeta = const RuntimeMeta(),
     this.requiresFullSync = false,
   }) : super(type: 'session_delta');
@@ -1100,6 +1150,7 @@ class SessionDeltaEvent extends AppEvent {
   final Map<String, String> rawTerminalByStream;
   final List<TerminalExecution> terminalExecutions;
   final bool canResume;
+  final bool runtimeAlive;
   final RuntimeMeta resumeRuntimeMeta;
   final bool requiresFullSync;
 
@@ -1164,6 +1215,7 @@ class SessionDeltaEvent extends AppEvent {
             .map(TerminalExecution.fromJson)
             .toList(),
         canResume: json['canResume'] == true,
+        runtimeAlive: json['runtimeAlive'] == true,
         resumeRuntimeMeta: json['resumeRuntimeMeta'] is Map<String, dynamic>
             ? RuntimeMeta.fromJson(
                 json['resumeRuntimeMeta'] as Map<String, dynamic>)
@@ -1326,6 +1378,40 @@ class MemoryListResultEvent extends AppEvent {
             .whereType<Map<String, dynamic>>()
             .map(MemoryItem.fromJson)
             .toList(),
+      );
+}
+
+class CatalogAuthoringResultEvent extends AppEvent {
+  const CatalogAuthoringResultEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.domain = '',
+    this.skill,
+    this.memory,
+    this.message = '',
+  }) : super(type: 'catalog_authoring_result');
+
+  final String domain;
+  final SkillDefinition? skill;
+  final MemoryItem? memory;
+  final String message;
+
+  factory CatalogAuthoringResultEvent.fromJson(Map<String, dynamic> json) =>
+      CatalogAuthoringResultEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        domain: (json['domain'] ?? '').toString(),
+        skill: json['skill'] is Map<String, dynamic>
+            ? SkillDefinition.fromJson(json['skill'] as Map<String, dynamic>)
+            : null,
+        memory: json['memory'] is Map<String, dynamic>
+            ? MemoryItem.fromJson(json['memory'] as Map<String, dynamic>)
+            : null,
+        message: (json['msg'] ?? json['message'] ?? '').toString(),
       );
 }
 

@@ -30,25 +30,25 @@ import (
 )
 
 type stubRunner struct {
-	mu                        sync.Mutex
-	events                    []any
-	writeCh                   chan []byte
-	writeErr                  error
-	holdOpen                  bool
-	interactive               bool
-	started                   chan struct{}
-	sink                      runner.EventSink
-	lastPermissionMode        string
-	permissionModes           []string
-	onStart                   func()
-	hasPendingPermission      bool
-	permissionResponseErr     error
-	permissionResponseWriteCh chan string
-	claudeSessionID           string
-	processRef                runner.ProcessRef
-	lastReq                   runner.ExecRequest
+	mu                         sync.Mutex
+	events                     []any
+	writeCh                    chan []byte
+	writeErr                   error
+	holdOpen                   bool
+	interactive                bool
+	started                    chan struct{}
+	sink                       runner.EventSink
+	lastPermissionMode         string
+	permissionModes            []string
+	onStart                    func()
+	hasPendingPermission       bool
+	permissionResponseErr      error
+	permissionResponseWriteCh  chan string
+	claudeSessionID            string
+	processRef                 runner.ProcessRef
+	lastReq                    runner.ExecRequest
 	currentPermissionRequestID string
-	closedCh                  chan struct{}
+	closedCh                   chan struct{}
 }
 
 func newStubRunner(events ...any) *stubRunner {
@@ -2365,7 +2365,7 @@ func TestSessionHistoryNormalizesStaleStartingToResumable(t *testing.T) {
 			Runtime:             store.SessionRuntime{ResumeSessionID: "resume-1", Command: "claude", ClaudeLifecycle: "starting"},
 			RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""},
 		},
-	})
+	}, false)
 	if history.ResumeRuntimeMeta.ClaudeLifecycle != "resumable" {
 		t.Fatalf("expected resumable lifecycle in history, got %#v", history.ResumeRuntimeMeta)
 	}
@@ -2454,7 +2454,7 @@ func TestProjectionHistoryIncludesTerminalExecutions(t *testing.T) {
 			ActiveReviewGroup: &session.ReviewGroup{ID: "group-1", Title: "修改组 1", ExecutionID: executionID, PendingReview: true},
 		},
 	}
-	history := newSessionHistoryEventFromRecord(record)
+	history := newSessionHistoryEventFromRecord(record, false)
 	if len(history.ReviewGroups) != 1 {
 		t.Fatalf("expected one review group in history, got %#v", history.ReviewGroups)
 	}

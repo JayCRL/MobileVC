@@ -27,6 +27,9 @@ class CommandInputBar extends StatefulWidget {
     required this.shouldShowReviewChoices,
     required this.shouldShowPlanChoices,
     required this.isSessionLoading,
+    this.canSendToContinuedSameSession = false,
+    this.isExternallyLocked = false,
+    this.externalLockedHint = '',
   });
 
   final bool awaitInput;
@@ -53,6 +56,9 @@ class CommandInputBar extends StatefulWidget {
   final bool shouldShowReviewChoices;
   final bool shouldShowPlanChoices;
   final bool isSessionLoading;
+  final bool canSendToContinuedSameSession;
+  final bool isExternallyLocked;
+  final String externalLockedHint;
 
   @override
   State<CommandInputBar> createState() => _CommandInputBarState();
@@ -63,15 +69,25 @@ class _CommandInputBarState extends State<CommandInputBar> {
   final FocusNode _focusNode = FocusNode();
 
   bool get _inputLocked =>
+      widget.isExternallyLocked ||
       widget.isSessionLoading ||
       widget.shouldShowPermissionChoices ||
       widget.shouldShowReviewChoices ||
       widget.shouldShowPlanChoices ||
-      (!widget.awaitInput && !widget.canStop && widget.isBusy);
+      (!widget.canSendToContinuedSameSession &&
+          !widget.awaitInput &&
+          !widget.canStop &&
+          widget.isBusy);
 
-  bool get _showStopAction => !_inputLocked && !widget.awaitInput && widget.canStop;
+  bool get _showStopAction =>
+      !_inputLocked && !widget.awaitInput && widget.canStop;
 
   String get _lockedHintText {
+    if (widget.isExternallyLocked) {
+      return widget.externalLockedHint.trim().isEmpty
+          ? '当前为只读观察模式'
+          : widget.externalLockedHint.trim();
+    }
     if (widget.isSessionLoading) {
       return '会话切换中...';
     }
@@ -162,6 +178,11 @@ class _CommandInputBarState extends State<CommandInputBar> {
     final modeColor = widget.showClaudeMode
         ? scheme.primary
         : scheme.onSurfaceVariant.withValues(alpha: 0.75);
+    final panelColor = scheme.surfaceContainerLow.withValues(alpha: 0.96);
+    final inputColor = scheme.surfaceContainerHighest.withValues(alpha: 0.72);
+    final shadowColor = scheme.shadow.withValues(
+      alpha: Theme.of(context).brightness == Brightness.dark ? 0.28 : 0.07,
+    );
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -174,7 +195,7 @@ class _CommandInputBarState extends State<CommandInputBar> {
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
-                  Colors.white.withValues(alpha: 0.98),
+                  panelColor,
                   scheme.surface,
                 ],
                 begin: Alignment.topLeft,
@@ -186,7 +207,7 @@ class _CommandInputBarState extends State<CommandInputBar> {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.07),
+                  color: shadowColor,
                   blurRadius: 28,
                   offset: const Offset(0, 10),
                 ),
@@ -288,7 +309,7 @@ class _CommandInputBarState extends State<CommandInputBar> {
                         const SizedBox(width: 8),
                         DecoratedBox(
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF7F8FC),
+                            color: inputColor,
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
                               color:
@@ -336,7 +357,7 @@ class _CommandInputBarState extends State<CommandInputBar> {
                 Container(
                   constraints: const BoxConstraints(minHeight: 56),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF7F8FC),
+                    color: inputColor,
                     borderRadius: BorderRadius.circular(28),
                     border: Border.all(
                       color: scheme.outlineVariant.withValues(alpha: 0.24),
@@ -397,12 +418,12 @@ class _CommandInputBarState extends State<CommandInputBar> {
                                   ? scheme.surfaceContainerHighest
                                   : _showStopAction
                                       ? scheme.error
-                                  : scheme.primary,
+                                      : scheme.primary,
                               foregroundColor: _inputLocked
                                   ? scheme.onSurfaceVariant
                                   : _showStopAction
                                       ? scheme.onError
-                                  : scheme.onPrimary,
+                                      : scheme.onPrimary,
                               padding: EdgeInsets.zero,
                               minimumSize: const Size(42, 42),
                               shape: RoundedRectangleBorder(
@@ -458,7 +479,7 @@ class _ToolChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: Colors.white.withValues(alpha: 0.85),
+      color: scheme.surfaceContainerHigh.withValues(alpha: 0.82),
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
         onTap: onPressed,
