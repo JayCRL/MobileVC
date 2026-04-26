@@ -519,17 +519,14 @@ func getShellSpec() shellSpec {
 		}
 	}
 
+	// 全部 Windows shell 都找不到 → 最后防线用 cmd.exe
 	if cmdPath := detectWindowsShellPath([]string{
 		filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe"),
 		"cmd.exe",
 	}); cmdPath != "" {
-		return shellSpec{
-			path: cmdPath,
-			args: []string{"/C"},
-		}
+		return shellSpec{path: cmdPath, args: []string{"/C"}}
 	}
-
-	return shellSpec{path: "sh", args: []string{"-lc"}}
+	return shellSpec{path: "cmd.exe", args: []string{"/C"}}
 }
 
 func shellEnvironment(spec shellSpec, command string) []string {
@@ -593,7 +590,7 @@ func detectGitBashPath() string {
 			filepath.Join(programFilesX86, "Git", "usr", "bin", "bash.exe"),
 		}, candidates...)
 	}
-	if pathBash := detectWindowsShellPath([]string{"bash.exe", "bash"}); pathBash != "" {
+	if pathBash := detectWindowsShellPath([]string{"bash.exe"}); pathBash != "" {
 		candidates = append([]string{pathBash}, candidates...)
 	}
 	if gitPath := detectWindowsShellPath([]string{"git.exe", "git"}); gitPath != "" {

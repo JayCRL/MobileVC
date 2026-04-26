@@ -3,6 +3,7 @@ package ws
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,6 +27,8 @@ import (
 	runtimepkg "mobilevc/internal/runtime"
 	"mobilevc/internal/session"
 	"mobilevc/internal/store"
+
+	_ "modernc.org/sqlite"
 )
 
 type stubRunner struct {
@@ -526,9 +528,6 @@ func writeTestFile(t *testing.T, path, content string) {
 
 func seedNativeCodexSessionFixture(t *testing.T, homeDir, cwd string) string {
 	t.Helper()
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		t.Skip("sqlite3 not available")
-	}
 
 	codexDir := filepath.Join(homeDir, ".codex")
 	if err := os.MkdirAll(codexDir, 0o755); err != nil {
@@ -550,14 +549,22 @@ func seedNativeCodexSessionFixture(t *testing.T, homeDir, cwd string) string {
 		t.Fatalf("mkdir rollout dir: %v", err)
 	}
 	dbPath := filepath.Join(codexDir, "state_5.sqlite")
-	sql := strings.Join([]string{
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	statements := []string{
 		"create table if not exists threads (id text primary key, cwd text, title text, model text, source text, model_provider text, created_at integer, updated_at integer, first_user_message text, rollout_path text, archived integer default 0);",
 		"delete from threads;",
 		"insert into threads (id, cwd, title, model, source, model_provider, created_at, updated_at, first_user_message, rollout_path, archived) values ('019d3c6b-c538-7420-8028-345f7dd70d63', '" + strings.ReplaceAll(cwd, "'", "''") + "', 'Desktop Codex Session', 'gpt-5-codex', 'codex', 'openai', " + int64String(createdAt) + ", " + int64String(updatedAt) + ", 'Fix the README wording', '" + strings.ReplaceAll(rolloutPath, "'", "''") + "', 0);",
-	}, " ")
-	cmd := exec.Command("sqlite3", dbPath, sql)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("seed sqlite fixture: %v (%s)", err, output)
+	}
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed sqlite fixture: %v (stmt: %s)", err, stmt[:min(len(stmt), 80)])
+		}
 	}
 
 	historyPath := filepath.Join(codexDir, "history.jsonl")

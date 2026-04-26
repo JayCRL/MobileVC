@@ -3,19 +3,20 @@ package codexsync
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/session"
 	"mobilevc/internal/store"
+
+	_ "modernc.org/sqlite"
 )
 
 const mirrorPrefix = "codex-thread:"
@@ -251,52 +252,65 @@ func MirrorRecord(thread NativeThread) store.SessionRecord {
 }
 
 func queryThreads(ctx context.Context, dbPath string) ([]NativeThread, error) {
-	queries := []string{
-		"select id, cwd, title, coalesce(model,''), coalesce(source,''), coalesce(model_provider,''), created_at, updated_at, coalesce(first_user_message,''), coalesce(rollout_path,'') from threads where archived = 0 order by updated_at desc;",
-		"select id, cwd, title, coalesce(model,''), coalesce(source,''), coalesce(model_provider,''), created_at, updated_at, coalesce(first_user_message,'') from threads where archived = 0 order by updated_at desc;",
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open codex sqlite failed: %w", err)
 	}
+	defer db.Close()
+
+	queryWithRollout := `select id, cwd, title, coalesce(model,''), coalesce(source,''), coalesce(model_provider,''), created_at, updated_at, coalesce(first_user_message,''), coalesce(rollout_path,'') from threads where archived = 0 order by updated_at desc`
+	queryWithoutRollout := `select id, cwd, title, coalesce(model,''), coalesce(source,''), coalesce(model_provider,''), created_at, updated_at, coalesce(first_user_message,'') from threads where archived = 0 order by updated_at desc`
+
 	var (
-		output []byte
-		err    error
+		rows           *sql.Rows
+		hasRolloutPath bool
 	)
-	for idx, query := range queries {
-		cmd := exec.CommandContext(ctx, "sqlite3", "-separator", "\t", dbPath, query)
-		output, err = cmd.CombinedOutput()
-		if err == nil {
-			break
+	rows, err = db.QueryContext(ctx, queryWithRollout)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such column: rollout_path") {
+			rows, err = db.QueryContext(ctx, queryWithoutRollout)
 		}
-		if idx == 0 && strings.Contains(string(output), "no such column: rollout_path") {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("query codex threads failed: %w", err)
 		}
-		return nil, fmt.Errorf("query codex threads failed: %w (%s)", err, strings.TrimSpace(string(output)))
+	} else {
+		hasRolloutPath = true
 	}
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	items := make([]NativeThread, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	defer rows.Close()
+
+	var items []NativeThread
+	for rows.Next() {
+		var (
+			id, cwd, title, model, source, modelProvider string
+			createdAt, updatedAt                         int64
+			firstUserMessage, rolloutPath                string
+		)
+		if hasRolloutPath {
+			err = rows.Scan(&id, &cwd, &title, &model, &source, &modelProvider, &createdAt, &updatedAt, &firstUserMessage, &rolloutPath)
+		} else {
+			err = rows.Scan(&id, &cwd, &title, &model, &source, &modelProvider, &createdAt, &updatedAt, &firstUserMessage)
 		}
-		parts := strings.Split(line, "\t")
-		if len(parts) < 9 {
-			continue
-		}
-		rolloutPath := ""
-		if len(parts) > 9 {
-			rolloutPath = strings.TrimSpace(parts[9])
+		if err != nil {
+			return nil, fmt.Errorf("scan codex thread row: %w", err)
 		}
 		items = append(items, NativeThread{
-			ThreadID:         strings.TrimSpace(parts[0]),
-			CWD:              strings.TrimSpace(parts[1]),
-			Title:            strings.TrimSpace(parts[2]),
-			Model:            strings.TrimSpace(parts[3]),
-			Source:           strings.TrimSpace(parts[4]),
-			ModelProvider:    strings.TrimSpace(parts[5]),
-			CreatedAt:        unixTime(parts[6]),
-			UpdatedAt:        unixTime(parts[7]),
-			FirstUserMessage: strings.TrimSpace(parts[8]),
+			ThreadID:         id,
+			CWD:              cwd,
+			Title:            title,
+			Model:            model,
+			Source:           source,
+			ModelProvider:    modelProvider,
+			CreatedAt:        time.Unix(createdAt, 0).UTC(),
+			UpdatedAt:        time.Unix(updatedAt, 0).UTC(),
+			FirstUserMessage: firstUserMessage,
 			RolloutPath:      rolloutPath,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate codex threads: %w", err)
+	}
+	if items == nil {
+		return []NativeThread{}, nil
 	}
 	return items, nil
 }
@@ -331,18 +345,6 @@ func loadHistory(path string) (map[string][]NativePrompt, error) {
 		return nil, fmt.Errorf("scan codex history failed: %w", err)
 	}
 	return items, nil
-}
-
-func unixTime(value string) time.Time {
-	parsed := strings.TrimSpace(value)
-	if parsed == "" {
-		return time.Time{}
-	}
-	seconds, err := strconv.ParseInt(parsed, 10, 64)
-	if err == nil {
-		return time.Unix(seconds, 0).UTC()
-	}
-	return time.Time{}
 }
 
 func loadRollout(path string) (nativeRolloutSnapshot, error) {

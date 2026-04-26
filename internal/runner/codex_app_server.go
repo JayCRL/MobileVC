@@ -17,6 +17,7 @@ import (
 	"mobilevc/internal/adapter"
 	"mobilevc/internal/logx"
 	"mobilevc/internal/protocol"
+	"mobilevc/internal/session"
 )
 
 const (
@@ -470,6 +471,10 @@ func (s *codexAppSession) handleNotification(message codexRPCMessage) {
 		var payload codexTurnNotification
 		if err := json.Unmarshal(message.Params, &payload); err == nil {
 			s.setActiveTurnID(payload.Turn.ID)
+			sendEvent(s.sink, protocol.ApplyRuntimeMeta(
+				protocol.NewAgentStateEvent(s.sessionID, string(session.ControllerStateThinking), "处理中", false, "", "", ""),
+				s.runtimeMeta("active"),
+			))
 		}
 	case "turn/completed":
 		s.handleTurnCompleted(message.Params)

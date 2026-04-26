@@ -3996,6 +3996,11 @@ class SessionController extends ChangeNotifier {
             _hasRecentContinuationInput;
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
+        // AI 正在运行中，清掉 pending prompt，防止阻塞态残留导致 awaitInput 误判
+        if (!_isIdleLikeState(agent.state) && !agent.awaitInput) {
+          _pendingPrompt = null;
+          _pendingInteraction = null;
+        }
         if (_isIdleLikeState(agent.state) || agent.awaitInput) {
           _markTerminalExecutionFinished(
             agent.runtimeMeta,
@@ -4183,6 +4188,10 @@ class SessionController extends ChangeNotifier {
           command: step.command,
           targetPath: step.runtimeMeta.targetPath,
         );
+        // 步骤更新说明 AI 正在工作中，清掉等待输入状态
+        _pendingPrompt = null;
+        _pendingInteraction = null;
+        _syncDerivedState();
         break;
       case ReviewStateEvent reviewState:
         _reviewGroups
