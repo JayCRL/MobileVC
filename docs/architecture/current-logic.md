@@ -1,6 +1,6 @@
 # MobileVC Current Logic Notes
 
-Last updated: 2026-04-24
+Last updated: 2026-04-28
 
 This document summarizes important runtime logic in the current codebase.
 
@@ -83,6 +83,39 @@ CWD matching attempts normalized path variants to reduce mismatch across Windows
 - Temporary permission grants reduce duplicate prompts during Claude hot-swap/resume.
 - Review state and diffs are stored in session projection.
 - Flutter focuses on presenting pending state and sending explicit user decisions.
+
+## Session Ownership
+
+`store.SessionSummary.Ownership` is the authoritative field for "who owns this session":
+
+- Set to `"mobilevc"` at `CreateSession` (`file_store.go:78`).
+- Upgraded to `"claude-native"` by `mergeClaudeJSONLToRecord` when desktop Claude CLI writes new entries to the session's JSONL (`handler.go:5269`).
+- `normalizeSessionRecord` only fills empty ownership; never overwrites existing value.
+- Flutter `_isExternalNativeSession()` reads ownership first: `"mobilevc"` → not external; `"claude-native"` / `"codex-native"` → external.
+- On unexpected disconnect, `_selectedSessionExternalNative` resets to `false`, then re-synced from backend ownership on reconnect.
+
+## Execution Active Latch
+
+`store.SessionSummary.ExecutionActive` latches execution state:
+
+- Derived in `normalizeSessionRecord` from controller state: IDLE → `false`; any non-IDLE (THINKING, RUNNING_TOOL, WAIT_INPUT) → `true`.
+- `OnCommandFinished` short-circuits at `WAIT_INPUT`: runner exits but controller stays `WAIT_INPUT`, so `ExecutionActive` stays `true` until user continues or session times out.
+- Runtime session cleanup (`cleanupIfOrphaned` after 15-min timeout) also unlocks via `onCleanup` callback.
+- Flutter: `AgentStateEvent` handler now includes `WAIT_INPUT` in `_sessionRuntimeAlive` keep-list, prevents "running → idle → running" flicker during background/foreground transitions.
+
+## Push Notification Expansion
+
+`push_helper.go` now triggers APNs for more event types:
+
+| Event | Condition | Debounce |
+|---|---|---|
+| `PromptRequestEvent` / `InteractionRequestEvent` | Always | None |
+| `AgentStateEvent` (non-idle) | No active WebSocket | 30s |
+| `StepUpdateEvent` | No active WebSocket | 30s |
+| `LogEvent` (assistant_reply) | No active WebSocket | 30s |
+| `ErrorEvent` | No active WebSocket | None |
+
+`runtimeSessionRegistry.HasActiveConnection(sessionID)` checks listener count to decide "online vs offline" push gating.
 
 ## Known Edge Cases
 

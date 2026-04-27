@@ -765,7 +765,10 @@ func (s *Service) prepareExecuteRequest(req ExecuteRequest) ExecuteRequest {
 		return prepared
 	}
 	if isClaudeCommandHead(prepared.Command) {
-		managedSessionID := newManagedClaudeSessionID()
+		managedSessionID := strings.TrimSpace(prepared.RuntimeMeta.ClaudeSessionUUID)
+		if managedSessionID == "" {
+			managedSessionID = newManagedClaudeSessionID()
+		}
 		prepared.Command = strings.TrimSpace(prepared.Command) + " " + claudeSessionIDFlag + " " + managedSessionID
 		prepared.RuntimeMeta.Command = prepared.Command
 		prepared.RuntimeMeta.ResumeSessionID = managedSessionID

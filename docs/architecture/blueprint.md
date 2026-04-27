@@ -1,6 +1,6 @@
 # MobileVC Architecture Blueprint
 
-Last updated: 2026-04-24
+Last updated: 2026-04-28
 
 This blueprint documents the current code path. It is descriptive, not a product roadmap.
 
@@ -84,6 +84,8 @@ Server writer behavior:
 - Prompt/interaction events get an event cursor and are buffered.
 - Detached sessions can accumulate resume notices.
 - `pendingSince(cursor)` is intentionally limited to blocking prompt/interaction events. General progress continuity comes from `session_delta_get` plus `task_snapshot`, not cached log replay.
+- `HasActiveConnection(sessionID)` checks listener count to determine if Flutter is online, used by push module.
+- `onCleanup` callback fires on runtime session release (immediate, 15-min timeout, or global cleanup) to unlock `ExecutionActive`.
 
 Design choice: the pending buffer is not used as a general log cache. Flutter recovery should directly sync backend projection/history increments and task snapshot.
 
@@ -104,6 +106,8 @@ The UI display model for empty Claude config is `Default`.
 - Native Claude sessions are mirrored from `~/.claude/projects/<cwd>/*.jsonl`.
 - Native Codex sessions are mirrored from `~/.codex/state_5.sqlite` and `~/.codex/history.jsonl`.
 - Session list filtering uses the current CWD and normalizes path variants to reduce Windows/symlink mismatches.
+- **Ownership**: `SessionSummary.Ownership` set at creation (`"mobilevc"`), upgraded by `mergeClaudeJSONLToRecord` when desktop Claude CLI writes to JSONL (`"claude-native"`). Flutter uses this as the authoritative external-session signal.
+- **ExecutionActive**: Controller state latch — `true` for any non-IDLE state, `false` only on IDLE or runtime session cleanup timeout.
 
 ## 8. Flutter Event Handling
 
@@ -118,7 +122,17 @@ The UI display model for empty Claude config is `Default`.
 - Handles `task_snapshot` as the service-authoritative running/waiting/idle signal for the selected session.
 - Treats `ws_closed`, `ws_stream_error`, and `ws_send_error` as unexpected socket disconnects when auto reconnect is enabled.
 
-## 9. Files Worth Updating Together
+## 9. Push Notifications
+
+`internal/ws/push_helper.go` and `internal/push/service.go`:
+
+- `prompt_request` / `interaction_request` events always trigger APNs push (user action needed).
+- `AgentStateEvent` (THINKING/RUNNING_TOOL), `StepUpdateEvent`, `LogEvent` (assistant_reply), `ErrorEvent` also trigger push when no active WebSocket connection exists.
+- Progress events debounced at 30s per session via `Handler.lastProgressPush` map.
+- `HasActiveConnection` gates progress pushes: online → skip (WebSocket delivers), offline → send APNs.
+- APNs payload includes `Alert` + `AlertBody` so iOS shows banner even when app is suspended.
+
+## 10. Files Worth Updating Together
 
 When changing connection/reconnect behavior, check:
 
@@ -126,7 +140,9 @@ When changing connection/reconnect behavior, check:
 - `mobile_vc/lib/data/services/mobilevc_ws_service.dart`
 - `internal/ws/handler.go`
 - `internal/ws/runtime_sessions.go`
+- `internal/ws/push_helper.go`
 - `internal/protocol/event.go`
+- `internal/store/file_store.go`
 
 When changing launcher QR/default workspace behavior, check:
 

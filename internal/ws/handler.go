@@ -41,6 +41,9 @@ type Handler struct {
 	PushService      push.Service
 	runtimeSessions  *runtimeSessionRegistry
 	permissionGrants *permissionGrantStore
+
+	muProgressPush   sync.Mutex
+	lastProgressPush map[string]time.Time
 }
 
 func NewHandler(authToken string, sessionStore store.Store) *Handler {
@@ -56,6 +59,7 @@ func NewHandler(authToken string, sessionStore store.Store) *Handler {
 		SessionStore:     sessionStore,
 		PushService:      &push.NoopService{},
 		permissionGrants: newPermissionGrantStore(),
+		lastProgressPush: make(map[string]time.Time),
 		Upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -69,7 +73,19 @@ func NewHandler(authToken string, sessionStore store.Store) *Handler {
 			NewExecRunner: handler.NewExecRunner,
 			NewPtyRunner:  handler.NewPtyRunner,
 		})
-	}, defaultRuntimeSessionReleaseAfter)
+	}, defaultRuntimeSessionReleaseAfter, func(sessionID string) {
+		if sessionStore == nil || strings.TrimSpace(sessionID) == "" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		record, err := sessionStore.GetSession(ctx, sessionID)
+		if err != nil {
+			return
+		}
+		record.Summary.ExecutionActive = false
+		sessionStore.UpsertSession(ctx, record)
+	})
 	return handler
 }
 
@@ -228,6 +244,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// Sync new user/assistant entries to Claude CLI JSONL.
 		syncSessionEntriesToClaudeJSONL(h.SessionStore, sessionID, snapshot)
+	}
+
+	lookupClaudeSessionUUID := func(sessionID string) string {
+		if h.SessionStore == nil || strings.TrimSpace(sessionID) == "" {
+			return ""
+		}
+		record, err := h.SessionStore.GetSession(ctx, sessionID)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(record.Summary.ClaudeSessionUUID)
 	}
 
 	emit := func(event any) {
@@ -1161,19 +1188,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Mode:           mode,
 				PermissionMode: reqEvent.PermissionMode,
 				RuntimeMeta: protocol.RuntimeMeta{
-					Source:         fallback(reqEvent.Source, "command"),
-					SkillName:      reqEvent.SkillName,
-					Target:         reqEvent.Target,
-					TargetType:     reqEvent.TargetType,
-					TargetPath:     reqEvent.TargetPath,
-					ResultView:     reqEvent.ResultView,
-					ContextID:      reqEvent.ContextID,
-					ContextTitle:   reqEvent.ContextTitle,
-					TargetText:     reqEvent.TargetText,
-					Command:        reqEvent.Command,
-					Engine:         reqEvent.Engine,
-					CWD:            reqEvent.CWD,
-					PermissionMode: reqEvent.PermissionMode,
+					Source:            fallback(reqEvent.Source, "command"),
+					SkillName:         reqEvent.SkillName,
+					Target:            reqEvent.Target,
+					TargetType:        reqEvent.TargetType,
+					TargetPath:        reqEvent.TargetPath,
+					ResultView:        reqEvent.ResultView,
+					ContextID:         reqEvent.ContextID,
+					ContextTitle:      reqEvent.ContextTitle,
+					TargetText:        reqEvent.TargetText,
+					Command:           reqEvent.Command,
+					Engine:            reqEvent.Engine,
+					CWD:               reqEvent.CWD,
+					PermissionMode:    reqEvent.PermissionMode,
+					ClaudeSessionUUID: lookupClaudeSessionUUID(sessionID),
 				},
 			}, emitAndPersist)
 			if err != nil {
@@ -1220,10 +1248,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Mode:           runner.ModePTY,
 					PermissionMode: firstNonEmptyString(inputEvent.PermissionMode, "default"),
 					RuntimeMeta: protocol.RuntimeMeta{
-						Source:         "input-promoted-exec",
-						Command:        command,
-						CWD:            firstNonEmptyString(inputEvent.CWD, "/"),
-						PermissionMode: firstNonEmptyString(inputEvent.PermissionMode, "default"),
+						Source:            "input-promoted-exec",
+						Command:           command,
+						CWD:               firstNonEmptyString(inputEvent.CWD, "/"),
+						PermissionMode:    firstNonEmptyString(inputEvent.PermissionMode, "default"),
+						ClaudeSessionUUID: lookupClaudeSessionUUID(sessionID),
 					},
 				}, emitAndPersist); err != nil {
 					logx.Error("ws", "promoted input execute failed: connectionID=%s sessionID=%s remoteAddr=%s command=%q err=%v", connectionID, sessionID, remoteAddr, command, err)
@@ -1265,11 +1294,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Mode:           runner.ModePTY,
 					PermissionMode: firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
 					RuntimeMeta: protocol.RuntimeMeta{
-						Source:          "input",
-						ResumeSessionID: firstNonEmptyString(snapshot.ResumeSessionID, snapshot.ActiveMeta.ResumeSessionID),
-						Command:         firstNonEmptyString(snapshot.ActiveMeta.Command, controller.CurrentCommand),
-						CWD:             snapshot.ActiveMeta.CWD,
-						PermissionMode:  firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
+						Source:            "input",
+						ResumeSessionID:   firstNonEmptyString(snapshot.ResumeSessionID, snapshot.ActiveMeta.ResumeSessionID),
+						Command:           firstNonEmptyString(snapshot.ActiveMeta.Command, controller.CurrentCommand),
+						CWD:               snapshot.ActiveMeta.CWD,
+						PermissionMode:    firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
+						ClaudeSessionUUID: lookupClaudeSessionUUID(sessionID),
 					},
 				}
 				if err := service.RestoreSafePermissionModeBeforeInput(ctx, sessionID, restoreReq, inputData, emitAndPersist); err != nil {
@@ -1346,6 +1376,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						projection.Runtime.PermissionMode,
 						"default",
 					),
+					ClaudeSessionUUID: lookupClaudeSessionUUID(sessionID),
 				},
 			}
 			if shouldEmitTransientResumeThinkingEvent(service, resumeReq) {
@@ -2130,7 +2161,9 @@ func sessionRecordRuntimeAlive(record store.SessionRecord, svc *runtimepkg.Servi
 		}
 	}
 	if !codexsync.IsMirrorSessionID(record.Summary.ID) && !claudesync.IsMirrorSessionID(record.Summary.ID) {
-		return false
+		if !record.Summary.External {
+			return false
+		}
 	}
 	projection := normalizeProjectionSnapshot(record.Projection)
 	state := strings.TrimSpace(string(projection.Controller.State))
@@ -2146,8 +2179,10 @@ func toProtocolSummary(item store.SessionSummary) protocol.SessionSummary {
 		UpdatedAt:   item.UpdatedAt.Format(time.RFC3339),
 		LastPreview: item.LastPreview,
 		EntryCount:  item.EntryCount,
-		Source:      item.Source,
-		External:    item.External,
+		Source:          item.Source,
+		External:        item.External,
+		Ownership:       item.Ownership,
+		ExecutionActive: item.ExecutionActive,
 		Runtime: protocol.RuntimeMeta{
 			ResumeSessionID: item.Runtime.ResumeSessionID,
 			Command:         item.Runtime.Command,
@@ -3624,7 +3659,9 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord, hasActiveRunn
 
 func isExternalNativeActiveRecord(record store.SessionRecord) bool {
 	if !codexsync.IsMirrorSessionID(record.Summary.ID) && !claudesync.IsMirrorSessionID(record.Summary.ID) {
-		return false
+		if !record.Summary.External {
+			return false
+		}
 	}
 	projection := normalizeProjectionSnapshot(record.Projection)
 	state := strings.TrimSpace(string(projection.Controller.State))
@@ -5226,11 +5263,40 @@ func mergeClaudeJSONLToRecord(ctx context.Context, sessionStore store.Store, rec
 	}
 	newEntries, newCount, err := claudesync.MergeJSONLToSession(cwd, csuuid, record.Projection.LogEntries)
 	if err != nil || len(newEntries) == 0 {
+		// If no new entries but session was already external, re-evaluate
+		// lifecycle based on recency of existing log entries.
+		if record.Summary.External {
+			latest := latestLogEntryTime(record.Projection.LogEntries)
+			if !latest.IsZero() && time.Since(latest) < 60*time.Second {
+				record.Projection.Runtime.ClaudeLifecycle = "active"
+			} else {
+				record.Projection.Runtime.ClaudeLifecycle = "resumable"
+			}
+		}
 		return record
 	}
 	record.Projection.LogEntries = append(record.Projection.LogEntries, newEntries...)
 	record.Summary.JSONLSyncEntryCount = newCount
 	record.Summary.UpdatedAt = time.Now().UTC()
+
+	// Desktop Claude CLI has written to this session's JSONL — upgrade
+	// metadata so the Flutter side recognizes it as externally managed.
+	record.Summary.External = true
+	record.Summary.Ownership = "claude-native"
+	if record.Summary.Source == "" || record.Summary.Source == "mobilevc" {
+		record.Summary.Source = "claude-native"
+	}
+	if record.Summary.Runtime.Source == "" || record.Summary.Runtime.Source == "mobilevc" {
+		record.Summary.Runtime.Source = "claude-native"
+	}
+
+	// Set lifecycle based on recency of the latest entry.
+	latest := latestLogEntryTime(record.Projection.LogEntries)
+	if !latest.IsZero() && time.Since(latest) < 60*time.Second {
+		record.Projection.Runtime.ClaudeLifecycle = "active"
+	} else {
+		record.Projection.Runtime.ClaudeLifecycle = "resumable"
+	}
 
 	saveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -5238,4 +5304,19 @@ func mergeClaudeJSONLToRecord(ctx context.Context, sessionStore store.Store, rec
 		logx.Error("ws", "merge claude jsonl to session failed: sessionID=%s err=%v", record.Summary.ID, err)
 	}
 	return record
+}
+
+// latestLogEntryTime returns the most recent timestamp among the given log entries.
+func latestLogEntryTime(entries []store.SnapshotLogEntry) time.Time {
+	var latest time.Time
+	for _, e := range entries {
+		ts, err := time.Parse(time.RFC3339, e.Timestamp)
+		if err != nil {
+			continue
+		}
+		if ts.After(latest) {
+			latest = ts
+		}
+	}
+	return latest
 }

@@ -1,23 +1,19 @@
 # Changelog
 
-This changelog tracks repository-facing npm package changes. Current package version: `0.1.18`.
+This changelog tracks repository-facing npm package changes. Current package version: `0.2.0`.
 
 ## Unreleased
 
 ### Fixed
 
-- QR launch URLs now include the current `mobilevc` invocation directory as `cwd`, and Flutter scan handling uses it to overwrite the connection path.
-- The npm launcher passes `RUNTIME_WORKSPACE_ROOT=process.cwd()` to the backend and records the launch CWD in state.
-- Claude's empty/default model now resolves to `default`, so the default command stays plain `claude` instead of adding `--model sonnet`.
-- Flutter treats `ws_send_error` as a recoverable socket disconnect.
-- WebSocket server writes now use a write deadline to avoid stuck writes on broken connections.
+- **切后台误入观察模式**：新增 `Ownership` 字段标记会话归属（`mobilevc` / `claude-native` / `codex-native`），创建时确定，只升级不降级。Flutter 端 `_isExternalNativeSession` 优先读此字段，断连时重置 `_selectedSessionExternalNative`。
+- **切后台回来状态跳动**：新增 `ExecutionActive` 运行锁存器，非 IDLE 即锁存为 `true`，IDLE 或 runtime session 超时释放时解锁。Flutter 端 `AgentStateEvent` 中 `WAIT_INPUT` 不再清除 `_sessionRuntimeAlive`。
+- **后台收不到进度通知**：推送触发事件扩展为 `AgentStateEvent`（THINKING/RUNNING_TOOL）、`StepUpdateEvent`、`LogEvent`（assistant_reply）、`ErrorEvent`。进度类事件 30s 防抖，WebSocket 在线时跳过进度推送，离线时才发 APNs。
 
 ### Added
 
-- Application-level Flutter -> server `ping` / server -> Flutter `pong` health checks.
-- Foreground/connect/reconnect task snapshots plus `session_delta_get` requests with known event/history/diff/terminal cursors.
-- `task_snapshot` events that let Flutter keep the running task card continuous after background/foreground transitions.
-- Recovery now prioritizes `session_delta_get` incremental backend sync; the short pending buffer remains for blocking prompt/interaction replay only, and full `session_resume` is fallback.
+- `runtimeSessionRegistry` 增加 `onCleanup` 回调，runtime session 超时释放时自动解锁 `ExecutionActive`。
+- `runtimeSessionRegistry.HasActiveConnection()` 方法，供推送模块判断 Flutter 是否在线。
 
 ## [0.1.18] - 2026-04-21
 

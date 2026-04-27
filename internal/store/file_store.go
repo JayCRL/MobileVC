@@ -75,6 +75,8 @@ func (s *FileStore) CreateSession(ctx context.Context, title string) (SessionSum
 		Title:             fallbackTitle(title, now),
 		CreatedAt:         now,
 		UpdatedAt:         now,
+		Source:            "mobilevc",
+		Ownership:         "mobilevc",
 		Runtime:           SessionRuntime{Source: "mobilevc"},
 		ClaudeSessionUUID: uuid.NewString(),
 	}
@@ -548,6 +550,13 @@ func normalizeSessionRecord(record SessionRecord) SessionRecord {
 		record.Summary.External = true
 		defaultSource = "codex-native"
 	}
+	if record.Summary.Ownership == "" {
+		if record.Summary.External {
+			record.Summary.Ownership = "claude-native"
+		} else {
+			record.Summary.Ownership = "mobilevc"
+		}
+	}
 	record.Projection.Runtime = mergeSessionRuntime(record.Summary.Runtime, record.Projection.Runtime)
 	if record.Projection.Runtime.Source == "" {
 		record.Projection.Runtime.Source = defaultSource
@@ -558,6 +567,14 @@ func normalizeSessionRecord(record SessionRecord) SessionRecord {
 	}
 	if record.Summary.Source == "" {
 		record.Summary.Source = defaultSource
+	}
+	// ExecutionActive latches: true when controller state is non-IDLE
+	// (THINKING, RUNNING_TOOL, WAIT_INPUT), false only when IDLE/empty.
+	controllerState := strings.TrimSpace(string(record.Projection.Controller.State))
+	if controllerState == "" || controllerState == string(session.ControllerStateIdle) {
+		record.Summary.ExecutionActive = false
+	} else {
+		record.Summary.ExecutionActive = true
 	}
 	record.Summary = deriveProjectionSummary(record.Summary, record.Projection)
 	return record

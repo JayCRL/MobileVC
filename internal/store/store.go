@@ -149,6 +149,8 @@ type SessionSummary struct {
 	Runtime              SessionRuntime `json:"runtime,omitempty"`
 	Source               string         `json:"source,omitempty"`
 	External             bool           `json:"external,omitempty"`
+	Ownership            string         `json:"ownership,omitempty"`
+	ExecutionActive      bool           `json:"executionActive,omitempty"`
 	ClaudeSessionUUID    string         `json:"claudeSessionUUID,omitempty"`
 	JSONLSyncEntryCount  int            `json:"jsonlSyncEntryCount,omitempty"`
 }

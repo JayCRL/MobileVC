@@ -17,6 +17,8 @@ class SessionSummary {
     this.entryCount = 0,
     this.source = '',
     this.external = false,
+    this.ownership = '',
+    this.executionActive = false,
     this.runtime = const RuntimeMeta(),
   });
 
@@ -28,6 +30,8 @@ class SessionSummary {
   final int entryCount;
   final String source;
   final bool external;
+  final String ownership;
+  final bool executionActive;
   final RuntimeMeta runtime;
 
   factory SessionSummary.fromJson(Map<String, dynamic> json) {
@@ -40,6 +44,8 @@ class SessionSummary {
       entryCount: (json['entryCount'] as num?)?.toInt() ?? 0,
       source: (json['source'] ?? '').toString(),
       external: json['external'] == true,
+      ownership: (json['ownership'] ?? '').toString(),
+      executionActive: json['executionActive'] == true,
       runtime: json['runtime'] is Map<String, dynamic>
           ? RuntimeMeta.fromJson(json['runtime'] as Map<String, dynamic>)
           : const RuntimeMeta(),

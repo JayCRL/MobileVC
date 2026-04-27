@@ -67,6 +67,7 @@ type RuntimeMeta struct {
 	CWD                 string `json:"cwd,omitempty"`
 	PermissionMode      string `json:"permissionMode,omitempty"`
 	PermissionRequestID string `json:"permissionRequestId,omitempty"`
+	ClaudeSessionUUID   string `json:"claudeSessionUUID,omitempty"`
 	ClaudeLifecycle     string `json:"claudeLifecycle,omitempty"`
 	BlockingKind        string `json:"blockingKind,omitempty"`
 }
@@ -424,15 +425,17 @@ type SessionDeleteRequestEvent struct {
 }
 
 type SessionSummary struct {
-	ID          string      `json:"id"`
-	Title       string      `json:"title"`
-	CreatedAt   string      `json:"createdAt,omitempty"`
-	UpdatedAt   string      `json:"updatedAt,omitempty"`
-	LastPreview string      `json:"lastPreview,omitempty"`
-	EntryCount  int         `json:"entryCount,omitempty"`
-	Source      string      `json:"source,omitempty"`
-	External    bool        `json:"external,omitempty"`
-	Runtime     RuntimeMeta `json:"runtime,omitempty"`
+	ID              string      `json:"id"`
+	Title           string      `json:"title"`
+	CreatedAt       string      `json:"createdAt,omitempty"`
+	UpdatedAt       string      `json:"updatedAt,omitempty"`
+	LastPreview     string      `json:"lastPreview,omitempty"`
+	EntryCount      int         `json:"entryCount,omitempty"`
+	Source          string      `json:"source,omitempty"`
+	External        bool        `json:"external,omitempty"`
+	Ownership       string      `json:"ownership,omitempty"`
+	ExecutionActive bool        `json:"executionActive,omitempty"`
+	Runtime         RuntimeMeta `json:"runtime,omitempty"`
 }
 
 type HistoryContext struct {
@@ -1360,6 +1363,9 @@ func MergeRuntimeMeta(base, overlay RuntimeMeta) RuntimeMeta {
 	}
 	if overlay.ClaudeLifecycle != "" {
 		merged.ClaudeLifecycle = overlay.ClaudeLifecycle
+	}
+	if overlay.ClaudeSessionUUID != "" {
+		merged.ClaudeSessionUUID = overlay.ClaudeSessionUUID
 	}
 	if overlay.BlockingKind != "" {
 		merged.BlockingKind = overlay.BlockingKind

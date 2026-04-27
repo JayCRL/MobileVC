@@ -212,11 +212,13 @@ type runtimeSessionRegistry struct {
 	sessions     map[string]*runtimeSession
 	newService   func(string) *runtimepkg.Service
 	releaseAfter time.Duration
+	onCleanup    func(sessionID string)
 }
 
 func newRuntimeSessionRegistry(
 	newService func(string) *runtimepkg.Service,
 	releaseAfter time.Duration,
+	onCleanup func(sessionID string),
 ) *runtimeSessionRegistry {
 	if releaseAfter <= 0 {
 		releaseAfter = defaultRuntimeSessionReleaseAfter
@@ -225,6 +227,7 @@ func newRuntimeSessionRegistry(
 		sessions:     make(map[string]*runtimeSession),
 		newService:   newService,
 		releaseAfter: releaseAfter,
+		onCleanup:    onCleanup,
 	}
 }
 
@@ -236,6 +239,20 @@ func (r *runtimeSessionRegistry) Ensure(sessionID string) *runtimeSession {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.ensureLocked(sessionID)
+}
+
+func (r *runtimeSessionRegistry) HasActiveConnection(sessionID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.sessions[sessionID]
+	if !ok {
+		return false
+	}
+	return entry.listenerCount() > 0
 }
 
 func (r *runtimeSessionRegistry) Attach(sessionID, listenerID string, listener func(any)) *runtimeSession {
@@ -279,6 +296,9 @@ func (r *runtimeSessionRegistry) Release(sessionID, listenerID string, cleanupIf
 		}
 		r.mu.Unlock()
 		entry.service.Cleanup()
+		if r.onCleanup != nil {
+			r.onCleanup(sessionID)
+		}
 		return
 	}
 	if entry.releaseTimer != nil {
@@ -306,11 +326,15 @@ func (r *runtimeSessionRegistry) cleanupIfOrphaned(sessionID string, target *run
 	current.releaseTimer = nil
 	r.mu.Unlock()
 	current.service.Cleanup()
+	if r.onCleanup != nil {
+		r.onCleanup(sessionID)
+	}
 }
 
 func (r *runtimeSessionRegistry) CleanupAll() {
 	r.mu.Lock()
 	services := make([]*runtimepkg.Service, 0, len(r.sessions))
+	sessionIDs := make([]string, 0, len(r.sessions))
 	for sessionID, entry := range r.sessions {
 		delete(r.sessions, sessionID)
 		if entry.releaseTimer != nil {
@@ -319,11 +343,15 @@ func (r *runtimeSessionRegistry) CleanupAll() {
 		}
 		if entry.service != nil {
 			services = append(services, entry.service)
+			sessionIDs = append(sessionIDs, sessionID)
 		}
 	}
 	r.mu.Unlock()
-	for _, service := range services {
+	for i, service := range services {
 		service.Cleanup()
+		if r.onCleanup != nil && i < len(sessionIDs) {
+			r.onCleanup(sessionIDs[i])
+		}
 	}
 }
 

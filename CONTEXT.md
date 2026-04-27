@@ -149,8 +149,8 @@
 - `_activeReviewGroupId`
 - `_activeReviewDiffId`
 - `_isStopping`
-- `_sessionRuntimeAlive` — 标记后端 runtime 是否存活（原生会话/恢复态）
-- `_selectedSessionExternalNative` — 当前选中的会话是否为电脑端原生 Codex 会话
+- `_sessionRuntimeAlive` — 标记后端 runtime 是否存活（原生会话/恢复态）。AgentStateEvent 中 `WAIT_INPUT` 现在也会保持为 `true`，不再错误清除运行态
+- `_selectedSessionExternalNative` — 当前选中的会话是否为电脑端原生 Codex/Claude 会话。**断连时会重置为 `false`**，重连后由后端 `ownership` 字段重新决定
 - `_continueSameSessionEnabled` — 用户是否已在手机端继续同一原生会话
 - `_continuedSameSessionId` — 正在继续的原生会话 ID
 - `_pendingOutboundActions` — 待确认的出站消息队列，带重试和 ack 确认
@@ -636,6 +636,8 @@ Claude 会话在 hot swap 或 resume 时，旧 runner 的 `defer clear()` 可能
 - `permissionRequestId`
 - `targetPath`
 - `runGeneration`
+- `ownership` — 会话归属（`mobilevc` / `claude-native` / `codex-native`），Flutter 优先读此字段判断是否外部会话
+- `executionActive` — 运行锁存器，非 IDLE 即为 `true`，用于切后台重连时保持运行态
 
 ## 11. 已确认的”旧索引 vs 现状”漂移点
 
@@ -721,6 +723,18 @@ Claude 会话在 hot swap 或 resume 时，旧 runner 的 `defer clear()` 可能
     - 旧理解：Claude `Run()` 直接进入 select 等待
     - 现状：引入 `processDone` channel，先启动 goroutine 执行 `runClaudeStream`，循环等待 `interactive` 就绪后再发送 `PromptRequestEvent`，避免启动阶段状态不同步
 
+21. **会话归属由 Ownership 字段决定**
+    - 旧理解：是否外部会话取决于 `External` + `Source` + `Runtime.Source` 多重推导，切后台重连时可能误判
+    - 现状：`SessionSummary.Ownership` 在创建时设为 `"mobilevc"`，只在桌面 Claude CLI 接管时升级为 `"claude-native"`，不受 projection 覆盖；Flutter `_isExternalNativeSession` 优先读此字段
+
+22. **ExecutionActive 锁存运行态**
+    - 旧理解：切后台回来时 `WAIT_INPUT` 会把 `_sessionRuntimeAlive` 置为 `false`，导致运行态指示跳动
+    - 现状：后端 `ExecutionActive` 在非 IDLE 时锁存为 `true`；Flutter `AgentStateEvent` 把 `WAIT_INPUT` 纳入运行态保持列表；runtime session 超时释放时兜底解锁
+
+23. **后台推送覆盖进度事件**
+    - 旧理解：只在需要用户介入时（权限/审核）才发 APNs 推送
+    - 现状：`AgentStateEvent`、`StepUpdateEvent`、`LogEvent`（assistant_reply）、`ErrorEvent` 也触发推送；进度类事件 30s 防抖；连接在线时跳过进度推送（WebSocket 已送达）
+
 ## 12. 更新这份文件时先看哪里
 
 ### Flutter source of truth
@@ -737,6 +751,7 @@ Claude 会话在 hot swap 或 resume 时，旧 runner 的 `defer clear()` 可能
 
 - `internal/ws/handler.go`
 - `internal/ws/runtime_sessions.go`
+- `internal/ws/push_helper.go`
 - `internal/ws/permission_grants.go`
 - `internal/ws/permission_decision.go`
 - `internal/runtime/manager.go`
@@ -744,6 +759,8 @@ Claude 会话在 hot swap 或 resume 时，旧 runner 的 `defer clear()` 可能
 - `internal/runner/codex_app_server.go`
 - `internal/protocol/event.go`
 - `internal/store/store.go`
+- `internal/store/file_store.go`
+- `internal/push/service.go`
 - `internal/codexsync/threads.go`
 
 ### 只能当参考、不能高于代码
@@ -920,3 +937,72 @@ Codex 的 app-server 协议中，同一段 assistant 回复可能通过多个通
 - `seenMessages` map 去重，避免原生同步时重复插入相同消息
 - 支持 `rolloutResponseItemPayload` 类型（`response_item` 事件），提取完整 response 文本
 - `responseItemText()` 从 `content[]` 中拼接文本
+
+## 18. 会话归属与运行状态锁存器
+
+### Ownership — 会话归属
+
+**问题**：之前"这个会话属于谁"的判断分散在 `External`、`Source`、`Runtime.Source` 三个字段里，通过多重推导得出。切后台回来时可能误判为外部会话，进入观察模式。
+
+**字段**：`store.SessionSummary.Ownership`（`store/store.go:152`）
+
+**值**：
+- `"mobilevc"` — 手机端创建并拥有
+- `"claude-native"` — 桌面 Claude CLI 接管（在 `mergeClaudeJSONLToRecord` 中升级）
+- `"codex-native"` — Codex 接管
+
+**生命周期**：
+- `CreateSession` → `"mobilevc"`（`file_store.go:78`）
+- `mergeClaudeJSONLToRecord` 发现桌面 Claude CLI 写入了新 JSONL 条目 → 升级为 `"claude-native"`（`handler.go:5269`）
+- `normalizeSessionRecord` 只在 Ownership 为空时设默认值，已有值**不会被覆盖降级**
+
+**Flutter 侧**：
+- `_isExternalNativeSession()` 优先读 `ownership`：`"mobilevc"` → 直接返回 `false`；`"claude-native"` / `"codex-native"` → 直接返回 `true`
+- 断连时 `_handleUnexpectedSocketDisconnect` **重置** `_selectedSessionExternalNative = false`
+- `_mergedSessionSummary` 合并时 incoming 优先，否则保留 existing
+
+### ExecutionActive — 运行状态锁存器
+
+**问题**：`AgentStateEvent` 处理中 `WAIT_INPUT` 会把 `_sessionRuntimeAlive` 置为 `false`，导致切后台回来时状态在"运行中"↔"等待输入"之间来回跳动。
+
+**字段**：`store.SessionSummary.ExecutionActive`（`store/store.go:155`）
+
+**触发（→ true）**：控制器状态变为非 IDLE（THINKING、WAIT_INPUT、RUNNING_TOOL 均视为活跃）
+
+**解锁（→ false）**：
+1. 控制器状态变为 IDLE（`OnCommandFinished` 正常结束）
+2. Runtime session 超时释放（`runtime_sessions.go` `cleanupIfOrphaned` → `onCleanup` 回调）
+3. Runtime session 立即释放（切会话时 `Release(..., true)`）
+4. 全局清理（`CleanupAll`）
+
+**注意**：`OnCommandFinished` 在 `WAIT_INPUT` 状态下有短路——runner 退出时如果当前状态是 `WAIT_INPUT`（等待用户继续），不会切到 IDLE，`ExecutionActive` 保持 `true`。此时如果用户超时 15 分钟不回来，runtime session 超时释放 → `onCleanup` 兜底解锁。
+
+**Flutter 侧**：
+- `AgentStateEvent` 处理中 `WAIT_INPUT` 加入 `_sessionRuntimeAlive` 保持列表
+
+## 19. 后台推送通知扩展
+
+### 问题
+
+之前只在 `prompt_request` / `interaction_request`（需要用户确认权限/审核代码）时才发 APNs 推送。切后台后 agent 思考、执行工具的进度完全不通知。
+
+### 推送触发事件（`push_helper.go`）
+
+| 事件 | 推送内容 | 防抖 |
+|---|---|---|
+| `PromptRequestEvent` | 需要用户确认权限 | 无（立即） |
+| `InteractionRequestEvent` | 需要用户审核代码变更 | 无（立即） |
+| `AgentStateEvent` (THINKING/RUNNING_TOOL) | "AI 助手运行中 / 思考中 / 执行工具中" | 30s |
+| `StepUpdateEvent` | "正在执行: <工具名>" | 30s |
+| `LogEvent` (assistant_reply) | 截取回复前 200 字符 | 30s |
+| `ErrorEvent` | 错误信息 | 无（立即） |
+
+**连接感知**：`runtimeSessionRegistry.HasActiveConnection(sessionID)` 检测 Flutter 是否在线。在线时只发需要用户介入的推送（WebSocket 已推送进度）；离线时才发进度推送。
+
+**防抖**：`Handler.lastProgressPush` map 按 session 记录上次推送时间，30 秒内不重复推送进度类事件。
+
+### 关键位置
+
+- `internal/ws/push_helper.go` — 推送判断与发送
+- `internal/ws/runtime_sessions.go` — `HasActiveConnection()` 连接检测；`onCleanup` 释放回调
+- `internal/push/service.go` — APNs 客户端实现

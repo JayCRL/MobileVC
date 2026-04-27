@@ -2,6 +2,8 @@ package ws
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"mobilevc/internal/logx"
@@ -9,17 +11,7 @@ import (
 	"mobilevc/internal/push"
 )
 
-// shouldSendPushNotification 判断是否需要发送推送通知
-func (h *Handler) shouldSendPushNotification(sessionID string, eventType string) bool {
-	// 只在需要用户介入时发送推送
-	switch eventType {
-	case protocol.EventTypePromptRequest,
-		protocol.EventTypeInteractionRequest:
-		return true
-	default:
-		return false
-	}
-}
+const progressPushDebounce = 30 * time.Second
 
 // sendPushNotificationIfNeeded 在需要时发送推送通知
 func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID string, event any) {
@@ -29,8 +21,9 @@ func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID st
 
 	eventType := ""
 	title := "MobileVC"
-	body := "需要你的确认"
+	body := ""
 	blockingKind := ""
+	isProgress := false
 
 	switch e := event.(type) {
 	case protocol.PromptRequestEvent:
@@ -49,10 +42,55 @@ func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID st
 		} else {
 			body = "Claude 需要你审核代码变更"
 		}
+	case protocol.AgentStateEvent:
+		state := strings.TrimSpace(strings.ToUpper(e.State))
+		if state == "IDLE" || state == "WAIT_INPUT" || state == "DONE" || state == "DISCONNECTED" || state == "" {
+			return
+		}
+		eventType = protocol.EventTypeAgentState
+		title = "AI 助手运行中"
+		if e.Message != "" {
+			body = e.Message
+		} else if e.Step != "" {
+			body = e.Step
+		} else {
+			body = "正在处理中..."
+		}
+		isProgress = true
+	case protocol.StepUpdateEvent:
+		eventType = protocol.EventTypeStepUpdate
+		title = "执行工具"
+		if e.Message != "" {
+			body = e.Message
+		} else if e.Target != "" {
+			body = fmt.Sprintf("正在执行: %s", e.Target)
+		} else {
+			body = "正在执行工具..."
+		}
+		isProgress = true
+	case protocol.LogEvent:
+		if e.Stream != "assistant_reply" && e.Stream != "markdown" {
+			return
+		}
+		eventType = protocol.EventTypeLog
+		title = "AI 回复"
+		body = truncatePushBody(e.Message, 200)
+		if body == "" {
+			return
+		}
+		isProgress = true
+	case protocol.ErrorEvent:
+		eventType = protocol.EventTypeError
+		title = "错误"
+		body = e.Message
+		if body == "" {
+			body = "发生了一个错误"
+		}
 	default:
 		return
 	}
 
+	// 覆盖 prompt/interaction 的 body
 	switch blockingKind {
 	case "permission":
 		body = "AI 助手需要你确认权限"
@@ -66,8 +104,22 @@ func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID st
 		return
 	}
 
-	if !h.shouldSendPushNotification(sessionID, eventType) {
+	// 检查是否有活跃连接。如果有，只发需要用户介入的事件。
+	hasActiveConnection := h.runtimeSessions.HasActiveConnection(sessionID)
+	if hasActiveConnection && isProgress {
 		return
+	}
+
+	// 进度类事件做防抖，避免推送轰炸。
+	if isProgress {
+		h.muProgressPush.Lock()
+		last, ok := h.lastProgressPush[sessionID]
+		if ok && time.Since(last) < progressPushDebounce {
+			h.muProgressPush.Unlock()
+			return
+		}
+		h.lastProgressPush[sessionID] = time.Now()
+		h.muProgressPush.Unlock()
 	}
 
 	// 异步发送推送，不阻塞主流程
@@ -94,7 +146,7 @@ func (h *Handler) sendPushNotificationIfNeeded(ctx context.Context, sessionID st
 			Title:    title,
 			Body:     body,
 			Data: map[string]string{
-				"type":         "action_needed",
+				"type":         firstNonEmptyPushString(eventType, "action_needed"),
 				"sessionId":    sessionID,
 				"eventType":    eventType,
 				"blockingKind": blockingKind,
@@ -114,4 +166,13 @@ func firstNonEmptyPushString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func truncatePushBody(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	if len([]rune(s)) <= maxLen {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:maxLen]) + "..."
 }

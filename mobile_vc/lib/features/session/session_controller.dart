@@ -870,24 +870,14 @@ class SessionController extends ChangeNotifier {
     if (_isClaudePendingReadyForInput) {
       return false;
     }
-    final currentExecutionKey = _runtimeExecutionKey(
-      _agentState?.runtimeMeta ??
-          _sessionState?.runtimeMeta ??
-          const RuntimeMeta(),
-    );
-    final assistantReplySettled = currentExecutionKey.isNotEmpty &&
-        currentExecutionKey == _lastAssistantReplyExecutionKey;
     final agentState = (_agentState?.state ?? '').trim().toUpperCase();
-    if ((agentState == 'THINKING' || agentState == 'RECOVERING') &&
-        !assistantReplySettled) {
-      return true;
-    }
-    if (agentState == 'RUNNING_TOOL') {
+    if (agentState == 'THINKING' ||
+        agentState == 'RECOVERING' ||
+        agentState == 'RUNNING_TOOL') {
       return true;
     }
     final sessionState = (_sessionState?.state ?? '').trim().toUpperCase();
-    if ((sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') &&
-        !assistantReplySettled) {
+    if (sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') {
       return true;
     }
     if (_hasRunningTerminalExecution) {
@@ -918,24 +908,14 @@ class SessionController extends ChangeNotifier {
     if (_hasRunningTerminalExecution) {
       return true;
     }
-    final currentExecutionKey = _runtimeExecutionKey(
-      _agentState?.runtimeMeta ??
-          _sessionState?.runtimeMeta ??
-          const RuntimeMeta(),
-    );
-    final assistantReplySettled = currentExecutionKey.isNotEmpty &&
-        currentExecutionKey == _lastAssistantReplyExecutionKey;
     final agentState = (_agentState?.state ?? '').trim().toUpperCase();
-    if ((agentState == 'THINKING' || agentState == 'RECOVERING') &&
-        !assistantReplySettled) {
-      return true;
-    }
-    if (agentState == 'RUNNING_TOOL') {
+    if (agentState == 'THINKING' ||
+        agentState == 'RECOVERING' ||
+        agentState == 'RUNNING_TOOL') {
       return true;
     }
     final sessionState = (_sessionState?.state ?? '').trim().toUpperCase();
-    if ((sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') &&
-        !assistantReplySettled) {
+    if (sessionState == 'THINKING' || sessionState == 'RUNNING_TOOL') {
       return true;
     }
     if (sessionState != 'RUNNING') {
@@ -1738,6 +1718,7 @@ class SessionController extends ChangeNotifier {
     final wasRecovering = _reconnecting;
     _connected = false;
     _connecting = false;
+    _selectedSessionExternalNative = false;
     _isLoadingSession = false;
     _sessionListSyncedSinceConnect = false;
     _pendingSessionTargetId = '';
@@ -3972,8 +3953,16 @@ class SessionController extends ChangeNotifier {
         }
         final ignoredAsStale = _handleTaskSnapshot(snapshot);
         if (!ignoredAsStale) {
-          _sessionRuntimeAlive =
-              snapshot.runtimeAlive || _hasRecentContinuationInput;
+          // Heartbeat snapshots use the backend runner state, which doesn't
+          // track external native (desktop Claude) processes. Trust the
+          // session history/delta events for runtimeAlive in that case.
+          final isExternalHeartbeatIdle = _selectedSessionExternalNative &&
+              !snapshot.syncing &&
+              !snapshot.runtimeAlive;
+          if (!isExternalHeartbeatIdle) {
+            _sessionRuntimeAlive =
+                snapshot.runtimeAlive || _hasRecentContinuationInput;
+          }
           if (!snapshot.runtimeAlive &&
               !_hasRecentContinuationInput &&
               !canSendToContinuedSameSession) {
@@ -3993,6 +3982,7 @@ class SessionController extends ChangeNotifier {
             agentStateName == 'RECOVERING' ||
             agentStateName == 'RUNNING' ||
             agentStateName == 'RUNNING_TOOL' ||
+            agentStateName == 'WAIT_INPUT' ||
             _hasRecentContinuationInput;
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
@@ -4962,6 +4952,15 @@ class SessionController extends ChangeNotifier {
   }
 
   bool _isExternalNativeSession(SessionSummary summary) {
+    final ownership = summary.ownership.trim().toLowerCase();
+    // Authoritative ownership field set by backend at session creation.
+    if (ownership == 'mobilevc') {
+      return false;
+    }
+    if (ownership == 'claude-native' || ownership == 'codex-native') {
+      return true;
+    }
+    // Fallback for legacy sessions without ownership field.
     final source = summary.source.trim().toLowerCase();
     final runtimeSource = summary.runtime.source.trim().toLowerCase();
     return summary.external ||
@@ -4992,6 +4991,8 @@ class SessionController extends ChangeNotifier {
               entryCount: summary.entryCount,
               source: summary.source,
               external: summary.external,
+              ownership: summary.ownership,
+              executionActive: summary.executionActive,
               runtime: summary.runtime,
             ),
     );
@@ -5023,6 +5024,11 @@ class SessionController extends ChangeNotifier {
       source:
           incoming.source.isNotEmpty ? incoming.source : existing?.source ?? '',
       external: incoming.external || (existing?.external ?? false),
+      ownership: incoming.ownership.isNotEmpty
+          ? incoming.ownership
+          : existing?.ownership ?? '',
+      executionActive:
+          incoming.executionActive || (existing?.executionActive ?? false),
       runtime: runtime,
     );
   }
@@ -6608,11 +6614,15 @@ class SessionController extends ChangeNotifier {
         sessionState == 'RUNNING' ||
         agentState == 'RUNNING_TOOL' ||
         sessionState == 'RUNNING_TOOL';
+    final isDefinitiveAgentState = agentState == 'THINKING' ||
+        agentState == 'RECOVERING' ||
+        agentState == 'RUNNING_TOOL' ||
+        sessionState == 'RUNNING_TOOL';
     final active = _connected &&
         !hasBlockingPrompt &&
         !_isClaudePendingReadyForInput &&
         hasRealRunningSignal &&
-        !assistantReplySettled;
+        (!assistantReplySettled || isDefinitiveAgentState);
     if (active) {
       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
       if (_activityToolLabel.isEmpty) {
@@ -6847,6 +6857,12 @@ class SessionController extends ChangeNotifier {
     final state =
         snapshot.state.trim().isEmpty ? 'IDLE' : snapshot.state.trim();
     if (!snapshot.runtimeAlive && _isIdleLikeState(state)) {
+      // Heartbeat snapshots use the backend runner state, which doesn't
+      // track external native (desktop Claude) processes. Keep the state
+      // from the authoritative session events for external sessions.
+      if (!snapshot.syncing && _selectedSessionExternalNative) {
+        return false;
+      }
       _agentState = null;
       _sessionRuntimeAlive = false;
       _lastContinuationInputAt = null;
