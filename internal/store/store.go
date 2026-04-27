@@ -140,15 +140,17 @@ type SessionRuntime struct {
 }
 
 type SessionSummary struct {
-	ID          string         `json:"id"`
-	Title       string         `json:"title"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
-	LastPreview string         `json:"lastPreview,omitempty"`
-	EntryCount  int            `json:"entryCount,omitempty"`
-	Runtime     SessionRuntime `json:"runtime,omitempty"`
-	Source      string         `json:"source,omitempty"`
-	External    bool           `json:"external,omitempty"`
+	ID                   string         `json:"id"`
+	Title                string         `json:"title"`
+	CreatedAt            time.Time      `json:"createdAt"`
+	UpdatedAt            time.Time      `json:"updatedAt"`
+	LastPreview          string         `json:"lastPreview,omitempty"`
+	EntryCount           int            `json:"entryCount,omitempty"`
+	Runtime              SessionRuntime `json:"runtime,omitempty"`
+	Source               string         `json:"source,omitempty"`
+	External             bool           `json:"external,omitempty"`
+	ClaudeSessionUUID    string         `json:"claudeSessionUUID,omitempty"`
+	JSONLSyncEntryCount  int            `json:"jsonlSyncEntryCount,omitempty"`
 }
 
 type SnapshotContext struct {

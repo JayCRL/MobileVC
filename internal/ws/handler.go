@@ -224,7 +224,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer persistCancel()
 		if _, err := h.SessionStore.SaveProjection(persistCtx, sessionID, snapshot); err != nil {
 			logx.Error("ws", "save session projection failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
+			return
 		}
+		// Sync new user/assistant entries to Claude CLI JSONL.
+		syncSessionEntriesToClaudeJSONL(h.SessionStore, sessionID, snapshot)
 	}
 
 	emit := func(event any) {
@@ -671,6 +674,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
+			// Merge any new events from Claude CLI JSONL (if this session was continued in CLI).
+			record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record)
 			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
 			switchRuntimeSession(record.Summary.ID)
 			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
@@ -763,6 +768,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
 				continue
 			}
+			// Merge any new events from Claude CLI JSONL.
+			record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record)
 			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
 			switchRuntimeSession(record.Summary.ID)
 			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
@@ -4652,6 +4659,9 @@ func summaryClaudeSessionID(item store.SessionSummary) string {
 }
 
 func resolveTrackedClaudeSessionID(ctx context.Context, sessionStore store.Store, item store.SessionSummary) string {
+	if sid := strings.TrimSpace(item.ClaudeSessionUUID); sid != "" {
+		return sid
+	}
 	if sid := summaryClaudeSessionID(item); sid != "" {
 		return sid
 	}
@@ -4682,8 +4692,17 @@ func trackedMobileVCClaudeSessions(ctx context.Context, sessionStore store.Store
 		if isExternalClaudeSummary(item) {
 			continue
 		}
-		if !isClaudeRuntime(item.Runtime) {
+		if strings.TrimSpace(item.ClaudeSessionUUID) == "" && !isClaudeRuntime(item.Runtime) {
 			continue
+		}
+		// Track ClaudeSessionUUID (for sessions created by MobileVC).
+		if sid := strings.TrimSpace(item.ClaudeSessionUUID); sid != "" {
+			tracked[sid] = struct{}{}
+		}
+		// Also track resumeSessionId (may differ from ClaudeSessionUUID
+		// if the user ran "claude --session-id <other>").
+		if sid := summaryClaudeSessionID(item); sid != "" {
+			tracked[sid] = struct{}{}
 		}
 		if sid := resolveTrackedClaudeSessionID(ctx, sessionStore, item); sid != "" {
 			tracked[sid] = struct{}{}
@@ -5132,4 +5151,94 @@ func laterNonZeroTime(values ...time.Time) time.Time {
 		}
 	}
 	return latest
+}
+
+// syncSessionEntriesToClaudeJSONL writes new user/assistant LogEntries to the
+// Claude CLI JSONL file for this session, if the session has a ClaudeSessionUUID.
+func syncSessionEntriesToClaudeJSONL(sessionStore store.Store, sessionID string, snapshot store.ProjectionSnapshot) {
+	if sessionStore == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	record, err := sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	csuuid := strings.TrimSpace(record.Summary.ClaudeSessionUUID)
+	if csuuid == "" {
+		return
+	}
+	cwd := strings.TrimSpace(record.Summary.Runtime.CWD)
+	if cwd == "" {
+		cwd = strings.TrimSpace(record.Projection.Runtime.CWD)
+	}
+	if cwd == "" {
+		return
+	}
+	startIndex := record.Summary.JSONLSyncEntryCount
+	events, newCount := claudesync.ExtractJSONLEvents(snapshot.LogEntries, startIndex)
+	if len(events) == 0 {
+		return
+	}
+	if err := claudesync.WriteSessionToJSONL(cwd, csuuid, events); err != nil {
+		logx.Error("ws", "sync claude jsonl failed: sessionID=%s err=%v", sessionID, err)
+		return
+	}
+	// Update sync count so we don't re-write the same entries.
+	updated := record
+	updated.Summary.JSONLSyncEntryCount = newCount
+	updated.Projection = snapshot
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	if _, err := sessionStore.UpsertSession(ctx2, updated); err != nil {
+		logx.Error("ws", "update jsonl sync count failed: sessionID=%s err=%v", sessionID, err)
+	}
+}
+
+// lastUserPromptFromEntries returns the text of the most recent user entry.
+func lastUserPromptFromEntries(entries []store.SnapshotLogEntry) string {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == "user" {
+			text := strings.TrimSpace(entries[i].Message)
+			if text == "" {
+				text = strings.TrimSpace(entries[i].Text)
+			}
+			if text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+// mergeClaudeJSONLToRecord checks if the session has a linked Claude CLI JSONL
+// file. If the JSONL has new entries (added by Claude CLI continuing the
+// conversation), they are merged into the record's LogEntries and persisted.
+func mergeClaudeJSONLToRecord(ctx context.Context, sessionStore store.Store, record store.SessionRecord) store.SessionRecord {
+	csuuid := strings.TrimSpace(record.Summary.ClaudeSessionUUID)
+	if csuuid == "" {
+		return record
+	}
+	cwd := strings.TrimSpace(record.Summary.Runtime.CWD)
+	if cwd == "" {
+		cwd = strings.TrimSpace(record.Projection.Runtime.CWD)
+	}
+	if cwd == "" {
+		return record
+	}
+	newEntries, newCount, err := claudesync.MergeJSONLToSession(cwd, csuuid, record.Projection.LogEntries)
+	if err != nil || len(newEntries) == 0 {
+		return record
+	}
+	record.Projection.LogEntries = append(record.Projection.LogEntries, newEntries...)
+	record.Summary.JSONLSyncEntryCount = newCount
+	record.Summary.UpdatedAt = time.Now().UTC()
+
+	saveCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := sessionStore.UpsertSession(saveCtx, record); err != nil {
+		logx.Error("ws", "merge claude jsonl to session failed: sessionID=%s err=%v", record.Summary.ID, err)
+	}
+	return record
 }

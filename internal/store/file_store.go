@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"mobilevc/internal/session"
+
+	"github.com/google/uuid"
 )
 
 type FileStore struct {
@@ -69,11 +71,12 @@ func (s *FileStore) CreateSession(ctx context.Context, title string) (SessionSum
 	}
 	now := time.Now().UTC()
 	summary := SessionSummary{
-		ID:        fmt.Sprintf("session-%d", now.UnixNano()),
-		Title:     fallbackTitle(title, now),
-		CreatedAt: now,
-		UpdatedAt: now,
-		Runtime:   SessionRuntime{Source: "mobilevc"},
+		ID:                fmt.Sprintf("session-%d", now.UnixNano()),
+		Title:             fallbackTitle(title, now),
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		Runtime:           SessionRuntime{Source: "mobilevc"},
+		ClaudeSessionUUID: uuid.NewString(),
 	}
 	record := SessionRecord{Summary: summary, Projection: normalizeProjection(ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}})}
 	index, err := s.readIndexLocked()
@@ -121,6 +124,9 @@ func (s *FileStore) UpsertSession(ctx context.Context, record SessionRecord) (Se
 		}
 		if record.Summary.CreatedAt.IsZero() {
 			record.Summary.CreatedAt = existing.Summary.CreatedAt
+		}
+		if record.Summary.ClaudeSessionUUID == "" {
+			record.Summary.ClaudeSessionUUID = existing.Summary.ClaudeSessionUUID
 		}
 	}
 	record.Summary = deriveProjectionSummary(record.Summary, record.Projection)
