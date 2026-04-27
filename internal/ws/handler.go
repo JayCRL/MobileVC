@@ -3831,9 +3831,6 @@ func isVisibleAssistantReplyLog(event protocol.LogEvent) bool {
 	if strings.Contains(message, "\n") {
 		return true
 	}
-	if len([]rune(message)) < 48 {
-		return false
-	}
 	return !looksLikeTerminalLikeLogLine(message)
 }
 
