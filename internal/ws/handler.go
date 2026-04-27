@@ -816,9 +816,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			emit(newSessionHistoryEventFromRecord(record, runtimeAlive))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
 			restoredState := ""
+			var restoredAgentEvent *protocol.AgentStateEvent
 			if restored := restoredAgentStateEventFromRecord(record, runtimeAlive); restored != nil {
 				restoredState = restored.State
-				emit(*restored)
+				restoredAgentEvent = restored
 			}
 			replayedCount := 0
 			latestCursor := int64(0)
@@ -832,6 +833,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					emit(pendingEvent)
 				}
 				latestCursor = sessionRuntime.latestCursor()
+			}
+			// Emit restored agent state AFTER pending replay so that log events
+			// (assistant replies) reach Flutter before the state transition,
+			// preventing a "paused → reply text appears" flicker.
+			if restoredAgentEvent != nil {
+				emit(*restoredAgentEvent)
 			}
 			if snapshot := buildTaskSnapshotEvent(record.Summary.ID, runtimeSvc, sessionRuntime, "resume", true); snapshot != nil {
 				emit(*snapshot)
