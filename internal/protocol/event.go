@@ -92,6 +92,7 @@ type ExecRequestEvent struct {
 	CWD            string `json:"cwd,omitempty"`
 	Mode           string `json:"mode,omitempty"`
 	PermissionMode string `json:"permissionMode,omitempty"`
+	InputData      string `json:"inputData,omitempty"`
 	RuntimeMeta
 }
 

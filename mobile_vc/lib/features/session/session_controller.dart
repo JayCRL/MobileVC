@@ -2808,6 +2808,7 @@ class SessionController extends ChangeNotifier {
       'mode': 'pty',
       ...mergedMeta.toJson(),
       'permissionMode': _config.permissionMode,
+      if (value.isNotEmpty) 'inputData': '$value\n',
     };
     final launchSent = _sendUserVisibleAction(
       launchPayload,
@@ -2823,7 +2824,9 @@ class SessionController extends ChangeNotifier {
       return;
     }
     _pendingAiLaunchAwaitingFirstInput = false;
-    _submitClaudeContinuation(value, meta: mergedMeta, label: label);
+    _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
+    _lastContinuationInputAt = DateTime.now();
+    _sessionRuntimeAlive = true;
   }
 
   void _submitClaudeContinuation(

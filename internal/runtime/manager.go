@@ -345,6 +345,7 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 			CWD:            preparedReq.CWD,
 			Mode:           preparedReq.Mode,
 			PermissionMode: preparedReq.PermissionMode,
+			InitialInput:   preparedReq.InitialInput,
 			RuntimeMeta:    preparedReq.RuntimeMeta,
 		}, func(event any) {
 			if provider, ok := selected.(runner.ClaudeSessionProvider); ok {

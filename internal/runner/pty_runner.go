@@ -276,13 +276,27 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
 		r.awaitingReadyPrompt = false
 		r.mu.Unlock()
 
-		sendEvent(sink, protocol.ApplyRuntimeMeta(
-			protocol.NewPromptRequestEvent(req.SessionID, "等待输入", nil),
-			protocol.MergeRuntimeMeta(startMeta, protocol.RuntimeMeta{
-				ClaudeLifecycle: "waiting_input",
-				BlockingKind:    "ready",
-			}),
-		))
+		if req.InitialInput != "" {
+			// Auto-send initial input to avoid extra round-trip
+			if err := r.Write(ctx, []byte(req.InitialInput)); err != nil {
+				logx.Warn("pty", "auto-send initial input failed: sessionID=%s err=%v", req.SessionID, err)
+				sendEvent(sink, protocol.ApplyRuntimeMeta(
+					protocol.NewPromptRequestEvent(req.SessionID, "等待输入", nil),
+					protocol.MergeRuntimeMeta(startMeta, protocol.RuntimeMeta{
+						ClaudeLifecycle: "waiting_input",
+						BlockingKind:    "ready",
+					}),
+				))
+			}
+		} else {
+			sendEvent(sink, protocol.ApplyRuntimeMeta(
+				protocol.NewPromptRequestEvent(req.SessionID, "等待输入", nil),
+				protocol.MergeRuntimeMeta(startMeta, protocol.RuntimeMeta{
+					ClaudeLifecycle: "waiting_input",
+					BlockingKind:    "ready",
+				}),
+			))
+		}
 
 		select {
 		case <-ctx.Done():
@@ -818,10 +832,10 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 		}
 	}()
 
-	// 稍候片刻以确认进程未即崩。若 200ms 内退出，则不标 interactive，
+	// 稍候片刻以确认进程未即崩。若 50ms 内退出，则不标 interactive，
 	// 使 Run() 经 r.processDone 直获其误，不发 PromptRequestEvent。
 	select {
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond):
 	case <-ctx.Done():
 		_ = stdin.Close()
 		return ctx.Err()

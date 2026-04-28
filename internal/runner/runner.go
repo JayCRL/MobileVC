@@ -28,6 +28,7 @@ type ExecRequest struct {
 	SessionID      string
 	Mode           Mode
 	PermissionMode string
+	InitialInput   string
 	protocol.RuntimeMeta
 }
 

@@ -10,6 +10,7 @@ type ExecuteRequest struct {
 	CWD            string
 	Mode           runner.Mode
 	PermissionMode string
+	InitialInput   string
 	protocol.RuntimeMeta
 }
 

@@ -1197,11 +1197,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if runtimeSession != nil {
 				service.SetSink(runtimeSession.EnsureBufferedSinkWithProcessor(emitAndPersist))
 			}
+			initialInput := reqEvent.InputData
+			if initialInput != "" {
+				service.RecordUserInput(initialInput)
+				projection := buildProjectionSnapshotFor(sessionID)
+				if shouldInjectEnabledSkillsForInput(
+					reqEvent.Command,
+					reqEvent.Engine,
+					reqEvent.Engine,
+					projection.Runtime.Engine,
+				) {
+					skillPrefix, err := skills.BuildEnabledSkillsPrefix(h.SessionStore, projection.SessionContext)
+					if err != nil {
+						logx.Warn("ws", "build enabled skills prefix failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
+					}
+					memoryPrefix, memoryErr := skills.BuildEnabledMemoryPrefix(h.SessionStore, projection.SessionContext)
+					if memoryErr != nil {
+						logx.Warn("ws", "build enabled memory prefix failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, memoryErr)
+					}
+					initialInput = skills.InjectConversationPrefixes(initialInput, skillPrefix, memoryPrefix)
+				}
+			}
 			err = service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
 				Command:        reqEvent.Command,
 				CWD:            reqEvent.CWD,
 				Mode:           mode,
 				PermissionMode: reqEvent.PermissionMode,
+				InitialInput:   initialInput,
 				RuntimeMeta: protocol.RuntimeMeta{
 					Source:            fallback(reqEvent.Source, "command"),
 					SkillName:         reqEvent.SkillName,
