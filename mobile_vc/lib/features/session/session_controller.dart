@@ -3770,9 +3770,12 @@ class SessionController extends ChangeNotifier {
         _connectionMessage = '已连接';
         _autoSessionRequested = false;
         _autoSessionCreating = false;
-        _pendingPrompt = null;
-        _pendingInteraction = null;
-        _clearPlanInteractionState();
+        // 保留阻塞型权限/审查/计划提示，防止切后台重连后被误清
+        if (!_shouldPreserveBlockingPrompt()) {
+          _pendingPrompt = null;
+          _pendingInteraction = null;
+          _clearPlanInteractionState();
+        }
         _resetActionNeededTracking(suppressNextSignal: true);
         final resolvedHistorySummary =
             _resolvedHistorySummary(history.summary, history.logEntries);
