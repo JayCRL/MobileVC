@@ -6632,7 +6632,8 @@ class SessionController extends ChangeNotifier {
         hasPendingPermissionPrompt ||
         shouldShowReviewChoices ||
         hasPendingPlanQuestions;
-    final hasRealRunningSignal = agentState == 'THINKING' ||
+    final hasRealRunningSignal = _executionActive ||
+        agentState == 'THINKING' ||
         agentState == 'RECOVERING' ||
         sessionState == 'THINKING' ||
         sessionState == 'RUNNING' ||
