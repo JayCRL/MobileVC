@@ -2819,14 +2819,17 @@ class SessionController extends ChangeNotifier {
     if (!launchSent) {
       return;
     }
+    _executionActive = true;
     if (value.isEmpty) {
       _pendingAiLaunchAwaitingFirstInput = true;
+      _syncDerivedState();
       return;
     }
     _pendingAiLaunchAwaitingFirstInput = false;
     _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
     _lastContinuationInputAt = DateTime.now();
     _sessionRuntimeAlive = true;
+    _syncDerivedState();
   }
 
   void _submitClaudeContinuation(
@@ -2866,6 +2869,7 @@ class SessionController extends ChangeNotifier {
     if (!sent) {
       return;
     }
+    _executionActive = true;
     _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
     _lastContinuationInputAt = DateTime.now();
     _sessionRuntimeAlive = true;
