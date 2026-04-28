@@ -4007,8 +4007,10 @@ class SessionController extends ChangeNotifier {
         }
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
-        // AI 正在运行中，清掉 pending prompt，防止阻塞态残留导致 awaitInput 误判
-        if (!_isIdleLikeState(agent.state) && !agent.awaitInput) {
+        // AI 正在运行中，清掉 pending prompt，防止阻塞态残留导致 awaitInput 误判。
+        // 但保留权限/审查/计划等阻塞型提示，防止 RECOVERING 等中间态误清。
+        if (!_isIdleLikeState(agent.state) && !agent.awaitInput &&
+            !_shouldPreserveBlockingPrompt()) {
           _pendingPrompt = null;
           _pendingInteraction = null;
         }
