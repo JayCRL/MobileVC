@@ -217,6 +217,7 @@ class SessionController extends ChangeNotifier {
   bool _canResumeCurrentSession = false;
   bool _sessionRuntimeAlive = false;
   bool _selectedSessionExternalNative = false;
+  bool _executionActive = false;
   bool _continueSameSessionEnabled = false;
   String _continuedSameSessionId = '';
   DateTime? _lastContinuationInputAt;
@@ -894,7 +895,9 @@ class SessionController extends ChangeNotifier {
     if (runningKey.isEmpty) {
       return true;
     }
-    return runningKey != _lastAssistantReplyExecutionKey;
+    return runningKey != _lastAssistantReplyExecutionKey ||
+        _isDefinitiveAgentState(agentState, sessionState) ||
+        _executionActive;
   }
 
   bool get canStopCurrentRun {
@@ -929,7 +932,9 @@ class SessionController extends ChangeNotifier {
     if (runningKey.isEmpty) {
       return true;
     }
-    return runningKey != _lastAssistantReplyExecutionKey;
+    return runningKey != _lastAssistantReplyExecutionKey ||
+        _isDefinitiveAgentState(agentState, sessionState) ||
+        _executionActive;
   }
 
   bool get _canBypassBusyGuardForCodexContinuation {
@@ -1044,6 +1049,13 @@ class SessionController extends ChangeNotifier {
   bool get _isClaudePendingReadyForInput =>
       _pendingAiLaunchAwaitingFirstInput &&
       _pendingAiLaunchEngine.trim().toLowerCase() == 'claude';
+
+  bool _isDefinitiveAgentState(String agentState, String sessionState) {
+    return agentState == 'THINKING' ||
+        agentState == 'RECOVERING' ||
+        agentState == 'RUNNING_TOOL' ||
+        sessionState == 'RUNNING_TOOL';
+  }
 
   RuntimeMeta get currentMeta {
     final merged = (_agentState?.runtimeMeta ?? const RuntimeMeta())
@@ -1645,6 +1657,7 @@ class SessionController extends ChangeNotifier {
     _fileReading = false;
     _sessionRuntimeAlive = false;
     _selectedSessionExternalNative = false;
+    _executionActive = false;
     _continueSameSessionEnabled = false;
     _continuedSameSessionId = '';
     _lastContinuationInputAt = null;
@@ -1719,6 +1732,7 @@ class SessionController extends ChangeNotifier {
     _connected = false;
     _connecting = false;
     _selectedSessionExternalNative = false;
+    _executionActive = false;
     _isLoadingSession = false;
     _sessionListSyncedSinceConnect = false;
     _pendingSessionTargetId = '';
@@ -3766,6 +3780,7 @@ class SessionController extends ChangeNotifier {
         _selectedSessionTitle = sessionDisplayTitle(resolvedHistorySummary);
         _selectedSessionExternalNative =
             _isExternalNativeSession(resolvedHistorySummary);
+        _executionActive = resolvedHistorySummary.executionActive;
         _sendCachedPushTokenIfPossible();
         _sessionContext = history.sessionContext;
         _skillCatalogMeta = history.skillCatalogMeta;
@@ -3978,12 +3993,15 @@ class SessionController extends ChangeNotifier {
         }
         _agentState = agent;
         final agentStateName = agent.state.trim().toUpperCase();
-        _sessionRuntimeAlive = agentStateName == 'THINKING' ||
+        // Only lift to true; never force to false — delta/history events
+        // carry the authoritative runtimeAlive and defeat stale override.
+        if (agentStateName == 'THINKING' ||
             agentStateName == 'RECOVERING' ||
             agentStateName == 'RUNNING' ||
             agentStateName == 'RUNNING_TOOL' ||
-            agentStateName == 'WAIT_INPUT' ||
-            _hasRecentContinuationInput;
+            agentStateName == 'WAIT_INPUT') {
+          _sessionRuntimeAlive = true;
+        }
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
         // AI 正在运行中，清掉 pending prompt，防止阻塞态残留导致 awaitInput 误判
@@ -4716,6 +4734,7 @@ class SessionController extends ChangeNotifier {
       _selectedSessionTitle = sessionDisplayTitle(resolvedSummary);
       _selectedSessionExternalNative =
           _isExternalNativeSession(resolvedSummary);
+      _executionActive = resolvedSummary.executionActive;
       _upsertSession(resolvedSummary);
     }
     _sessionContext = delta.sessionContext;
@@ -6614,15 +6633,13 @@ class SessionController extends ChangeNotifier {
         sessionState == 'RUNNING' ||
         agentState == 'RUNNING_TOOL' ||
         sessionState == 'RUNNING_TOOL';
-    final isDefinitiveAgentState = agentState == 'THINKING' ||
-        agentState == 'RECOVERING' ||
-        agentState == 'RUNNING_TOOL' ||
-        sessionState == 'RUNNING_TOOL';
+    final isDefinitiveAgentState =
+        _isDefinitiveAgentState(agentState, sessionState);
     final active = _connected &&
         !hasBlockingPrompt &&
         !_isClaudePendingReadyForInput &&
         hasRealRunningSignal &&
-        (!assistantReplySettled || isDefinitiveAgentState);
+        (!assistantReplySettled || isDefinitiveAgentState || _executionActive);
     if (active) {
       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
       if (_activityToolLabel.isEmpty) {

@@ -702,7 +702,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			// Merge any new events from Claude CLI JSONL (if this session was continued in CLI).
-			record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record)
+			record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record, runtimeSvc)
 			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
 			switchRuntimeSession(record.Summary.ID)
 			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
@@ -771,6 +771,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			record.Summary.Runtime = record.Projection.Runtime
 			runtimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
+			logx.Info("ws", "session delta response: sessionID=%s runtimeAlive=%v canResume=%v", record.Summary.ID, runtimeAlive, sessionRuntime != nil && runtimeAlive)
 			emit(newSessionDeltaEventFromRecord(record, req.Known, sessionRuntime, runtimeAlive))
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
 			if snapshot := buildTaskSnapshotEvent(record.Summary.ID, runtimeSvc, sessionRuntime, "delta", true); snapshot != nil {
@@ -796,7 +797,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			// Merge any new events from Claude CLI JSONL.
-			record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record)
+			record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record, runtimeSvc)
 			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
 			switchRuntimeSession(record.Summary.ID)
 			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
@@ -814,6 +815,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(buildResumeRecoveryStateEvent(record.Summary.ID, runtimeSvc, projection, req.LastKnownRuntimeState))
 			}
 			emit(newSessionHistoryEventFromRecord(record, runtimeAlive))
+			logx.Info("ws", "session history emitted: sessionID=%s runtimeAlive=%v ownership=%s", record.Summary.ID, runtimeAlive, record.Summary.Ownership)
 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
 			restoredState := ""
 			var restoredAgentEvent *protocol.AgentStateEvent
@@ -5256,7 +5258,7 @@ func lastUserPromptFromEntries(entries []store.SnapshotLogEntry) string {
 // mergeClaudeJSONLToRecord checks if the session has a linked Claude CLI JSONL
 // file. If the JSONL has new entries (added by Claude CLI continuing the
 // conversation), they are merged into the record's LogEntries and persisted.
-func mergeClaudeJSONLToRecord(ctx context.Context, sessionStore store.Store, record store.SessionRecord) store.SessionRecord {
+func mergeClaudeJSONLToRecord(ctx context.Context, sessionStore store.Store, record store.SessionRecord, runtimeSvc *runtimepkg.Service) store.SessionRecord {
 	csuuid := strings.TrimSpace(record.Summary.ClaudeSessionUUID)
 	if csuuid == "" {
 		return record
@@ -5286,15 +5288,23 @@ func mergeClaudeJSONLToRecord(ctx context.Context, sessionStore store.Store, rec
 	record.Summary.JSONLSyncEntryCount = newCount
 	record.Summary.UpdatedAt = time.Now().UTC()
 
-	// Desktop Claude CLI has written to this session's JSONL — upgrade
-	// metadata so the Flutter side recognizes it as externally managed.
-	record.Summary.External = true
-	record.Summary.Ownership = "claude-native"
-	if record.Summary.Source == "" || record.Summary.Source == "mobilevc" {
-		record.Summary.Source = "claude-native"
+	// Only upgrade ownership when the session is NOT actively managed
+	// by MobileVC's own runtime. If MobileVC launched the Claude CLI,
+	// the JSONL entries are ours and ownership stays "mobilevc".
+	runtimeManaged := false
+	if runtimeSvc != nil {
+		snapshot := runtimeSvc.RuntimeSnapshot()
+		runtimeManaged = snapshot.Running && strings.TrimSpace(snapshot.ActiveSession) == strings.TrimSpace(record.Summary.ID)
 	}
-	if record.Summary.Runtime.Source == "" || record.Summary.Runtime.Source == "mobilevc" {
-		record.Summary.Runtime.Source = "claude-native"
+	if !runtimeManaged {
+		record.Summary.External = true
+		record.Summary.Ownership = "claude-native"
+		if record.Summary.Source == "" || record.Summary.Source == "mobilevc" {
+			record.Summary.Source = "claude-native"
+		}
+		if record.Summary.Runtime.Source == "" || record.Summary.Runtime.Source == "mobilevc" {
+			record.Summary.Runtime.Source = "claude-native"
+		}
 	}
 
 	// Set lifecycle based on recency of the latest entry.

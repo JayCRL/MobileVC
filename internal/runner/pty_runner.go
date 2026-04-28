@@ -804,7 +804,6 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	r.cmd = cmd
 	r.currentDir = cwd
 	r.lazyStart = false
-	r.interactive = true
 	r.awaitingReadyPrompt = false
 	r.closed = false
 	r.runGeneration = generation
@@ -818,6 +817,26 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 			_ = stdin.Close()
 		}
 	}()
+
+	// 稍候片刻以确认进程未即崩。若 200ms 内退出，则不标 interactive，
+	// 使 Run() 经 r.processDone 直获其误，不发 PromptRequestEvent。
+	select {
+	case <-time.After(200 * time.Millisecond):
+	case <-ctx.Done():
+		_ = stdin.Close()
+		return ctx.Err()
+	}
+
+	// 再次确认进程仍存
+	if !cmdAlive(cmd) {
+		_ = stdin.Close()
+		sendEvent(sink, protocol.NewErrorEvent(req.SessionID, "command exited immediately", ""))
+		return fmt.Errorf("command exited immediately after start")
+	}
+
+	r.mu.Lock()
+	r.interactive = true
+	r.mu.Unlock()
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "command started"))
 
@@ -993,6 +1012,13 @@ func (r *PtyRunner) shouldSuppressExitError() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.suppressExitError
+}
+
+func cmdAlive(cmd *exec.Cmd) bool {
+	if cmd == nil || cmd.Process == nil {
+		return false
+	}
+	return cmd.ProcessState == nil
 }
 
 func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecRequest, cwd string, sink EventSink, firstInput []byte) error {
