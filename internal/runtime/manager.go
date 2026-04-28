@@ -235,6 +235,7 @@ type Service struct {
 	deps       Dependencies
 	execMu     sync.Mutex
 	execWG     sync.WaitGroup
+	sinkMu     sync.RWMutex
 	sink       runner.EventSink
 }
 
@@ -264,9 +265,15 @@ func (s *Service) Cleanup() {
 }
 
 func (s *Service) SetSink(sink runner.EventSink) {
-	s.execMu.Lock()
-	defer s.execMu.Unlock()
+	s.sinkMu.Lock()
+	defer s.sinkMu.Unlock()
 	s.sink = sink
+}
+
+func (s *Service) getSink() runner.EventSink {
+	s.sinkMu.RLock()
+	defer s.sinkMu.RUnlock()
+	return s.sink
 }
 
 func (s *Service) ClearSink() {
@@ -302,7 +309,6 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 	runCtx, runCancel := context.WithCancel(context.Background())
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
-	capturedSink := s.sink
 	if err := s.manager.start(sessionID, selected, runCancel, preparedReq.RuntimeMeta); err != nil {
 		runCancel()
 		return err
@@ -326,9 +332,12 @@ func (s *Service) Execute(ctx context.Context, sessionID string, req ExecuteRequ
 				}
 			}
 		}()
-		runnerSink := capturedSink
-		if runnerSink == nil {
-			runnerSink = emit
+		runnerSink := func(event any) {
+			if current := s.getSink(); current != nil {
+				current(event)
+			} else {
+				emit(event)
+			}
 		}
 		err := selected.Run(runCtx, runner.ExecRequest{
 			SessionID:      sessionID,

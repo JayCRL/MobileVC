@@ -702,9 +702,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			// Merge any new events from Claude CLI JSONL (if this session was continued in CLI).
+			// Switch runtime first so merge sees the correct ActiveSession.
+			switchRuntimeSession(record.Summary.ID)
 			record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record, runtimeSvc)
 			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
-			switchRuntimeSession(record.Summary.ID)
 			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
 			if codexsync.IsMirrorSessionID(record.Summary.ID) {
 				record.Projection = mergeProjectionWithOptionalRuntime(augmentedProjection, runtimeProjection, runtimeSvc, record.Summary.ID)
@@ -797,10 +798,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			// Merge any new events from Claude CLI JSONL.
-			record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record, runtimeSvc)
-			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
+			// Switch runtime session first so mergeClaudeJSONLToRecord can
+			// check the correct ActiveSession when deciding ownership upgrades.
 			switchRuntimeSession(record.Summary.ID)
 			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
+			// Re-bind PTY runner output sink to new connection after reconnect.
+			resumeEmitAndPersist := emitAndPersistFor(selectedSessionID)
+			runtimeSvc.SetSink(sessionRuntime.EnsureBufferedSinkWithProcessor(resumeEmitAndPersist))
+			record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record, runtimeSvc)
+			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
 			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
 			projection := runtimeProjection
 			if codexsync.IsMirrorSessionID(record.Summary.ID) {
@@ -5304,6 +5310,14 @@ func mergeClaudeJSONLToRecord(ctx context.Context, sessionStore store.Store, rec
 		}
 		if record.Summary.Runtime.Source == "" || record.Summary.Runtime.Source == "mobilevc" {
 			record.Summary.Runtime.Source = "claude-native"
+		}
+	} else {
+		// Reset stale ownership when MobileVC runtime is actively managing
+		// this session — undo any External/ownership from previous sessions.
+		record.Summary.External = false
+		record.Summary.Ownership = "mobilevc"
+		if record.Summary.Runtime.Source == "" || record.Summary.Runtime.Source == "claude-native" {
+			record.Summary.Runtime.Source = "mobilevc"
 		}
 	}
 
