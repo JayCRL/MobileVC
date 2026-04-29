@@ -199,6 +199,7 @@ class SessionController extends ChangeNotifier {
   bool _connected = false;
   bool _appInForeground = true;
   bool _autoReconnectEnabled = false;
+  int _sessionLoadEpoch = 0;
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
   Timer? _connectionHealthTimer;
@@ -2029,6 +2030,7 @@ class SessionController extends ChangeNotifier {
 
   void _beginSessionLoading({String targetId = ''}) {
     _sessionLoadingTimeout?.cancel();
+    _sessionLoadEpoch++;
     _isLoadingSession = true;
     _pendingSessionTargetId = targetId.trim();
     _pendingAiLaunchEngine = '';
@@ -3757,6 +3759,7 @@ class SessionController extends ChangeNotifier {
   void _handleEvent(AppEvent event) async {
     _lastServerEventAt = DateTime.now();
     _trackSessionEventCursor(event);
+    var needsDerivedSync = true;
     switch (event) {
       case ClientActionAckEvent ack:
         _handleClientActionAck(ack);
@@ -4469,6 +4472,7 @@ class SessionController extends ChangeNotifier {
         }
         break;
       case AdbDevicesResultEvent result:
+        needsDerivedSync = false;
         _adbDevices
           ..clear()
           ..addAll(result.devices);
@@ -4503,6 +4507,7 @@ class SessionController extends ChangeNotifier {
         }
         break;
       case AdbStreamStateEvent state:
+        needsDerivedSync = false;
         _adbStreaming = state.running;
         if (state.serial.trim().isNotEmpty) {
           _adbSelectedSerial = state.serial.trim();
@@ -4524,6 +4529,7 @@ class SessionController extends ChangeNotifier {
         }
         break;
       case AdbFrameEvent frame:
+        needsDerivedSync = false;
         try {
           _adbFrameBytes = base64Decode(frame.image);
           _adbFrameSeq = frame.seq;
@@ -4543,6 +4549,7 @@ class SessionController extends ChangeNotifier {
         }
         break;
       case AdbWebRtcAnswerEvent answer:
+        needsDerivedSync = false;
         if (answer.serial.trim().isNotEmpty) {
           _adbSelectedSerial = answer.serial.trim();
         }
@@ -4550,6 +4557,7 @@ class SessionController extends ChangeNotifier {
         _adbStatus = 'WebRTC answer 已收到，等待连接…';
         break;
       case AdbWebRtcStateEvent state:
+        needsDerivedSync = false;
         _adbStreaming = state.running;
         _adbWebRtcConnected = state.connected;
         if (state.running || state.connected) {
@@ -4573,15 +4581,19 @@ class SessionController extends ChangeNotifier {
         }
         break;
       case PongEvent _:
+        needsDerivedSync = false;
         break;
       case UnknownEvent unknown:
+        needsDerivedSync = false;
         _pushSystem('system', '收到未识别事件：${unknown.type}');
         break;
       default:
         break;
     }
-    _syncPendingAiLaunchFromRuntime();
-    _syncDerivedState();
+    if (needsDerivedSync) {
+      _syncPendingAiLaunchFromRuntime();
+      _syncDerivedState();
+    }
     notifyListeners();
   }
 
