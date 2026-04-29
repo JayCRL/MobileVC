@@ -28,6 +28,8 @@ class ChatTimeline extends StatefulWidget {
     this.pendingPlanQuestion,
     this.pendingPlanProgressLabel = '',
     this.shouldShowPlanChoices = false,
+    this.isAiRunning = false,
+    this.aiStatusLabel = '',
     this.onOpenDiff,
     this.onOpenRuntimeInfo,
     this.onOpenFile,
@@ -49,6 +51,8 @@ class ChatTimeline extends StatefulWidget {
   final PlanQuestion? pendingPlanQuestion;
   final String pendingPlanProgressLabel;
   final bool shouldShowPlanChoices;
+  final bool isAiRunning;
+  final String aiStatusLabel;
   final VoidCallback? onOpenDiff;
   final VoidCallback? onOpenRuntimeInfo;
   final VoidCallback? onOpenFile;
@@ -168,6 +172,14 @@ class _ChatTimelineState extends State<ChatTimeline> {
           body: visiblePlanQuestion.message,
           meta: visiblePrompt?.runtimeMeta ?? const RuntimeMeta(),
         ),
+      if (widget.isAiRunning)
+        TimelineItem(
+          id: 'ai-status-indicator',
+          kind: 'ai_status',
+          timestamp: DateTime.now(),
+          title: widget.aiStatusLabel,
+          body: '',
+        ),
     ];
     if (items.isEmpty) {
       return const SizedBox.shrink();
@@ -180,6 +192,9 @@ class _ChatTimelineState extends State<ChatTimeline> {
         final item = items[index];
         if (item.kind == 'file_diff') {
           return const SizedBox.shrink();
+        }
+        if (item.kind == 'ai_status') {
+          return _AiStatusIndicator(label: item.title);
         }
         if (item.kind == 'review_summary') {
           return _ReviewSummaryCard(
@@ -378,6 +393,57 @@ class _InteractionRequestCard extends StatelessWidget {
                   .toList(),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AiStatusIndicator extends StatefulWidget {
+  const _AiStatusIndicator({required this.label});
+  final String label;
+  @override
+  State<_AiStatusIndicator> createState() => _AiStatusIndicatorState();
+}
+
+class _AiStatusIndicatorState extends State<_AiStatusIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  );
+  @override
+  void initState() { super.initState(); _pulse.repeat(reverse: true); }
+  @override
+  void dispose() { _pulse.dispose(); super.dispose(); }
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          AnimatedBuilder(
+            animation: _pulse,
+            builder: (context, _) {
+              final opacity = 0.35 + 0.35 * _pulse.value;
+              return Container(
+                width: 8, height: 8,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: opacity),
+                  shape: BoxShape.circle,
+                ),
+              );
+            },
+          ),
+          const SizedBox(width: 10),
+          Text(
+            widget.label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
         ],
       ),
     );

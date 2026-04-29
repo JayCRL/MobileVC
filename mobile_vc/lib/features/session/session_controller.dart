@@ -225,6 +225,8 @@ class SessionController extends ChangeNotifier {
   bool _isHotSwapping = false;
   Timer? _hotSwapTimeoutTimer;
   static const Duration _hotSwapTimeout = Duration(seconds: 10);
+  Timer? _sessionLoadingTimeout;
+  static const Duration _sessionLoadingTimeoutDuration = Duration(seconds: 15);
   String _connectionMessage = '未连接';
   String _selectedSessionId = '';
   String _selectedSessionTitle = 'MobileVC';
@@ -773,6 +775,15 @@ class SessionController extends ChangeNotifier {
     _syncActiveReviewSelection();
     _syncDerivedState();
     notifyListeners();
+    _sessionLoadingTimeout = Timer(_sessionLoadingTimeoutDuration, () {
+      if (!_isLoadingSession) return;
+      _isLoadingSession = false;
+      _pendingSessionTargetId = '';
+      _agentPhaseLabel = '加载超时';
+      _pushSystem('error', '会话加载超时，请检查网络后重试');
+      _syncDerivedState();
+      notifyListeners();
+    });
   }
 
   void setActiveReviewDiff(String diffId) {
@@ -1270,6 +1281,7 @@ class SessionController extends ChangeNotifier {
     _connectionHealthTimer?.cancel();
     _hotSwapTimeoutTimer?.cancel();
     _pendingOutboundRetryTimer?.cancel();
+    _sessionLoadingTimeout?.cancel();
     await _subscription?.cancel();
     await _adbWebRtc.dispose();
     await _service.dispose();
@@ -1643,6 +1655,10 @@ class SessionController extends ChangeNotifier {
     _cancelReconnectTimer();
     _stopObservedSessionSync();
     _stopAdbRefreshPolling();
+    _connectionHealthTimer?.cancel();
+    _connectionHealthTimer = null;
+    _sessionLoadingTimeout?.cancel();
+    _sessionLoadingTimeout = null;
     await _adbWebRtc.stop();
     await _service.disconnect();
     _connected = false;
@@ -1740,6 +1756,17 @@ class SessionController extends ChangeNotifier {
     _clearDeferredFirstInput();
     _pendingAiLaunchEngine = '';
     _pendingAiLaunchAwaitingFirstInput = false;
+    _sessionEventCursors.clear();
+    _sessionDeltaKnown.clear();
+    _sessionRuntimeAlive = false;
+    _continueSameSessionEnabled = false;
+    _continuedSameSessionId = '';
+    _lastContinuationInputAt = null;
+    _agentState = null;
+    _sessionState = null;
+    _runtimePhase = null;
+    _stopObservedSessionSync();
+    _stopAdbRefreshPolling();
     if (_autoReconnectEnabled) {
       _reconnecting = true;
       _connectionStage = _appInForeground
@@ -1997,6 +2024,7 @@ class SessionController extends ChangeNotifier {
   }
 
   void _beginSessionLoading({String targetId = ''}) {
+    _sessionLoadingTimeout?.cancel();
     _isLoadingSession = true;
     _pendingSessionTargetId = targetId.trim();
     _pendingAiLaunchEngine = '';
@@ -2096,6 +2124,8 @@ class SessionController extends ChangeNotifier {
     if (!_isLoadingSession) {
       return;
     }
+    _sessionLoadingTimeout?.cancel();
+    _sessionLoadingTimeout = null;
     final normalized = sessionId.trim();
     if (normalized.isNotEmpty) {
       _pendingSessionTargetId = normalized;
@@ -6650,6 +6680,7 @@ class SessionController extends ChangeNotifier {
         shouldShowReviewChoices ||
         hasPendingPlanQuestions;
     final hasRealRunningSignal = _executionActive ||
+        _sessionRuntimeAlive ||
         agentState == 'THINKING' ||
         agentState == 'RECOVERING' ||
         sessionState == 'THINKING' ||
@@ -6903,7 +6934,6 @@ class SessionController extends ChangeNotifier {
       if (!snapshot.syncing && _selectedSessionExternalNative) {
         return false;
       }
-      _agentState = null;
       _sessionRuntimeAlive = false;
       _lastContinuationInputAt = null;
       _syncDerivedState();

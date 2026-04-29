@@ -21,7 +21,6 @@ import '../../features/runtime_info/runtime_info_sheet.dart';
 import '../../features/skills/skill_management_sheet.dart';
 import '../../features/status/status_detail_sheet.dart';
 import '../../features/status/terminal_log_sheet.dart';
-import 'activity_runner_bar.dart';
 import 'claude_model_utils.dart';
 import 'connection_scan_sheet.dart';
 import 'session_controller.dart';
@@ -152,20 +151,6 @@ class _SessionHomePageState extends State<SessionHomePage> {
               onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
               child: Column(
                 children: [
-                  AnimatedBuilder(
-                    animation: Listenable.merge([controller]),
-                    builder: (context, _) {
-                      return ActivityRunnerBar(
-                        visible: controller.activityBannerVisible,
-                        title: controller.activityBannerTitle,
-                        detail: controller.activityBannerDetail,
-                        startedAt: controller.activityStartedAt,
-                        elapsedSeconds: controller.activityElapsedSeconds,
-                        animated: controller.activityBannerAnimated,
-                        showElapsed: controller.activityBannerShowsElapsed,
-                      );
-                    },
-                  ),
                   if (controller.shouldShowSessionObservationBanner)
                     _SessionObservationBanner(controller: controller),
                   Expanded(
@@ -203,6 +188,9 @@ class _SessionHomePageState extends State<SessionHomePage> {
                                       controller.pendingPlanProgressLabel,
                                   shouldShowPlanChoices:
                                       controller.shouldShowPlanChoices,
+                                  isAiRunning: controller.activityBannerVisible &&
+                                      !controller.isObservingRemoteActiveSession,
+                                  aiStatusLabel: controller.activityBannerTitle,
                                   onOpenDiff: () => _openDiff(context),
                                   onOpenRuntimeInfo: () =>
                                       _openRuntimeInfo(context),

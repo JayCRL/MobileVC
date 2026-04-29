@@ -159,25 +159,15 @@ class _CommandInputBarState extends State<CommandInputBar> {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final engineLabel =
         _engineLabel(widget.currentEngine, widget.showClaudeMode);
-    final modeStateLabel = widget.awaitInput
-        ? '等待输入'
-        : widget.isBusy
-            ? '处理中'
-            : '空闲';
     final hintText = _inputLocked
         ? _lockedHintText
         : widget.awaitInput
-            ? (widget.showClaudeMode ? '继续回复 $engineLabel' : '继续输入')
+            ? (widget.showClaudeMode ? '回复 $engineLabel' : '继续输入')
             : widget.hasPendingReview
                 ? '先处理待审核 diff，再继续'
                 : widget.isBusy
-                    ? (widget.showClaudeMode
-                        ? '$engineLabel 正在处理中'
-                        : '当前 shell 会话仍在运行')
+                    ? (widget.showClaudeMode ? '$engineLabel 处理中…' : 'Shell 运行中')
                     : (widget.showClaudeMode ? '给 $engineLabel 发送消息' : '输入命令');
-    final modeColor = widget.showClaudeMode
-        ? scheme.primary
-        : scheme.onSurfaceVariant.withValues(alpha: 0.75);
     final panelColor = scheme.surfaceContainerLow.withValues(alpha: 0.96);
     final inputColor = scheme.surfaceContainerHighest.withValues(alpha: 0.72);
     final shadowColor = scheme.shadow.withValues(
@@ -216,55 +206,6 @@ class _CommandInputBarState extends State<CommandInputBar> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 1, 6, 0),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: modeColor,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: modeColor.withValues(alpha: 0.18),
-                              blurRadius: 5,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 7),
-                      RichText(
-                        text: TextSpan(
-                          children: [
-                            TextSpan(
-                              text: engineLabel,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    color: modeColor,
-                                  ),
-                            ),
-                            TextSpan(
-                              text: ' · $modeStateLabel',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: SingleChildScrollView(
