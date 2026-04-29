@@ -1,0 +1,2136 @@
+diff --git a/internal/runner/codex_app_server.go b/internal/runner/codex_app_server.go
+index 01f5741..a033304 100644
+--- a/internal/runner/codex_app_server.go
++++ b/internal/runner/codex_app_server.go
+@@ -12,6 +12,7 @@ import (
+ 	"strings"
+ 	"sync"
+ 	"sync/atomic"
++	"time"
+ 
+ 	"mobilevc/internal/adapter"
+ 	"mobilevc/internal/logx"
+@@ -65,11 +66,14 @@ type codexAppSession struct {
+ 	pending map[string]chan codexRPCResponse
+ 	readErr error
+ 
+-	threadID        string
+-	activeTurnID    string
+-	lastDiff        string
+-	assistantBuffer strings.Builder
+-	pendingApproval *codexPendingApproval
++	threadID          string
++	activeTurnID      string
++	lastDiff          string
++	assistantBuffer   strings.Builder
++	lastAssistantText string
++	assistantEmitted  string
++	pendingApproval   *codexPendingApproval
++	readyPromptSeq    uint64
+ }
+ 
+ type codexPendingApproval struct {
+@@ -410,6 +414,7 @@ func (s *codexAppSession) readLoop(ctx context.Context, reader io.Reader) {
+ 			logx.Warn("pty", "codex app-server json parse failed: sessionID=%s err=%v preview=%q", s.sessionID, err, ptyDebugPreview(line))
+ 			return nil
+ 		}
++		logx.Info("pty", "codex app-server rpc received: sessionID=%s id=%s method=%q hasResult=%t hasError=%t paramsPreview=%q resultPreview=%q", s.sessionID, strings.TrimSpace(string(message.ID)), message.Method, len(message.Result) > 0, message.Error != nil, ptyDebugPreview(string(message.Params)), ptyDebugPreview(string(message.Result)))
+ 		switch {
+ 		case len(message.ID) > 0 && message.Method == "":
+ 			s.resolvePending(message)
+@@ -459,10 +464,7 @@ func (s *codexAppSession) handleNotification(message codexRPCMessage) {
+ 	case "thread/status/changed":
+ 		var payload codexThreadStatusNotification
+ 		if err := json.Unmarshal(message.Params, &payload); err == nil && strings.EqualFold(payload.Status.Type, "idle") && s.activeTurn() == "" {
+-			sendEvent(s.sink, protocol.ApplyRuntimeMeta(
+-				protocol.NewPromptRequestEvent(s.sessionID, "", nil),
+-				s.runtimeMeta("waiting_input"),
+-			))
++			s.emitReadyPromptAfterReply()
+ 		}
+ 	case "turn/started":
+ 		var payload codexTurnNotification
+@@ -474,19 +476,16 @@ func (s *codexAppSession) handleNotification(message codexRPCMessage) {
+ 	case "item/agentMessage/delta":
+ 		var payload codexAgentDeltaNotification
+ 		if err := json.Unmarshal(message.Params, &payload); err == nil {
+-			meta := s.runtimeMeta("active")
+-			meta.Source = "codex/assistant"
+ 			for _, chunk := range s.appendAssistantDelta(payload.Delta) {
+-				sendEvent(s.sink, protocol.ApplyRuntimeMeta(
+-					protocol.NewLogEvent(s.sessionID, chunk, "stdout"),
+-					meta,
+-				))
++				s.emitAssistantChunk(chunk)
+ 			}
+ 		}
+ 	case "item/started":
+ 		s.handleItemEvent(message.Params, "running")
+ 	case "item/completed":
+ 		s.handleItemEvent(message.Params, "done")
++	case "rawResponseItem/completed":
++		s.handleRawResponseItemCompleted(message.Params)
+ 	case "turn/diff/updated":
+ 		var payload codexTurnDiffNotification
+ 		if err := json.Unmarshal(message.Params, &payload); err == nil {
+@@ -571,12 +570,7 @@ func (s *codexAppSession) handleTurnCompleted(raw json.RawMessage) {
+ 		return
+ 	}
+ 	for _, chunk := range s.flushAssistantDelta() {
+-		meta := s.runtimeMeta("active")
+-		meta.Source = "codex/assistant"
+-		sendEvent(s.sink, protocol.ApplyRuntimeMeta(
+-			protocol.NewLogEvent(s.sessionID, chunk, "stdout"),
+-			meta,
+-		))
++		s.emitAssistantChunk(chunk)
+ 	}
+ 	s.clearActiveTurnID(payload.Turn.ID)
+ 	if payload.Turn.Error != nil && strings.TrimSpace(payload.Turn.Error.Message) != "" {
+@@ -585,10 +579,7 @@ func (s *codexAppSession) handleTurnCompleted(raw json.RawMessage) {
+ 			s.runtimeMeta("active"),
+ 		))
+ 	}
+-	sendEvent(s.sink, protocol.ApplyRuntimeMeta(
+-		protocol.NewPromptRequestEvent(s.sessionID, "", nil),
+-		s.runtimeMeta("waiting_input"),
+-	))
++	s.emitReadyPromptAfterReply()
+ }
+ 
+ func (s *codexAppSession) handleItemEvent(raw json.RawMessage, status string) {
+@@ -601,13 +592,12 @@ func (s *codexAppSession) handleItemEvent(raw json.RawMessage, status string) {
+ 		return
+ 	}
+ 	if status == "done" && itemType == "agentMessage" {
+-		for _, chunk := range s.flushAssistantDelta() {
+-			meta := s.runtimeMeta("active")
+-			meta.Source = "codex/assistant"
+-			sendEvent(s.sink, protocol.ApplyRuntimeMeta(
+-				protocol.NewLogEvent(s.sessionID, chunk, "stdout"),
+-				meta,
+-			))
++		if text := codexItemText(payload.Item); text != "" {
++			s.emitAssistantCompletedText(text)
++		} else {
++			for _, chunk := range s.flushAssistantDelta() {
++				s.emitAssistantChunk(chunk)
++			}
+ 		}
+ 		return
+ 	}
+@@ -621,6 +611,135 @@ func (s *codexAppSession) handleItemEvent(raw json.RawMessage, status string) {
+ 	))
+ }
+ 
++func (s *codexAppSession) handleRawResponseItemCompleted(raw json.RawMessage) {
++	var payload codexItemNotification
++	if err := json.Unmarshal(raw, &payload); err != nil {
++		return
++	}
++	text := codexItemText(payload.Item)
++	if text == "" {
++		return
++	}
++	s.emitAssistantCompletedText(text)
++}
++
++func (s *codexAppSession) emitAssistantChunk(text string) {
++	text = strings.TrimSpace(text)
++	if text == "" {
++		return
++	}
++	s.mu.Lock()
++	if text == s.lastAssistantText {
++		s.mu.Unlock()
++		return
++	}
++	if s.lastAssistantText != "" && strings.Contains(text, s.lastAssistantText) && len([]rune(text)) <= len([]rune(s.lastAssistantText))*2+16 {
++		s.lastAssistantText = text
++		s.mu.Unlock()
++		return
++	}
++	s.lastAssistantText = text
++	s.assistantEmitted += text
++	s.mu.Unlock()
++	meta := s.runtimeMeta("active")
++	meta.Source = "codex/assistant"
++	sendEvent(s.sink, protocol.ApplyRuntimeMeta(
++		protocol.NewLogEvent(s.sessionID, text, "stdout"),
++		meta,
++	))
++}
++
++func (s *codexAppSession) emitAssistantCompletedText(text string) {
++	text = strings.TrimSpace(text)
++	if text == "" {
++		return
++	}
++	s.mu.Lock()
++	emitted := strings.TrimSpace(s.assistantEmitted)
++	s.assistantBuffer.Reset()
++	if emitted != "" {
++		if text == emitted {
++			s.lastAssistantText = text
++			s.assistantEmitted = text
++			s.mu.Unlock()
++			return
++		}
++		if strings.HasPrefix(text, emitted) {
++			text = strings.TrimSpace(strings.TrimPrefix(text, emitted))
++			if text == "" {
++				s.lastAssistantText = emitted
++				s.assistantEmitted = emitted
++				s.mu.Unlock()
++				return
++			}
++		}
++	}
++	s.mu.Unlock()
++	s.emitAssistantChunk(text)
++}
++
++func (s *codexAppSession) emitReadyPromptAfterReply() {
++	sessionID := s.sessionID
++	sink := s.sink
++	meta := s.runtimeMeta("waiting_input")
++	s.mu.Lock()
++	s.readyPromptSeq++
++	seq := s.readyPromptSeq
++	s.mu.Unlock()
++	go func() {
++		timer := time.NewTimer(350 * time.Millisecond)
++		defer timer.Stop()
++		select {
++		case <-s.runner.commandContext().Done():
++			return
++		case <-timer.C:
++		}
++		s.mu.Lock()
++		if seq != s.readyPromptSeq {
++			s.mu.Unlock()
++			return
++		}
++		s.mu.Unlock()
++		emitCodexReadyPrompt(sessionID, sink, meta)
++	}()
++}
++
++func (s *codexAppSession) emitReadyPrompt() {
++	emitCodexReadyPrompt(s.sessionID, s.sink, s.runtimeMeta("waiting_input"))
++}
++
++func emitCodexReadyPrompt(sessionID string, sink EventSink, meta protocol.RuntimeMeta) {
++	sendEvent(sink, protocol.ApplyRuntimeMeta(
++		protocol.NewPromptRequestEvent(sessionID, "", nil),
++		meta,
++	))
++}
++
++func codexItemText(item map[string]any) string {
++	for _, key := range []string{"text", "message", "content", "output_text"} {
++		if text := strings.TrimSpace(asString(item[key])); text != "" {
++			return text
++		}
++	}
++	if content, ok := item["content"].([]any); ok {
++		var parts []string
++		for _, entry := range content {
++			entryMap, ok := entry.(map[string]any)
++			if !ok {
++				continue
++			}
++			for _, key := range []string{"text", "content", "output_text"} {
++				if text := strings.TrimSpace(asString(entryMap[key])); text != "" {
++					parts = append(parts, text)
++					break
++				}
++			}
++		}
++		return strings.TrimSpace(strings.Join(parts, "\n"))
++	}
++	return ""
++}
++
+ func (s *codexAppSession) handleDiffUpdate(turnID, diff string) {
+ 	diff = strings.TrimSpace(diff)
+ 	if diff == "" {
+@@ -788,7 +907,13 @@ func (s *codexAppSession) setThreadID(threadID string) {
+ func (s *codexAppSession) setActiveTurnID(turnID string) {
+ 	s.mu.Lock()
+ 	defer s.mu.Unlock()
+-	s.activeTurnID = strings.TrimSpace(turnID)
++	trimmed := strings.TrimSpace(turnID)
++	if trimmed != "" && trimmed != s.activeTurnID {
++		s.assistantBuffer.Reset()
++		s.lastAssistantText = ""
++		s.assistantEmitted = ""
++	}
++	s.activeTurnID = trimmed
+ }
+ 
+ func (s *codexAppSession) clearActiveTurnID(turnID string) {
+diff --git a/internal/runner/pty_runner.go b/internal/runner/pty_runner.go
+index 4d80bc2..8ac4db4 100644
+--- a/internal/runner/pty_runner.go
++++ b/internal/runner/pty_runner.go
+@@ -180,6 +180,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
+ 		r.mu.Lock()
+ 		r.writer = &claudeShellOnceWriter{runner: r}
+ 		r.mu.Unlock()
++		sendLazyReadyPrompt(sink, req)
+ 
+ 		select {
+ 		case <-ctx.Done():
+@@ -234,6 +235,7 @@ func (r *PtyRunner) Run(ctx context.Context, req ExecRequest, sink EventSink) er
+ 		r.mu.Lock()
+ 		r.writer = &claudeShellOnceWriter{runner: r}
+ 		r.mu.Unlock()
++		sendLazyReadyPrompt(sink, req)
+ 
+ 		select {
+ 		case <-ctx.Done():
+@@ -394,6 +396,39 @@ func (r *PtyRunner) Write(ctx context.Context, data []byte) error {
+ 	return errors.New("no active pty session")
+ }
+ 
++func sendLazyReadyPrompt(sink EventSink, req ExecRequest) {
++	engine := strings.TrimSpace(req.RuntimeMeta.Engine)
++	if engine == "" {
++		engine = lazyReadyEngine(req.Command)
++	}
++	meta := protocol.MergeRuntimeMeta(req.RuntimeMeta, protocol.RuntimeMeta{
++		Command:         req.Command,
++		Engine:          engine,
++		CWD:             req.CWD,
++		PermissionMode:  req.PermissionMode,
++		BlockingKind:    "ready",
++		ClaudeLifecycle: "waiting_input",
++	})
++	sendEvent(
++		sink,
++		protocol.ApplyRuntimeMeta(
++			protocol.NewPromptRequestEvent(req.SessionID, "等待输入", nil),
++			meta,
++		),
++	)
++}
++
++func lazyReadyEngine(command string) string {
++	switch {
++	case isCodexCommandName(command):
++		return "codex"
++	case isClaudeCommandName(command):
++		return "claude"
++	default:
++		return ""
++	}
++}
++
+ func (r *PtyRunner) CanAcceptInteractiveInput() bool {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+@@ -1274,8 +1309,9 @@ func extractToolTarget(toolName string, rawInput json.RawMessage) string {
+ 
+ // extractPathFromCommand 从命令字符串中提取路径部分
+ // 例如: "mkdir test_dir" -> "test_dir"
+-//      "mkdir -p /path/to/dir" -> "/path/to/dir"
+-//      "touch /path/to/file.txt" -> "/path/to/file.txt"
++//
++//	"mkdir -p /path/to/dir" -> "/path/to/dir"
++//	"touch /path/to/file.txt" -> "/path/to/file.txt"
+ func extractPathFromCommand(command string) string {
+ 	command = strings.TrimSpace(command)
+ 	if command == "" {
+@@ -1992,6 +2028,8 @@ func (r *PtyRunner) shouldEmitResultText(text string) bool {
+ 	r.mu.Lock()
+ 	if r.lastAssistantTextKey == normalized {
+ 		r.lastAssistantTextKey = ""
++		r.mu.Unlock()
++		return false
+ 	}
+ 	defer func() {
+ 		r.lastAssistantTextKey = normalized
+diff --git a/internal/ws/handler.go b/internal/ws/handler.go
+index ff18e90..8b5d22d 100644
+--- a/internal/ws/handler.go
++++ b/internal/ws/handler.go
+@@ -230,6 +230,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 	emit := func(event any) {
+ 		runtimepkg.Enqueue(ctx, writeCh, event)
+ 	}
++	ackClientAction := func(sessionID, action string, client protocol.ClientEvent) bool {
++		clientActionID := strings.TrimSpace(client.ClientActionID)
++		if clientActionID == "" {
++			return true
++		}
++		targetSessionID := strings.TrimSpace(sessionID)
++		if targetSessionID == "" {
++			targetSessionID = strings.TrimSpace(selectedSessionID)
++		}
++		sessionRuntime := h.runtimeSessions.Ensure(targetSessionID)
++		accepted := true
++		if sessionRuntime != nil {
++			accepted = sessionRuntime.markClientAction(clientActionID)
++		}
++		emit(protocol.NewClientActionAckEvent(targetSessionID, action, clientActionID, "accepted", !accepted))
++		return accepted
++	}
+ 
+ 	adbRTC := newADBWebRTCBridge(func() string {
+ 		return selectedSessionID
+@@ -521,7 +538,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 				if err != nil {
+ 					logx.Warn("ws", "initial session history restore skipped: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+ 				} else {
+-					emit(newSessionHistoryEventFromRecord(record))
++					emit(newSessionHistoryEventFromRecord(record, sessionRecordRuntimeAlive(record, runtimeSvc)))
+ 					emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
+ 				}
+ 			}
+@@ -651,16 +668,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+ 				continue
+ 			}
+-			augmentedEntries := append([]store.SnapshotLogEntry(nil), record.Projection.LogEntries...)
++			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
+ 			switchRuntimeSession(record.Summary.ID)
+-			record.Projection = buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+-			if preferAugmentedLogEntries(augmentedEntries, record.Projection.LogEntries) {
+-				record.Projection.LogEntries = augmentedEntries
++			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
++			if codexsync.IsMirrorSessionID(record.Summary.ID) {
++				record.Projection = mergeProjectionWithOptionalRuntime(augmentedProjection, runtimeProjection, runtimeSvc, record.Summary.ID)
++			} else {
++				record.Projection = runtimeProjection
++				if preferAugmentedLogEntries(augmentedProjection.LogEntries, record.Projection.LogEntries) {
++					record.Projection.LogEntries = augmentedProjection.LogEntries
++				}
+ 			}
+ 			record.Summary.Runtime = record.Projection.Runtime
+-			emit(newSessionHistoryEventFromRecord(record))
++			loadRuntimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
++			if restored := restoredAgentStateEventFromRecord(record, loadRuntimeAlive); restored != nil {
++				emit(*restored)
++			}
++			emit(newSessionHistoryEventFromRecord(record, loadRuntimeAlive))
+ 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
+-			if restored := restoredAgentStateEventFromRecord(record, runtimeSvc.IsRunning()); restored != nil {
++			if restored := restoredAgentStateEventFromRecord(record, loadRuntimeAlive); restored != nil && !loadRuntimeAlive {
+ 				emit(*restored)
+ 			}
+ 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
+@@ -701,10 +727,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 			}
+ 			switchRuntimeSession(record.Summary.ID)
+ 			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
+-			projection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+-			record.Projection = projection
+-			record.Summary.Runtime = projection.Runtime
+-			emit(newSessionDeltaEventFromRecord(record, req.Known, sessionRuntime))
++			freshProjection := normalizeProjectionSnapshot(record.Projection)
++			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
++			if codexsync.IsMirrorSessionID(record.Summary.ID) {
++				record.Projection = mergeProjectionWithOptionalRuntime(freshProjection, runtimeProjection, runtimeSvc, record.Summary.ID)
++			} else {
++				record.Projection = runtimeProjection
++			}
++			record.Summary.Runtime = record.Projection.Runtime
++			runtimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
++			emit(newSessionDeltaEventFromRecord(record, req.Known, sessionRuntime, runtimeAlive))
+ 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
+ 			if snapshot := buildTaskSnapshotEvent(record.Summary.ID, runtimeSvc, sessionRuntime, "delta", true); snapshot != nil {
+ 				emit(*snapshot)
+@@ -728,20 +760,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 				emit(protocol.NewErrorEvent(selectedSessionID, err.Error(), ""))
+ 				continue
+ 			}
+-			augmentedEntries := append([]store.SnapshotLogEntry(nil), record.Projection.LogEntries...)
++			augmentedProjection := normalizeProjectionSnapshot(record.Projection)
+ 			switchRuntimeSession(record.Summary.ID)
+ 			sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
+-			projection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+-			if preferAugmentedLogEntries(augmentedEntries, projection.LogEntries) {
+-				projection.LogEntries = augmentedEntries
++			runtimeProjection := buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
++			projection := runtimeProjection
++			if codexsync.IsMirrorSessionID(record.Summary.ID) {
++				projection = mergeProjectionWithOptionalRuntime(augmentedProjection, runtimeProjection, runtimeSvc, record.Summary.ID)
++			} else if preferAugmentedLogEntries(augmentedProjection.LogEntries, projection.LogEntries) {
++				projection.LogEntries = augmentedProjection.LogEntries
+ 			}
+ 			record.Projection = projection
+ 			record.Summary.Runtime = projection.Runtime
+-			runtimeAlive := runtimeSvc != nil && runtimeSvc.IsRunning()
++			runtimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
+ 			if runtimeAlive {
+ 				emit(buildResumeRecoveryStateEvent(record.Summary.ID, runtimeSvc, projection, req.LastKnownRuntimeState))
+ 			}
+-			emit(newSessionHistoryEventFromRecord(record))
++			emit(newSessionHistoryEventFromRecord(record, runtimeAlive))
+ 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
+ 			restoredState := ""
+ 			if restored := restoredAgentStateEventFromRecord(record, runtimeAlive); restored != nil {
+@@ -821,9 +856,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 			}
+ 			record.Projection = buildProjectionSnapshotForService(record.Summary.ID, runtimeSvc)
+ 			record.Summary.Runtime = record.Projection.Runtime
+-			emit(newSessionHistoryEventFromRecord(record))
++			emit(newSessionHistoryEventFromRecord(record, sessionRecordRuntimeAlive(record, runtimeSvc)))
+ 			emitReviewStateFromProjection(emit, selectedSessionID, record.Projection)
+-			if restored := restoredAgentStateEventFromRecord(record, runtimeSvc.IsRunning()); restored != nil {
++			if restored := restoredAgentStateEventFromRecord(record, sessionRecordRuntimeAlive(record, runtimeSvc)); restored != nil {
+ 				emit(*restored)
+ 			}
+ 			emit(protocol.NewSessionStateEvent(selectedSessionID, string(session.StateActive), "history loaded"))
+@@ -1081,11 +1116,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 				emit(protocol.NewErrorEvent(selectedSessionID, "cmd is required", ""))
+ 				continue
+ 			}
+-			if strings.TrimSpace(selectedSessionID) == "" || selectedSessionID == connectionID {
++			sessionID := strings.TrimSpace(firstNonEmptyString(reqEvent.SessionID, selectedSessionID))
++			if sessionID == "" || sessionID == connectionID {
+ 				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
+ 				continue
+ 			}
+-			sessionID := selectedSessionID
++			if sessionID != strings.TrimSpace(selectedSessionID) {
++				switchRuntimeSession(sessionID)
++			}
++			if !ackClientAction(sessionID, "exec", reqEvent.ClientEvent) {
++				logx.Info("ws", "duplicate client action ignored: connectionID=%s sessionID=%s remoteAddr=%s action=exec clientActionID=%s", connectionID, sessionID, remoteAddr, reqEvent.ClientActionID)
++				continue
++			}
+ 			service := runtimeSvc
+ 			emitAndPersist := emitAndPersistFor(sessionID)
+ 			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, reqEvent.Command, "命令", connectionID, remoteAddr)
+@@ -1097,7 +1139,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 			}
+ 			logx.Info("ws", "dispatch exec: connectionID=%s sessionID=%s remoteAddr=%s action=exec mode=%s cwd=%q permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, mode, reqEvent.CWD, reqEvent.PermissionMode, wsDebugPreview(reqEvent.Command))
+ 			if runtimeSession != nil {
+-				service.SetSink(runtimeSession.EnsureBufferedSink())
++				service.SetSink(runtimeSession.EnsureBufferedSinkWithProcessor(emitAndPersist))
+ 			}
+ 			err = service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
+ 				Command:        reqEvent.Command,
+@@ -1137,14 +1179,44 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 				emit(protocol.NewErrorEvent(selectedSessionID, "input data is required", ""))
+ 				continue
+ 			}
+-			if strings.TrimSpace(selectedSessionID) == "" || selectedSessionID == connectionID {
++			sessionID := strings.TrimSpace(firstNonEmptyString(inputEvent.SessionID, selectedSessionID))
++			if sessionID == "" || sessionID == connectionID {
+ 				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
+ 				continue
+ 			}
+-			sessionID := selectedSessionID
++			if sessionID != strings.TrimSpace(selectedSessionID) {
++				switchRuntimeSession(sessionID)
++			}
++			if !ackClientAction(sessionID, "input", inputEvent.ClientEvent) {
++				logx.Info("ws", "duplicate client action ignored: connectionID=%s sessionID=%s remoteAddr=%s action=input clientActionID=%s", connectionID, sessionID, remoteAddr, inputEvent.ClientActionID)
++				continue
++			}
+ 			service := runtimeSvc
+ 			emitAndPersist := emitAndPersistFor(sessionID)
+-			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
++			if shouldTreatInputAsAICommand(inputEvent.Data) {
++				command := strings.TrimSpace(inputEvent.Data)
++				logx.Info("ws", "promote input to exec: connectionID=%s sessionID=%s remoteAddr=%s action=input command=%q", connectionID, sessionID, remoteAddr, command)
++				appendUserProjectionEntry(h.SessionStore, ctx, sessionID, command, "命令", connectionID, remoteAddr)
++				if runtimeSession != nil {
++					service.SetSink(runtimeSession.EnsureBufferedSinkWithProcessor(emitAndPersist))
++				}
++				if err := service.Execute(ctx, sessionID, runtimepkg.ExecuteRequest{
++					Command:        command,
++					CWD:            firstNonEmptyString(inputEvent.CWD, "/"),
++					Mode:           runner.ModePTY,
++					PermissionMode: firstNonEmptyString(inputEvent.PermissionMode, "default"),
++					RuntimeMeta: protocol.RuntimeMeta{
++						Source:         "input-promoted-exec",
++						Command:        command,
++						CWD:            firstNonEmptyString(inputEvent.CWD, "/"),
++						PermissionMode: firstNonEmptyString(inputEvent.PermissionMode, "default"),
++					},
++				}, emitAndPersist); err != nil {
++					logx.Error("ws", "promoted input execute failed: connectionID=%s sessionID=%s remoteAddr=%s command=%q err=%v", connectionID, sessionID, remoteAddr, command, err)
++					emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
++				}
++				continue
++			}
+ 			service.RecordUserInput(inputEvent.Data)
+ 			controller := service.ControllerSnapshot()
+ 			projection := buildProjectionSnapshotFor(sessionID)
+@@ -1199,6 +1271,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 					}
+ 					logx.Warn("ws", "restore safe permission mode before input failed: connectionID=%s sessionID=%s remoteAddr=%s action=input err=%v", connectionID, sessionID, remoteAddr, err)
+ 					emit(protocol.NewErrorEvent(sessionID, message, ""))
++				} else {
++					appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
+ 				}
+ 				continue
+ 			}
+@@ -1297,6 +1371,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 				}
+ 				logx.Warn("ws", "service send input failed: connectionID=%s sessionID=%s remoteAddr=%s action=input err=%v", connectionID, sessionID, remoteAddr, err)
+ 				emit(protocol.NewErrorEvent(sessionID, message, ""))
++			} else {
++				appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
+ 			}
+ 		case "stop":
+ 			if strings.TrimSpace(selectedSessionID) == "" || selectedSessionID == connectionID {
+@@ -1764,7 +1840,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 				}
+ 				sessionContext = record.Projection.SessionContext
+ 			}
+-			sessionID := selectedSessionID
++			sessionID := strings.TrimSpace(firstNonEmptyString(slashReq.SessionID, selectedSessionID))
++			if sessionID == "" || sessionID == connectionID {
++				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
++				continue
++			}
++			if sessionID != strings.TrimSpace(selectedSessionID) {
++				switchRuntimeSession(sessionID)
++			}
++			if !ackClientAction(sessionID, "slash_command", slashReq.ClientEvent) {
++				logx.Info("ws", "duplicate client action ignored: connectionID=%s sessionID=%s remoteAddr=%s action=slash_command clientActionID=%s", connectionID, sessionID, remoteAddr, slashReq.ClientActionID)
++				continue
++			}
+ 			service := runtimeSvc
+ 			emitAndPersist := emitAndPersistFor(sessionID)
+ 			if err := handleSlashCommand(ctx, sessionID, slashReq, sessionContext, service, h.SkillLauncher, emitAndPersist); err != nil {
+@@ -2005,6 +2092,38 @@ func withRuntimeSnapshot(snapshot store.ProjectionSnapshot, svc *runtimepkg.Serv
+ 	return snapshot
+ }
+ 
++func mergeProjectionWithOptionalRuntime(base store.ProjectionSnapshot, runtimeProjection store.ProjectionSnapshot, svc *runtimepkg.Service, sessionID string) store.ProjectionSnapshot {
++	base = normalizeProjectionSnapshot(base)
++	runtimeProjection = normalizeProjectionSnapshot(runtimeProjection)
++	if svc == nil {
++		return base
++	}
++	runtimeSnapshot := svc.RuntimeSnapshot()
++	runtimeActiveForSession := runtimeSnapshot.Running && strings.TrimSpace(runtimeSnapshot.ActiveSession) == strings.TrimSpace(sessionID)
++	if !runtimeActiveForSession {
++		return base
++	}
++	merged := mergeCodexMirrorProjection(base, runtimeProjection)
++	merged.LogEntries = mergeSnapshotLogEntries(base.LogEntries, runtimeProjection.LogEntries)
++	return normalizeProjectionSnapshot(merged)
++}
++
++func sessionRecordRuntimeAlive(record store.SessionRecord, svc *runtimepkg.Service) bool {
++	if svc != nil {
++		snapshot := svc.RuntimeSnapshot()
++		if snapshot.Running && strings.TrimSpace(snapshot.ActiveSession) == strings.TrimSpace(record.Summary.ID) {
++			return true
++		}
++	}
++	if !codexsync.IsMirrorSessionID(record.Summary.ID) && !claudesync.IsMirrorSessionID(record.Summary.ID) {
++		return false
++	}
++	projection := normalizeProjectionSnapshot(record.Projection)
++	state := strings.TrimSpace(string(projection.Controller.State))
++	lifecycle := strings.TrimSpace(projection.Runtime.ClaudeLifecycle)
++	return isBusyRuntimeState(state) || lifecycle == "active" || lifecycle == "starting"
++}
++
+ func toProtocolSummary(item store.SessionSummary) protocol.SessionSummary {
+ 	return protocol.SessionSummary{
+ 		ID:          item.ID,
+@@ -3199,7 +3318,7 @@ func pickActiveReviewGroup(groups []session.ReviewGroup) *session.ReviewGroup {
+ 	return nil
+ }
+ 
+-func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.SessionHistoryEvent {
++func newSessionHistoryEventFromRecord(record store.SessionRecord, runtimeAlive bool) protocol.SessionHistoryEvent {
+ 	projection := normalizeProjectionSnapshot(record.Projection)
+ 	entries := make([]protocol.HistoryLogEntry, 0, len(projection.LogEntries))
+ 	for _, entry := range projection.LogEntries {
+@@ -3254,11 +3373,12 @@ func newSessionHistoryEventFromRecord(record store.SessionRecord) protocol.Sessi
+ 		toProtocolCatalogMetadata(projection.SkillCatalogMeta),
+ 		toProtocolCatalogMetadata(projection.MemoryCatalogMeta),
+ 		canResume,
++		runtimeAlive,
+ 		resumeMeta,
+ 	)
+ }
+ 
+-func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.SessionDeltaKnown, sessionRuntime *runtimeSession) protocol.SessionDeltaEvent {
++func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.SessionDeltaKnown, sessionRuntime *runtimeSession, runtimeAlive bool) protocol.SessionDeltaEvent {
+ 	projection := normalizeProjectionSnapshot(record.Projection)
+ 	allEntries := make([]protocol.HistoryLogEntry, 0, len(projection.LogEntries))
+ 	for _, entry := range projection.LogEntries {
+@@ -3360,6 +3480,7 @@ func newSessionDeltaEventFromRecord(record store.SessionRecord, known protocol.S
+ 		toProtocolCatalogMetadata(projection.SkillCatalogMeta),
+ 		toProtocolCatalogMetadata(projection.MemoryCatalogMeta),
+ 		strings.TrimSpace(resumeMeta.ResumeSessionID) != "",
++		runtimeAlive,
+ 		resumeMeta,
+ 		(startLog == 0 && known.LogEntryCount > 0) || (stdoutStart == 0 && known.TerminalStdoutLength > 0) || (stderrStart == 0 && known.TerminalStderrLength > 0),
+ 	)
+@@ -3415,12 +3536,12 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord, hasActiveRunn
+ 			state = session.ControllerStateIdle
+ 		}
+ 	}
+-	if !hasActiveRunner {
++	if !hasActiveRunner && !isExternalNativeActiveRecord(record) {
+ 		switch state {
+ 		case session.ControllerStateThinking, session.ControllerStateRunningTool:
+ 			if strings.TrimSpace(runtimeMeta.ResumeSessionID) != "" {
+-				state = session.ControllerStateWaitInput
+-				runtimeMeta.ClaudeLifecycle = "waiting_input"
++				state = session.ControllerStateIdle
++				runtimeMeta.ClaudeLifecycle = "resumable"
+ 			} else {
+ 				state = session.ControllerStateIdle
+ 				runtimeMeta.ClaudeLifecycle = ""
+@@ -3475,6 +3596,21 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord, hasActiveRunn
+ 	return &event
+ }
+ 
++func isExternalNativeActiveRecord(record store.SessionRecord) bool {
++	if !codexsync.IsMirrorSessionID(record.Summary.ID) && !claudesync.IsMirrorSessionID(record.Summary.ID) {
++		return false
++	}
++	projection := normalizeProjectionSnapshot(record.Projection)
++	state := strings.TrimSpace(string(projection.Controller.State))
++	lifecycle := strings.TrimSpace(firstNonEmptyString(
++		projection.Controller.ClaudeLifecycle,
++		projection.Controller.ActiveMeta.ClaudeLifecycle,
++		projection.Runtime.ClaudeLifecycle,
++		record.Summary.Runtime.ClaudeLifecycle,
++	))
++	return isBusyRuntimeState(state) || lifecycle == "active" || lifecycle == "starting"
++}
++
+ func shouldEmitTransientResumeThinkingEvent(service *runtimepkg.Service, req runtimepkg.ExecuteRequest) bool {
+ 	if service == nil || service.IsRunning() {
+ 		return false
+@@ -3838,6 +3974,10 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
+ 			return snapshot, false
+ 		}
+ 		if isVisibleAssistantReplyLog(e) {
++			snapshot.LogEntries = removeSupersededAssistantLogEntry(
++				snapshot.LogEntries,
++				e,
++			)
+ 			snapshot.LogEntries = append(snapshot.LogEntries, store.SnapshotLogEntry{Kind: "markdown", Message: e.Message, Timestamp: e.Timestamp.Format(time.RFC3339), Stream: e.Stream, ExecutionID: e.ExecutionID, Phase: phase, ExitCode: e.ExitCode, Context: context})
+ 		} else {
+ 			previousIndex := len(snapshot.LogEntries) - 1
+@@ -3927,6 +4067,67 @@ func applyEventToProjection(snapshot store.ProjectionSnapshot, event any) (store
+ 	}
+ }
+ 
++func removeSupersededAssistantLogEntry(entries []store.SnapshotLogEntry, event protocol.LogEvent) []store.SnapshotLogEntry {
++	message := strings.TrimSpace(event.Message)
++	if message == "" || len(entries) == 0 {
++		return entries
++	}
++	normalizedMessage := normalizeAssistantReplyForDedupe(message)
++	eventStream := strings.TrimSpace(event.Stream)
++	eventExecutionID := strings.TrimSpace(event.ExecutionID)
++	remove := make(map[int]bool)
++	found := false
++	for index := len(entries) - 1; index >= 0; index-- {
++		entry := entries[index]
++		if eventExecutionID != "" && strings.TrimSpace(entry.ExecutionID) != "" && strings.TrimSpace(entry.ExecutionID) != eventExecutionID {
++			if found {
++				break
++			}
++			continue
++		}
++		if eventStream != "" && strings.TrimSpace(entry.Stream) != "" && strings.TrimSpace(entry.Stream) != eventStream {
++			if found {
++				break
++			}
++			continue
++		}
++		if entry.Kind != "terminal" && entry.Kind != "markdown" {
++			if found {
++				break
++			}
++			continue
++		}
++		previous := strings.TrimSpace(firstNonEmptyString(entry.Message, entry.Text))
++		if previous == "" {
++			continue
++		}
++		normalizedPrevious := normalizeAssistantReplyForDedupe(previous)
++		if normalizedPrevious == normalizedMessage ||
++			strings.HasPrefix(normalizedMessage, normalizedPrevious) ||
++			strings.Contains(normalizedMessage, normalizedPrevious) {
++			remove[index] = true
++			found = true
++			continue
++		}
++		break
++	}
++	if len(remove) == 0 {
++		return entries
++	}
++	next := entries[:0]
++	for index, entry := range entries {
++		if remove[index] {
++			continue
++		}
++		next = append(next, entry)
++	}
++	return next
++}
++
++func normalizeAssistantReplyForDedupe(text string) string {
++	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
++}
++
+ func normalizeProjectionSnapshot(snapshot store.ProjectionSnapshot) store.ProjectionSnapshot {
+ 	if snapshot.RawTerminalByStream == nil {
+ 		snapshot.RawTerminalByStream = map[string]string{"stdout": "", "stderr": ""}
+@@ -4670,10 +4871,10 @@ func augmentLocalClaudeRecordFromNative(ctx context.Context, record store.Sessio
+ }
+ 
+ func mergeCodexMirrorRecord(fresh store.SessionRecord, existing store.SessionRecord) store.SessionRecord {
+-	fresh.Projection = mergeCodexMirrorProjection(fresh.Projection, existing.Projection)
++	fresh.Projection = preserveCodexMirrorLocalSettings(fresh.Projection, existing.Projection)
+ 	fresh.Summary.CreatedAt = laterNonZeroTime(fresh.Summary.CreatedAt, existing.Summary.CreatedAt)
+ 	fresh.Summary.UpdatedAt = laterNonZeroTime(fresh.Summary.UpdatedAt, existing.Summary.UpdatedAt)
+-	fresh.Summary.Runtime = mergeStoreSessionRuntime(fresh.Summary.Runtime, fresh.Projection.Runtime)
++	fresh.Summary.Runtime = mergeStoreSessionRuntime(store.SessionRuntime{}, fresh.Projection.Runtime)
+ 	if fresh.Summary.Runtime.Source == "" {
+ 		fresh.Summary.Runtime.Source = "codex-native"
+ 	}
+@@ -4682,6 +4883,19 @@ func mergeCodexMirrorRecord(fresh store.SessionRecord, existing store.SessionRec
+ 	return fresh
+ }
+ 
++func preserveCodexMirrorLocalSettings(fresh store.ProjectionSnapshot, existing store.ProjectionSnapshot) store.ProjectionSnapshot {
++	fresh = normalizeProjectionSnapshot(fresh)
++	existing = normalizeProjectionSnapshot(existing)
++	fresh.SessionContext = existing.SessionContext
++	fresh.PermissionRulesEnabled = existing.PermissionRulesEnabled
++	if len(existing.PermissionRules) > 0 {
++		fresh.PermissionRules = existing.PermissionRules
++	}
++	fresh.SkillCatalogMeta = existing.SkillCatalogMeta
++	fresh.MemoryCatalogMeta = existing.MemoryCatalogMeta
++	return normalizeProjectionSnapshot(fresh)
++}
++
+ func mergeCodexMirrorProjection(fresh store.ProjectionSnapshot, existing store.ProjectionSnapshot) store.ProjectionSnapshot {
+ 	fresh = normalizeProjectionSnapshot(fresh)
+ 	existing = normalizeProjectionSnapshot(existing)
+@@ -4854,6 +5068,22 @@ func mergeTerminalExecutions(base []store.TerminalExecution, overlay []store.Ter
+ 	return merged
+ }
+ 
++func shouldTreatInputAsAICommand(data string) bool {
++	fields := strings.Fields(strings.TrimSpace(data))
++	if len(fields) == 0 {
++		return false
++	}
++	if len(fields) > 1 {
++		return false
++	}
++	switch strings.ToLower(fields[0]) {
++	case "codex", "claude", "gemini":
++		return true
++	default:
++		return false
++	}
++}
++
+ func firstNonNilInt(values ...*int) *int {
+ 	for _, value := range values {
+ 		if value != nil {
+diff --git a/mobile_vc/lib/data/models/events.dart b/mobile_vc/lib/data/models/events.dart
+index 15d814a..c84bae0 100644
+--- a/mobile_vc/lib/data/models/events.dart
++++ b/mobile_vc/lib/data/models/events.dart
+@@ -42,6 +42,52 @@ class UnknownEvent extends AppEvent {
+   });
+ }
+ 
++class PongEvent extends AppEvent {
++  const PongEvent({
++    required super.timestamp,
++    required super.sessionId,
++    required super.runtimeMeta,
++    required super.raw,
++  }) : super(type: 'pong');
++
++  factory PongEvent.fromJson(Map<String, dynamic> json) => PongEvent(
++        timestamp: _tryReadTimestamp(json['ts']) ?? _readTimestamp(json),
++        sessionId: (json['sessionId'] ?? '').toString(),
++        runtimeMeta: RuntimeMeta.fromJson(json),
++        raw: json,
++      );
++}
++
++class ClientActionAckEvent extends AppEvent {
++  const ClientActionAckEvent({
++    required super.timestamp,
++    required super.sessionId,
++    required super.runtimeMeta,
++    required super.raw,
++    this.action = '',
++    this.clientActionId = '',
++    this.status = '',
++    this.duplicate = false,
++  }) : super(type: 'client_action_ack');
++
++  final String action;
++  final String clientActionId;
++  final String status;
++  final bool duplicate;
++
++  factory ClientActionAckEvent.fromJson(Map<String, dynamic> json) =>
++      ClientActionAckEvent(
++        timestamp: _tryReadTimestamp(json['ts']) ?? _readTimestamp(json),
++        sessionId: (json['sessionId'] ?? '').toString(),
++        runtimeMeta: RuntimeMeta.fromJson(json),
++        raw: json,
++        action: (json['action'] ?? '').toString(),
++        clientActionId: (json['clientActionId'] ?? '').toString(),
++        status: (json['status'] ?? '').toString(),
++        duplicate: json['duplicate'] == true,
++      );
++}
++
+ class LogEvent extends AppEvent {
+   const LogEvent({
+     required super.timestamp,
+@@ -935,6 +981,7 @@ class SessionHistoryEvent extends AppEvent {
+     this.rawTerminalByStream = const {},
+     this.terminalExecutions = const [],
+     this.canResume = false,
++    this.runtimeAlive = false,
+     this.resumeRuntimeMeta = const RuntimeMeta(),
+   }) : super(type: 'session_history');
+ 
+@@ -952,6 +999,7 @@ class SessionHistoryEvent extends AppEvent {
+   final Map<String, String> rawTerminalByStream;
+   final List<TerminalExecution> terminalExecutions;
+   final bool canResume;
++  final bool runtimeAlive;
+   final RuntimeMeta resumeRuntimeMeta;
+ 
+   factory SessionHistoryEvent.fromJson(Map<String, dynamic> json) =>
+@@ -1009,6 +1057,7 @@ class SessionHistoryEvent extends AppEvent {
+             .map(TerminalExecution.fromJson)
+             .toList(),
+         canResume: json['canResume'] == true,
++        runtimeAlive: json['runtimeAlive'] == true,
+         resumeRuntimeMeta: json['resumeRuntimeMeta'] is Map<String, dynamic>
+             ? RuntimeMeta.fromJson(
+                 json['resumeRuntimeMeta'] as Map<String, dynamic>)
+@@ -1080,6 +1129,7 @@ class SessionDeltaEvent extends AppEvent {
+     this.rawTerminalByStream = const {},
+     this.terminalExecutions = const [],
+     this.canResume = false,
++    this.runtimeAlive = false,
+     this.resumeRuntimeMeta = const RuntimeMeta(),
+     this.requiresFullSync = false,
+   }) : super(type: 'session_delta');
+@@ -1100,6 +1150,7 @@ class SessionDeltaEvent extends AppEvent {
+   final Map<String, String> rawTerminalByStream;
+   final List<TerminalExecution> terminalExecutions;
+   final bool canResume;
++  final bool runtimeAlive;
+   final RuntimeMeta resumeRuntimeMeta;
+   final bool requiresFullSync;
+ 
+@@ -1164,6 +1215,7 @@ class SessionDeltaEvent extends AppEvent {
+             .map(TerminalExecution.fromJson)
+             .toList(),
+         canResume: json['canResume'] == true,
++        runtimeAlive: json['runtimeAlive'] == true,
+         resumeRuntimeMeta: json['resumeRuntimeMeta'] is Map<String, dynamic>
+             ? RuntimeMeta.fromJson(
+                 json['resumeRuntimeMeta'] as Map<String, dynamic>)
+@@ -1329,6 +1381,40 @@ class MemoryListResultEvent extends AppEvent {
+       );
+ }
+ 
++class CatalogAuthoringResultEvent extends AppEvent {
++  const CatalogAuthoringResultEvent({
++    required super.timestamp,
++    required super.sessionId,
++    required super.runtimeMeta,
++    required super.raw,
++    this.domain = '',
++    this.skill,
++    this.memory,
++    this.message = '',
++  }) : super(type: 'catalog_authoring_result');
++
++  final String domain;
++  final SkillDefinition? skill;
++  final MemoryItem? memory;
++  final String message;
++
++  factory CatalogAuthoringResultEvent.fromJson(Map<String, dynamic> json) =>
++      CatalogAuthoringResultEvent(
++        timestamp: _readTimestamp(json),
++        sessionId: (json['sessionId'] ?? '').toString(),
++        runtimeMeta: RuntimeMeta.fromJson(json),
++        raw: json,
++        domain: (json['domain'] ?? '').toString(),
++        skill: json['skill'] is Map<String, dynamic>
++            ? SkillDefinition.fromJson(json['skill'] as Map<String, dynamic>)
++            : null,
++        memory: json['memory'] is Map<String, dynamic>
++            ? MemoryItem.fromJson(json['memory'] as Map<String, dynamic>)
++            : null,
++        message: (json['msg'] ?? json['message'] ?? '').toString(),
++      );
++}
++
+ class SessionContextResultEvent extends AppEvent {
+   const SessionContextResultEvent({
+     required super.timestamp,
+diff --git a/mobile_vc/lib/features/session/session_controller.dart b/mobile_vc/lib/features/session/session_controller.dart
+index 41ed7d9..12953b3 100644
+--- a/mobile_vc/lib/features/session/session_controller.dart
++++ b/mobile_vc/lib/features/session/session_controller.dart
+@@ -123,6 +123,41 @@ class _DeferredFirstInput {
+   final String text;
+ }
+ 
++class _PendingOutboundAction {
++  const _PendingOutboundAction({
++    required this.payload,
++    required this.userText,
++    required this.label,
++    required this.createdAt,
++    required this.clientActionId,
++    this.displayed = false,
++    this.sendAttempts = 0,
++  });
++
++  final Map<String, dynamic> payload;
++  final String userText;
++  final String label;
++  final DateTime createdAt;
++  final String clientActionId;
++  final bool displayed;
++  final int sendAttempts;
++
++  _PendingOutboundAction copyWith({
++    Map<String, dynamic>? payload,
++    bool? displayed,
++    int? sendAttempts,
++  }) =>
++      _PendingOutboundAction(
++        payload: payload ?? this.payload,
++        userText: userText,
++        label: label,
++        createdAt: createdAt,
++        clientActionId: clientActionId,
++        displayed: displayed ?? this.displayed,
++        sendAttempts: sendAttempts ?? this.sendAttempts,
++      );
++}
++
+ @visibleForTesting
+ bool shouldPreserveAdbFailureStatus(String status) {
+   final normalized = status.trim().toLowerCase();
+@@ -152,6 +187,8 @@ class SessionController extends ChangeNotifier {
+   static const int _maxForegroundReconnectAttempts = 4;
+   static const Duration _connectionHealthInterval = Duration(seconds: 10);
+   static const Duration _connectionSilenceTimeout = Duration(seconds: 45);
++  static const Duration _observedSessionSyncInterval = Duration(seconds: 3);
++  static const Duration _outboundAckRetryDelay = Duration(seconds: 6);
+   final MobileVcWsService _service;
+   final AdbWebRtcService _adbWebRtc = AdbWebRtcService();
+ 
+@@ -166,13 +203,23 @@ class SessionController extends ChangeNotifier {
+   int _reconnectAttempt = 0;
+   Timer? _reconnectTimer;
+   Timer? _connectionHealthTimer;
++  Timer? _observedSessionSyncTimer;
++  Timer? _pendingOutboundRetryTimer;
+   DateTime? _lastServerEventAt;
++  final List<_PendingOutboundAction> _pendingOutboundActions =
++      <_PendingOutboundAction>[];
++  int _clientActionSequence = 0;
+   final Map<String, int> _sessionEventCursors = <String, int>{};
+   final Map<String, SessionDeltaKnown> _sessionDeltaKnown =
+       <String, SessionDeltaKnown>{};
+   bool _fileListLoading = false;
+   bool _fileReading = false;
+   bool _canResumeCurrentSession = false;
++  bool _sessionRuntimeAlive = false;
++  bool _selectedSessionExternalNative = false;
++  bool _continueSameSessionEnabled = false;
++  String _continuedSameSessionId = '';
++  DateTime? _lastContinuationInputAt;
+   bool _isStopping = false;
+   bool _isHotSwapping = false;
+   Timer? _hotSwapTimeoutTimer;
+@@ -576,6 +623,36 @@ class SessionController extends ChangeNotifier {
+   bool get hasCompactContextSelection =>
+       _skills.isNotEmpty || _memoryItems.isNotEmpty;
+   bool get isLoadingSession => _isLoadingSession;
++  bool get isObservingRemoteActiveSession =>
++      _selectedSessionExternalNative && !_continueSameSessionEnabled;
++  bool get isSessionReadOnly => isObservingRemoteActiveSession;
++  String get sessionReadOnlyHint =>
++      isSessionReadOnly ? '电脑端原生会话正在运行，手机端当前为观察模式' : '';
++  String get sessionObservationTitle =>
++      _continueSameSessionEnabled ? '已在手机继续同一会话' : '观察模式';
++  String get sessionObservationDetail => _continueSameSessionEnabled
++      ? '请避免同时在电脑端原生终端输入，防止上下文交错。'
++      : '正在同步电脑端进度。点击继续后，手机会向同一个会话发送输入。';
++  bool get shouldShowSessionObservationBanner =>
++      _selectedSessionId.trim().isNotEmpty &&
++      _sessionRuntimeAlive &&
++      _selectedSessionExternalNative &&
++      !hasPendingPermissionPrompt &&
++      !shouldShowReviewChoices &&
++      !hasPendingPlanPrompt &&
++      !hasPendingPlanQuestions;
++  bool get canContinueSameSession =>
++      shouldShowSessionObservationBanner && !_continueSameSessionEnabled;
++
++  bool get canSendToContinuedSameSession =>
++      _continueSameSessionEnabled &&
++      _selectedSessionId.trim().isNotEmpty &&
++      _continuedSameSessionId == _selectedSessionId.trim();
++
++  bool get _hasRecentContinuationInput {
++    final sentAt = _lastContinuationInputAt;
++    return sentAt != null && DateTime.now().difference(sentAt).inSeconds < 8;
++  }
+ 
+   List<TimelineItem> get timeline => List.unmodifiable(_timeline);
+   List<ReviewGroup> get reviewGroups => List.unmodifiable(_reviewGroups);
+@@ -893,13 +970,20 @@ class SessionController extends ChangeNotifier {
+   String get agentPhaseLabel => _agentPhaseLabel;
+   bool get activityVisible => _activityVisible;
+   bool get activityBannerVisible =>
++      isObservingRemoteActiveSession ||
+       _activityVisible ||
+       _isClaudePendingReadyForInput ||
+       _isStopping ||
+       _isHotSwapping;
+   bool get activityBannerAnimated =>
+-      (_activityVisible || _isHotSwapping) && !_isStopping;
++      !isObservingRemoteActiveSession &&
++      (_activityVisible || _isHotSwapping) &&
++      !_isStopping &&
++      !_hasRecentContinuationInput;
+   String get activityBannerTitle {
++    if (isObservingRemoteActiveSession) {
++      return '观察模式';
++    }
+     if (_isStopping) {
+       return '正在停止';
+     }
+@@ -908,7 +992,11 @@ class SessionController extends ChangeNotifier {
+     }
+     return _isClaudePendingReadyForInput ? '待输入' : 'AI 助手正在运行中';
+   }
++
+   String get activityBannerDetail {
++    if (isObservingRemoteActiveSession) {
++      return _sessionRuntimeAlive ? '正在同步电脑端原生会话进度' : '电脑端原生会话只读预览';
++    }
+     if (_isStopping) {
+       return '等待后端确认停止...';
+     }
+@@ -934,7 +1022,8 @@ class SessionController extends ChangeNotifier {
+     return '调用工具 · $label';
+   }
+ 
+-  bool get activityBannerShowsElapsed => _activityVisible;
++  bool get activityBannerShowsElapsed =>
++      !isObservingRemoteActiveSession && _activityVisible;
+   DateTime? get activityStartedAt => _activityStartedAt;
+   int get activityElapsedSeconds {
+     final startedAt = _activityStartedAt;
+@@ -1010,10 +1099,13 @@ class SessionController extends ChangeNotifier {
+     switch (normalizedEngine) {
+       case 'codex':
+         parts.add('codex');
+-        parts.addAll([
+-          '-m',
+-          _resolvedAiModel('codex', _configuredModelForEngine('codex')),
+-        ]);
++        final model = _resolvedAiModel(
++          'codex',
++          _configuredModelForEngine('codex'),
++        );
++        if (model.isNotEmpty) {
++          parts.addAll(['-m', model]);
++        }
+         final effort = _resolvedAiReasoningEffort(
+           'codex',
+           _configuredReasoningEffortForEngine('codex'),
+@@ -1174,10 +1266,12 @@ class SessionController extends ChangeNotifier {
+ 
+   Future<void> disposeController() async {
+     _stopAdbRefreshPolling();
++    _stopObservedSessionSync();
+     _adbWebRtcStartTimeout?.cancel();
+     _reconnectTimer?.cancel();
+     _connectionHealthTimer?.cancel();
+     _hotSwapTimeoutTimer?.cancel();
++    _pendingOutboundRetryTimer?.cancel();
+     await _subscription?.cancel();
+     await _adbWebRtc.dispose();
+     await _service.dispose();
+@@ -1253,6 +1347,123 @@ class SessionController extends ChangeNotifier {
+     });
+   }
+ 
++  bool _sendUserVisibleAction(
++    Map<String, dynamic> payload, {
++    required String userText,
++    required String label,
++    bool queueOnFailure = true,
++  }) {
++    final clientActionId = _nextClientActionId();
++    final outboundPayload = Map<String, dynamic>.from(payload)
++      ..['clientActionId'] = clientActionId;
++    final sessionId = _selectedSessionId.trim();
++    if (sessionId.isNotEmpty &&
++        (outboundPayload['sessionId'] ?? '').toString().trim().isEmpty) {
++      outboundPayload['sessionId'] = sessionId;
++    }
++    final pendingAction = _PendingOutboundAction(
++      payload: outboundPayload,
++      userText: userText,
++      label: label,
++      createdAt: DateTime.now(),
++      clientActionId: clientActionId,
++    );
++    final sent = _service.send(outboundPayload);
++    if (sent) {
++      _pendingOutboundActions.add(
++        pendingAction.copyWith(displayed: true, sendAttempts: 1),
++      );
++      _schedulePendingOutboundRetry();
++      return true;
++    }
++    if (queueOnFailure) {
++      _pendingOutboundActions.add(pendingAction);
++      _pushSystem('session', '网络暂不可用，消息已排队，恢复连接后自动发送');
++      _scheduleReconnect(immediate: true);
++      _schedulePendingOutboundRetry();
++    } else {
++      _pushSystem('error', '消息发送失败：WebSocket 未连接或写入失败');
++    }
++    return false;
++  }
++
++  String _nextClientActionId() {
++    _clientActionSequence += 1;
++    return '${DateTime.now().microsecondsSinceEpoch}-$_clientActionSequence';
++  }
++
++  void _flushPendingOutboundActions() {
++    if (!_connected || _connecting || _pendingOutboundActions.isEmpty) {
++      return;
++    }
++    final pending = List<_PendingOutboundAction>.from(_pendingOutboundActions);
++    _pendingOutboundActions.clear();
++    var flushed = 0;
++    var newlyDisplayed = 0;
++    for (final action in pending) {
++      final sent = _service.send(action.payload);
++      if (!sent) {
++        _pendingOutboundActions
++          ..add(action)
++          ..addAll(pending.skip(flushed + 1));
++        _scheduleReconnect(immediate: true);
++        _schedulePendingOutboundRetry();
++        return;
++      }
++      flushed++;
++      if (!action.displayed) {
++        _pushUser(action.userText, action.label);
++        newlyDisplayed++;
++      }
++      _pendingOutboundActions.add(
++        action.copyWith(
++          displayed: true,
++          sendAttempts: action.sendAttempts + 1,
++        ),
++      );
++    }
++    if (newlyDisplayed > 0) {
++      _pushSystem('session', '已自动补发 $newlyDisplayed 条排队消息');
++    }
++    if (flushed > 0) {
++      _schedulePendingOutboundRetry();
++    }
++  }
++
++  void _handleClientActionAck(ClientActionAckEvent ack) {
++    final clientActionId = ack.clientActionId.trim();
++    if (clientActionId.isEmpty || _pendingOutboundActions.isEmpty) {
++      return;
++    }
++    final before = _pendingOutboundActions.length;
++    _pendingOutboundActions
++        .removeWhere((action) => action.clientActionId == clientActionId);
++    if (_pendingOutboundActions.length != before) {
++      _schedulePendingOutboundRetry();
++    }
++  }
++
++  void _schedulePendingOutboundRetry() {
++    _pendingOutboundRetryTimer?.cancel();
++    if (_pendingOutboundActions.isEmpty) {
++      return;
++    }
++    _pendingOutboundRetryTimer =
++        Timer(_outboundAckRetryDelay, _retryPendingOutboundActions);
++  }
++
++  void _retryPendingOutboundActions() {
++    if (_pendingOutboundActions.isEmpty) {
++      return;
++    }
++    if (!_connected || _connecting) {
++      _scheduleReconnect(immediate: true);
++      _schedulePendingOutboundRetry();
++      return;
++    }
++    _flushPendingOutboundActions();
++  }
++
+   void setDevicePushToken(String token) {
+     final normalized = token.trim();
+     if (normalized.isEmpty || _devicePushToken == normalized) {
+@@ -1267,6 +1478,9 @@ class SessionController extends ChangeNotifier {
+     _appInForeground = isForeground;
+     if (_appInForeground && !previous) {
+       _scheduleReconnect(immediate: true);
++      _syncObservedSessionPolling();
++    } else if (!_appInForeground) {
++      _stopObservedSessionSync();
+     }
+   }
+ 
+@@ -1378,9 +1592,14 @@ class SessionController extends ChangeNotifier {
+       requestPermissionRuleList();
+       requestReviewState();
+       requestTaskSnapshot();
+-      _requestSessionDelta(reason: silently ? 'reconnect' : 'connect');
++      if (_selectedSessionId.trim().isNotEmpty) {
++        _requestSessionResume(reason: silently ? 'reconnect' : 'connect');
++      } else {
++        _requestSessionDelta(reason: silently ? 'reconnect' : 'connect');
++      }
+       _sendCachedPushTokenIfPossible();
+       _restorePendingNotificationSessionIfNeeded();
++      _flushPendingOutboundActions();
+     } catch (error) {
+       _connected = false;
+       if (silently && _autoReconnectEnabled) {
+@@ -1424,6 +1643,7 @@ class SessionController extends ChangeNotifier {
+     _reconnecting = false;
+     _reconnectAttempt = 0;
+     _cancelReconnectTimer();
++    _stopObservedSessionSync();
+     _stopAdbRefreshPolling();
+     await _adbWebRtc.stop();
+     await _service.disconnect();
+@@ -1433,9 +1653,15 @@ class SessionController extends ChangeNotifier {
+     _selectedSessionTitle = 'MobileVC';
+     _connectionMessage = '已断开';
+     _clearDeferredFirstInput();
++    _pendingOutboundActions.clear();
+     _sessionListSyncedSinceConnect = false;
+     _fileListLoading = false;
+     _fileReading = false;
++    _sessionRuntimeAlive = false;
++    _selectedSessionExternalNative = false;
++    _continueSameSessionEnabled = false;
++    _continuedSameSessionId = '';
++    _lastContinuationInputAt = null;
+     _currentDirectoryPath = '';
+     _currentDirectoryItems.clear();
+     _openedFile = null;
+@@ -1541,7 +1767,10 @@ class SessionController extends ChangeNotifier {
+   void resumeConnectionIfNeeded() {
+     if (_connected && !_connecting) {
+       requestTaskSnapshot();
++      _requestSessionResume(reason: 'foreground');
+       _requestSessionDelta(reason: 'foreground');
++      _flushPendingOutboundActions();
++      _syncObservedSessionPolling();
+       return;
+     }
+     _scheduleReconnect(immediate: true);
+@@ -1553,7 +1782,8 @@ class SessionController extends ChangeNotifier {
+       return;
+     }
+     final lastSeenCursor = _sessionEventCursors[sessionId] ?? 0;
+-    final runtimeState = (_agentState?.state ?? _sessionState?.state ?? '').trim();
++    final runtimeState =
++        (_agentState?.state ?? _sessionState?.state ?? '').trim();
+     _connectionStage = SessionConnectionStage.catchingUp;
+     _service.send({
+       'action': 'session_resume',
+@@ -1572,7 +1802,6 @@ class SessionController extends ChangeNotifier {
+     if (!_connected || _connecting || sessionId.isEmpty) {
+       return;
+     }
+-    _connectionStage = SessionConnectionStage.catchingUp;
+     _service.send({
+       'action': 'session_delta_get',
+       'sessionId': sessionId,
+@@ -1580,6 +1809,41 @@ class SessionController extends ChangeNotifier {
+       if (reason.trim().isNotEmpty) 'reason': reason.trim(),
+       'known': _currentSessionDeltaKnown(sessionId).toJson(),
+     });
++  }
++
++  void _syncObservedSessionPolling() {
++    if (!_connected ||
++        _connecting ||
++        !_appInForeground ||
++        _selectedSessionId.trim().isEmpty ||
++        (!_sessionRuntimeAlive && !_selectedSessionExternalNative)) {
++      _stopObservedSessionSync();
++      return;
++    }
++    if (_observedSessionSyncTimer != null) {
++      return;
++    }
++    _observedSessionSyncTimer = Timer.periodic(
++      _observedSessionSyncInterval,
++      (_) => _requestSessionDelta(reason: 'observe_active_session'),
++    );
++  }
++
++  void _stopObservedSessionSync() {
++    _observedSessionSyncTimer?.cancel();
++    _observedSessionSyncTimer = null;
++  }
++
++  void continueSameSessionFromPhone() {
++    if (!canContinueSameSession) {
++      return;
++    }
++    _continueSameSessionEnabled = true;
++    _continuedSameSessionId = _selectedSessionId.trim();
++    _pushSystem(
++      'session',
++      '已在手机继续同一会话。电脑端原生终端仍可输入，请避免两端同时输入。',
++    );
+     _syncDerivedState();
+     notifyListeners();
+   }
+@@ -1818,6 +2082,15 @@ class SessionController extends ChangeNotifier {
+     return normalized == targetId;
+   }
+ 
++  bool _eventTargetsCurrentSession(String sessionId) {
++    final normalized = sessionId.trim();
++    if (normalized.isEmpty) {
++      return _selectedSessionId.trim().isEmpty;
++    }
++    final selected = _selectedSessionId.trim();
++    return selected.isEmpty || normalized == selected;
++  }
++
+   void _finishSessionLoading({String sessionId = ''}) {
+     if (!_isLoadingSession) {
+       return;
+@@ -1853,7 +2126,10 @@ class SessionController extends ChangeNotifier {
+       _pushSystem('session', '当前模式暂不支持快捷切换模型');
+       return;
+     }
+-    final normalizedModel = _resolvedAiModel(engine, model);
++    final normalizedModel =
++        engine == 'codex' && model.trim().toLowerCase() == 'default'
++            ? ''
++            : _resolvedAiModel(engine, model);
+     final normalizedEffort =
+         _resolvedAiReasoningEffort(engine, reasoningEffort);
+     _pendingAiPreferences[engine] = _PendingAiPreference(
+@@ -1869,7 +2145,7 @@ class SessionController extends ChangeNotifier {
+     _pushSystem(
+       'session',
+       engine == 'codex'
+-          ? 'Codex 模型已切换为 ${_codexModelDisplayLabel(normalizedModel)} · ${normalizedEffort.toUpperCase()}，将对下一次 Codex 启动生效'
++          ? 'Codex 模型已切换为 ${normalizedModel.isEmpty ? 'Default' : _codexModelDisplayLabel(normalizedModel)} · ${normalizedEffort.toUpperCase()}，将对下一次 Codex 启动生效'
+           : 'Claude 模型已切换为 ${_claudeModelLabel(normalizedModel)}，将对下一次 Claude 启动生效',
+     );
+     notifyListeners();
+@@ -2524,14 +2800,23 @@ class SessionController extends ChangeNotifier {
+       ),
+     );
+     _lastAssistantReplyExecutionKey = '';
+-    _service.send({
++    final launchPayload = {
+       'action': 'exec',
+       'cmd': preferredCommand,
+       'cwd': effectiveCwd,
+       'mode': 'pty',
+       ...mergedMeta.toJson(),
+       'permissionMode': _config.permissionMode,
+-    });
++    };
++    final launchSent = _sendUserVisibleAction(
++      launchPayload,
++      userText: preferredCommand,
++      label: '命令',
++      queueOnFailure: true,
++    );
++    if (!launchSent) {
++      return;
++    }
+     if (value.isEmpty) {
+       _pendingAiLaunchAwaitingFirstInput = true;
+       return;
+@@ -2562,17 +2847,27 @@ class SessionController extends ChangeNotifier {
+         permissionMode: _config.permissionMode,
+       ),
+     );
+-    _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
+-    _syncDerivedState();
+-    _pushUser(value, label);
+-    _lastAssistantReplyExecutionKey = '';
+-    _service.send({
++    final payload = {
+       'action': 'input',
+       'data': '$value\n',
+       'cwd': effectiveCwd,
+       ...mergedMeta.toJson(),
+       'permissionMode': _config.permissionMode,
+-    });
++    };
++    final sent = _sendUserVisibleAction(
++      payload,
++      userText: value,
++      label: label,
++    );
++    if (!sent) {
++      return;
++    }
++    _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
++    _lastContinuationInputAt = DateTime.now();
++    _sessionRuntimeAlive = true;
++    _syncDerivedState();
++    _pushUser(value, label);
++    _lastAssistantReplyExecutionKey = '';
+   }
+ 
+   void continueWithCurrentFile([String text = '基于当前文件继续处理']) {
+@@ -2676,6 +2971,18 @@ class SessionController extends ChangeNotifier {
+       _pushSystem('session', '请先在上方完成计划选择');
+       return;
+     }
++    final lower = value.toLowerCase();
++    final isAiCommand = _isAiCommand(lower);
++    if (isAiCommand) {
++      _clearPendingAiLaunch();
++      _continueSameSessionEnabled = false;
++      _continuedSameSessionId = '';
++    }
++    if (canSendToContinuedSameSession) {
++      _resetActionNeededTracking();
++      _submitClaudeContinuation(value, label: '回复');
++      return;
++    }
+     if (awaitInput) {
+       _markActionNeededHandled();
+       _submitAwaitingPrompt(value);
+@@ -2685,8 +2992,6 @@ class SessionController extends ChangeNotifier {
+       _handleSlashCommand(value);
+       return;
+     }
+-    final lower = value.toLowerCase();
+-    final isAiCommand = _isAiCommand(lower);
+     if (_shouldAutoCreateSessionOnFirstInput()) {
+       _deferFirstInputAndCreateSession(value);
+       return;
+@@ -2728,14 +3033,17 @@ class SessionController extends ChangeNotifier {
+     }
+     _clearPendingAiLaunch();
+     _lastAssistantReplyExecutionKey = '';
+-    _service.send({
++    final payload = {
+       'action': 'exec',
+       'cmd': value,
+       'cwd': effectiveCwd,
+       'mode': 'pty',
+       ...currentMeta.toJson(),
+       'permissionMode': _config.permissionMode,
+-    });
++    };
++    if (!_sendUserVisibleAction(payload, userText: value, label: '命令')) {
++      return;
++    }
+     _pushUser(value, '命令');
+   }
+ 
+@@ -3001,7 +3309,9 @@ class SessionController extends ChangeNotifier {
+         'promptMessage': interaction.message,
+         'command': decisionMeta.command,
+         'cwd': decisionMeta.cwd.isNotEmpty ? decisionMeta.cwd : effectiveCwd,
+-        'engine': decisionMeta.engine.isNotEmpty ? decisionMeta.engine : _config.engine,
++        'engine': decisionMeta.engine.isNotEmpty
++            ? decisionMeta.engine
++            : _config.engine,
+         'target': decisionMeta.target,
+         'targetType': decisionMeta.targetType,
+       });
+@@ -3024,12 +3334,15 @@ class SessionController extends ChangeNotifier {
+     _pendingInteraction = null;
+     _clearPlanInteractionState();
+     _lastAssistantReplyExecutionKey = '';
+-    _optimisticallyResumeAiProcessingAfterInput();
+-    _service.send({
++    final payload = {
+       'action': 'input',
+       'data': '$value\n',
+       'permissionMode': _config.permissionMode,
+-    });
++    };
++    if (!_sendUserVisibleAction(payload, userText: value, label: promptLabel)) {
++      return;
++    }
++    _optimisticallyResumeAiProcessingAfterInput();
+     _pushUser(value, promptLabel);
+     _syncDerivedState();
+     notifyListeners();
+@@ -3108,12 +3421,12 @@ class SessionController extends ChangeNotifier {
+         ? promptSnapshot!.message
+         : _runtimePhase?.message;
+     final decisionMeta = currentMeta.merge(promptMeta).merge(
+-      RuntimeMeta(
+-        contextTitle: contextTitle,
+-        targetPath: targetPath,
+-        permissionMode: _currentDecisionPermissionMode,
+-      ),
+-    );
++          RuntimeMeta(
++            contextTitle: contextTitle,
++            targetPath: targetPath,
++            permissionMode: _currentDecisionPermissionMode,
++          ),
++        );
+     _pendingPrompt = null;
+     _pendingInteraction = null;
+     _runtimePhase = null;
+@@ -3133,7 +3446,8 @@ class SessionController extends ChangeNotifier {
+       'promptMessage': promptMessage,
+       'command': decisionMeta.command,
+       'cwd': decisionMeta.cwd.isNotEmpty ? decisionMeta.cwd : effectiveCwd,
+-      'engine': decisionMeta.engine.isNotEmpty ? decisionMeta.engine : _config.engine,
++      'engine':
++          decisionMeta.engine.isNotEmpty ? decisionMeta.engine : _config.engine,
+       'target': decisionMeta.target,
+       'targetType': decisionMeta.targetType,
+     });
+@@ -3383,14 +3697,17 @@ class SessionController extends ChangeNotifier {
+         break;
+       default:
+         final meta = currentMeta;
+-        _service.send({
++        final payload = {
+           'action': 'slash_command',
+           'command': raw,
+           'cwd': effectiveCwd,
+           'engine': _config.engine,
+           ...meta.toJson(),
+           'permissionMode': _config.permissionMode,
+-        });
++        };
++        if (!_sendUserVisibleAction(payload, userText: raw, label: 'Slash')) {
++          return;
++        }
+         _pushUser(raw, 'Slash');
+     }
+   }
+@@ -3399,6 +3716,9 @@ class SessionController extends ChangeNotifier {
+     _lastServerEventAt = DateTime.now();
+     _trackSessionEventCursor(event);
+     switch (event) {
++      case ClientActionAckEvent ack:
++        _handleClientActionAck(ack);
++        break;
+       case SessionCreatedEvent created:
+         _connectionStage = SessionConnectionStage.ready;
+         _connectionMessage = '已连接';
+@@ -3406,6 +3726,8 @@ class SessionController extends ChangeNotifier {
+         _autoSessionCreating = false;
+         _selectedSessionId = created.summary.id;
+         _selectedSessionTitle = sessionDisplayTitle(created.summary);
++        _selectedSessionExternalNative =
++            _isExternalNativeSession(created.summary);
+         _sendCachedPushTokenIfPossible();
+         _resetNewSessionState();
+         _upsertSession(created.summary);
+@@ -3455,6 +3777,8 @@ class SessionController extends ChangeNotifier {
+             _resolvedHistorySummary(history.summary, history.logEntries);
+         _selectedSessionId = resolvedHistorySummary.id;
+         _selectedSessionTitle = sessionDisplayTitle(resolvedHistorySummary);
++        _selectedSessionExternalNative =
++            _isExternalNativeSession(resolvedHistorySummary);
+         _sendCachedPushTokenIfPossible();
+         _sessionContext = history.sessionContext;
+         _skillCatalogMeta = history.skillCatalogMeta;
+@@ -3483,6 +3807,10 @@ class SessionController extends ChangeNotifier {
+         _latestError = history.latestError;
+         _canResumeCurrentSession = history.canResume;
+         _resumeRuntimeMeta = history.resumeRuntimeMeta;
++        _sessionRuntimeAlive = history.runtimeAlive;
++        _continueSameSessionEnabled = false;
++        _continuedSameSessionId = '';
++        _lastContinuationInputAt = null;
+         _terminalExecutions
+           ..clear()
+           ..addAll(history.terminalExecutions);
+@@ -3559,11 +3887,15 @@ class SessionController extends ChangeNotifier {
+         final restoredCwd = history.resumeRuntimeMeta.cwd.trim();
+         final targetCwd = restoredCwd.isNotEmpty ? restoredCwd : _config.cwd;
+         await switchWorkingDirectory(targetCwd);
++        _requestSessionDelta(reason: 'history_loaded');
+         break;
+       case SessionDeltaEvent delta:
+         _handleSessionDelta(delta);
+         break;
+       case SessionResumeResultEvent result:
++        if (!_eventTargetsCurrentSession(result.sessionId)) {
++          break;
++        }
+         if (result.sessionId.trim().isNotEmpty) {
+           final previous = _sessionEventCursors[result.sessionId.trim()] ?? 0;
+           if (result.latestCursor > previous) {
+@@ -3572,12 +3904,29 @@ class SessionController extends ChangeNotifier {
+         }
+         _connectionStage = SessionConnectionStage.ready;
+         _connectionMessage = '已连接';
++        _sessionRuntimeAlive = result.runtimeAlive;
++        if (!result.runtimeAlive && !canSendToContinuedSameSession) {
++          _continueSameSessionEnabled = false;
++          _continuedSameSessionId = '';
++        }
++        _syncObservedSessionPolling();
+         break;
+       case SessionResumeNoticeEvent notice:
+         _emitResumeNotification(notice);
+         break;
+       case SessionStateEvent state:
++        if (!_eventTargetsCurrentSession(state.sessionId)) {
++          break;
++        }
+         _sessionState = state;
++        if (_isIdleLikeState(state.state) ||
++            state.state.trim().toLowerCase() == 'stopped') {
++          _sessionRuntimeAlive = false;
++          if (!canSendToContinuedSameSession) {
++            _continueSameSessionEnabled = false;
++            _continuedSameSessionId = '';
++          }
++        }
+         _maybeAutoSyncAiModel(state.runtimeMeta);
+         _syncRuntimePermissionMode();
+ 
+@@ -3601,20 +3950,44 @@ class SessionController extends ChangeNotifier {
+         }
+         if (_isIdleLikeState(state.state) && !_shouldPreserveBlockingPrompt()) {
+           _pendingInteraction = null;
+-        _pendingPrompt = null;
++          _pendingPrompt = null;
+           _runtimePhase = null;
+           _agentState = null;
+         }
+         _connectionMessage =
+             state.message.isNotEmpty ? state.message : state.state;
+         _syncDerivedState();
++        _syncObservedSessionPolling();
+         _handleSessionStateTimeline(state);
+         break;
+       case TaskSnapshotEvent snapshot:
+-        _handleTaskSnapshot(snapshot);
++        if (!_eventTargetsCurrentSession(snapshot.sessionId)) {
++          break;
++        }
++        final ignoredAsStale = _handleTaskSnapshot(snapshot);
++        if (!ignoredAsStale) {
++          _sessionRuntimeAlive =
++              snapshot.runtimeAlive || _hasRecentContinuationInput;
++          if (!snapshot.runtimeAlive &&
++              !_hasRecentContinuationInput &&
++              !canSendToContinuedSameSession) {
++            _continueSameSessionEnabled = false;
++            _continuedSameSessionId = '';
++          }
++        }
++        _syncObservedSessionPolling();
+         break;
+       case AgentStateEvent agent:
++        if (!_eventTargetsCurrentSession(agent.sessionId)) {
++          break;
++        }
+         _agentState = agent;
++        final agentStateName = agent.state.trim().toUpperCase();
++        _sessionRuntimeAlive = agentStateName == 'THINKING' ||
++            agentStateName == 'RECOVERING' ||
++            agentStateName == 'RUNNING' ||
++            agentStateName == 'RUNNING_TOOL' ||
++            _hasRecentContinuationInput;
+         _maybeAutoSyncAiModel(agent.runtimeMeta);
+         _syncRuntimePermissionMode();
+         if (_isIdleLikeState(agent.state) || agent.awaitInput) {
+@@ -3623,7 +3996,8 @@ class SessionController extends ChangeNotifier {
+             finishedAt: agent.timestamp,
+           );
+         }
+-        if ((_isIdleLikeState(agent.state) || agent.awaitInput) && !_shouldPreserveBlockingPrompt()) {
++        if ((_isIdleLikeState(agent.state) || agent.awaitInput) &&
++            !_shouldPreserveBlockingPrompt()) {
+           _pendingInteraction = null;
+           _pendingPrompt = null;
+           _runtimePhase = null;
+@@ -3636,6 +4010,7 @@ class SessionController extends ChangeNotifier {
+           targetPath: agent.runtimeMeta.targetPath,
+         );
+         _syncDerivedState();
++        _syncObservedSessionPolling();
+         break;
+       case RuntimePhaseEvent runtimePhase:
+         _runtimePhase = runtimePhase;
+@@ -3950,6 +4325,20 @@ class SessionController extends ChangeNotifier {
+           ..addAll(result.items);
+         _isSavingMemory = false;
+         break;
++      case CatalogAuthoringResultEvent result:
++        if (result.skill != null) {
++          _upsertSkillDefinition(result.skill!);
++          _isSavingSkill = false;
++        }
++        if (result.memory != null) {
++          _upsertMemoryItem(result.memory!);
++          _isSavingMemory = false;
++        }
++        final message = result.message.trim();
++        if (message.isNotEmpty) {
++          _pushSystem('catalog', message);
++        }
++        break;
+       case SessionContextResultEvent result:
+         _sessionContext = result.sessionContext;
+         _pendingSessionContextTarget = null;
+@@ -4109,6 +4498,8 @@ class SessionController extends ChangeNotifier {
+           _adbWebRtcStarting = false;
+         }
+         break;
++      case PongEvent _:
++        break;
+       case UnknownEvent unknown:
+         _pushSystem('system', '收到未识别事件：${unknown.type}');
+         break;
+@@ -4318,6 +4709,8 @@ class SessionController extends ChangeNotifier {
+     if (resolvedSummary.id.trim().isNotEmpty) {
+       _selectedSessionId = resolvedSummary.id;
+       _selectedSessionTitle = sessionDisplayTitle(resolvedSummary);
++      _selectedSessionExternalNative =
++          _isExternalNativeSession(resolvedSummary);
+       _upsertSession(resolvedSummary);
+     }
+     _sessionContext = delta.sessionContext;
+@@ -4326,6 +4719,13 @@ class SessionController extends ChangeNotifier {
+     _runtimePermissionMode = delta.resumeRuntimeMeta.permissionMode.trim();
+     _canResumeCurrentSession = delta.canResume;
+     _resumeRuntimeMeta = delta.resumeRuntimeMeta;
++    _sessionRuntimeAlive = delta.runtimeAlive || _hasRecentContinuationInput;
++    if (!delta.runtimeAlive &&
++        !_hasRecentContinuationInput &&
++        !canSendToContinuedSameSession) {
++      _continueSameSessionEnabled = false;
++      _continuedSameSessionId = '';
++    }
+     if (delta.latest.eventCursor > 0) {
+       final sessionId = delta.sessionId.trim();
+       final previous = _sessionEventCursors[sessionId] ?? 0;
+@@ -4520,6 +4920,42 @@ class SessionController extends ChangeNotifier {
+     }
+   }
+ 
++  void _upsertSkillDefinition(SkillDefinition skill) {
++    final name = skill.name.trim();
++    if (name.isEmpty) {
++      return;
++    }
++    final index = _skills.indexWhere((item) => item.name == name);
++    if (index == -1) {
++      _skills.insert(0, skill);
++    } else {
++      _skills[index] = skill;
++    }
++  }
++
++  void _upsertMemoryItem(MemoryItem memory) {
++    final id = memory.id.trim();
++    if (id.isEmpty) {
++      return;
++    }
++    final index = _memoryItems.indexWhere((item) => item.id == id);
++    if (index == -1) {
++      _memoryItems.insert(0, memory);
++    } else {
++      _memoryItems[index] = memory;
++    }
++  }
++
++  bool _isExternalNativeSession(SessionSummary summary) {
++    final source = summary.source.trim().toLowerCase();
++    final runtimeSource = summary.runtime.source.trim().toLowerCase();
++    return summary.external ||
++        source == 'codex-native' ||
++        source == 'claude-native' ||
++        runtimeSource == 'codex-native' ||
++        runtimeSource == 'claude-native';
++  }
++
+   SessionSummary _resolvedHistorySummary(
+     SessionSummary summary,
+     List<HistoryLogEntry> entries,
+@@ -4673,6 +5109,12 @@ class SessionController extends ChangeNotifier {
+     if (!_shouldKeepTimelineItem(item)) {
+       return;
+     }
++    if (_timeline.any((previous) => previous.id == item.id)) {
++      return;
++    }
++    if (_isDuplicateUserTimelineItem(item)) {
++      return;
++    }
+     if (_shouldMergeIntoPreviousTimelineItem(item)) {
+       final previous = _timeline.removeLast();
+       final mergedItem = TimelineItem(
+@@ -4702,6 +5144,25 @@ class SessionController extends ChangeNotifier {
+     }
+   }
+ 
++  bool _isDuplicateUserTimelineItem(TimelineItem item) {
++    if (item.kind != 'user') {
++      return false;
++    }
++    final body = item.body.trim();
++    if (body.isEmpty) {
++      return false;
++    }
++    for (final previous in _timeline.reversed.take(6)) {
++      if (previous.kind == 'user' && previous.body.trim() == body) {
++        final gap = item.timestamp.difference(previous.timestamp).abs();
++        if (gap.inSeconds <= 12) {
++          return true;
++        }
++      }
++    }
++    return false;
++  }
++
+   String _mergedTimelineKind(TimelineItem previous, TimelineItem next) {
+     if (_isAssistantReplyTimelineItem(previous) &&
+         _isAssistantReplyTimelineItem(next)) {
+@@ -4924,11 +5385,13 @@ class SessionController extends ChangeNotifier {
+     if (kind == 'markdown') {
+       final executionKey = _runtimeExecutionKey(mergedMeta);
+       _lastAssistantReplyExecutionKey = executionKey;
++      _lastContinuationInputAt = null;
+       _markTerminalExecutionFinished(
+         mergedMeta,
+         finishedAt: log.timestamp,
+       );
+       _syncDerivedState();
++      _syncObservedSessionPolling();
+     }
+     _pushTimelineItem(
+       TimelineItem(
+@@ -5372,7 +5835,8 @@ class SessionController extends ChangeNotifier {
+       return false;
+     }
+     if (looksLikeSessionNoiseText(trimmed) ||
+-        looksLikeSessionBootstrapCommand(trimmed)) {
++        looksLikeSessionBootstrapCommand(trimmed) ||
++        looksLikeSessionPlaceholderTitle(trimmed)) {
+       return true;
+     }
+     final lower = trimmed.toLowerCase();
+@@ -6100,17 +6564,17 @@ class SessionController extends ChangeNotifier {
+         hasPendingPermissionPrompt ||
+         shouldShowReviewChoices ||
+         hasPendingPlanQuestions;
++    final hasRealRunningSignal = agentState == 'THINKING' ||
++        agentState == 'RECOVERING' ||
++        sessionState == 'THINKING' ||
++        sessionState == 'RUNNING' ||
++        agentState == 'RUNNING_TOOL' ||
++        sessionState == 'RUNNING_TOOL';
+     final active = _connected &&
+         !hasBlockingPrompt &&
+         !_isClaudePendingReadyForInput &&
+-        (((_connectionStage == SessionConnectionStage.catchingUp ||
+-                    agentState == 'THINKING' ||
+-                    agentState == 'RECOVERING' ||
+-                    sessionState == 'THINKING' ||
+-                    sessionState == 'RUNNING') &&
+-                !assistantReplySettled) ||
+-            agentState == 'RUNNING_TOOL' ||
+-            sessionState == 'RUNNING_TOOL');
++        hasRealRunningSignal &&
++        !assistantReplySettled;
+     if (active) {
+       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
+       if (_activityToolLabel.isEmpty) {
+@@ -6328,10 +6792,13 @@ class SessionController extends ChangeNotifier {
+     _shouldSuppressNextActionNeededSignal = suppressNextSignal;
+   }
+ 
+-  void _handleTaskSnapshot(TaskSnapshotEvent snapshot) {
++  bool _handleTaskSnapshot(TaskSnapshotEvent snapshot) {
+     final sessionId = snapshot.sessionId.trim();
+     if (sessionId.isNotEmpty && sessionId != _selectedSessionId.trim()) {
+-      return;
++      return true;
++    }
++    if (_shouldIgnoreStaleSnapshotAfterInput(snapshot)) {
++      return true;
+     }
+     if (sessionId.isNotEmpty && snapshot.latestCursor > 0) {
+       final previous = _sessionEventCursors[sessionId] ?? 0;
+@@ -6339,7 +6806,16 @@ class SessionController extends ChangeNotifier {
+         _sessionEventCursors[sessionId] = snapshot.latestCursor;
+       }
+     }
+-    final state = snapshot.state.trim().isEmpty ? 'IDLE' : snapshot.state.trim();
++    final state =
++        snapshot.state.trim().isEmpty ? 'IDLE' : snapshot.state.trim();
++    if (!snapshot.runtimeAlive && _isIdleLikeState(state)) {
++      _agentState = null;
++      _sessionRuntimeAlive = false;
++      _lastContinuationInputAt = null;
++      _syncDerivedState();
++      notifyListeners();
++      return false;
++    }
+     final meta = snapshot.runtimeMeta.merge(
+       RuntimeMeta(
+         command: snapshot.command,
+@@ -6364,24 +6840,48 @@ class SessionController extends ChangeNotifier {
+       _connectionStage = snapshot.syncing
+           ? SessionConnectionStage.catchingUp
+           : SessionConnectionStage.ready;
+-      _connectionMessage = snapshot.syncing
+-          ? 'Syncing latest progress...'
+-          : 'Session is live';
+-    } else if (_connected && _connectionStage != SessionConnectionStage.catchingUp) {
++      _connectionMessage =
++          snapshot.syncing ? 'Syncing latest progress...' : 'Session is live';
++    } else if (_connected &&
++        _connectionStage != SessionConnectionStage.catchingUp) {
+       _connectionStage = SessionConnectionStage.ready;
+-      _connectionMessage = snapshot.message.isNotEmpty
+-          ? snapshot.message
+-          : 'Session ready';
++      _connectionMessage =
++          snapshot.message.isNotEmpty ? snapshot.message : 'Session ready';
++    }
++    if (!_isHeartbeatIdleSnapshot(snapshot, state)) {
++      _syncStepSummary(
++        message: snapshot.step.isNotEmpty ? snapshot.step : snapshot.message,
++        status: state,
++        tool: snapshot.tool,
++        command: snapshot.command,
++        targetPath: snapshot.runtimeMeta.targetPath,
++      );
+     }
+-    _syncStepSummary(
+-      message: snapshot.step.isNotEmpty ? snapshot.step : snapshot.message,
+-      status: state,
+-      tool: snapshot.tool,
+-      command: snapshot.command,
+-      targetPath: snapshot.runtimeMeta.targetPath,
+-    );
+     _syncDerivedState();
+     notifyListeners();
++    return false;
++  }
++
++  bool _shouldIgnoreStaleSnapshotAfterInput(TaskSnapshotEvent snapshot) {
++    if (!_hasRecentContinuationInput) {
++      return false;
++    }
++    final state = snapshot.state.trim().toLowerCase();
++    final lifecycle = snapshot.runtimeMeta.claudeLifecycle.trim().toLowerCase();
++    return snapshot.awaitInput ||
++        state == 'wait_input' ||
++        state == 'idle' ||
++        lifecycle == 'waiting_input' ||
++        lifecycle == 'resumable';
++  }
++
++  bool _isHeartbeatIdleSnapshot(TaskSnapshotEvent snapshot, String state) {
++    final normalizedState = state.trim().toLowerCase();
++    final message = snapshot.message.trim().toLowerCase();
++    final step = snapshot.step.trim().toLowerCase();
++    return !snapshot.runtimeAlive &&
++        normalizedState == 'idle' &&
++        (message.contains('heartbeat') || step.contains('heartbeat'));
+   }
+ 
+   void _startConnectionHealthMonitor() {
+@@ -6394,7 +6894,8 @@ class SessionController extends ChangeNotifier {
+       if (lastSeen != null &&
+           DateTime.now().difference(lastSeen) > _connectionSilenceTimeout) {
+         unawaited(_service.disconnect());
+-        _handleUnexpectedSocketDisconnect('Connection timed out, reconnecting...');
++        _handleUnexpectedSocketDisconnect(
++            'Connection timed out, reconnecting...');
+         return;
+       }
+       _service.send({
+@@ -6865,7 +7366,10 @@ class SessionController extends ChangeNotifier {
+       command: meta.command.isNotEmpty ? meta.command : currentMeta.command,
+       engine: meta.engine.isNotEmpty ? meta.engine : currentMeta.engine,
+     );
+-    if (!(engine == 'claude' || engine == 'codex')) {
++    if (engine == 'codex') {
++      return;
++    }
++    if (engine != 'claude') {
+       return;
+     }
+ 
+@@ -6960,7 +7464,9 @@ class SessionController extends ChangeNotifier {
+   ) {
+     switch (engine) {
+       case 'codex':
+-        return '${_codexModelDisplayLabel(model)} · ${_resolvedAiReasoningEffort('codex', reasoningEffort).toUpperCase()}';
++        final label =
++            model.trim().isEmpty ? 'Default' : _codexModelDisplayLabel(model);
++        return '$label · ${_resolvedAiReasoningEffort('codex', reasoningEffort).toUpperCase()}';
+       case 'claude':
+         return _claudeModelLabel(model);
+       case 'gemini':
+@@ -7010,7 +7516,6 @@ class SessionController extends ChangeNotifier {
+     }
+     return withoutTrailing.substring(0, index);
+   }
+-
+ }
+ 
+ (String, String) _parseAiModelFromText(String engine, String text) {
+@@ -7069,8 +7574,11 @@ String _resolvedAiModel(String engine, String configured) {
+   final normalized = configured.trim();
+   switch (engine) {
+     case 'codex':
++      if (normalized.isEmpty || normalized.toLowerCase() == 'default') {
++        return '';
++      }
+       final codexModel = _normalizeCodexModel(normalized);
+-      return codexModel.isNotEmpty ? codexModel : 'gpt-5-codex';
++      return codexModel;
+     case 'claude':
+       return _normalizeClaudeModel(normalized);
+     default:

@@ -3790,7 +3790,7 @@ class SessionController extends ChangeNotifier {
         _selectedSessionTitle = sessionDisplayTitle(resolvedHistorySummary);
         _selectedSessionExternalNative =
             _isExternalNativeSession(resolvedHistorySummary);
-        _executionActive = resolvedHistorySummary.executionActive;
+        _executionActive = _executionActive || resolvedHistorySummary.executionActive;
         _sendCachedPushTokenIfPossible();
         _sessionContext = history.sessionContext;
         _skillCatalogMeta = history.skillCatalogMeta;
@@ -4033,6 +4033,7 @@ class SessionController extends ChangeNotifier {
           _pendingPrompt = null;
           _runtimePhase = null;
         }
+        _checkAndClearExecutionState(agent.state);
         _syncStepSummary(
           message: agent.step.isNotEmpty ? agent.step : agent.message,
           status: agent.state,
@@ -4598,6 +4599,15 @@ class SessionController extends ChangeNotifier {
         normalized == 'DISCONNECTED';
   }
 
+  void _checkAndClearExecutionState(String agentState) {
+    final normalized = agentState.trim().toUpperCase();
+    if (_isIdleLikeState(normalized) || normalized == 'WAIT_INPUT') {
+      _executionActive = false;
+      _activityStartedAt = null;
+      _activityToolLabel = '';
+    }
+  }
+
   void _markDiffReviewState(
     HistoryContext diff, {
     required bool keepPending,
@@ -4746,7 +4756,7 @@ class SessionController extends ChangeNotifier {
       _selectedSessionTitle = sessionDisplayTitle(resolvedSummary);
       _selectedSessionExternalNative =
           _isExternalNativeSession(resolvedSummary);
-      _executionActive = resolvedSummary.executionActive;
+      _executionActive = _executionActive || resolvedSummary.executionActive;
       _upsertSession(resolvedSummary);
     }
     _sessionContext = delta.sessionContext;

@@ -41,7 +41,7 @@ def flutter_install_plugin_pods(application_path = nil, relative_symlink_dir, pl
   plugins_file = File.join(application_path, '..', '.flutter-plugins-dependencies')
   dependencies_hash = flutter_parse_plugins_file(plugins_file)
   plugin_pods = flutter_get_plugins_list(dependencies_hash, platform)
-  swift_package_manager_enabled = flutter_get_swift_package_manager_enabled(dependencies_hash)
+  swift_package_manager_enabled = flutter_get_swift_package_manager_enabled(dependencies_hash, platform)
 
   if platform == 'ios'
     excluded_plugin_names = %w[integration_test patrol]
