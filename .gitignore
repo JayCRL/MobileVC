@@ -1,0 +1,19 @@
+# 编译产物
+server
+packages/
+
+# 日志
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Claude 工作区
+.claude/worktrees/
