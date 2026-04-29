@@ -986,7 +986,18 @@ class SessionController extends ChangeNotifier {
     if (_isHotSwapping) {
       return '权限已授权，正在继续…';
     }
-    return _isClaudePendingReadyForInput ? '待输入' : 'AI 助手正在运行中';
+    if (_isClaudePendingReadyForInput) {
+      return '待输入';
+    }
+    final stepSummary = _currentStepSummary.trim();
+    if (stepSummary.isNotEmpty) {
+      return stepSummary;
+    }
+    final phase = _agentPhaseLabel.trim();
+    if (phase.isNotEmpty && phase != '已连接') {
+      return phase;
+    }
+    return '运行中';
   }
 
   String get activityBannerDetail {
@@ -1065,7 +1076,9 @@ class SessionController extends ChangeNotifier {
     return agentState == 'THINKING' ||
         agentState == 'RECOVERING' ||
         agentState == 'RUNNING_TOOL' ||
-        sessionState == 'RUNNING_TOOL';
+        sessionState == 'RUNNING_TOOL' ||
+        sessionState == 'THINKING' ||
+        sessionState == 'RUNNING';
   }
 
   RuntimeMeta get currentMeta {
@@ -3803,6 +3816,10 @@ class SessionController extends ChangeNotifier {
         _handleAutoSessionBinding(mergedItems);
         break;
       case SessionHistoryEvent history:
+        // 正在创建或加载会话中，不覆盖 _selectedSessionId，避免与 auto-create 竞态
+        if (_isLoadingSession) {
+          break;
+        }
         _connectionStage = SessionConnectionStage.ready;
         _connectionMessage = '已连接';
         _autoSessionRequested = false;
@@ -4773,6 +4790,10 @@ class SessionController extends ChangeNotifier {
   void _handleSessionDelta(SessionDeltaEvent delta) {
     if (delta.requiresFullSync) {
       _requestSessionResume(reason: 'delta_base_mismatch');
+      return;
+    }
+    // 正在创建或加载会话中，不覆盖 _selectedSessionId，避免与 auto-create 竞态
+    if (_isLoadingSession) {
       return;
     }
     _connectionStage = SessionConnectionStage.ready;

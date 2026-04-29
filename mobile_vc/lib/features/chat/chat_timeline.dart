@@ -194,7 +194,10 @@ class _ChatTimelineState extends State<ChatTimeline> {
           return const SizedBox.shrink();
         }
         if (item.kind == 'ai_status') {
-          return _AiStatusIndicator(label: item.title);
+          return _AiStatusIndicator(
+            key: const ValueKey('ai-status-indicator'),
+            label: item.title,
+          );
         }
         if (item.kind == 'review_summary') {
           return _ReviewSummaryCard(
@@ -400,7 +403,7 @@ class _InteractionRequestCard extends StatelessWidget {
 }
 
 class _AiStatusIndicator extends StatefulWidget {
-  const _AiStatusIndicator({required this.label});
+  const _AiStatusIndicator({super.key, required this.label});
   final String label;
   @override
   State<_AiStatusIndicator> createState() => _AiStatusIndicatorState();

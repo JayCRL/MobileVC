@@ -6648,6 +6648,249 @@ void main() {
       expect(service.sentPayloads.single['decision'], 'approve');
     });
   });
+
+  group('Bug fix: activityBannerTitle dynamic status', () {
+    test('returns default "运行中" when no step summary or phase label',
+        () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      expect(controller.activityBannerTitle, '未连接');
+
+      await controller.connect();
+      // After connect, no agent state yet — should show phase label or default
+      final title = controller.activityBannerTitle;
+      // Connected but no activity, should not return the old static text
+      expect(title, isNot('AI 助手正在运行中'));
+    });
+
+    test('reflects current step summary from agent_state', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionCreatedEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_created'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+      ));
+      await _flushEvents();
+
+      // Send "claude" to trigger pending launch
+      controller.sendInputText('claude');
+      await _flushEvents();
+
+      // Should show "待输入" when pending input
+      expect(controller.activityBannerTitle, '待输入');
+
+      // Simulate backend response with thinking state
+      service.emit(AgentStateEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+        raw: const {'type': 'agent_state'},
+        state: 'THINKING',
+        message: '分析需求中',
+        command: 'claude',
+      ));
+      await _flushEvents();
+
+      // After agent_state THINKING, phase label should be "思考中"
+      expect(controller.agentPhaseLabel, '思考中');
+
+      // Step summary from syncStepSummary should be set
+      final title = controller.activityBannerTitle;
+      expect(title, isNotEmpty);
+      expect(title, isNot('AI 助手正在运行中'));
+    });
+  });
+
+  group('Bug fix: _isDefinitiveAgentState session states', () {
+    test('sessionState THINKING produces visible activity', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionCreatedEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_created'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+      ));
+      await _flushEvents();
+
+      // Simulate a session that is THINKING
+      service.emit(SessionStateEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(executionId: 'exec-1', command: 'claude'),
+        raw: const {'type': 'session_state'},
+        state: 'THINKING',
+        message: 'thinking...',
+      ));
+      await _flushEvents();
+
+      // Activity should be visible with sessionState=THINKING
+      expect(controller.activityVisible, isTrue);
+      expect(controller.activityBannerVisible, isTrue);
+    });
+
+    test('sessionState RUNNING produces visible activity', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionCreatedEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_created'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+      ));
+      await _flushEvents();
+
+      // Set execution active first
+      controller.sendInputText('claude');
+      await _flushEvents();
+
+      // Simulate session_state RUNNING
+      service.emit(SessionStateEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta:
+            const RuntimeMeta(executionId: 'exec-1', command: 'claude'),
+        raw: const {'type': 'session_state'},
+        state: 'RUNNING',
+        message: 'running...',
+      ));
+      await _flushEvents();
+
+      // Session state RUNNING should keep activity visible
+      expect(controller.activityVisible, isTrue);
+    });
+  });
+
+  group('Bug fix: delta/history do not overwrite during loading', () {
+    test(
+        'SessionDeltaEvent does not overwrite selectedSessionId while loading',
+        () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      // Simulate session list synced so auto-create can trigger
+      service.emit(SessionListResultEvent(
+        timestamp: _timestamp,
+        sessionId: '',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_list_result'},
+        items: const [],
+      ));
+      await _flushEvents();
+
+      // Trigger auto-create-session by sending 'claude' with no session
+      controller.sendInputText('claude');
+      await _flushEvents();
+
+      // Now _isLoadingSession should be true (auto-create in progress)
+      expect(controller.isLoadingSession, isTrue);
+
+      // Simulate stale SessionDeltaEvent arriving during loading
+      service.emit(SessionDeltaEvent(
+        timestamp: _timestamp,
+        sessionId: 'stale-session',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_delta'},
+        summary: const SessionSummary(id: 'stale-session', title: 'Stale'),
+        appendLogEntries: const [],
+        upsertDiffs: const [],
+        reviewGroups: const [],
+        rawTerminalByStream: const {},
+        terminalExecutions: const [],
+        base: const SessionDeltaKnown(),
+        latest: const SessionDeltaKnown(),
+        sessionContext: const SessionContext(),
+        skillCatalogMeta: const CatalogMetadata(domain: 'skill'),
+        memoryCatalogMeta: const CatalogMetadata(domain: 'memory'),
+        resumeRuntimeMeta: const RuntimeMeta(),
+        requiresFullSync: false,
+        runtimeAlive: false,
+        canResume: false,
+      ));
+      await _flushEvents();
+
+      // selectedSessionId should NOT be 'stale-session' — guard prevented overwrite
+      expect(controller.selectedSessionId, isNot('stale-session'));
+      // Should still be loading
+      expect(controller.isLoadingSession, isTrue);
+    });
+
+    test('SessionHistoryEvent does not overwrite selectedSessionId while loading',
+        () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionListResultEvent(
+        timestamp: _timestamp,
+        sessionId: '',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_list_result'},
+        items: const [],
+      ));
+      await _flushEvents();
+
+      // Trigger auto-create
+      controller.sendInputText('claude');
+      await _flushEvents();
+
+      expect(controller.isLoadingSession, isTrue);
+
+      // Simulate stale SessionHistoryEvent
+      service.emit(SessionHistoryEvent(
+        timestamp: _timestamp,
+        sessionId: 'stale-history-session',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_history'},
+        summary: const SessionSummary(
+            id: 'stale-history-session', title: 'Stale History'),
+        logEntries: const [],
+        diffs: const [],
+        reviewGroups: const [],
+        rawTerminalByStream: const {},
+        terminalExecutions: const [],
+        sessionContext: const SessionContext(),
+        skillCatalogMeta: const CatalogMetadata(domain: 'skill'),
+        memoryCatalogMeta: const CatalogMetadata(domain: 'memory'),
+        resumeRuntimeMeta: const RuntimeMeta(),
+        runtimeAlive: false,
+        canResume: false,
+        currentStep: null,
+        latestError: null,
+        activeReviewGroup: null,
+      ));
+      await _flushEvents();
+
+      // selectedSessionId should NOT be overwritten
+      expect(controller.selectedSessionId, isNot('stale-history-session'));
+      expect(controller.isLoadingSession, isTrue);
+    });
+  });
 }
 
 final _timestamp = DateTime(2026, 1, 1);
@@ -6700,8 +6943,9 @@ class _FakeMobileVcWsService extends MobileVcWsService {
   }
 
   @override
-  void send(Map<String, dynamic> payload) {
+  bool send(Map<String, dynamic> payload) {
     sentPayloads.add(Map<String, dynamic>.from(payload));
+    return true;
   }
 
   void emit(AppEvent event) {
