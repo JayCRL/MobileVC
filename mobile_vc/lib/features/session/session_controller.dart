@@ -197,7 +197,6 @@ class SessionController extends ChangeNotifier {
   SessionConnectionStage _connectionStage = SessionConnectionStage.disconnected;
   bool _connecting = false;
   bool _connected = false;
-  bool _reconnecting = false;
   bool _appInForeground = true;
   bool _autoReconnectEnabled = false;
   int _reconnectAttempt = 0;
@@ -385,11 +384,13 @@ class SessionController extends ChangeNotifier {
       );
   bool get connecting => _connecting;
   bool get connected => _connected;
-  bool get reconnecting => _reconnecting;
+  bool get reconnecting =>
+      _connectionStage == SessionConnectionStage.reconnecting ||
+      _connectionStage == SessionConnectionStage.backgroundSuspended;
   bool get shouldShowSessionSurface =>
       _connected ||
       _connectionStage == SessionConnectionStage.catchingUp ||
-      ((_connecting || _reconnecting) &&
+      ((_connecting || reconnecting) &&
           (_selectedSessionId.trim().isNotEmpty || _timeline.isNotEmpty));
   bool get fileListLoading => _fileListLoading;
   bool get fileReading => _fileReading;
@@ -1535,7 +1536,6 @@ class SessionController extends ChangeNotifier {
     if (_connected || _connecting) {
       return;
     }
-    _reconnecting = true;
     _cancelReconnectTimer();
     if (!_appInForeground) {
       _connectionStage = SessionConnectionStage.backgroundSuspended;
@@ -1565,7 +1565,6 @@ class SessionController extends ChangeNotifier {
     _cancelReconnectTimer();
     if (_isInvalidLoopbackHostForMobile()) {
       _connectionStage = SessionConnectionStage.failed;
-      _reconnecting = false;
       _connecting = false;
       _connected = false;
       _connectionMessage = 'iPhone 不能使用 localhost/127.0.0.1，请改成 Mac 的局域网 IP';
@@ -1577,9 +1576,8 @@ class SessionController extends ChangeNotifier {
     final reconnectTarget = restoreSession ? _selectedSessionId.trim() : '';
     var shouldRetrySilently = false;
     _autoReconnectEnabled = true;
-    _reconnecting = silently || _reconnecting;
     _connecting = true;
-    _connectionStage = _reconnecting
+    _connectionStage = (silently || reconnecting)
         ? SessionConnectionStage.reconnecting
         : SessionConnectionStage.connecting;
     _connectionMessage =
@@ -1589,7 +1587,6 @@ class SessionController extends ChangeNotifier {
     try {
       await _service.connect(_config.wsUrl);
       _connected = true;
-      _reconnecting = false;
       _reconnectAttempt = 0;
       _connectionStage = SessionConnectionStage.connected;
       _connectionMessage = '已连接';
@@ -1628,13 +1625,11 @@ class SessionController extends ChangeNotifier {
       if (silently && _autoReconnectEnabled) {
         if (_appInForeground &&
             _reconnectAttempt >= _maxForegroundReconnectAttempts) {
-          _reconnecting = false;
           _autoReconnectEnabled = false;
           _connectionStage = SessionConnectionStage.failed;
           _connectionMessage = '恢复失败，需要重连';
           _pushSystem('error', _connectionMessage);
         } else {
-          _reconnecting = true;
           _connectionStage = _appInForeground
               ? SessionConnectionStage.reconnecting
               : SessionConnectionStage.backgroundSuspended;
@@ -1643,7 +1638,6 @@ class SessionController extends ChangeNotifier {
           shouldRetrySilently = true;
         }
       } else {
-        _reconnecting = false;
         _connectionStage = SessionConnectionStage.failed;
         _connectionMessage = '连接失败：$error';
         _pushSystem('error', _connectionMessage);
@@ -1663,7 +1657,6 @@ class SessionController extends ChangeNotifier {
 
   Future<void> disconnect() async {
     _autoReconnectEnabled = false;
-    _reconnecting = false;
     _reconnectAttempt = 0;
     _cancelReconnectTimer();
     _stopObservedSessionSync();
@@ -1757,7 +1750,7 @@ class SessionController extends ChangeNotifier {
 
   void _handleUnexpectedSocketDisconnect(String message) {
     final normalized = message.trim().isEmpty ? '连接已断开' : message.trim();
-    final wasRecovering = _reconnecting;
+    final wasRecovering = reconnecting;
     _connected = false;
     _connecting = false;
     _selectedSessionExternalNative = false;
@@ -1781,7 +1774,6 @@ class SessionController extends ChangeNotifier {
     _stopObservedSessionSync();
     _stopAdbRefreshPolling();
     if (_autoReconnectEnabled) {
-      _reconnecting = true;
       _connectionStage = _appInForeground
           ? SessionConnectionStage.reconnecting
           : SessionConnectionStage.backgroundSuspended;
@@ -1790,7 +1782,6 @@ class SessionController extends ChangeNotifier {
     } else {
       final alreadyDisconnected =
           !_connected && !_connecting && _connectionMessage == normalized;
-      _reconnecting = false;
       _connectionStage = SessionConnectionStage.failed;
       _connectionMessage = normalized;
       _pendingPrompt = null;
