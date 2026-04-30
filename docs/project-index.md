@@ -51,6 +51,8 @@ Scope: current repository state. If this document conflicts with code, treat cod
 - Claude/Codex permission approval now writes the structured permission response back to the active runner; it no longer restarts the runner or injects continuation text.
 - Claude `control_response` approvals use the official `auto` mode flow and include `updatedInput` copied from the original `control_request.request.input`.
 - Claude permission mode is normalized to `auto` by default, with `bypassPermissions` kept as the explicit override.
+- If a client submits a stale `permissionRequestId`, the server refreshes the prompt with the current pending request ID instead of approving the old request.
+- While a permission prompt is pending, Flutter suppresses transient snapshot/delta status changes so foreground/background transitions do not make the running state jump.
 - Normal text input is blocked while a permission request is pending, so Claude does not receive invalid stdin while waiting for a structured authorization response.
 - Review state, file diffs, terminal logs, and runtime process info are persisted into session projections.
 - Push/local notification plumbing remains split between Flutter app services and Go push helpers.
