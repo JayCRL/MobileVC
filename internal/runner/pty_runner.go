@@ -1930,13 +1930,13 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			}
 			if looksLikePermissionPrompt(promptMessage, promptChoices) {
 				promptMeta.BlockingKind = "permission"
+				promptMeta.PermissionRequestID = requestID
 				// 提取 targetPath 用于权限匹配
 				if strings.EqualFold(strings.TrimSpace(envelope.Request.Subtype), "can_use_tool") {
 					toolName := strings.TrimSpace(envelope.Request.ToolName)
 					target := strings.TrimSpace(extractToolTarget(toolName, envelope.Request.Input))
 					if target != "" {
 						promptMeta.TargetPath = target
-						promptMeta.PermissionRequestID = requestID
 					}
 				}
 			}

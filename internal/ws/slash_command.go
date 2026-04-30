@@ -192,16 +192,18 @@ func buildExecRequestFromSlash(parsed *parsedSlashCommand, req protocol.SlashCom
 			command = fmt.Sprintf(parsed.spec.execTemplate, args)
 		}
 	}
+	permissionMode := normalizePermissionModeForClaude(req.PermissionMode)
 	return runtimepkg.ExecuteRequest{
 		Command:        command,
 		CWD:            fallback(req.CWD, "."),
 		Mode:           runner.ModePTY,
-		PermissionMode: req.PermissionMode,
+		PermissionMode: permissionMode,
 		RuntimeMeta: protocol.RuntimeMeta{
-			Source:     "slash-command",
-			Target:     parsed.raw,
-			TargetType: "slash-command",
-			TargetText: parsed.raw,
+			Source:         "slash-command",
+			Target:         parsed.raw,
+			TargetType:     "slash-command",
+			TargetText:     parsed.raw,
+			PermissionMode: permissionMode,
 		},
 	}, nil
 }

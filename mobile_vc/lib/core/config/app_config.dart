@@ -14,7 +14,7 @@ class AppConfig {
     this.claudeModel = '',
     this.codexModel = '',
     this.codexReasoningEffort = '',
-    this.permissionMode = 'default',
+    this.permissionMode = 'auto',
     this.fastMode = false,
     this.adbIceServersJson = '',
   });
@@ -152,7 +152,9 @@ class AppConfig {
       claudeModel: nextClaudeModel,
       codexModel: nextCodexModel,
       codexReasoningEffort: nextCodexReasoningEffort,
-      permissionMode: permissionMode ?? this.permissionMode,
+      permissionMode: _normalizePermissionMode(
+        permissionMode ?? this.permissionMode,
+      ),
       fastMode: fastMode ?? this.fastMode,
       adbIceServersJson: adbIceServersJson ?? this.adbIceServersJson,
     );
@@ -233,10 +235,20 @@ class AppConfig {
                   ? legacyReasoningEffort
                   : ''))
           .toString(),
-      permissionMode: (json['permissionMode'] ?? 'default').toString(),
+      permissionMode: _normalizePermissionMode(
+          (json['permissionMode'] ?? 'auto').toString()),
       fastMode: json['fastMode'] == true,
       adbIceServersJson: (json['adbIceServersJson'] ?? '').toString(),
     );
+  }
+
+  static String _normalizePermissionMode(String value) {
+    switch (value.trim()) {
+      case 'bypassPermissions':
+        return 'bypassPermissions';
+      default:
+        return 'auto';
+    }
   }
 
   static AppConfig? fromLaunchUri(

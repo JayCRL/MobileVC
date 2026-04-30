@@ -222,9 +222,6 @@ class SessionController extends ChangeNotifier {
   String _continuedSameSessionId = '';
   DateTime? _lastContinuationInputAt;
   bool _isStopping = false;
-  bool _isHotSwapping = false;
-  Timer? _hotSwapTimeoutTimer;
-  static const Duration _hotSwapTimeout = Duration(seconds: 10);
   Timer? _sessionLoadingTimeout;
   static const Duration _sessionLoadingTimeoutDuration = Duration(seconds: 15);
   String _connectionMessage = '未连接';
@@ -675,9 +672,11 @@ class SessionController extends ChangeNotifier {
   ActionNeededSignal? get actionNeededSignal => _actionNeededSignal;
   AppNotificationSignal? get notificationSignal => _notificationSignal;
   bool get fastMode => _config.fastMode;
-  String get displayPermissionMode => _runtimePermissionMode.isNotEmpty
-      ? _runtimePermissionMode
-      : _config.permissionMode;
+  String get displayPermissionMode => _normalizeDisplayPermissionMode(
+        _runtimePermissionMode.isNotEmpty
+            ? _runtimePermissionMode
+            : _config.permissionMode,
+      );
   bool get hasPendingReview => pendingDiffCount > 0;
   int get pendingDiffCount => _pendingDiffs.length;
   int get pendingReviewGroupCount =>
@@ -692,7 +691,7 @@ class SessionController extends ChangeNotifier {
   HistoryContext? get openedFilePendingDiff => _pendingDiffForOpenedFile();
   HistoryContext? get reviewActionTargetDiff => _reviewActionTargetDiff();
   bool get openedFileMatchesPendingDiff => openedFilePendingDiff != null;
-  bool get isAutoAcceptMode => displayPermissionMode == 'acceptEdits';
+  bool get isAutoAcceptMode => displayPermissionMode == 'auto';
   bool get isBypassPermissionsMode =>
       displayPermissionMode == 'bypassPermissions';
   bool get isManualReviewMode => !isAutoAcceptMode;
@@ -971,11 +970,10 @@ class SessionController extends ChangeNotifier {
       isObservingRemoteActiveSession ||
       _activityVisible ||
       _isClaudePendingReadyForInput ||
-      _isStopping ||
-      _isHotSwapping;
+      _isStopping;
   bool get activityBannerAnimated =>
       !isObservingRemoteActiveSession &&
-      (_activityVisible || _isHotSwapping) &&
+      _activityVisible &&
       !_isStopping &&
       !_hasRecentContinuationInput;
   String get activityBannerTitle {
@@ -984,9 +982,6 @@ class SessionController extends ChangeNotifier {
     }
     if (_isStopping) {
       return '正在停止';
-    }
-    if (_isHotSwapping) {
-      return '权限已授权，正在继续…';
     }
     if (_isClaudePendingReadyForInput) {
       return '待输入';
@@ -1008,10 +1003,6 @@ class SessionController extends ChangeNotifier {
     }
     if (_isStopping) {
       return '等待后端确认停止...';
-    }
-    if (_isHotSwapping) {
-      final carry = _currentStepSummary.trim();
-      return carry.isNotEmpty ? carry : '正在切换 runner…';
     }
     if (_isClaudePendingReadyForInput) {
       return 'Claude 已启动，请继续输入';
@@ -1231,11 +1222,11 @@ class SessionController extends ChangeNotifier {
     final interactionMode =
         pendingInteraction?.runtimeMeta.permissionMode.trim() ?? '';
     if (interactionMode.isNotEmpty) {
-      return interactionMode;
+      return _normalizeDisplayPermissionMode(interactionMode);
     }
     final promptMode = pendingPrompt?.runtimeMeta.permissionMode.trim() ?? '';
     if (promptMode.isNotEmpty) {
-      return promptMode;
+      return _normalizeDisplayPermissionMode(promptMode);
     }
     return displayPermissionMode;
   }
@@ -1294,7 +1285,6 @@ class SessionController extends ChangeNotifier {
     _adbWebRtcStartTimeout?.cancel();
     _reconnectTimer?.cancel();
     _connectionHealthTimer?.cancel();
-    _hotSwapTimeoutTimer?.cancel();
     _pendingOutboundRetryTimer?.cancel();
     _sessionLoadingTimeout?.cancel();
     await _subscription?.cancel();
@@ -1741,7 +1731,6 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
-    _endHotSwap();
     _activeReviewDiffId = '';
     _agentPhaseLabel = '未连接';
     _resetActionNeededTracking();
@@ -2049,7 +2038,6 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
-    _endHotSwap();
     _resetRuntimeProcessState();
     _sessionPermissionRules.clear();
     _persistentPermissionRules.clear();
@@ -2079,7 +2067,6 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
-    _endHotSwap();
     _currentDiff = null;
     _latestError = null;
     _recentDiffs.clear();
@@ -3831,7 +3818,8 @@ class SessionController extends ChangeNotifier {
         _selectedSessionTitle = sessionDisplayTitle(resolvedHistorySummary);
         _selectedSessionExternalNative =
             _isExternalNativeSession(resolvedHistorySummary);
-        _executionActive = _executionActive || resolvedHistorySummary.executionActive;
+        _executionActive =
+            _executionActive || resolvedHistorySummary.executionActive;
         _sendCachedPushTokenIfPossible();
         _sessionContext = history.sessionContext;
         _skillCatalogMeta = history.skillCatalogMeta;
@@ -4057,7 +4045,8 @@ class SessionController extends ChangeNotifier {
         _syncRuntimePermissionMode();
         // AI 正在运行中，清掉 pending prompt，防止阻塞态残留导致 awaitInput 误判。
         // 但保留权限/审查/计划等阻塞型提示，防止 RECOVERING 等中间态误清。
-        if (!_isIdleLikeState(agent.state) && !agent.awaitInput &&
+        if (!_isIdleLikeState(agent.state) &&
+            !agent.awaitInput &&
             !_shouldPreserveBlockingPrompt()) {
           _pendingPrompt = null;
           _pendingInteraction = null;
@@ -4251,8 +4240,11 @@ class SessionController extends ChangeNotifier {
           targetPath: step.runtimeMeta.targetPath,
         );
         // 步骤更新说明 AI 正在工作中，清掉等待输入状态
-        _pendingPrompt = null;
-        _pendingInteraction = null;
+        // 但保留权限/审查/计划等阻塞型提示
+        if (!_shouldPreserveBlockingPrompt()) {
+          _pendingPrompt = null;
+          _pendingInteraction = null;
+        }
         _syncDerivedState();
         break;
       case ReviewStateEvent reviewState:
@@ -4266,14 +4258,17 @@ class SessionController extends ChangeNotifier {
         break;
       case FileDiffEvent diff:
         _currentDiff = diff;
-        if (_pendingInteraction?.isPermission == true) {
+        if (_pendingInteraction?.isPermission == true &&
+            !_shouldPreserveBlockingPrompt()) {
           _pendingInteraction = null;
         }
-        if (_pendingPrompt?.isPermission == true) {
+        if (_pendingPrompt?.isPermission == true &&
+            !_shouldPreserveBlockingPrompt()) {
           _pendingPrompt = null;
         }
-        if (_runtimePermissionMode.trim() == 'acceptEdits' ||
-            diff.runtimeMeta.permissionMode.trim() == 'acceptEdits') {
+        if (_normalizeDisplayPermissionMode(_runtimePermissionMode) == 'auto' ||
+            _normalizeDisplayPermissionMode(diff.runtimeMeta.permissionMode) ==
+                'auto') {
           _runtimePermissionMode = _config.permissionMode;
         }
         _runtimePhase = RuntimePhaseEvent(
@@ -4437,8 +4432,6 @@ class SessionController extends ChangeNotifier {
         // 后端已自动应用权限规则，清空 pending 状态
         _pendingPrompt = null;
         _pendingInteraction = null;
-        // 授权后后端会 hot swap runner，标记 sticky 避免 banner 闪断
-        _beginHotSwap();
         if (result.message.trim().isNotEmpty) {
           _pushSystem('session', result.message.trim());
         }
@@ -5731,10 +5724,11 @@ class SessionController extends ChangeNotifier {
       return false;
     }
     final runtimeMessage = _runtimePhase?.message.trim().toLowerCase() ?? '';
-    final temporaryHandoff = _runtimePermissionMode.trim() == 'acceptEdits' ||
-        runtimeMessage.contains('权限') ||
-        runtimeMessage.contains('permission') ||
-        runtimeMessage.contains('授权');
+    final temporaryHandoff =
+        _normalizeDisplayPermissionMode(_runtimePermissionMode) == 'auto' ||
+            runtimeMessage.contains('权限') ||
+            runtimeMessage.contains('permission') ||
+            runtimeMessage.contains('授权');
     if (!temporaryHandoff) {
       return false;
     }
@@ -6608,7 +6602,7 @@ class SessionController extends ChangeNotifier {
         shouldShowReviewChoices ||
         _pendingInteraction?.isPlan == true ||
         hasPendingPlanQuestions ||
-        pendingPrompt != null;
+        _pendingPrompt != null;
   }
 
   bool _shouldKeepExistingBlockingPrompt(
@@ -6636,52 +6630,30 @@ class SessionController extends ChangeNotifier {
     final interactionMode =
         _pendingInteraction?.runtimeMeta.permissionMode.trim() ?? '';
     if (interactionMode.isNotEmpty) {
-      _runtimePermissionMode = interactionMode;
+      _runtimePermissionMode = _normalizeDisplayPermissionMode(interactionMode);
       return;
     }
     final promptMode = _pendingPrompt?.runtimeMeta.permissionMode.trim() ?? '';
     if (promptMode.isNotEmpty) {
-      _runtimePermissionMode = promptMode;
+      _runtimePermissionMode = _normalizeDisplayPermissionMode(promptMode);
       return;
     }
     final sessionMode = _sessionState?.runtimeMeta.permissionMode.trim() ?? '';
     if (sessionMode.isNotEmpty) {
-      _runtimePermissionMode = sessionMode;
+      _runtimePermissionMode = _normalizeDisplayPermissionMode(sessionMode);
       return;
     }
     final agentMode = _agentState?.runtimeMeta.permissionMode.trim() ?? '';
     if (agentMode.isNotEmpty) {
-      _runtimePermissionMode = agentMode;
+      _runtimePermissionMode = _normalizeDisplayPermissionMode(agentMode);
       return;
     }
     final resumeMode = _resumeRuntimeMeta.permissionMode.trim();
     if (resumeMode.isNotEmpty) {
-      _runtimePermissionMode = resumeMode;
+      _runtimePermissionMode = _normalizeDisplayPermissionMode(resumeMode);
       return;
     }
     _runtimePermissionMode = '';
-  }
-
-  void _beginHotSwap() {
-    _hotSwapTimeoutTimer?.cancel();
-    _isHotSwapping = true;
-    _hotSwapTimeoutTimer = Timer(_hotSwapTimeout, () {
-      if (!_isHotSwapping) {
-        return;
-      }
-      _isHotSwapping = false;
-      _hotSwapTimeoutTimer = null;
-      notifyListeners();
-    });
-  }
-
-  void _endHotSwap() {
-    if (!_isHotSwapping && _hotSwapTimeoutTimer == null) {
-      return;
-    }
-    _hotSwapTimeoutTimer?.cancel();
-    _hotSwapTimeoutTimer = null;
-    _isHotSwapping = false;
   }
 
   void _syncDerivedState() {
@@ -6727,23 +6699,11 @@ class SessionController extends ChangeNotifier {
                 ? _agentState!.tool
                 : _toolLabelFromCommand(_agentState?.command ?? '');
       }
-    } else if (!_isHotSwapping) {
+    } else {
       _activityStartedAt = null;
       _activityToolLabel = '';
     }
     _activityVisible = active;
-    // hot swap 期间一旦后端的新 runner 给出活跃信号，立即解除 sticky。
-    if (_isHotSwapping &&
-        (active ||
-            agentState == 'RUNNING_TOOL' ||
-            agentState == 'RUNNING' ||
-            agentState == 'THINKING' ||
-            agentState == 'RECOVERING' ||
-            sessionState == 'RUNNING_TOOL' ||
-            sessionState == 'RUNNING' ||
-            sessionState == 'THINKING')) {
-      _endHotSwap();
-    }
     if (_currentStepSummary.isEmpty && _currentStep != null) {
       _currentStepSummary = _summaryFromHistoryContext(_currentStep);
     }
@@ -7507,13 +7467,22 @@ class SessionController extends ChangeNotifier {
 
   String _permissionModeLabel(String permissionMode) {
     switch (permissionMode.trim()) {
-      case 'acceptEdits':
-        return '自动接受修改';
       case 'bypassPermissions':
         return '跳过权限确认';
+      case 'auto':
+      case 'acceptEdits':
       case 'default':
       default:
-        return '默认确认';
+        return '自动模式';
+    }
+  }
+
+  String _normalizeDisplayPermissionMode(String permissionMode) {
+    switch (permissionMode.trim()) {
+      case 'bypassPermissions':
+        return 'bypassPermissions';
+      default:
+        return 'auto';
     }
   }
 

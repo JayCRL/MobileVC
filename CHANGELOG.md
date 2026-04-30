@@ -9,6 +9,7 @@ This changelog tracks repository-facing npm package changes. Current package ver
 - **切后台误入观察模式**：新增 `Ownership` 字段标记会话归属（`mobilevc` / `claude-native` / `codex-native`），创建时确定，只升级不降级。Flutter 端 `_isExternalNativeSession` 优先读此字段，断连时重置 `_selectedSessionExternalNative`。
 - **切后台回来状态跳动**：新增 `ExecutionActive` 运行锁存器，非 IDLE 即锁存为 `true`，IDLE 或 runtime session 超时释放时解锁。Flutter 端 `AgentStateEvent` 中 `WAIT_INPUT` 不再清除 `_sessionRuntimeAlive`。
 - **后台收不到进度通知**：推送触发事件扩展为 `AgentStateEvent`（THINKING/RUNNING_TOOL）、`StepUpdateEvent`、`LogEvent`（assistant_reply）、`ErrorEvent`。进度类事件 30s 防抖，WebSocket 在线时跳过进度推送，离线时才发 APNs。
+- **Claude 权限授权循环**：权限批准和规则自动命中直接写回结构化 `control_response`，不再热重启 runner 或注入“已授权，继续”；默认权限模式归一化为 `auto`，待处理权限期间阻止普通 stdin 输入。
 
 ### Added
 

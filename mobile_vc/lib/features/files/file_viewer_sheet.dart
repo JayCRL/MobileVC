@@ -265,7 +265,7 @@ class _FileViewerSheetState extends State<FileViewerSheet> {
                   children: [
                     Text(
                       widget.isAutoAcceptMode
-                          ? '当前是自动接受修改模式'
+                          ? '当前是自动模式'
                           : widget.shouldShowReviewChoices
                               ? '当前文件正在等待你审核'
                               : '当前文件包含待审核改动',

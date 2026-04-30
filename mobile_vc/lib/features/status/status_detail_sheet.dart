@@ -120,13 +120,13 @@ class StatusDetailSheet extends StatelessWidget {
 
 String _permissionModeLabel(String permissionMode) {
   switch (permissionMode.trim()) {
-    case 'acceptEdits':
-      return '自动接受修改';
     case 'bypassPermissions':
       return '跳过权限确认';
+    case 'auto':
+    case 'acceptEdits':
     case 'default':
     default:
-      return '默认确认';
+      return '自动模式';
   }
 }
 

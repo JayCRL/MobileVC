@@ -1,6 +1,6 @@
 # MobileVC Project Index
 
-Last updated: 2026-04-24
+Last updated: 2026-04-30
 Scope: current repository state. If this document conflicts with code, treat code as the source of truth and update this file.
 
 ## Start Here
@@ -37,7 +37,7 @@ Scope: current repository state. If this document conflicts with code, treat cod
 - Claude/Codex command selection is generated in `SessionController._preferredAiCommandForEngine(...)`.
 - Claude's empty/default model now resolves to `default`, so the default launch command is plain `claude` without `--model sonnet`.
 - Codex still defaults to `gpt-5-codex` with reasoning effort fallback `medium`.
-- Runtime execution, input, hot swap, and resume orchestration live under `internal/runtime/` and `internal/ws/handler.go`.
+- Runtime execution, input, permission response, and resume orchestration live under `internal/runtime/` and `internal/ws/handler.go`.
 
 ### Native Session Integration
 
@@ -48,7 +48,9 @@ Scope: current repository state. If this document conflicts with code, treat cod
 ### Permissions, Review, and Notifications
 
 - Permission rule matching and auto-apply are handled on the Go side; Flutter displays resulting state/events.
-- Temporary permission grants reduce repeated prompts during Claude hot-swap/resume flows.
+- Claude/Codex permission approval now writes the structured permission response back to the active runner; it no longer restarts the runner or injects continuation text.
+- Claude permission mode is normalized to `auto` by default, with `bypassPermissions` kept as the explicit override.
+- Normal text input is blocked while a permission request is pending, so Claude does not receive invalid stdin while waiting for a structured authorization response.
 - Review state, file diffs, terminal logs, and runtime process info are persisted into session projections.
 - Push/local notification plumbing remains split between Flutter app services and Go push helpers.
 
@@ -68,7 +70,7 @@ Scope: current repository state. If this document conflicts with code, treat cod
 ### Backend Modules
 
 - `internal/ws/`: WebSocket action dispatch, session load/resume, permission/review orchestration, ADB WebRTC bridge.
-- `internal/runtime/`: active runner lifecycle, hot swap, resume, process snapshots, runtime info.
+- `internal/runtime/`: active runner lifecycle, permission response writes, resume, process snapshots, runtime info.
 - `internal/runner/`: PTY/exec runners and Claude/Codex command adaptation.
 - `internal/store/`: file-backed session projection and catalogs.
 - `internal/claudesync/`: native Claude JSONL history mirroring.

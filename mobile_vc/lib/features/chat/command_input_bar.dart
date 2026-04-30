@@ -166,7 +166,9 @@ class _CommandInputBarState extends State<CommandInputBar> {
             : widget.hasPendingReview
                 ? '先处理待审核 diff，再继续'
                 : widget.isBusy
-                    ? (widget.showClaudeMode ? '$engineLabel 处理中…' : 'Shell 运行中')
+                    ? (widget.showClaudeMode
+                        ? '$engineLabel 处理中…'
+                        : 'Shell 运行中')
                     : (widget.showClaudeMode ? '给 $engineLabel 发送消息' : '输入命令');
     final panelColor = scheme.surfaceContainerLow.withValues(alpha: 0.96);
     final inputColor = scheme.surfaceContainerHighest.withValues(alpha: 0.72);
@@ -269,12 +271,8 @@ class _CommandInputBarState extends State<CommandInputBar> {
                                     ?.copyWith(fontWeight: FontWeight.w600),
                                 items: const [
                                   DropdownMenuItem(
-                                    value: 'default',
-                                    child: Text('默认确认'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'acceptEdits',
-                                    child: Text('自动接受修改'),
+                                    value: 'auto',
+                                    child: Text('自动模式'),
                                   ),
                                   DropdownMenuItem(
                                     value: 'bypassPermissions',

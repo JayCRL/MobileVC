@@ -19,7 +19,6 @@ func executePermissionDecision(
 	service *runtimepkg.Service,
 	projection store.ProjectionSnapshot,
 	controller session.ControllerSnapshot,
-	grantStore *permissionGrantStore,
 	emitAndPersist func(any),
 ) error {
 	decision := strings.TrimSpace(strings.ToLower(permissionEvent.Decision))
@@ -72,41 +71,15 @@ func executePermissionDecision(
 			RuntimeMeta: inputMeta,
 		}, emitAndPersist)
 	}
-	replayInput := hotSwapApproveContinuation(permissionEvent)
-	targetPath := normalizePermissionGrantPath(inputMeta.TargetPath)
-	permissionRequestID := strings.TrimSpace(inputMeta.PermissionRequestID)
-	grantIssued := false
-	if grantStore != nil && targetPath != "" {
-		grantIssued = grantStore.Issue(sessionID, targetPath, permissionRequestID, temporaryPermissionGrantTTL)
+	if strings.TrimSpace(inputMeta.PermissionMode) != "auto" {
+		inputMeta.PermissionMode = "auto"
+		service.UpdatePermissionMode("auto")
 	}
-	revokeGrant := func() {
-		if grantIssued {
-			grantStore.Revoke(sessionID, targetPath)
-		}
-	}
-	req := runtimepkg.ExecuteRequest{
-		Command:        inputMeta.Command,
-		CWD:            inputMeta.CWD,
-		Mode:           runner.ModePTY,
-		PermissionMode: inputMeta.PermissionMode,
-		RuntimeMeta:    inputMeta,
-	}
-	currentRunner := service.CurrentRunner()
-	if currentRunner != nil {
-		if err := service.HotSwapApproveWithTemporaryElevation(ctx, sessionID, req, replayInput, emitAndPersist); err == nil || !errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-			if err != nil {
-				revokeGrant()
-			}
-			return err
-		}
-	}
-	if !service.CanHotSwapClaudeSession(req) || !service.HasResumeSession(req) {
-		revokeGrant()
-		return runtimepkg.ErrNoActiveRunner
-	}
-	if err := service.HotSwapApproveFromResume(ctx, sessionID, req, replayInput, emitAndPersist); err != nil {
-		revokeGrant()
+	if err := service.SendPermissionDecision(ctx, sessionID, decision, inputMeta, emitAndPersist); err == nil {
+		return nil
+	} else if errors.Is(err, runner.ErrNoPendingControlRequest) {
+		return runtimepkg.ErrPermissionRequestExpired
+	} else {
 		return err
 	}
-	return nil
 }

@@ -300,7 +300,9 @@ class _ChatTimelineState extends State<ChatTimeline> {
   }
 
   bool _shouldHidePassiveReadyInteraction(InteractionRequestEvent interaction) {
-    if (interaction.isPermission || interaction.isReview || interaction.isPlan) {
+    if (interaction.isPermission ||
+        interaction.isReview ||
+        interaction.isPlan) {
       return false;
     }
     if (interaction.actions.isNotEmpty) {
@@ -416,9 +418,17 @@ class _AiStatusIndicatorState extends State<_AiStatusIndicator>
     duration: const Duration(milliseconds: 1400),
   );
   @override
-  void initState() { super.initState(); _pulse.repeat(reverse: true); }
+  void initState() {
+    super.initState();
+    _pulse.repeat(reverse: true);
+  }
+
   @override
-  void dispose() { _pulse.dispose(); super.dispose(); }
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -431,7 +441,8 @@ class _AiStatusIndicatorState extends State<_AiStatusIndicator>
             builder: (context, _) {
               final opacity = 0.35 + 0.35 * _pulse.value;
               return Container(
-                width: 8, height: 8,
+                width: 8,
+                height: 8,
                 decoration: BoxDecoration(
                   color: scheme.primary.withValues(alpha: opacity),
                   shape: BoxShape.circle,
@@ -443,9 +454,9 @@ class _AiStatusIndicatorState extends State<_AiStatusIndicator>
           Text(
             widget.label,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-              fontStyle: FontStyle.italic,
-            ),
+                  color: scheme.onSurfaceVariant,
+                  fontStyle: FontStyle.italic,
+                ),
           ),
         ],
       ),
@@ -798,7 +809,7 @@ class _ReviewSummaryCard extends StatelessWidget {
     final pendingLabelCount =
         groupFileCount > 0 ? groupFileCount : pendingDiffCount;
     if (isAutoAcceptMode) {
-      return '自动接受修改模式已开启，新的 diff 会自动确认。';
+      return '自动模式已开启，新的 diff 会自动确认。';
     }
     if (!isManualReviewMode) {
       return '当前模式不需要手动确认 diff。';

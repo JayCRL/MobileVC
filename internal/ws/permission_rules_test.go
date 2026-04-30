@@ -1,7 +1,6 @@
 package ws
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -93,7 +92,7 @@ func TestMaybeAutoApplyPermissionEventIgnoresReadyPrompt(t *testing.T) {
 	}
 }
 
-func TestMaybeAutoApplyPermissionEventUsesHotSwapApproveForSessionRule(t *testing.T) {
+func TestMaybeAutoApplyPermissionEventUsesDirectApproveForSessionRule(t *testing.T) {
 	sessionStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("new temp store: %v", err)
@@ -123,15 +122,12 @@ func TestMaybeAutoApplyPermissionEventUsesHotSwapApproveForSessionRule(t *testin
 	}
 
 	firstRunner := newHoldingStubRunner()
-	secondRunner := newHoldingStubRunner()
+	firstRunner.currentPermissionRequestID = "perm-main"
 	runnerIndex := 0
 	service := runtimepkg.NewService(sessionID, runtimepkg.Dependencies{
 		NewPtyRunner: func() runner.Runner {
 			runnerIndex++
-			if runnerIndex == 1 {
-				return firstRunner
-			}
-			return secondRunner
+			return firstRunner
 		},
 		NewExecRunner: func() runner.Runner { return newHoldingStubRunner() },
 	})
@@ -155,13 +151,14 @@ func TestMaybeAutoApplyPermissionEventUsesHotSwapApproveForSessionRule(t *testin
 	event := protocol.ApplyRuntimeMeta(
 		protocol.NewPromptRequestEvent(sessionID, "Claude requested permissions to use Edit on /workspace/lib/main.dart", []string{"y", "n"}),
 		protocol.RuntimeMeta{
-			Engine:          "claude",
-			Command:         "claude --resume resume-123",
-			CWD:             "/workspace",
-			PermissionMode:  "default",
-			ResumeSessionID: "resume-123",
-			BlockingKind:    "permission",
-			TargetPath:      "/workspace/lib/main.dart",
+			Engine:              "claude",
+			Command:             "claude --resume resume-123",
+			CWD:                 "/workspace",
+			PermissionMode:      "default",
+			ResumeSessionID:     "resume-123",
+			BlockingKind:        "permission",
+			TargetPath:          "/workspace/lib/main.dart",
+			PermissionRequestID: "perm-main",
 		},
 	)
 
@@ -177,15 +174,21 @@ func TestMaybeAutoApplyPermissionEventUsesHotSwapApproveForSessionRule(t *testin
 	if !applied {
 		t.Fatal("expected session rule to auto-apply")
 	}
-	firstRunner.WaitClosed(t)
-	secondRunner.WaitStarted(t)
 	select {
-	case payload := <-secondRunner.writeCh:
-		if got := string(payload); !strings.Contains(got, "先使用 Read 读取目标文件的当前内容") {
-			t.Fatalf("expected hot-swap continuation payload, got %q", got)
+	case decision := <-firstRunner.permissionResponseWriteCh:
+		if decision != "approve" {
+			t.Fatalf("unexpected direct permission decision: %q", decision)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive hot-swap continuation payload")
+		t.Fatal("did not receive direct permission decision")
+	}
+	if runnerIndex != 1 {
+		t.Fatalf("expected no runner restart, got runner count=%d", runnerIndex)
+	}
+	select {
+	case payload := <-firstRunner.writeCh:
+		t.Fatalf("unexpected continuation payload: %q", string(payload))
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	record, err := sessionStore.GetSession(t.Context(), sessionID)

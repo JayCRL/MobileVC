@@ -113,11 +113,14 @@ func TestBuildExecRequestFromSlash(t *testing.T) {
 			if req.Command != tt.wantCommand {
 				t.Fatalf("expected command %q, got %q", tt.wantCommand, req.Command)
 			}
-			if req.CWD != fallback(tt.cwd, ".") || req.PermissionMode != "acceptEdits" {
+			if req.CWD != fallback(tt.cwd, ".") || req.PermissionMode != "auto" {
 				t.Fatalf("unexpected request metadata: %#v", req)
 			}
 			if req.RuntimeMeta.Source != "slash-command" {
 				t.Fatalf("expected slash-command source, got %#v", req.RuntimeMeta)
+			}
+			if req.RuntimeMeta.PermissionMode != "auto" {
+				t.Fatalf("expected normalized runtime permission mode, got %#v", req.RuntimeMeta)
 			}
 		})
 	}
@@ -151,6 +154,9 @@ func TestBuildExecRequestFromSlashUsesCodexEngine(t *testing.T) {
 			}
 			if req.Command != tt.wantCommand {
 				t.Fatalf("expected %q, got %q", tt.wantCommand, req.Command)
+			}
+			if req.PermissionMode != "auto" || req.RuntimeMeta.PermissionMode != "auto" {
+				t.Fatalf("expected default permission mode to normalize to auto, got %#v", req)
 			}
 		})
 	}

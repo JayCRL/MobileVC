@@ -12,7 +12,7 @@ import (
 	"mobilevc/internal/runner"
 )
 
-type hotSwapStubRunner struct {
+type resumeStubRunner struct {
 	interactive   bool
 	claudeSession string
 	writeErr      error
@@ -23,8 +23,8 @@ type hotSwapStubRunner struct {
 	runFn         func(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error
 }
 
-func newHotSwapStubRunner(sessionID string, interactive bool) *hotSwapStubRunner {
-	return &hotSwapStubRunner{
+func newResumeStubRunner(sessionID string, interactive bool) *resumeStubRunner {
+	return &resumeStubRunner{
 		interactive:   interactive,
 		claudeSession: sessionID,
 		started:       make(chan struct{}, 1),
@@ -32,7 +32,7 @@ func newHotSwapStubRunner(sessionID string, interactive bool) *hotSwapStubRunner
 	}
 }
 
-func (s *hotSwapStubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
+func (s *resumeStubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
 	s.lastReq = req
 	select {
 	case s.started <- struct{}{}:
@@ -45,7 +45,7 @@ func (s *hotSwapStubRunner) Run(ctx context.Context, req runner.ExecRequest, sin
 	return nil
 }
 
-func (s *hotSwapStubRunner) Write(ctx context.Context, data []byte) error {
+func (s *resumeStubRunner) Write(ctx context.Context, data []byte) error {
 	if s.writeErr != nil {
 		return s.writeErr
 	}
@@ -53,7 +53,7 @@ func (s *hotSwapStubRunner) Write(ctx context.Context, data []byte) error {
 	return nil
 }
 
-func (s *hotSwapStubRunner) Close() error {
+func (s *resumeStubRunner) Close() error {
 	select {
 	case s.closed <- struct{}{}:
 	default:
@@ -61,11 +61,11 @@ func (s *hotSwapStubRunner) Close() error {
 	return nil
 }
 
-func (s *hotSwapStubRunner) CanAcceptInteractiveInput() bool {
+func (s *resumeStubRunner) CanAcceptInteractiveInput() bool {
 	return s.interactive
 }
 
-func (s *hotSwapStubRunner) ClaudeSessionID() string {
+func (s *resumeStubRunner) ClaudeSessionID() string {
 	return s.claudeSession
 }
 
@@ -79,8 +79,8 @@ func waitSignal(t *testing.T, ch <-chan struct{}, label string) {
 }
 
 func TestManagerFinishIfCurrentIgnoresSupersededRunner(t *testing.T) {
-	first := newHotSwapStubRunner("resume-old", true)
-	second := newHotSwapStubRunner("resume-new", true)
+	first := newResumeStubRunner("resume-old", true)
+	second := newResumeStubRunner("resume-new", true)
 	mgr := newManager()
 	if err := mgr.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", PermissionMode: "default"}); err != nil {
 		t.Fatalf("start first runner: %v", err)
@@ -113,8 +113,8 @@ func TestManagerFinishIfCurrentIgnoresSupersededRunner(t *testing.T) {
 }
 
 func TestExecuteSupersededRunnerDoesNotEmitFinishedState(t *testing.T) {
-	first := newHotSwapStubRunner("resume-old", true)
-	second := newHotSwapStubRunner("resume-new", true)
+	first := newResumeStubRunner("resume-old", true)
+	second := newResumeStubRunner("resume-new", true)
 	firstDone := make(chan struct{})
 	secondDone := make(chan struct{})
 	firstRunEntered := make(chan struct{}, 1)
@@ -139,7 +139,7 @@ func TestExecuteSupersededRunnerDoesNotEmitFinishedState(t *testing.T) {
 
 	call := 0
 	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewExecRunner: func() runner.Runner { return newResumeStubRunner("", true) },
 		NewPtyRunner: func() runner.Runner {
 			call++
 			if call == 1 {
@@ -206,22 +206,22 @@ func TestExecuteSupersededRunnerDoesNotEmitFinishedState(t *testing.T) {
 	}
 }
 
-type overridableHotSwapStubRunner struct {
-	hotSwapStubRunner
+type overridableResumeStubRunner struct {
+	resumeStubRunner
 	runFn func(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error
 }
 
-func (s *overridableHotSwapStubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
+func (s *overridableResumeStubRunner) Run(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
 	if s.runFn != nil {
 		return s.runFn(ctx, req, sink)
 	}
-	return s.hotSwapStubRunner.Run(ctx, req, sink)
+	return s.resumeStubRunner.Run(ctx, req, sink)
 }
 
 func TestExecuteInjectsManagedSessionIDForFreshClaudeExec(t *testing.T) {
-	pty := newHotSwapStubRunner("", true)
+	pty := newResumeStubRunner("", true)
 	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewExecRunner: func() runner.Runner { return newResumeStubRunner("", true) },
 		NewPtyRunner:  func() runner.Runner { return pty },
 	})
 	if err := svc.Execute(context.Background(), "s1", ExecuteRequest{
@@ -250,7 +250,7 @@ func TestExecuteInjectsManagedSessionIDForFreshClaudeExec(t *testing.T) {
 }
 
 func TestExecuteClaudeLifecycleTransitionsFromStarting(t *testing.T) {
-	pty := newHotSwapStubRunner("resume-xyz", false)
+	pty := newResumeStubRunner("resume-xyz", false)
 	pty.runFn = func(ctx context.Context, req runner.ExecRequest, sink runner.EventSink) error {
 		sink(protocol.NewSessionStateEvent("s1", "active", "command started"))
 		sink(protocol.NewStepUpdateEvent("s1", "Running TodoWrite", "running", "TodoWrite", "TodoWrite", "Running TodoWrite"))
@@ -259,7 +259,7 @@ func TestExecuteClaudeLifecycleTransitionsFromStarting(t *testing.T) {
 		return nil
 	}
 	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewExecRunner: func() runner.Runner { return newResumeStubRunner("", true) },
 		NewPtyRunner:  func() runner.Runner { return pty },
 	})
 	var events []any
@@ -318,172 +318,10 @@ func TestExecuteClaudeLifecycleTransitionsFromStarting(t *testing.T) {
 	}
 }
 
-func TestHotSwapApproveWithTemporaryElevationRestartsWithResumeAndContinuation(t *testing.T) {
-	first := newHotSwapStubRunner("resume-123", true)
-	second := newHotSwapStubRunner("resume-123", true)
-	call := 0
-	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
-		NewPtyRunner: func() runner.Runner {
-			call++
-			if call == 1 {
-				return second
-			}
-			return newHotSwapStubRunner("resume-123", true)
-		},
-	})
-	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default"}); err != nil {
-		t.Fatalf("start manager: %v", err)
-	}
-
-	continuation := hotSwapContinuationInput("README.md", "写 README 需要你的授权")
-	err := svc.HotSwapApproveWithTemporaryElevation(context.Background(), "s1", ExecuteRequest{
-		Command:        "claude",
-		CWD:            "/tmp",
-		Mode:           runner.ModePTY,
-		PermissionMode: "default",
-		RuntimeMeta: protocol.RuntimeMeta{
-			Source:         "permission-decision",
-			Command:        "claude",
-			CWD:            "/tmp",
-			PermissionMode: "default",
-		},
-	}, continuation, func(any) {})
-	if err != nil {
-		t.Fatalf("hot swap approve: %v", err)
-	}
-	waitSignal(t, first.closed, "old runner close")
-	waitSignal(t, second.started, "new runner start")
-	if second.lastReq.PermissionMode != "auto" {
-		t.Fatalf("expected auto, got %#v", second.lastReq)
-	}
-	if !strings.Contains(second.lastReq.Command, "--resume resume-123") {
-		t.Fatalf("expected resume command, got %q", second.lastReq.Command)
-	}
-	if !strings.Contains(second.lastReq.Command, "--print") {
-		t.Fatalf("expected print mode on hot swap command, got %q", second.lastReq.Command)
-	}
-	if strings.Contains(second.lastReq.Command, "--session-id") {
-		t.Fatalf("did not expect managed session id on hot swap command, got %q", second.lastReq.Command)
-	}
-	if len(second.writes) != 1 || string(second.writes[0]) != continuation {
-		t.Fatalf("unexpected continuation writes: %#v", second.writes)
-	}
-	if !strings.Contains(continuation, "先使用 Read 读取目标文件的当前内容") {
-		t.Fatalf("expected continuation to require Read before Edit, got %q", continuation)
-	}
-	snapshot := svc.RuntimeSnapshot()
-	if !snapshot.TemporaryElevated {
-		t.Fatal("expected temporary elevated snapshot")
-	}
-	if snapshot.SafePermissionMode != "default" {
-		t.Fatalf("expected safe permission mode default, got %#v", snapshot)
-	}
-	if snapshot.ActiveMeta.PermissionMode != "default" {
-		t.Fatalf("expected exposed runtime permission mode to stay default during temporary elevation, got %#v", snapshot.ActiveMeta)
-	}
-}
-
-func TestRestoreSafePermissionModeBeforeInputRestartsAndSendsUserInput(t *testing.T) {
-	first := newHotSwapStubRunner("resume-234", true)
-	second := newHotSwapStubRunner("resume-234", true)
-	call := 0
-	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
-		NewPtyRunner: func() runner.Runner {
-			call++
-			if call == 1 {
-				return second
-			}
-			return newHotSwapStubRunner("resume-234", true)
-		},
-	})
-	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude --resume resume-234", CWD: "/tmp", PermissionMode: "auto", ResumeSessionID: "resume-234"}); err != nil {
-		t.Fatalf("start manager: %v", err)
-	}
-	svc.manager.updateResumeSessionID("resume-234")
-	svc.manager.setTemporaryElevation(true, "default")
-
-	err := svc.RestoreSafePermissionModeBeforeInput(context.Background(), "s1", ExecuteRequest{
-		Command:        "claude --resume resume-234",
-		CWD:            "/tmp",
-		Mode:           runner.ModePTY,
-		PermissionMode: "default",
-		RuntimeMeta: protocol.RuntimeMeta{
-			Command:         "claude --resume resume-234",
-			CWD:             "/tmp",
-			ResumeSessionID: "resume-234",
-			PermissionMode:  "default",
-		},
-	}, "hello\n", func(any) {})
-	if err != nil {
-		t.Fatalf("restore safe mode: %v", err)
-	}
-	waitSignal(t, first.closed, "elevated runner close")
-	waitSignal(t, second.started, "safe runner start")
-	if second.lastReq.PermissionMode != "default" {
-		t.Fatalf("expected default mode, got %#v", second.lastReq)
-	}
-	if !strings.Contains(second.lastReq.Command, "--resume resume-234") {
-		t.Fatalf("expected resume command during restore, got %q", second.lastReq.Command)
-	}
-	if !strings.Contains(second.lastReq.Command, "--print") {
-		t.Fatalf("expected print mode during restore, got %q", second.lastReq.Command)
-	}
-	if len(second.writes) != 1 || string(second.writes[0]) != "hello\n" {
-		t.Fatalf("unexpected user input writes: %#v", second.writes)
-	}
-	if svc.RuntimeSnapshot().TemporaryElevated {
-		t.Fatal("expected temporary elevation to be cleared")
-	}
-}
-
-func TestRestoreSafePermissionModeBeforeInputCanRestartFromDetachedResumeSession(t *testing.T) {
-	second := newHotSwapStubRunner("resume-detached", true)
-	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
-		NewPtyRunner:  func() runner.Runner { return second },
-	})
-	svc.manager.updateResumeSessionID("resume-detached")
-	svc.manager.setTemporaryElevation(true, "default")
-	if snapshot := svc.RuntimeSnapshot(); snapshot.ActiveSession != "" || snapshot.Running {
-		t.Fatalf("expected detached snapshot before restore, got %#v", snapshot)
-	}
-
-	err := svc.RestoreSafePermissionModeBeforeInput(context.Background(), "s1", ExecuteRequest{
-		Command:        "claude",
-		CWD:            "/tmp",
-		Mode:           runner.ModePTY,
-		PermissionMode: "default",
-		RuntimeMeta: protocol.RuntimeMeta{
-			Command:         "claude",
-			CWD:             "/tmp",
-			ResumeSessionID: "resume-detached",
-			PermissionMode:  "default",
-		},
-	}, "hello\n", func(any) {})
-	if err != nil {
-		t.Fatalf("restore safe mode from detached resume: %v", err)
-	}
-	waitSignal(t, second.started, "safe runner start")
-	if second.lastReq.PermissionMode != "default" {
-		t.Fatalf("expected default mode, got %#v", second.lastReq)
-	}
-	if !strings.Contains(second.lastReq.Command, "--resume resume-detached") {
-		t.Fatalf("expected detached resume command, got %q", second.lastReq.Command)
-	}
-	if len(second.writes) != 1 || string(second.writes[0]) != "hello\n" {
-		t.Fatalf("unexpected user input writes: %#v", second.writes)
-	}
-	if svc.RuntimeSnapshot().TemporaryElevated {
-		t.Fatal("expected temporary elevation to be cleared")
-	}
-}
-
 func TestSendInputOrResumeWritesActiveRunnerWithoutRestart(t *testing.T) {
-	active := newHotSwapStubRunner("resume-active", true)
+	active := newResumeStubRunner("resume-active", true)
 	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewExecRunner: func() runner.Runner { return newResumeStubRunner("", true) },
 		NewPtyRunner:  func() runner.Runner { t.Fatal("did not expect resume runner to start"); return nil },
 	})
 	if err := svc.manager.start("s1", active, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default", ResumeSessionID: "resume-active"}); err != nil {
@@ -506,9 +344,9 @@ func TestSendInputOrResumeWritesActiveRunnerWithoutRestart(t *testing.T) {
 }
 
 func TestSendInputOrResumeRestartsDetachedResumeSession(t *testing.T) {
-	resumed := newHotSwapStubRunner("resume-detached", true)
+	resumed := newResumeStubRunner("resume-detached", true)
 	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewExecRunner: func() runner.Runner { return newResumeStubRunner("", true) },
 		NewPtyRunner:  func() runner.Runner { return resumed },
 	})
 	svc.manager.updateResumeSessionID("resume-detached")
@@ -546,57 +384,10 @@ func TestSendInputOrResumeReturnsNoActiveRunnerWithoutResumeSession(t *testing.T
 	}
 }
 
-func TestHotSwapApproveWithTemporaryElevationRequiresResumeSession(t *testing.T) {
-	first := newHotSwapStubRunner("", true)
-	svc := NewService("s1", Dependencies{})
-	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default"}); err != nil {
-		t.Fatalf("start manager: %v", err)
-	}
-	continuation := hotSwapContinuationInput("README.md", "写 README 需要你的授权")
-	err := svc.HotSwapApproveWithTemporaryElevation(context.Background(), "s1", ExecuteRequest{
-		Command:        "claude",
-		CWD:            "/tmp",
-		Mode:           runner.ModePTY,
-		PermissionMode: "default",
-		RuntimeMeta:    protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default"},
-	}, continuation, func(any) {})
-	if !errors.Is(err, ErrResumeSessionUnavailable) {
-		t.Fatalf("expected ErrResumeSessionUnavailable, got %v", err)
-	}
-}
-
-func TestHotSwapApproveWithTemporaryElevationDoesNotRequireInteractiveRunner(t *testing.T) {
-	first := newHotSwapStubRunner("resume-345", true)
-	second := newHotSwapStubRunner("resume-345", false)
-	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
-		NewPtyRunner:  func() runner.Runner { return second },
-	})
-	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default", ResumeSessionID: "resume-345"}); err != nil {
-		t.Fatalf("start manager: %v", err)
-	}
-	continuation := hotSwapContinuationInput("README.md", "写 README 需要你的授权")
-	err := svc.HotSwapApproveWithTemporaryElevation(context.Background(), "s1", ExecuteRequest{
-		Command:        "claude",
-		CWD:            "/tmp",
-		Mode:           runner.ModePTY,
-		PermissionMode: "default",
-		RuntimeMeta:    protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default", ResumeSessionID: "resume-345"},
-	}, continuation, func(any) {})
-	if err != nil {
-		t.Fatalf("expected non-interactive hot swap to succeed, got %v", err)
-	}
-	waitSignal(t, first.closed, "old runner close")
-	waitSignal(t, second.started, "new runner start")
-	if len(second.writes) != 1 || string(second.writes[0]) != continuation {
-		t.Fatalf("unexpected continuation writes: %#v", second.writes)
-	}
-}
-
 func TestExecuteDefaultsToCodexWhenEngineIsCodex(t *testing.T) {
-	pty := newHotSwapStubRunner("", true)
+	pty := newResumeStubRunner("", true)
 	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewExecRunner: func() runner.Runner { return newResumeStubRunner("", true) },
 		NewPtyRunner:  func() runner.Runner { return pty },
 	})
 	if err := svc.Execute(context.Background(), "s1", ExecuteRequest{
@@ -637,13 +428,13 @@ func TestEnsureResumeCommandUsesCodexResumeSubcommand(t *testing.T) {
 	}
 }
 
-func TestBuildDetachedHotSwapStreamRequestForCodexDoesNotAppendClaudeFlags(t *testing.T) {
+func TestBuildDetachedResumeRequestForCodexDoesNotAppendClaudeFlags(t *testing.T) {
 	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
-		NewPtyRunner:  func() runner.Runner { return newHotSwapStubRunner("", true) },
+		NewExecRunner: func() runner.Runner { return newResumeStubRunner("", true) },
+		NewPtyRunner:  func() runner.Runner { return newResumeStubRunner("", true) },
 	})
 	svc.manager.updateResumeSessionID("resume-codex-123")
-	req, safeMode, err := svc.buildDetachedHotSwapStreamRequest(ExecuteRequest{
+	req, err := svc.buildDetachedResumeRequest(ExecuteRequest{
 		Command:        "codex -m gpt-5",
 		CWD:            "/tmp",
 		Mode:           runner.ModePTY,
@@ -657,10 +448,7 @@ func TestBuildDetachedHotSwapStreamRequestForCodexDoesNotAppendClaudeFlags(t *te
 		},
 	}, "auto")
 	if err != nil {
-		t.Fatalf("buildDetachedHotSwapStreamRequest: %v", err)
-	}
-	if safeMode != "default" {
-		t.Fatalf("expected default safe permission mode, got %q", safeMode)
+		t.Fatalf("buildDetachedResumeRequest: %v", err)
 	}
 	lower := strings.ToLower(req.Command)
 	if !strings.HasPrefix(lower, "codex resume resume-codex-123") {
@@ -668,30 +456,5 @@ func TestBuildDetachedHotSwapStreamRequestForCodexDoesNotAppendClaudeFlags(t *te
 	}
 	if strings.Contains(lower, "--print") || strings.Contains(lower, "--input-format") || strings.Contains(lower, "--output-format") || strings.Contains(lower, "--permission-prompt-tool") {
 		t.Fatalf("did not expect claude stream flags on codex command, got %q", req.Command)
-	}
-}
-
-func TestRestoreSafePermissionModeBeforeInputPropagatesWriteFailure(t *testing.T) {
-	first := newHotSwapStubRunner("resume-456", true)
-	second := newHotSwapStubRunner("resume-456", true)
-	second.writeErr = errors.New("write failed")
-	svc := NewService("s1", Dependencies{
-		NewExecRunner: func() runner.Runner { return newHotSwapStubRunner("", true) },
-		NewPtyRunner:  func() runner.Runner { return second },
-	})
-	if err := svc.manager.start("s1", first, nil, protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "auto", ResumeSessionID: "resume-456"}); err != nil {
-		t.Fatalf("start manager: %v", err)
-	}
-	svc.manager.updateResumeSessionID("resume-456")
-	svc.manager.setTemporaryElevation(true, "default")
-	err := svc.RestoreSafePermissionModeBeforeInput(context.Background(), "s1", ExecuteRequest{
-		Command:        "claude",
-		CWD:            "/tmp",
-		Mode:           runner.ModePTY,
-		PermissionMode: "default",
-		RuntimeMeta:    protocol.RuntimeMeta{Command: "claude", CWD: "/tmp", PermissionMode: "default", ResumeSessionID: "resume-456"},
-	}, "hello\n", func(any) {})
-	if err == nil || !strings.Contains(err.Error(), "write failed") {
-		t.Fatalf("expected write failure, got %v", err)
 	}
 }

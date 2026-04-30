@@ -22,8 +22,6 @@ type Snapshot struct {
 	ActiveMeta                protocol.RuntimeMeta
 	ActiveSession             string
 	ResumeSessionID           string
-	TemporaryElevated         bool
-	SafePermissionMode        string
 	ClaudeLifecycle           string
 }
 
@@ -155,8 +153,6 @@ func BuildRuntimeInfoResult(sessionID, query, cwd string, svc *Service) (protoco
 			{Label: "skill", Value: fallbackValue(snapshot.ActiveMeta.SkillName, "none"), Available: true, Status: availabilityStatus(snapshot.ActiveMeta.SkillName != "")},
 			{Label: "target_path", Value: fallbackValue(snapshot.ActiveMeta.TargetPath, "(none)"), Available: true, Status: availabilityStatus(snapshot.ActiveMeta.TargetPath != "")},
 			{Label: "resume_session", Value: fallbackValue(firstNonEmpty(snapshot.ActiveMeta.ResumeSessionID, snapshot.ResumeSessionID), "(none)"), Available: true, Status: availabilityStatus(firstNonEmpty(snapshot.ActiveMeta.ResumeSessionID, snapshot.ResumeSessionID) != "")},
-			{Label: "temporary_elevated", Value: ternary(snapshot.TemporaryElevated, "true", "false"), Available: true, Status: ternary(snapshot.TemporaryElevated, "active", "ready")},
-			{Label: "safe_permission_mode", Value: fallbackValue(snapshot.SafePermissionMode, "(none)"), Available: true, Status: availabilityStatus(snapshot.SafePermissionMode != "")},
 			{Label: "context", Value: fallbackValue(snapshot.ActiveMeta.ContextTitle, "(none)"), Available: true, Status: availabilityStatus(snapshot.ActiveMeta.ContextTitle != "")},
 		}
 		return protocol.NewRuntimeInfoResultEvent(sessionID, key, title, "当前运行上下文快照。", false, items), nil

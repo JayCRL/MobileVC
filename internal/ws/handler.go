@@ -31,16 +31,24 @@ import (
 
 const wsDebugPreviewLimit = 240
 
+func normalizePermissionModeForClaude(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case "bypassPermissions":
+		return "bypassPermissions"
+	default:
+		return "auto"
+	}
+}
+
 type Handler struct {
-	AuthToken        string
-	NewExecRunner    func() runner.Runner
-	NewPtyRunner     func() runner.Runner
-	Upgrader         websocket.Upgrader
-	SkillLauncher    *skills.Launcher
-	SessionStore     store.Store
-	PushService      push.Service
-	runtimeSessions  *runtimeSessionRegistry
-	permissionGrants *permissionGrantStore
+	AuthToken       string
+	NewExecRunner   func() runner.Runner
+	NewPtyRunner    func() runner.Runner
+	Upgrader        websocket.Upgrader
+	SkillLauncher   *skills.Launcher
+	SessionStore    store.Store
+	PushService     push.Service
+	runtimeSessions *runtimeSessionRegistry
 
 	muProgressPush   sync.Mutex
 	lastProgressPush map[string]time.Time
@@ -58,7 +66,6 @@ func NewHandler(authToken string, sessionStore store.Store) *Handler {
 		SkillLauncher:    skills.NewLauncher(sessionStore),
 		SessionStore:     sessionStore,
 		PushService:      &push.NoopService{},
-		permissionGrants: newPermissionGrantStore(),
 		lastProgressPush: make(map[string]time.Time),
 		Upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -478,13 +485,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			switch event.(type) {
 			case protocol.PromptRequestEvent, protocol.InteractionRequestEvent:
 				autoApplyCtx, autoApplyCancel := sessionProjectionContext()
-				consumed, err := maybeConsumeTemporaryPermissionGrant(autoApplyCtx, h.SessionStore, runtimeSessionID, event, sessionRuntimeSvc, h.permissionGrants, emitAndPersistFor(runtimeSessionID))
-				autoApplyCancel()
-				if err == nil && consumed {
-					logx.Info("ws", "permission event consumed by temporary grant: sessionID=%s", runtimeSessionID)
-					return
-				}
-				autoApplyCtx, autoApplyCancel = sessionProjectionContext()
 				applied, err := maybeAutoApplyPermissionEvent(autoApplyCtx, h.SessionStore, runtimeSessionID, event, sessionRuntimeSvc, emitSessionEvent, emitAndPersistFor(runtimeSessionID))
 				autoApplyCancel()
 				if err == nil && applied {
@@ -1274,6 +1274,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			emitAndPersist := emitAndPersistFor(sessionID)
 			if shouldTreatInputAsAICommand(inputEvent.Data) {
 				command := strings.TrimSpace(inputEvent.Data)
+				permissionMode := normalizePermissionModeForClaude(inputEvent.PermissionMode)
 				logx.Info("ws", "promote input to exec: connectionID=%s sessionID=%s remoteAddr=%s action=input command=%q", connectionID, sessionID, remoteAddr, command)
 				appendUserProjectionEntry(h.SessionStore, ctx, sessionID, command, "命令", connectionID, remoteAddr)
 				if runtimeSession != nil {
@@ -1283,12 +1284,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Command:        command,
 					CWD:            firstNonEmptyString(inputEvent.CWD, "/"),
 					Mode:           runner.ModePTY,
-					PermissionMode: firstNonEmptyString(inputEvent.PermissionMode, "default"),
+					PermissionMode: permissionMode,
 					RuntimeMeta: protocol.RuntimeMeta{
 						Source:            "input-promoted-exec",
 						Command:           command,
 						CWD:               firstNonEmptyString(inputEvent.CWD, "/"),
-						PermissionMode:    firstNonEmptyString(inputEvent.PermissionMode, "default"),
+						PermissionMode:    permissionMode,
 						ClaudeSessionUUID: lookupClaudeSessionUUID(sessionID),
 					},
 				}, emitAndPersist); err != nil {
@@ -1321,42 +1322,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			inputMeta := protocol.RuntimeMeta{}
 			if pm := inputEvent.PermissionMode; pm != "" {
 				service.UpdatePermissionMode(pm)
-				inputMeta.PermissionMode = pm
+				inputMeta.PermissionMode = service.ControllerSnapshot().ActiveMeta.PermissionMode
 			}
-			logx.Info("ws", "dispatch input: connectionID=%s sessionID=%s remoteAddr=%s action=input permissionMode=%q temporaryElevated=%v safePermissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, inputMeta.PermissionMode, snapshot.TemporaryElevated, snapshot.SafePermissionMode, wsDebugPreview(inputData))
-			if snapshot.TemporaryElevated {
-				restoreReq := runtimepkg.ExecuteRequest{
-					Command:        firstNonEmptyString(snapshot.ActiveMeta.Command, controller.CurrentCommand),
-					CWD:            snapshot.ActiveMeta.CWD,
-					Mode:           runner.ModePTY,
-					PermissionMode: firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
-					RuntimeMeta: protocol.RuntimeMeta{
-						Source:            "input",
-						ResumeSessionID:   firstNonEmptyString(snapshot.ResumeSessionID, snapshot.ActiveMeta.ResumeSessionID),
-						Command:           firstNonEmptyString(snapshot.ActiveMeta.Command, controller.CurrentCommand),
-						CWD:               snapshot.ActiveMeta.CWD,
-						PermissionMode:    firstNonEmptyString(snapshot.SafePermissionMode, snapshot.ActiveMeta.PermissionMode, "default"),
-						ClaudeSessionUUID: lookupClaudeSessionUUID(sessionID),
-					},
+			// 权限请求待处理时，阻止普通文本输入写入 Claude stdin，
+			// 防止 Claude 在等待结构化权限响应时收到无效文本导致 hang。
+			if currentRunner := service.CurrentRunner(); currentRunner != nil {
+				if prw, ok := currentRunner.(runner.PermissionResponseWriter); ok && prw.HasPendingPermissionRequest() {
+					logx.Warn("ws", "input blocked by pending permission request: connectionID=%s sessionID=%s remoteAddr=%s preview=%q", connectionID, sessionID, remoteAddr, wsDebugPreview(inputData))
+					emit(protocol.NewErrorEvent(sessionID, "有权限请求待处理，请先在 App 中完成授权", ""))
+					continue
 				}
-				if err := service.RestoreSafePermissionModeBeforeInput(ctx, sessionID, restoreReq, inputData, emitAndPersist); err != nil {
-					message := err.Error()
-					if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {
-						message = "当前没有可恢复的 Claude 会话，无法先恢复到安全权限模式"
-					} else if errors.Is(err, runtimepkg.ErrHotSwapUnsupportedRunner) {
-						message = "当前活跃会话不是可热重启恢复的 Claude PTY 会话"
-					} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
-						message = "Claude 恢复到安全模式后未进入可输入状态，请稍后重试"
-					} else if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
-						message = "安全权限模式恢复失败，当前没有可交互会话"
-					}
-					logx.Warn("ws", "restore safe permission mode before input failed: connectionID=%s sessionID=%s remoteAddr=%s action=input err=%v", connectionID, sessionID, remoteAddr, err)
-					emit(protocol.NewErrorEvent(sessionID, message, ""))
-				} else {
-					appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimRight(inputEvent.Data, "\n"), "回复", connectionID, remoteAddr)
-				}
-				continue
 			}
+			logx.Info("ws", "dispatch input: connectionID=%s sessionID=%s remoteAddr=%s action=input permissionMode=%q preview=%q", connectionID, sessionID, remoteAddr, inputMeta.PermissionMode, wsDebugPreview(inputData))
+			resumePermissionMode := normalizePermissionModeForClaude(firstNonEmptyString(
+				inputEvent.PermissionMode,
+				snapshot.ActiveMeta.PermissionMode,
+				controller.ActiveMeta.PermissionMode,
+				projection.Runtime.PermissionMode,
+			))
 			resumeReq := runtimepkg.ExecuteRequest{
 				Command: firstNonEmptyString(
 					snapshot.ActiveMeta.Command,
@@ -1373,15 +1356,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					controller.ActiveMeta.CWD,
 					projection.Runtime.CWD,
 				),
-				Mode: runner.ModePTY,
-				PermissionMode: firstNonEmptyString(
-					inputEvent.PermissionMode,
-					snapshot.SafePermissionMode,
-					snapshot.ActiveMeta.PermissionMode,
-					controller.ActiveMeta.PermissionMode,
-					projection.Runtime.PermissionMode,
-					"default",
-				),
+				Mode:           runner.ModePTY,
+				PermissionMode: resumePermissionMode,
 				RuntimeMeta: protocol.RuntimeMeta{
 					Source: "input",
 					ResumeSessionID: firstNonEmptyString(
@@ -1405,14 +1381,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						controller.ActiveMeta.CWD,
 						projection.Runtime.CWD,
 					),
-					PermissionMode: firstNonEmptyString(
-						inputEvent.PermissionMode,
-						snapshot.SafePermissionMode,
-						snapshot.ActiveMeta.PermissionMode,
-						controller.ActiveMeta.PermissionMode,
-						projection.Runtime.PermissionMode,
-						"default",
-					),
+					PermissionMode:    resumePermissionMode,
 					ClaudeSessionUUID: lookupClaudeSessionUUID(sessionID),
 				},
 			}
@@ -1506,7 +1475,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				emitPermissionRuleList(emit, h.SessionStore, ctx, sessionID)
 			}
-			err := executePermissionDecision(ctx, sessionID, permissionEvent, service, projection, controller, h.permissionGrants, emitAndPersist)
+			err := executePermissionDecision(ctx, sessionID, permissionEvent, service, projection, controller, emitAndPersist)
 			if err == nil {
 				continue
 			}
@@ -1518,11 +1487,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			} else if errors.Is(err, runner.ErrInputNotSupported) {
 				message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
 			} else if errors.Is(err, runtimepkg.ErrResumeSessionUnavailable) {
-				message = "当前没有可恢复的 Claude 会话，无法通过热重启继续此次权限批准"
-			} else if errors.Is(err, runtimepkg.ErrHotSwapUnsupportedRunner) {
-				message = "当前活跃会话不是可热重启恢复的 Claude PTY 会话"
+				message = "当前没有可恢复的 Claude 会话，无法继续此次权限批准"
 			} else if errors.Is(err, runtimepkg.ErrResumeConversationNotFound) {
-				message = "当前 Claude 会话的 resume id 已失效或不存在，无法通过热重启继续此次权限批准"
+				message = "当前 Claude 会话的 resume id 已失效或不存在，无法继续此次权限批准"
 			} else if errors.Is(err, runtimepkg.ErrRunnerNotInteractive) {
 				message = "Claude 恢复后未进入可输入状态，无法继续刚才的操作"
 			}
@@ -1652,7 +1619,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			service := runtimeSvc
 			service.UpdatePermissionMode(modeEvent.PermissionMode)
-			emit(protocol.ApplyRuntimeMeta(service.InitialEvent(), protocol.RuntimeMeta{PermissionMode: modeEvent.PermissionMode}))
+			emit(protocol.ApplyRuntimeMeta(service.InitialEvent(), protocol.RuntimeMeta{PermissionMode: service.ControllerSnapshot().ActiveMeta.PermissionMode}))
 		case "skill_exec":
 			var skillEvent protocol.SkillRequestEvent
 			if err := json.Unmarshal(payload, &skillEvent); err != nil {
@@ -2075,12 +2042,6 @@ func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecis
 	}
 }
 
-func hotSwapApproveContinuation(req protocol.PermissionDecisionRequestEvent) string {
-	// 热重载后，Claude 会话已恢复，权限已提升
-	// 告诉 Claude 已授权，让它继续执行
-	return "已授权，继续"
-}
-
 func wsDebugPreview(value string) string {
 	trimmed := strings.ReplaceAll(strings.TrimSpace(value), "\n", `\n`)
 	trimmed = strings.ReplaceAll(trimmed, "\r", `\r`)
@@ -2210,12 +2171,12 @@ func sessionRecordRuntimeAlive(record store.SessionRecord, svc *runtimepkg.Servi
 
 func toProtocolSummary(item store.SessionSummary) protocol.SessionSummary {
 	return protocol.SessionSummary{
-		ID:          item.ID,
-		Title:       item.Title,
-		CreatedAt:   item.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   item.UpdatedAt.Format(time.RFC3339),
-		LastPreview: item.LastPreview,
-		EntryCount:  item.EntryCount,
+		ID:              item.ID,
+		Title:           item.Title,
+		CreatedAt:       item.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:       item.UpdatedAt.Format(time.RFC3339),
+		LastPreview:     item.LastPreview,
+		EntryCount:      item.EntryCount,
 		Source:          item.Source,
 		External:        item.External,
 		Ownership:       item.Ownership,
@@ -3608,6 +3569,7 @@ func restoredAgentStateEventFromRecord(record store.SessionRecord, hasActiveRunn
 		PermissionMode: firstNonEmptyString(
 			projection.Controller.ActiveMeta.PermissionMode,
 			projection.Runtime.PermissionMode,
+			"auto",
 		),
 		ClaudeLifecycle: normalizeProjectionLifecycle(
 			firstNonEmptyString(
@@ -3718,7 +3680,7 @@ func shouldEmitTransientResumeThinkingEvent(service *runtimepkg.Service, req run
 	if req.Mode != runner.ModePTY {
 		return false
 	}
-	if !service.CanHotSwapClaudeSession(req) {
+	if !service.CanResumeAISession(req) {
 		return false
 	}
 	if !service.HasResumeSession(req) {

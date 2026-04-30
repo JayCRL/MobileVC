@@ -3288,14 +3288,12 @@ func TestHandlerInputInjectsEmptySessionContextToOverrideEarlierSkillAndMemorySt
 	}
 }
 
-func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
+func TestHandlerInputBlocksPendingPermissionRequest(t *testing.T) {
 	firstRunner := newHoldingStubRunner(protocol.ApplyRuntimeMeta(
 		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
 		protocol.RuntimeMeta{ResumeSessionID: "resume-input-123"},
 	))
 	firstRunner.claudeSessionID = "resume-input-123"
-	secondRunner := newHoldingStubRunner()
-	thirdRunner := newHoldingStubRunner()
 	runnerIndex := 0
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
@@ -3305,17 +3303,11 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner {
 		runnerIndex++
-		if runnerIndex == 1 {
-			return firstRunner
-		}
-		if runnerIndex == 2 {
-			return secondRunner
-		}
-		return thirdRunner
+		return firstRunner
 	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
-	_ = createHistorySessionForHandlerTest(t, h, conn, "input-restore-safe")
+	_ = createHistorySessionForHandlerTest(t, h, conn, "input-pending-permission")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty", PermissionMode: "default"}); err != nil {
 		t.Fatalf("write exec request: %v", err)
@@ -3327,42 +3319,17 @@ func TestHandlerInputRestoresSafePermissionModeBeforeSending(t *testing.T) {
 	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "请创建 README.md 并写入 hello\n"}); err != nil {
 		t.Fatalf("write input request: %v", err)
 	}
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "有权限请求待处理，请先在 App 中完成授权" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+	if runnerIndex != 1 {
+		t.Fatalf("expected no runner restart while permission is pending, got runner count=%d", runnerIndex)
+	}
 	select {
 	case payload := <-firstRunner.writeCh:
-		if string(payload) != "请创建 README.md 并写入 hello\n" {
-			t.Fatalf("unexpected initial input payload: %q", string(payload))
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive initial input payload")
-	}
-
-	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{ClientEvent: protocol.ClientEvent{Action: "permission_decision"}, Decision: "approve", PermissionMode: "default", TargetPath: "README.md", PromptMessage: "写 README 需要你的授权"}); err != nil {
-		t.Fatalf("write permission decision request: %v", err)
-	}
-	firstRunner.WaitClosed(t)
-	secondRunner.WaitStarted(t)
-	select {
-	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。  先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次已批准的操作。  你上一次请求权限时的原始上下文如下，请按该上下文继续处理：写 README 需要你的授权\n" {
-			t.Fatalf("unexpected continuation payload: %q", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive continuation payload")
-	}
-
-	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "next\n"}); err != nil {
-		t.Fatalf("write input request: %v", err)
-	}
-	select {
-	case payload := <-thirdRunner.writeCh:
-		if string(payload) != "next\n" {
-			t.Fatalf("unexpected restored input payload: %q", string(payload))
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive restored input payload")
-	}
-	if thirdRunner.lastReq.PermissionMode != "default" {
-		t.Fatalf("expected default permission mode after restore, got %#v", thirdRunner.lastReq)
+		t.Fatalf("unexpected input payload while permission is pending: %q", string(payload))
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	_ = conn.Close()
@@ -3428,8 +3395,8 @@ func TestHandlerInputAutoResumesDetachedClaudeSession(t *testing.T) {
 	if thinking["claudeLifecycle"] != "active" {
 		t.Fatalf("expected active claudeLifecycle on transient thinking event, got %#v", thinking)
 	}
-	if thinking["permissionMode"] != "default" {
-		t.Fatalf("expected default permission mode on transient thinking event, got %#v", thinking)
+	if thinking["permissionMode"] != "auto" {
+		t.Fatalf("expected auto permission mode on transient thinking event, got %#v", thinking)
 	}
 	secondRunner.WaitStarted(t)
 	if !strings.Contains(secondRunner.lastReq.Command, "--resume ") {
@@ -3780,11 +3747,12 @@ func TestHandlerUnknownMode(t *testing.T) {
 	}
 }
 
-func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
-	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
-	firstRunner.claudeSessionID = "resume-approve-123"
-	secondRunner := newHoldingStubRunner()
-	thirdRunner := newHoldingStubRunner()
+func TestHandlerPermissionDecisionApproveUsesDirectPermissionResponse(t *testing.T) {
+	firstRunner := newHoldingStubRunner(protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
+		protocol.RuntimeMeta{PermissionRequestID: "perm-claude-1", BlockingKind: "permission"},
+	))
+	firstRunner.currentPermissionRequestID = "perm-claude-1"
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {
@@ -3794,18 +3762,11 @@ func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
 	runnerIndex := 0
 	h.NewPtyRunner = func() runner.Runner {
 		runnerIndex++
-		switch runnerIndex {
-		case 1:
-			return firstRunner
-		case 2:
-			return secondRunner
-		default:
-			return thirdRunner
-		}
+		return firstRunner
 	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
-	sessionID := createHistorySessionForHandlerTest(t, h, conn, "permission-approve")
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-approve")
 
 	if err := conn.WriteJSON(protocol.ExecRequestEvent{
 		ClientEvent:    protocol.ClientEvent{Action: "exec"},
@@ -3822,54 +3783,34 @@ func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
 	}
 	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
 
-	if err := conn.WriteJSON(protocol.InputRequestEvent{ClientEvent: protocol.ClientEvent{Action: "input"}, Data: "请创建 README.md 并写入 hello\n"}); err != nil {
-		t.Fatalf("write input request: %v", err)
-	}
-	select {
-	case payload := <-firstRunner.writeCh:
-		if string(payload) != "请创建 README.md 并写入 hello\n" {
-			t.Fatalf("unexpected initial input payload: %q", string(payload))
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive initial input payload")
-	}
-
 	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
-		ClientEvent:    protocol.ClientEvent{Action: "permission_decision"},
-		Decision:       "approve",
-		PermissionMode: "default",
-		TargetPath:     "README.md",
-		ContextTitle:   "README",
-		PromptMessage:  "写 README 需要你的授权",
+		ClientEvent:         protocol.ClientEvent{Action: "permission_decision"},
+		Decision:            "approve",
+		PermissionMode:      "default",
+		PermissionRequestID: "perm-claude-1",
+		TargetPath:          "README.md",
+		ContextTitle:        "README",
+		PromptMessage:       "写 README 需要你的授权",
+		FallbackCommand:     "claude",
+		FallbackEngine:      "claude",
 	}); err != nil {
 		t.Fatalf("write permission decision request: %v", err)
 	}
 
-	firstRunner.WaitClosed(t)
-	secondRunner.WaitStarted(t)
-	select {
-	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。  先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次已批准的操作。  你上一次请求权限时的原始上下文如下，请按该上下文继续处理：写 README 需要你的授权\n" {
-			t.Fatalf("unexpected continuation payload: %q", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive continuation payload on hot-swapped runner")
-	}
-	if secondRunner.lastReq.PermissionMode != "acceptEdits" {
-		t.Fatalf("expected acceptEdits restart permission mode, got %#v", secondRunner.lastReq)
-	}
-	if !strings.Contains(secondRunner.lastReq.Command, "--resume ") {
-		t.Fatalf("expected resume command, got %q", secondRunner.lastReq.Command)
-	}
-	if !strings.Contains(secondRunner.lastReq.Command, "--print") {
-		t.Fatalf("expected print mode on hot-swapped command, got %q", secondRunner.lastReq.Command)
-	}
-	if strings.Contains(secondRunner.lastReq.Command, "--session-id") {
-		t.Fatalf("did not expect managed session id on hot-swapped command, got %q", secondRunner.lastReq.Command)
-	}
 	select {
 	case decision := <-firstRunner.permissionResponseWriteCh:
-		t.Fatalf("unexpected structured decision: %q", decision)
+		if decision != "approve" {
+			t.Fatalf("unexpected direct permission response: %q", decision)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive direct permission response")
+	}
+	if runnerIndex != 1 {
+		t.Fatalf("expected no runner restart, got runner count=%d", runnerIndex)
+	}
+	select {
+	case payload := <-firstRunner.writeCh:
+		t.Fatalf("unexpected continuation payload: %q", string(payload))
 	case <-time.After(200 * time.Millisecond):
 	}
 
@@ -3890,46 +3831,9 @@ func TestHandlerPermissionDecisionApproveTriggersHotSwap(t *testing.T) {
 	if thinking["source"] != "permission-decision" {
 		t.Fatalf("expected permission-decision source, got %#v", thinking)
 	}
-
-	runtimeSession := h.runtimeSessions.Ensure(sessionID)
-	if runtimeSession == nil {
-		t.Fatal("expected runtime session")
+	if thinking["permissionMode"] != "auto" {
+		t.Fatalf("expected auto permission mode after approval, got %#v", thinking)
 	}
-	foundApprovedPrompt := false
-	for _, pending := range runtimeSession.pendingSince(0) {
-		prompt, ok := pending.(protocol.PromptRequestEvent)
-		if ok && prompt.Message == "写 README 需要你的授权" {
-			foundApprovedPrompt = true
-			break
-		}
-	}
-	if !foundApprovedPrompt {
-		t.Fatal("expected approved permission prompt to remain pending for hot-swap replay semantics")
-	}
-
-	go func() {
-		secondRunner.mu.Lock()
-		sink := secondRunner.sink
-		secondRunner.mu.Unlock()
-		if sink != nil {
-			sink(protocol.ApplyRuntimeMeta(
-				protocol.NewPromptRequestEvent("ignored", "Claude requested permissions to use Edit on README.md", []string{"y", "n"}),
-				protocol.RuntimeMeta{ResumeSessionID: "resume-approve-123", TargetPath: "README.md", Command: "claude"},
-			))
-		}
-	}()
-
-	thirdRunner.WaitStarted(t)
-	select {
-	case payload := <-thirdRunner.writeCh:
-		if !strings.Contains(string(payload), "README.md") {
-			t.Fatalf("unexpected grant replay payload: %q", string(payload))
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive continuation payload on grant-consumed hot swap")
-	}
-
-	assertNoEventType(t, conn, protocol.EventTypePromptRequest, 300*time.Millisecond)
 }
 
 func TestHandlerPermissionDecisionApproveForCodexUsesDirectPermissionResponse(t *testing.T) {
@@ -3983,7 +3887,7 @@ func TestHandlerPermissionDecisionApproveForCodexUsesDirectPermissionResponse(t 
 		t.Fatal("did not receive direct codex permission response")
 	}
 	if runnerIndex != 1 {
-		t.Fatalf("expected no hot swap runner restart for codex, got runner count=%d", runnerIndex)
+		t.Fatalf("expected no runner restart for codex, got runner count=%d", runnerIndex)
 	}
 }
 
@@ -4038,7 +3942,7 @@ func TestHandlerPermissionDecisionApproveForCodexWithExpiredPendingRequestReturn
 		t.Fatalf("unexpected error event: %#v", event)
 	}
 	if runnerIndex != 1 {
-		t.Fatalf("expected no hot swap runner restart for expired codex permission, got runner count=%d", runnerIndex)
+		t.Fatalf("expected no runner restart for expired codex permission, got runner count=%d", runnerIndex)
 	}
 	select {
 	case decision := <-firstRunner.permissionResponseWriteCh:
@@ -4230,9 +4134,8 @@ func TestHandlerPermissionDecisionWithoutRunnerReturnsError(t *testing.T) {
 	}
 }
 
-func TestHandlerPermissionDecisionWithManagedFreshClaudeSessionCanHotSwap(t *testing.T) {
+func TestHandlerPermissionDecisionWithManagedFreshClaudeSessionUsesDirectPermissionResponse(t *testing.T) {
 	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
-	secondRunner := newHoldingStubRunner()
 	runnerIndex := 0
 
 	h := newTestHandler()
@@ -4243,10 +4146,7 @@ func TestHandlerPermissionDecisionWithManagedFreshClaudeSessionCanHotSwap(t *tes
 	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner {
 		runnerIndex++
-		if runnerIndex == 1 {
-			return firstRunner
-		}
-		return secondRunner
+		return firstRunner
 	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
@@ -4277,16 +4177,20 @@ func TestHandlerPermissionDecisionWithManagedFreshClaudeSessionCanHotSwap(t *tes
 		t.Fatalf("write permission decision request: %v", err)
 	}
 
-	firstRunner.WaitClosed(t)
-	secondRunner.WaitStarted(t)
 	select {
-	case <-secondRunner.writeCh:
+	case decision := <-firstRunner.permissionResponseWriteCh:
+		if decision != "approve" {
+			t.Fatalf("unexpected direct permission response: %q", decision)
+		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive continuation payload on hot-swapped runner")
+		t.Fatal("did not receive direct permission response")
+	}
+	if runnerIndex != 1 {
+		t.Fatalf("expected no runner restart, got runner count=%d", runnerIndex)
 	}
 }
 
-func TestHandlerPermissionDecisionWithoutHotSwapSupportReturnsError(t *testing.T) {
+func TestHandlerPermissionDecisionWithoutPermissionResponseSupportReturnsError(t *testing.T) {
 	base := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
 	runnerWithoutClaudeSession := &writeOnlyStubRunner{base: base}
 	h := newTestHandler()
@@ -4331,23 +4235,12 @@ func TestHandlerPermissionDecisionWithoutHotSwapSupportReturnsError(t *testing.T
 	}
 }
 
-func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
+func TestHandlerPermissionDecisionApproveAfterRunnerEndedReturnsError(t *testing.T) {
 	firstRunner := newStubRunner(protocol.ApplyRuntimeMeta(
 		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
 		protocol.RuntimeMeta{ResumeSessionID: "resume-123"},
 	))
 	firstRunner.claudeSessionID = "resume-123"
-	secondRunner := newHoldingStubRunner()
-	secondRunner.interactive = false
-	secondRunner.onStart = func() {
-		go func() {
-			time.Sleep(80 * time.Millisecond)
-			secondRunner.mu.Lock()
-			secondRunner.interactive = true
-			secondRunner.hasPendingPermission = true
-			secondRunner.mu.Unlock()
-		}()
-	}
 	runnerIndex := 0
 
 	h := newTestHandler()
@@ -4358,10 +4251,7 @@ func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
 	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner {
 		runnerIndex++
-		if runnerIndex == 1 {
-			return firstRunner
-		}
-		return secondRunner
+		return firstRunner
 	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
@@ -4396,21 +4286,18 @@ func TestHandlerPermissionDecisionApproveResumesAfterRunnerEnded(t *testing.T) {
 		t.Fatalf("write permission decision request: %v", err)
 	}
 
-	secondRunner.WaitStarted(t)
-	select {
-	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。  先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次已批准的操作。  你上一次请求权限时的原始上下文如下，请按该上下文继续处理：写 README 需要你的授权\n" {
-			t.Fatalf("unexpected continuation payload on resumed runner: %q", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive continuation payload on resumed runner")
+	event := readUntilType(t, conn, protocol.EventTypeError)
+	if event["msg"] != "当前没有可交互的 Claude 会话，无法继续处理该权限请求" {
+		t.Fatalf("unexpected error event: %#v", event)
+	}
+	if runnerIndex != 1 {
+		t.Fatalf("expected no runner restart, got runner count=%d", runnerIndex)
 	}
 }
 
-func TestHandlerPermissionDecisionWithNonInteractiveRunnerStillHotSwaps(t *testing.T) {
+func TestHandlerPermissionDecisionWithNonInteractiveRunnerUsesDirectPermissionResponse(t *testing.T) {
 	firstRunner := newNonInteractiveHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}))
 	firstRunner.claudeSessionID = "resume-non-interactive-123"
-	secondRunner := newHoldingStubRunner()
 	runnerIndex := 0
 	h := newTestHandler()
 	tempStore, err := store.NewFileStore(t.TempDir())
@@ -4420,10 +4307,7 @@ func TestHandlerPermissionDecisionWithNonInteractiveRunnerStillHotSwaps(t *testi
 	h.SessionStore = tempStore
 	h.NewPtyRunner = func() runner.Runner {
 		runnerIndex++
-		if runnerIndex == 1 {
-			return firstRunner
-		}
-		return secondRunner
+		return firstRunner
 	}
 	conn := newTestConn(t, h)
 	_, _ = readInitialEvents(t, conn)
@@ -4460,15 +4344,16 @@ func TestHandlerPermissionDecisionWithNonInteractiveRunnerStillHotSwaps(t *testi
 	}); err != nil {
 		t.Fatalf("write permission decision request: %v", err)
 	}
-	firstRunner.WaitClosed(t)
-	secondRunner.WaitStarted(t)
 	select {
-	case payload := <-secondRunner.writeCh:
-		if got := string(payload); got != "我已经批准这次文件修改权限。  不要继续复用刚才那次失败的工具调用；请基于这次已批准的权限重新开始处理。  先使用 Read 读取目标文件的当前内容；读取成功后，再发起一次新的 Edit/Write 操作。  本次已授权的目标文件：`README.md`。  不要再次请求权限，不要只做解释，直接完成这次已批准的操作。  你上一次请求权限时的原始上下文如下，请按该上下文继续处理：写 README 需要你的授权\n" {
-			t.Fatalf("unexpected continuation payload: %q", got)
+	case decision := <-firstRunner.permissionResponseWriteCh:
+		if decision != "approve" {
+			t.Fatalf("unexpected direct permission response: %q", decision)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("did not receive continuation payload")
+		t.Fatal("did not receive direct permission response")
+	}
+	if runnerIndex != 1 {
+		t.Fatalf("expected no runner restart, got runner count=%d", runnerIndex)
 	}
 	thinking := readUntilType(t, conn, protocol.EventTypeAgentState)
 	if thinking["state"] != "THINKING" {
@@ -4533,7 +4418,7 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 		ContextID:      "diff:1",
 		ContextTitle:   "最近 Diff",
 		TargetPath:     "internal/ws/handler.go",
-		PermissionMode: "acceptEdits",
+		PermissionMode: "auto",
 		IsReviewOnly:   true,
 	}); err != nil {
 		t.Fatalf("write review decision request: %v", err)
@@ -4562,8 +4447,8 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	if thinking["source"] != "review-decision" {
 		t.Fatalf("expected review-decision source, got %#v", thinking)
 	}
-	if thinking["permissionMode"] != "acceptEdits" {
-		t.Fatalf("expected acceptEdits permission mode, got %#v", thinking)
+	if thinking["permissionMode"] != "auto" {
+		t.Fatalf("expected auto permission mode, got %#v", thinking)
 	}
 }
 
@@ -4591,7 +4476,7 @@ func TestHandlerReviewDecisionRevertSendsPromptEvenWhenReviewOnly(t *testing.T) 
 		ContextID:      "diff:revert-1",
 		ContextTitle:   "最近 Diff",
 		TargetPath:     "internal/ws/handler.go",
-		PermissionMode: "acceptEdits",
+		PermissionMode: "auto",
 		IsReviewOnly:   true,
 	}); err != nil {
 		t.Fatalf("write review decision request: %v", err)
@@ -4717,7 +4602,7 @@ func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 	_, _ = readInitialEvents(t, conn)
 	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-mode-session")
 
-	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty", PermissionMode: "acceptEdits"}); err != nil {
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{ClientEvent: protocol.ClientEvent{Action: "exec"}, Command: "claude", Mode: "pty", PermissionMode: "auto"}); err != nil {
 		t.Fatalf("write exec request: %v", err)
 	}
 	ptyRunner.WaitStarted(t)
@@ -4729,7 +4614,7 @@ func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 	var state map[string]any
 	for i := 0; i < 5; i++ {
 		event := readUntilType(t, conn, protocol.EventTypeAgentState)
-		if event["permissionMode"] == "default" {
+		if event["permissionMode"] == "auto" {
 			state = event
 			break
 		}
@@ -4737,10 +4622,10 @@ func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 	if state == nil {
 		t.Fatal("did not receive updated permissionMode agent state")
 	}
-	if state["permissionMode"] != "default" {
+	if state["permissionMode"] != "auto" {
 		t.Fatalf("expected updated permission mode, got %#v", state)
 	}
-	if ptyRunner.lastPermissionMode != "default" {
+	if ptyRunner.lastPermissionMode != "auto" {
 		t.Fatalf("expected runner permission mode to update, got %q", ptyRunner.lastPermissionMode)
 	}
 }
@@ -4762,7 +4647,7 @@ func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 		ClientEvent:    protocol.ClientEvent{Action: "exec"},
 		Command:        "claude",
 		Mode:           "pty",
-		PermissionMode: "acceptEdits",
+		PermissionMode: "auto",
 	}); err != nil {
 		t.Fatalf("write exec request: %v", err)
 	}
@@ -4778,7 +4663,7 @@ func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 	var state map[string]any
 	for i := 0; i < 5; i++ {
 		event := readUntilType(t, conn, protocol.EventTypeAgentState)
-		if event["permissionMode"] == "default" {
+		if event["permissionMode"] == "auto" {
 			state = event
 			break
 		}
@@ -4786,10 +4671,10 @@ func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 	if state == nil {
 		t.Fatal("did not receive updated permissionMode agent state")
 	}
-	if state["permissionMode"] != "default" {
-		t.Fatalf("expected permissionMode to be default, got %#v", state)
+	if state["permissionMode"] != "auto" {
+		t.Fatalf("expected permissionMode to be auto, got %#v", state)
 	}
-	if ptyRunner.lastPermissionMode != "default" {
+	if ptyRunner.lastPermissionMode != "auto" {
 		t.Fatalf("expected runner permission mode to update, got %q", ptyRunner.lastPermissionMode)
 	}
 }
@@ -4854,8 +4739,8 @@ func TestHandlerReviewDecisionAcceptAllowedInDefaultMode(t *testing.T) {
 	if thinking["state"] != "THINKING" {
 		t.Fatalf("expected THINKING state, got %#v", thinking)
 	}
-	if thinking["permissionMode"] != "default" {
-		t.Fatalf("expected default permission mode, got %#v", thinking)
+	if thinking["permissionMode"] != "auto" {
+		t.Fatalf("expected auto permission mode, got %#v", thinking)
 	}
 }
 

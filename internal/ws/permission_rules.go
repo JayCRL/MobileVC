@@ -310,20 +310,20 @@ func buildPermissionDecisionFromEvent(
 	controller session.ControllerSnapshot,
 ) protocol.PermissionDecisionRequestEvent {
 	return protocol.PermissionDecisionRequestEvent{
-		ClientEvent:        protocol.ClientEvent{Action: "permission_decision"},
-		Decision:           "approve",
-		PermissionMode:     firstNonEmptyString(meta.PermissionMode, controller.ActiveMeta.PermissionMode, projection.Runtime.PermissionMode),
+		ClientEvent:         protocol.ClientEvent{Action: "permission_decision"},
+		Decision:            "approve",
+		PermissionMode:      firstNonEmptyString(meta.PermissionMode, controller.ActiveMeta.PermissionMode, projection.Runtime.PermissionMode),
 		PermissionRequestID: strings.TrimSpace(meta.PermissionRequestID),
-		ResumeSessionID:    firstNonEmptyString(meta.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID),
-		TargetPath:         firstNonEmptyString(meta.TargetPath, controller.ActiveMeta.TargetPath),
-		ContextID:          firstNonEmptyString(meta.ContextID, controller.ActiveMeta.ContextID),
-		ContextTitle:       firstNonEmptyString(meta.ContextTitle, controller.ActiveMeta.ContextTitle),
-		PromptMessage:      strings.TrimSpace(message),
-		FallbackCommand:    firstNonEmptyString(meta.Command, projection.Runtime.Command, controller.CurrentCommand, controller.ActiveMeta.Command),
-		FallbackCWD:        firstNonEmptyString(meta.CWD, controller.ActiveMeta.CWD, projection.Runtime.CWD),
-		FallbackEngine:     firstNonEmptyString(meta.Engine, controller.ActiveMeta.Engine, projection.Runtime.Engine),
-		FallbackTarget:     firstNonEmptyString(meta.Target, controller.ActiveMeta.Target),
-		FallbackTargetType: firstNonEmptyString(meta.TargetType, controller.ActiveMeta.TargetType),
+		ResumeSessionID:     firstNonEmptyString(meta.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID),
+		TargetPath:          firstNonEmptyString(meta.TargetPath, controller.ActiveMeta.TargetPath),
+		ContextID:           firstNonEmptyString(meta.ContextID, controller.ActiveMeta.ContextID),
+		ContextTitle:        firstNonEmptyString(meta.ContextTitle, controller.ActiveMeta.ContextTitle),
+		PromptMessage:       strings.TrimSpace(message),
+		FallbackCommand:     firstNonEmptyString(meta.Command, projection.Runtime.Command, controller.CurrentCommand, controller.ActiveMeta.Command),
+		FallbackCWD:         firstNonEmptyString(meta.CWD, controller.ActiveMeta.CWD, projection.Runtime.CWD),
+		FallbackEngine:      firstNonEmptyString(meta.Engine, controller.ActiveMeta.Engine, projection.Runtime.Engine),
+		FallbackTarget:      firstNonEmptyString(meta.Target, controller.ActiveMeta.Target),
+		FallbackTargetType:  firstNonEmptyString(meta.TargetType, controller.ActiveMeta.TargetType),
 	}
 }
 
@@ -362,59 +362,6 @@ func looksLikePermissionInteractionForRule(event protocol.InteractionRequestEven
 	targetPath := firstNonEmptyString(event.TargetPath, event.RuntimeMeta.TargetPath)
 	derivedKind := classifyPermissionKind(message, strings.TrimSpace(targetPath), strings.TrimSpace(event.RuntimeMeta.Command))
 	return derivedKind != "" && derivedKind != store.PermissionKindGeneric
-}
-
-func maybeConsumeTemporaryPermissionGrant(
-	ctx context.Context,
-	sessionStore store.Store,
-	sessionID string,
-	event any,
-	service *runtimepkg.Service,
-	grantStore *permissionGrantStore,
-	emitAndPersist func(any),
-) (bool, error) {
-	if grantStore == nil {
-		return false, nil
-	}
-	var (
-		message string
-		meta    protocol.RuntimeMeta
-	)
-	switch e := event.(type) {
-	case protocol.PromptRequestEvent:
-		if !looksLikePermissionPromptForRule(e) {
-			return false, nil
-		}
-		message = e.Message
-		meta = e.RuntimeMeta
-	case protocol.InteractionRequestEvent:
-		if !looksLikePermissionInteractionForRule(e) {
-			return false, nil
-		}
-		message = e.Message
-		meta = protocol.MergeRuntimeMeta(e.RuntimeMeta, protocol.RuntimeMeta{TargetPath: firstNonEmptyString(e.TargetPath, e.RuntimeMeta.TargetPath)})
-	default:
-		return false, nil
-	}
-	targetPath := normalizePermissionGrantPath(meta.TargetPath)
-	if targetPath == "" || !grantStore.ConsumeIfValid(sessionID, targetPath, strings.TrimSpace(meta.PermissionRequestID)) {
-		return false, nil
-	}
-	projection := normalizeProjectionSnapshot(store.ProjectionSnapshot{})
-	if strings.TrimSpace(sessionID) != "" && sessionStore != nil {
-		if record, err := sessionStore.GetSession(ctx, sessionID); err == nil {
-			projection = normalizeProjectionSnapshot(record.Projection)
-		}
-	}
-	controller := service.ControllerSnapshot()
-	req := buildPermissionDecisionFromEvent(sessionID, message, meta, projection, controller)
-	if req.TargetPath == "" {
-		req.TargetPath = targetPath
-	}
-	if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, grantStore, emitAndPersist); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func maybeAutoApplyPermissionEvent(
@@ -461,7 +408,7 @@ func maybeAutoApplyPermissionEvent(
 
 	if projection.PermissionRulesEnabled {
 		if rule, ok := matchPermissionRule(projection.PermissionRules, matchCtx); ok {
-			if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, nil, emitAndPersist); err != nil {
+			if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, emitAndPersist); err != nil {
 				return false, err
 			}
 			if strings.TrimSpace(sessionID) != "" {
@@ -488,7 +435,7 @@ func maybeAutoApplyPermissionEvent(
 	if !ok {
 		return false, nil
 	}
-	if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, nil, emitAndPersist); err != nil {
+	if err := executePermissionDecision(ctx, sessionID, req, service, projection, controller, emitAndPersist); err != nil {
 		return false, err
 	}
 	persistentSnapshot.Items = markPermissionRuleMatched(persistentSnapshot.Items, rule.ID)
