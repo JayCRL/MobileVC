@@ -54,6 +54,7 @@ type PtyRunner struct {
 	codexSession            *codexAppSession
 	permissionMode          string
 	pendingControlRequestID string
+	pendingControlInput     json.RawMessage
 	pendingPromptOptions    []string
 	lastToolName            string
 	lastToolTarget          string
@@ -610,6 +611,7 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 	writer := r.writer
 	closed := r.closed
 	requestID := strings.TrimSpace(r.pendingControlRequestID)
+	controlInput := cloneRawMessage(r.pendingControlInput)
 	promptOptions := append([]string(nil), r.pendingPromptOptions...)
 	req := r.pendingReq
 	r.mu.Unlock()
@@ -650,17 +652,23 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 		r.mu.Lock()
 		if r.pendingControlRequestID == requestID {
 			r.pendingControlRequestID = ""
+			r.pendingControlInput = nil
 			r.pendingPromptOptions = nil
 		}
 		r.mu.Unlock()
 		return nil
 	}
 
+	responseBody, err := buildClaudePermissionControlResponseBody(behavior, controlInput)
+	if err != nil {
+		return err
+	}
 	payload := map[string]any{
-		"type":       "control_response",
-		"request_id": requestID,
+		"type": "control_response",
 		"response": map[string]any{
-			"behavior": behavior,
+			"subtype":    "success",
+			"request_id": requestID,
+			"response":   responseBody,
 		},
 	}
 	encoded, err := json.Marshal(payload)
@@ -672,6 +680,13 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 
 	writeDone := make(chan error, 1)
 	go func() {
+		if rawWriter, ok := writer.(interface {
+			WriteControlResponse([]byte) (int, error)
+		}); ok {
+			_, err := rawWriter.WriteControlResponse(encoded)
+			writeDone <- err
+			return
+		}
 		_, err := writer.Write(encoded)
 		writeDone <- err
 	}()
@@ -688,6 +703,7 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 	r.mu.Lock()
 	if r.pendingControlRequestID == requestID {
 		r.pendingControlRequestID = ""
+		r.pendingControlInput = nil
 		r.pendingPromptOptions = nil
 	}
 	r.mu.Unlock()
@@ -762,6 +778,7 @@ func (r *PtyRunner) clearGeneration(generation uint64) {
 	r.interactive = false
 	r.awaitingReadyPrompt = false
 	r.pendingControlRequestID = ""
+	r.pendingControlInput = nil
 	r.pendingPromptOptions = nil
 	r.closed = true
 	r.suppressExitError = false
@@ -1744,6 +1761,18 @@ type claudeStreamWriter struct {
 	writer io.Writer
 }
 
+func (w *claudeStreamWriter) WriteControlResponse(data []byte) (int, error) {
+	if len(data) == 0 {
+		return 0, nil
+	}
+	logx.Info("pty", "claude stream writer received control response: preview=%q", ptyDebugPreview(string(data)))
+	_, err := w.writer.Write(data)
+	if err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
+
 func (w *claudeStreamWriter) Write(data []byte) (int, error) {
 	text := strings.TrimSpace(string(data))
 	if text == "" {
@@ -1801,6 +1830,28 @@ type claudeStreamEnvelope struct {
 			IsError bool            `json:"is_error,omitempty"`
 		} `json:"content"`
 	} `json:"message"`
+}
+
+func buildClaudePermissionControlResponseBody(behavior string, rawInput json.RawMessage) (map[string]any, error) {
+	switch behavior {
+	case "allow":
+		updatedInput := map[string]any{}
+		if len(rawInput) > 0 {
+			if err := json.Unmarshal(rawInput, &updatedInput); err != nil {
+				return nil, fmt.Errorf("decode permission tool input: %w", err)
+			}
+		}
+		return map[string]any{
+			"updatedInput": updatedInput,
+		}, nil
+	case "deny":
+		return map[string]any{
+			"behavior": "deny",
+			"message":  "Permission denied by user",
+		}, nil
+	default:
+		return nil, errors.New("unknown permission behavior")
+	}
 }
 
 func extractControlRequestPrompt(envelope claudeStreamEnvelope) string {
@@ -1885,6 +1936,7 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			if requestID != "" {
 				r.mu.Lock()
 				r.pendingControlRequestID = requestID
+				r.pendingControlInput = cloneRawMessage(envelope.Request.Input)
 				r.mu.Unlock()
 				logx.Info("pty", "cached control request: sessionID=%s requestID=%q", sessionID, requestID)
 			}

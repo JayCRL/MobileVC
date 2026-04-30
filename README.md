@@ -171,7 +171,7 @@ MobileVC 解决的不是”怎么远程看见电脑”，而是：
 ### 权限、审核与通知
 
 - 权限规则自动应用已经收敛到后端，前端只负责展示结果
-- Claude 权限批准链路直接回写 `control_response`，避免授权后热重启循环
+- Claude 权限批准链路直接回写 `control_response`，避免授权后热重启循环；approve 会带回原始 tool input 的 `updatedInput`
 - Claude 默认采用官方 `permission-model-auto`
 - 用户手动同意和会话/长期规则命中走同一条后端授权写回路径，不再向会话注入“已授权，继续”
 - 普通输入遇到待处理权限请求会被后端拦截，避免把文本写入正在等待结构化权限响应的 Claude stdin

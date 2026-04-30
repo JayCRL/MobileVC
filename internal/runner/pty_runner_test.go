@@ -570,11 +570,59 @@ func TestPtyRunnerWritePermissionResponseApproveEncodesControlResponse(t *testin
 	if !strings.Contains(output, `"request_id":"req-approve"`) {
 		t.Fatalf("expected request_id in payload, got %q", output)
 	}
-	if !strings.Contains(output, `"behavior":"allow"`) {
-		t.Fatalf("expected allow behavior, got %q", output)
+	if !strings.Contains(output, `"subtype":"success"`) {
+		t.Fatalf("expected success subtype in payload, got %q", output)
+	}
+	if !strings.Contains(output, `"updatedInput":{}`) {
+		t.Fatalf("expected updatedInput in approve payload, got %q", output)
 	}
 	if runner.HasPendingPermissionRequest() {
 		t.Fatal("expected pending control request to be cleared after successful write")
+	}
+}
+
+func TestPtyRunnerWritePermissionResponseApproveIncludesToolInput(t *testing.T) {
+	buf := &nopWriteCloser{}
+	runner := NewPtyRunner()
+	runner.writer = buf
+	runner.pendingReq = ExecRequest{SessionID: "s-control-approve-input"}
+	runner.pendingControlRequestID = "req-approve-input"
+	runner.pendingControlInput = json.RawMessage(`{"file_path":"/tmp/example.txt","content":"ok\n"}`)
+
+	if err := runner.WritePermissionResponse(context.Background(), "approve"); err != nil {
+		t.Fatalf("write permission response: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `"updatedInput":{"content":"ok\n","file_path":"/tmp/example.txt"}`) {
+		t.Fatalf("expected updatedInput to include original tool input, got %q", output)
+	}
+}
+
+func TestPtyRunnerWritePermissionResponseBypassesClaudeUserWrapper(t *testing.T) {
+	buf := &nopWriteCloser{}
+	runner := NewPtyRunner()
+	runner.writer = &claudeStreamWriter{writer: buf}
+	runner.pendingReq = ExecRequest{SessionID: "s-control-stream"}
+	runner.pendingControlRequestID = "req-stream"
+	runner.pendingControlInput = json.RawMessage(`{"command":"echo ok"}`)
+
+	if err := runner.WritePermissionResponse(context.Background(), "approve"); err != nil {
+		t.Fatalf("write permission response: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `"type":"control_response"`) {
+		t.Fatalf("expected raw control_response payload, got %q", output)
+	}
+	if strings.Contains(output, `"type":"user"`) {
+		t.Fatalf("control response must not be wrapped as user input, got %q", output)
+	}
+	if !strings.Contains(output, `"request_id":"req-stream"`) {
+		t.Fatalf("expected request_id in payload, got %q", output)
+	}
+	if !strings.Contains(output, `"updatedInput":{"command":"echo ok"}`) {
+		t.Fatalf("expected updatedInput in payload, got %q", output)
 	}
 }
 
@@ -592,6 +640,9 @@ func TestPtyRunnerWritePermissionResponseDenyEncodesControlResponse(t *testing.T
 	output := buf.String()
 	if !strings.Contains(output, `"behavior":"deny"`) {
 		t.Fatalf("expected deny behavior, got %q", output)
+	}
+	if !strings.Contains(output, `"message":"Permission denied by user"`) {
+		t.Fatalf("expected deny message, got %q", output)
 	}
 }
 

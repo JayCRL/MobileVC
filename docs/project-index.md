@@ -49,6 +49,7 @@ Scope: current repository state. If this document conflicts with code, treat cod
 
 - Permission rule matching and auto-apply are handled on the Go side; Flutter displays resulting state/events.
 - Claude/Codex permission approval now writes the structured permission response back to the active runner; it no longer restarts the runner or injects continuation text.
+- Claude `control_response` approvals use the official `auto` mode flow and include `updatedInput` copied from the original `control_request.request.input`.
 - Claude permission mode is normalized to `auto` by default, with `bypassPermissions` kept as the explicit override.
 - Normal text input is blocked while a permission request is pending, so Claude does not receive invalid stdin while waiting for a structured authorization response.
 - Review state, file diffs, terminal logs, and runtime process info are persisted into session projections.
