@@ -573,6 +573,9 @@ func TestPtyRunnerWritePermissionResponseApproveEncodesControlResponse(t *testin
 	if !strings.Contains(output, `"subtype":"success"`) {
 		t.Fatalf("expected success subtype in payload, got %q", output)
 	}
+	if !strings.Contains(output, `"behavior":"allow"`) {
+		t.Fatalf("expected allow behavior in approve payload, got %q", output)
+	}
 	if !strings.Contains(output, `"updatedInput":{}`) {
 		t.Fatalf("expected updatedInput in approve payload, got %q", output)
 	}
@@ -594,6 +597,9 @@ func TestPtyRunnerWritePermissionResponseApproveIncludesToolInput(t *testing.T) 
 	}
 
 	output := buf.String()
+	if !strings.Contains(output, `"behavior":"allow"`) {
+		t.Fatalf("expected allow behavior in approve payload, got %q", output)
+	}
 	if !strings.Contains(output, `"updatedInput":{"content":"ok\n","file_path":"/tmp/example.txt"}`) {
 		t.Fatalf("expected updatedInput to include original tool input, got %q", output)
 	}
@@ -620,6 +626,9 @@ func TestPtyRunnerWritePermissionResponseBypassesClaudeUserWrapper(t *testing.T)
 	}
 	if !strings.Contains(output, `"request_id":"req-stream"`) {
 		t.Fatalf("expected request_id in payload, got %q", output)
+	}
+	if !strings.Contains(output, `"behavior":"allow"`) {
+		t.Fatalf("expected allow behavior in payload, got %q", output)
 	}
 	if !strings.Contains(output, `"updatedInput":{"command":"echo ok"}`) {
 		t.Fatalf("expected updatedInput in payload, got %q", output)

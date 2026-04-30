@@ -1842,6 +1842,7 @@ func buildClaudePermissionControlResponseBody(behavior string, rawInput json.Raw
 			}
 		}
 		return map[string]any{
+			"behavior":     "allow",
 			"updatedInput": updatedInput,
 		}, nil
 	case "deny":
