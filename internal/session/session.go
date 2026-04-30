@@ -231,7 +231,8 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 	now := time.Now()
 	switch e := event.(type) {
 	case protocol.PromptRequestEvent:
-		if e.Message == c.lastPromptMsg && c.currentState == ControllerStateWaitInput {
+		if e.Message == c.lastPromptMsg && c.currentState == ControllerStateWaitInput &&
+			(strings.TrimSpace(e.PermissionRequestID) == "" || strings.TrimSpace(e.PermissionRequestID) == strings.TrimSpace(c.activeMeta.PermissionRequestID)) {
 			return nil
 		}
 		c.lastPromptMsg = e.Message
@@ -243,9 +244,18 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		if e.ResumeSessionID != "" {
 			c.resumeSession = e.ResumeSessionID
 		}
+		c.activeMeta = protocol.MergeRuntimeMeta(c.activeMeta, e.RuntimeMeta)
 		c.claudeLifecycle = "waiting_input"
 		c.activeMeta.ClaudeLifecycle = c.claudeLifecycle
 		c.activeMeta.BlockingKind = normalizeBlockingKind(e.RuntimeMeta.BlockingKind)
+		if c.activeMeta.BlockingKind == "permission" {
+			c.activeMeta.PermissionRequestID = strings.TrimSpace(e.PermissionRequestID)
+			c.activeMeta.ContextID = strings.TrimSpace(e.ContextID)
+			c.activeMeta.ContextTitle = strings.TrimSpace(e.ContextTitle)
+			c.activeMeta.TargetPath = strings.TrimSpace(e.TargetPath)
+			c.activeMeta.Target = strings.TrimSpace(e.Target)
+			c.activeMeta.TargetType = strings.TrimSpace(e.TargetType)
+		}
 		return []any{c.newAgentStateEvent(message, true)}
 	case protocol.StepUpdateEvent:
 		if e.Message == c.lastStepMsg && (e.Status == c.lastStepStatus || e.Status == "") {
@@ -372,7 +382,12 @@ func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {
 	if meta.Source == "permission-decision" && strings.TrimSpace(strings.ToLower(meta.TargetText)) == "deny" {
 		c.currentState = ControllerStateWaitInput
 		c.activeMeta.BlockingKind = "ready"
+		c.activeMeta.PermissionRequestID = ""
 		return []any{c.newAgentStateEvent("已拒绝权限，可继续输入", true)}
+	}
+	if meta.Source == "permission-decision" {
+		c.activeMeta.PermissionRequestID = ""
+		c.activeMeta.BlockingKind = ""
 	}
 	c.currentState = ControllerStateThinking
 	message := "思考中"

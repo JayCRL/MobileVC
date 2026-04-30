@@ -25,6 +25,33 @@ func TestControllerPromptEventForcesWaitingInputLifecycle(t *testing.T) {
 	}
 }
 
+func TestControllerPermissionPromptReplacesPreviousPermissionMeta(t *testing.T) {
+	controller := NewController("s1")
+	controller.OnInputSent(protocol.RuntimeMeta{
+		Source:              "permission-decision",
+		PermissionRequestID: "old-perm",
+		TargetPath:          "/tmp/old.txt",
+	})
+	events := controller.OnRunnerEvent(protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent("s1", "Claude requested permissions to use Edit on /tmp/new.txt", []string{"y", "n"}),
+		protocol.RuntimeMeta{
+			BlockingKind:        "permission",
+			PermissionRequestID: "new-perm",
+			TargetPath:          "/tmp/new.txt",
+		},
+	))
+	if len(events) != 1 {
+		t.Fatalf("expected one agent event, got %#v", events)
+	}
+	snapshot := controller.Snapshot()
+	if snapshot.ActiveMeta.PermissionRequestID != "new-perm" {
+		t.Fatalf("expected new permission id, got %#v", snapshot.ActiveMeta)
+	}
+	if snapshot.ActiveMeta.TargetPath != "/tmp/new.txt" {
+		t.Fatalf("expected new target path, got %#v", snapshot.ActiveMeta)
+	}
+}
+
 func TestControllerKeepsRecentDiffContext(t *testing.T) {
 	controller := NewController("s1")
 	controller.OnRunnerEvent(protocol.FileDiffEvent{

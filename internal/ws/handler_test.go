@@ -3956,7 +3956,7 @@ func TestHandlerPermissionDecisionApproveForCodexWithExpiredPendingRequestReturn
 	}
 }
 
-func TestHandlerPermissionDecisionApproveForCodexWithMismatchedRequestIDReturnsError(t *testing.T) {
+func TestHandlerPermissionDecisionApproveForCodexWithMismatchedRequestIDRefreshesPrompt(t *testing.T) {
 	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "需要权限确认", []string{"approve", "deny"}))
 	firstRunner.currentPermissionRequestID = "perm-codex-1"
 	h := newTestHandler()
@@ -3994,9 +3994,12 @@ func TestHandlerPermissionDecisionApproveForCodexWithMismatchedRequestIDReturnsE
 		t.Fatalf("write permission decision request: %v", err)
 	}
 
-	event := readUntilType(t, conn, protocol.EventTypeError)
-	if event["msg"] != "当前权限请求已失效，请等待 AI 重新发起操作后再确认" {
-		t.Fatalf("unexpected error event: %#v", event)
+	event := readUntilType(t, conn, protocol.EventTypePromptRequest)
+	if event["permissionRequestId"] != "perm-codex-1" {
+		t.Fatalf("expected refreshed current permission request id, got %#v", event)
+	}
+	if event["blockingKind"] != "permission" {
+		t.Fatalf("expected refreshed permission prompt, got %#v", event)
 	}
 	select {
 	case decision := <-firstRunner.permissionResponseWriteCh:

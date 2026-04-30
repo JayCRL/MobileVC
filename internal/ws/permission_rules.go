@@ -315,15 +315,15 @@ func buildPermissionDecisionFromEvent(
 		PermissionMode:      firstNonEmptyString(meta.PermissionMode, controller.ActiveMeta.PermissionMode, projection.Runtime.PermissionMode),
 		PermissionRequestID: strings.TrimSpace(meta.PermissionRequestID),
 		ResumeSessionID:     firstNonEmptyString(meta.ResumeSessionID, controller.ResumeSession, controller.ActiveMeta.ResumeSessionID, projection.Runtime.ResumeSessionID),
-		TargetPath:          firstNonEmptyString(meta.TargetPath, controller.ActiveMeta.TargetPath),
-		ContextID:           firstNonEmptyString(meta.ContextID, controller.ActiveMeta.ContextID),
-		ContextTitle:        firstNonEmptyString(meta.ContextTitle, controller.ActiveMeta.ContextTitle),
+		TargetPath:          strings.TrimSpace(meta.TargetPath),
+		ContextID:           strings.TrimSpace(meta.ContextID),
+		ContextTitle:        strings.TrimSpace(meta.ContextTitle),
 		PromptMessage:       strings.TrimSpace(message),
 		FallbackCommand:     firstNonEmptyString(meta.Command, projection.Runtime.Command, controller.CurrentCommand, controller.ActiveMeta.Command),
 		FallbackCWD:         firstNonEmptyString(meta.CWD, controller.ActiveMeta.CWD, projection.Runtime.CWD),
 		FallbackEngine:      firstNonEmptyString(meta.Engine, controller.ActiveMeta.Engine, projection.Runtime.Engine),
-		FallbackTarget:      firstNonEmptyString(meta.Target, controller.ActiveMeta.Target),
-		FallbackTargetType:  firstNonEmptyString(meta.TargetType, controller.ActiveMeta.TargetType),
+		FallbackTarget:      strings.TrimSpace(meta.Target),
+		FallbackTargetType:  strings.TrimSpace(meta.TargetType),
 	}
 }
 

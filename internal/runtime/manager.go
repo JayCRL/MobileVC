@@ -496,6 +496,21 @@ func (s *Service) SendPermissionDecision(ctx context.Context, sessionID string, 
 	return nil
 }
 
+func (s *Service) CurrentPermissionRequestID(sessionID string) string {
+	currentRunner, _, currentSessionID := s.manager.current()
+	if currentRunner == nil || currentSessionID == "" {
+		return ""
+	}
+	if targetSessionID := strings.TrimSpace(sessionID); targetSessionID != "" && targetSessionID != currentSessionID {
+		return ""
+	}
+	responder, ok := currentRunner.(runner.PermissionResponseWriter)
+	if !ok || !responder.HasPendingPermissionRequest() {
+		return ""
+	}
+	return strings.TrimSpace(responder.CurrentPermissionRequestID())
+}
+
 func (s *Service) ReviewDecision(ctx context.Context, sessionID string, req ReviewDecisionRequest, emit func(any)) error {
 	decision := strings.TrimSpace(strings.ToLower(req.Decision))
 	if decision == "" {

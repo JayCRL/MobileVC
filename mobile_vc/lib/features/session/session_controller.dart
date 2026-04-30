@@ -3436,28 +3436,34 @@ class SessionController extends ChangeNotifier {
   }) {
     final promptSnapshot = prompt ?? _pendingPrompt;
     final promptMeta = promptSnapshot?.runtimeMeta ?? const RuntimeMeta();
-    final targetPath = promptMeta.targetPath.isNotEmpty
-        ? promptMeta.targetPath
-        : (_openedFile?.path.isNotEmpty == true
-            ? _openedFile!.path
-            : currentMeta.targetPath);
+    final baseMeta = currentMeta;
+    final promptRequestId = promptMeta.permissionRequestId.trim();
+    final targetPath = promptMeta.targetPath;
     final contextTitle = promptMeta.contextTitle.isNotEmpty
         ? promptMeta.contextTitle
-        : (_openedFile?.title.isNotEmpty == true
-            ? _openedFile!.title
-            : currentMeta.contextTitle.isNotEmpty
-                ? currentMeta.contextTitle
-                : currentMeta.targetTitle);
+        : promptMeta.targetTitle;
     final promptMessage = promptSnapshot?.message.trim().isNotEmpty == true
         ? promptSnapshot!.message
         : _runtimePhase?.message;
-    final decisionMeta = currentMeta.merge(promptMeta).merge(
-          RuntimeMeta(
-            contextTitle: contextTitle,
-            targetPath: targetPath,
-            permissionMode: _currentDecisionPermissionMode,
-          ),
-        );
+    final decisionMeta = promptMeta.merge(
+      RuntimeMeta(
+        resumeSessionId: promptMeta.resumeSessionId.isNotEmpty
+            ? promptMeta.resumeSessionId
+            : baseMeta.resumeSessionId,
+        contextId: promptMeta.contextId,
+        contextTitle: contextTitle,
+        command: promptMeta.command.isNotEmpty
+            ? promptMeta.command
+            : baseMeta.command,
+        engine:
+            promptMeta.engine.isNotEmpty ? promptMeta.engine : baseMeta.engine,
+        cwd: promptMeta.cwd.isNotEmpty ? promptMeta.cwd : baseMeta.cwd,
+        target: promptMeta.target,
+        targetType: promptMeta.targetType,
+        targetPath: targetPath,
+        permissionMode: _currentDecisionPermissionMode,
+      ),
+    );
     _pendingPrompt = null;
     _pendingInteraction = null;
     _runtimePhase = null;
@@ -3469,7 +3475,7 @@ class SessionController extends ChangeNotifier {
       'decision': selection.decision,
       if (selection.scope.isNotEmpty) 'scope': selection.scope,
       'permissionMode': _currentDecisionPermissionMode,
-      'permissionRequestId': decisionMeta.permissionRequestId,
+      'permissionRequestId': promptRequestId,
       'resumeSessionId': decisionMeta.resumeSessionId,
       'targetPath': targetPath,
       'contextId': decisionMeta.contextId,
@@ -4793,7 +4799,9 @@ class SessionController extends ChangeNotifier {
       return;
     }
     _connectionStage = SessionConnectionStage.ready;
-    _connectionMessage = 'Syncing latest progress...';
+    if (!hasPendingPermissionPrompt) {
+      _connectionMessage = 'Syncing latest progress...';
+    }
     _autoSessionRequested = false;
     _autoSessionCreating = false;
     final resolvedSummary =
@@ -6664,6 +6672,7 @@ class SessionController extends ChangeNotifier {
     _syncActiveReviewSelection();
     final agentState = (_agentState?.state ?? '').trim().toUpperCase();
     final sessionState = (_sessionState?.state ?? '').trim().toUpperCase();
+    final hasPendingPermission = hasPendingPermissionPrompt;
     final currentExecutionKey = _runtimeExecutionKey(
       _agentState?.runtimeMeta ??
           _sessionState?.runtimeMeta ??
@@ -6672,7 +6681,7 @@ class SessionController extends ChangeNotifier {
     final assistantReplySettled = currentExecutionKey.isNotEmpty &&
         currentExecutionKey == _lastAssistantReplyExecutionKey;
     final hasBlockingPrompt = awaitInput ||
-        hasPendingPermissionPrompt ||
+        hasPendingPermission ||
         shouldShowReviewChoices ||
         hasPendingPlanQuestions;
     final hasRealRunningSignal = _executionActive ||
@@ -6690,7 +6699,11 @@ class SessionController extends ChangeNotifier {
         !_isClaudePendingReadyForInput &&
         hasRealRunningSignal &&
         (!assistantReplySettled || isDefinitiveAgentState || _executionActive);
-    if (active) {
+    if (hasPendingPermission) {
+      _activityStartedAt = null;
+      _activityToolLabel = '';
+      _activityVisible = false;
+    } else if (active) {
       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
       if (_activityToolLabel.isEmpty) {
         _activityToolLabel = _currentStep?.tool.isNotEmpty == true
@@ -6702,8 +6715,8 @@ class SessionController extends ChangeNotifier {
     } else {
       _activityStartedAt = null;
       _activityToolLabel = '';
+      _activityVisible = false;
     }
-    _activityVisible = active;
     if (_currentStepSummary.isEmpty && _currentStep != null) {
       _currentStepSummary = _summaryFromHistoryContext(_currentStep);
     }
@@ -6948,13 +6961,17 @@ class SessionController extends ChangeNotifier {
       _connectionStage = snapshot.syncing
           ? SessionConnectionStage.catchingUp
           : SessionConnectionStage.ready;
-      _connectionMessage =
-          snapshot.syncing ? 'Syncing latest progress...' : 'Session is live';
+      if (!hasPendingPermissionPrompt) {
+        _connectionMessage =
+            snapshot.syncing ? 'Syncing latest progress...' : 'Session is live';
+      }
     } else if (_connected &&
         _connectionStage != SessionConnectionStage.catchingUp) {
       _connectionStage = SessionConnectionStage.ready;
-      _connectionMessage =
-          snapshot.message.isNotEmpty ? snapshot.message : 'Session ready';
+      if (!hasPendingPermissionPrompt) {
+        _connectionMessage =
+            snapshot.message.isNotEmpty ? snapshot.message : 'Session ready';
+      }
     }
     if (!_isHeartbeatIdleSnapshot(snapshot, state)) {
       _syncStepSummary(

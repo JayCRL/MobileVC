@@ -45,6 +45,33 @@ func TestBuildPermissionRuleCarriesScopeAndContext(t *testing.T) {
 	}
 }
 
+func TestBuildPermissionDecisionFromEventDoesNotInheritStaleTarget(t *testing.T) {
+	meta := protocol.RuntimeMeta{
+		PermissionRequestID: "perm-new",
+		BlockingKind:        "permission",
+		Command:             "claude",
+	}
+	controller := session.ControllerSnapshot{
+		ActiveMeta: protocol.RuntimeMeta{
+			PermissionRequestID: "perm-old",
+			TargetPath:          "/workspace/old.txt",
+			ContextID:           "old-context",
+		},
+	}
+
+	req := buildPermissionDecisionFromEvent("s1", "Claude requested permissions to use Bash", meta, store.ProjectionSnapshot{}, controller)
+
+	if req.PermissionRequestID != "perm-new" {
+		t.Fatalf("expected current permission id, got %#v", req)
+	}
+	if req.TargetPath != "" {
+		t.Fatalf("expected no stale target path, got %#v", req)
+	}
+	if req.ContextID != "" {
+		t.Fatalf("expected no stale context id, got %#v", req)
+	}
+}
+
 func TestMaybeAutoApplyPermissionEventIgnoresReadyPrompt(t *testing.T) {
 	sessionStore, err := store.NewFileStore(t.TempDir())
 	if err != nil {

@@ -1452,6 +1452,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			emitAndPersist := emitAndPersistFor(sessionID)
 			projection := buildProjectionSnapshotFor(sessionID)
 			controller := service.ControllerSnapshot()
+			if requestedID := strings.TrimSpace(permissionEvent.PermissionRequestID); requestedID != "" {
+				currentID := strings.TrimSpace(service.CurrentPermissionRequestID(sessionID))
+				if currentID != "" && currentID != requestedID {
+					if refreshed := refreshedPermissionPromptEvent(sessionID, permissionEvent, service); refreshed != nil {
+						logx.Info("ws", "permission decision request id stale, refreshing current request id: connectionID=%s sessionID=%s remoteAddr=%s clientRequestID=%q currentRequestID=%q", connectionID, sessionID, remoteAddr, requestedID, currentID)
+						emit(*refreshed)
+						continue
+					}
+				}
+			}
 			appendUserProjectionEntry(h.SessionStore, ctx, sessionID, strings.TrimSpace(permissionEvent.PromptMessage), "权限决策", connectionID, remoteAddr)
 			scope := strings.TrimSpace(permissionEvent.Scope)
 			if decision == "approve" && (scope == string(store.PermissionScopeSession) || scope == string(store.PermissionScopePersistent)) {
@@ -1483,6 +1493,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, runtimepkg.ErrNoActiveRunner) {
 				message = "当前没有可交互的 Claude 会话，无法继续处理该权限请求"
 			} else if errors.Is(err, runtimepkg.ErrPermissionRequestExpired) {
+				if refreshed := refreshedPermissionPromptEvent(sessionID, permissionEvent, service); refreshed != nil {
+					logx.Info("ws", "permission decision expired, refreshing current request id: connectionID=%s sessionID=%s remoteAddr=%s clientRequestID=%q currentRequestID=%q", connectionID, sessionID, remoteAddr, permissionEvent.PermissionRequestID, refreshed.PermissionRequestID)
+					emit(*refreshed)
+					continue
+				}
 				message = "当前权限请求已失效，请等待 AI 重新发起操作后再确认"
 			} else if errors.Is(err, runner.ErrInputNotSupported) {
 				message = "当前会话不支持交互输入，请先恢复 Claude PTY 会话"
@@ -1989,6 +2004,38 @@ func permissionDecisionIntent(req protocol.PermissionDecisionRequestEvent) store
 	default:
 		return store.PermissionKindGeneric
 	}
+}
+
+func refreshedPermissionPromptEvent(sessionID string, req protocol.PermissionDecisionRequestEvent, service *runtimepkg.Service) *protocol.PromptRequestEvent {
+	if service == nil {
+		return nil
+	}
+	requestID := strings.TrimSpace(service.CurrentPermissionRequestID(sessionID))
+	if requestID == "" {
+		return nil
+	}
+	message := strings.TrimSpace(req.PromptMessage)
+	if message == "" {
+		message = "当前操作需要你的授权"
+	}
+	event := protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent(sessionID, message, []string{"y", "n"}),
+		protocol.RuntimeMeta{
+			Source:              "permission-refresh",
+			ResumeSessionID:     strings.TrimSpace(req.ResumeSessionID),
+			Command:             strings.TrimSpace(req.FallbackCommand),
+			Engine:              strings.TrimSpace(req.FallbackEngine),
+			CWD:                 strings.TrimSpace(req.FallbackCWD),
+			PermissionMode:      normalizePermissionModeForClaude(req.PermissionMode),
+			PermissionRequestID: requestID,
+			BlockingKind:        "permission",
+		},
+	)
+	prompt, ok := event.(protocol.PromptRequestEvent)
+	if !ok {
+		return nil
+	}
+	return &prompt
 }
 
 func buildPermissionDecisionPrompt(decision string, req protocol.PermissionDecisionRequestEvent) (string, error) {
