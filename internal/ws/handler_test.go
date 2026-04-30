@@ -3836,6 +3836,68 @@ func TestHandlerPermissionDecisionApproveUsesDirectPermissionResponse(t *testing
 	}
 }
 
+func TestHandlerPermissionDecisionBeforeResumeBindsSelectedSession(t *testing.T) {
+	firstRunner := newHoldingStubRunner(protocol.ApplyRuntimeMeta(
+		protocol.NewPromptRequestEvent("ignored", "写 README 需要你的授权", []string{"y", "n"}),
+		protocol.RuntimeMeta{
+			PermissionRequestID: "perm-reconnect-1",
+			ResumeSessionID:     "resume-reconnect-123",
+			BlockingKind:        "permission",
+		},
+	))
+	firstRunner.currentPermissionRequestID = "perm-reconnect-1"
+	firstRunner.claudeSessionID = "resume-reconnect-123"
+	h := newTestHandler()
+	tempStore, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() runner.Runner { return firstRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	sessionID := createHistorySessionForHandlerTest(t, h, conn, "permission-reconnect")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "claude",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close first conn: %v", err)
+	}
+
+	conn2 := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn2)
+	if err := conn2.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:         protocol.ClientEvent{Action: "permission_decision", SessionID: sessionID},
+		Decision:            "approve",
+		PermissionMode:      "default",
+		PermissionRequestID: "perm-reconnect-1",
+		ResumeSessionID:     "resume-reconnect-123",
+		TargetPath:          "README.md",
+		PromptMessage:       "写 README 需要你的授权",
+		FallbackCommand:     "claude",
+		FallbackEngine:      "claude",
+	}); err != nil {
+		t.Fatalf("write reconnect permission decision: %v", err)
+	}
+	select {
+	case decision := <-firstRunner.permissionResponseWriteCh:
+		if decision != "approve" {
+			t.Fatalf("unexpected direct permission response: %q", decision)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not receive direct permission response after reconnect")
+	}
+}
+
 func TestHandlerPermissionDecisionApproveForCodexUsesDirectPermissionResponse(t *testing.T) {
 	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "需要权限确认", []string{"approve", "deny"}))
 	firstRunner.currentPermissionRequestID = "perm-codex-1"

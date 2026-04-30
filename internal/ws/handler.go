@@ -423,6 +423,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		runtimeSvc = newDetachedRuntimeService()
 	}
 
+	resolvePermissionDecisionRuntime := func(req protocol.PermissionDecisionRequestEvent) (string, *runtimepkg.Service) {
+		targetSessionID := strings.TrimSpace(firstNonEmptyString(req.SessionID, selectedSessionID))
+		if targetSessionID != "" {
+			if targetSessionID != strings.TrimSpace(selectedSessionID) {
+				switchRuntimeSession(targetSessionID)
+			}
+			return targetSessionID, runtimeSvc
+		}
+		resumeSessionID := strings.TrimSpace(req.ResumeSessionID)
+		if resumeSessionID == "" {
+			return "", runtimeSvc
+		}
+		matchedSessionID, matchedRuntime := h.runtimeSessions.FindByResumeSessionID(resumeSessionID)
+		if matchedSessionID == "" || matchedRuntime == nil {
+			return "", runtimeSvc
+		}
+		switchRuntimeSession(matchedSessionID)
+		return matchedSessionID, runtimeSvc
+	}
+
 	emitSessionList := func(filterCWD string) []store.SessionSummary {
 		if h.SessionStore == nil {
 			logx.Warn("ws", "session list requested but session store unavailable: connectionID=%s sessionID=%s remoteAddr=%s", connectionID, selectedSessionID, remoteAddr)
@@ -831,16 +851,47 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			replayedCount := 0
 			latestCursor := int64(0)
+			currentPermissionID := ""
+			replayedCurrentPermission := false
 			if sessionRuntime != nil {
 				effectiveCursor := req.LastSeenEventCursor
 				if persisted := sessionRuntime.persistedCursor.Load(); persisted > effectiveCursor {
 					effectiveCursor = persisted
 				}
+				currentPermissionID = strings.TrimSpace(runtimeSvc.CurrentPermissionRequestID(record.Summary.ID))
 				for _, pendingEvent := range sessionRuntime.pendingSince(effectiveCursor) {
+					if currentPermissionID != "" {
+						if prompt, ok := pendingEvent.(protocol.PromptRequestEvent); ok &&
+							strings.TrimSpace(prompt.BlockingKind) == "permission" &&
+							strings.TrimSpace(prompt.PermissionRequestID) == currentPermissionID {
+							replayedCurrentPermission = true
+						}
+					}
 					replayedCount++
 					emit(pendingEvent)
 				}
 				latestCursor = sessionRuntime.latestCursor()
+			}
+			if currentPermissionID != "" && !replayedCurrentPermission {
+				var prompt *protocol.PromptRequestEvent
+				if sessionRuntime != nil {
+					prompt = sessionRuntime.latestPendingPermissionPrompt(currentPermissionID)
+				}
+				if prompt == nil {
+					prompt = refreshedPermissionPromptEventWithID(record.Summary.ID, protocol.PermissionDecisionRequestEvent{
+						PermissionMode:      projection.Runtime.PermissionMode,
+						PermissionRequestID: currentPermissionID,
+						ResumeSessionID:     firstNonEmptyString(projection.Runtime.ResumeSessionID, runtimeSvc.RuntimeSnapshot().ResumeSessionID),
+						PromptMessage:       "当前操作需要你的授权",
+						FallbackCommand:     projection.Runtime.Command,
+						FallbackCWD:         projection.Runtime.CWD,
+						FallbackEngine:      projection.Runtime.Engine,
+					}, runtimeSvc, currentPermissionID)
+				}
+				if prompt != nil {
+					logx.Info("ws", "session resume refreshed pending permission prompt: sessionID=%s requestID=%s", record.Summary.ID, currentPermissionID)
+					emit(*prompt)
+				}
 			}
 			// Emit restored agent state AFTER pending replay so that log events
 			// (assistant replies) reach Flutter before the state transition,
@@ -1447,15 +1498,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				emit(protocol.NewErrorEvent(selectedSessionID, "permission decision must be one of: approve, deny", ""))
 				continue
 			}
-			sessionID := selectedSessionID
-			service := runtimeSvc
+			sessionID, service := resolvePermissionDecisionRuntime(permissionEvent)
 			emitAndPersist := emitAndPersistFor(sessionID)
 			projection := buildProjectionSnapshotFor(sessionID)
 			controller := service.ControllerSnapshot()
 			if requestedID := strings.TrimSpace(permissionEvent.PermissionRequestID); requestedID != "" {
 				currentID := strings.TrimSpace(service.CurrentPermissionRequestID(sessionID))
 				if currentID != "" && currentID != requestedID {
-					if refreshed := refreshedPermissionPromptEvent(sessionID, permissionEvent, service); refreshed != nil {
+					var refreshed *protocol.PromptRequestEvent
+					if runtimeSession != nil {
+						refreshed = runtimeSession.latestPendingPermissionPrompt(currentID)
+					}
+					if refreshed == nil {
+						refreshed = refreshedPermissionPromptEvent(sessionID, permissionEvent, service)
+					}
+					if refreshed != nil {
 						logx.Info("ws", "permission decision request id stale, refreshing current request id: connectionID=%s sessionID=%s remoteAddr=%s clientRequestID=%q currentRequestID=%q", connectionID, sessionID, remoteAddr, requestedID, currentID)
 						emit(*refreshed)
 						continue
@@ -2014,23 +2071,46 @@ func refreshedPermissionPromptEvent(sessionID string, req protocol.PermissionDec
 	if requestID == "" {
 		return nil
 	}
+	return refreshedPermissionPromptEventWithID(sessionID, req, service, requestID)
+}
+
+func refreshedPermissionPromptEventWithID(sessionID string, req protocol.PermissionDecisionRequestEvent, service *runtimepkg.Service, requestID string) *protocol.PromptRequestEvent {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return nil
+	}
+	meta := protocol.RuntimeMeta{
+		Source:              "permission-refresh",
+		ResumeSessionID:     strings.TrimSpace(req.ResumeSessionID),
+		Command:             strings.TrimSpace(req.FallbackCommand),
+		Engine:              strings.TrimSpace(req.FallbackEngine),
+		CWD:                 strings.TrimSpace(req.FallbackCWD),
+		PermissionMode:      normalizePermissionModeForClaude(req.PermissionMode),
+		PermissionRequestID: requestID,
+		BlockingKind:        "permission",
+		ContextID:           strings.TrimSpace(req.ContextID),
+		ContextTitle:        strings.TrimSpace(req.ContextTitle),
+		TargetPath:          strings.TrimSpace(req.TargetPath),
+		Target:              strings.TrimSpace(req.FallbackTarget),
+		TargetType:          strings.TrimSpace(req.FallbackTargetType),
+	}
+	if service != nil {
+		snapshot := service.RuntimeSnapshot()
+		controller := service.ControllerSnapshot()
+		currentMeta := protocol.MergeRuntimeMeta(snapshot.ActiveMeta, controller.ActiveMeta)
+		meta = protocol.MergeRuntimeMeta(meta, currentMeta)
+		meta.Source = "permission-refresh"
+		meta.PermissionRequestID = requestID
+		meta.BlockingKind = "permission"
+		if mode := strings.TrimSpace(req.PermissionMode); mode != "" {
+			meta.PermissionMode = normalizePermissionModeForClaude(mode)
+		}
+	}
 	message := strings.TrimSpace(req.PromptMessage)
 	if message == "" {
 		message = "当前操作需要你的授权"
 	}
-	event := protocol.ApplyRuntimeMeta(
-		protocol.NewPromptRequestEvent(sessionID, message, []string{"y", "n"}),
-		protocol.RuntimeMeta{
-			Source:              "permission-refresh",
-			ResumeSessionID:     strings.TrimSpace(req.ResumeSessionID),
-			Command:             strings.TrimSpace(req.FallbackCommand),
-			Engine:              strings.TrimSpace(req.FallbackEngine),
-			CWD:                 strings.TrimSpace(req.FallbackCWD),
-			PermissionMode:      normalizePermissionModeForClaude(req.PermissionMode),
-			PermissionRequestID: requestID,
-			BlockingKind:        "permission",
-		},
-	)
+	event := protocol.ApplyRuntimeMeta(protocol.NewPromptRequestEvent(sessionID, message, []string{"y", "n"}), meta)
 	prompt, ok := event.(protocol.PromptRequestEvent)
 	if !ok {
 		return nil

@@ -3329,6 +3329,7 @@ class SessionController extends ChangeNotifier {
       );
       _service.send({
         'action': 'permission_decision',
+        'sessionId': _selectedSessionId,
         'decision': selection.decision,
         if (selection.scope.isNotEmpty) 'scope': selection.scope,
         'permissionMode': _currentDecisionPermissionMode,
@@ -3472,6 +3473,7 @@ class SessionController extends ChangeNotifier {
     );
     _service.send({
       'action': 'permission_decision',
+      'sessionId': _selectedSessionId,
       'decision': selection.decision,
       if (selection.scope.isNotEmpty) 'scope': selection.scope,
       'permissionMode': _currentDecisionPermissionMode,
@@ -6618,6 +6620,20 @@ class SessionController extends ChangeNotifier {
     InteractionRequestEvent? currentInteraction,
     PromptRequestEvent? currentPrompt,
   ) {
+    if (currentInteraction?.isPermission == true ||
+        currentPrompt?.isPermission == true) {
+      if (!incoming.isPermission) {
+        return true;
+      }
+      final currentID = (currentInteraction?.runtimeMeta.permissionRequestId ??
+              currentPrompt?.runtimeMeta.permissionRequestId ??
+              '')
+          .trim();
+      final incomingID = incoming.runtimeMeta.permissionRequestId.trim();
+      return currentID.isNotEmpty &&
+          incomingID.isNotEmpty &&
+          currentID == incomingID;
+    }
     if (incoming.isReady) {
       return currentInteraction?.isPermission == true ||
           currentInteraction?.isReview == true ||

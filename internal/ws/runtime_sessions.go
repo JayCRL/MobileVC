@@ -172,6 +172,30 @@ func (s *runtimeSession) pendingSince(cursor int64) []any {
 	return items
 }
 
+func (s *runtimeSession) latestPendingPermissionPrompt(requestID string) *protocol.PromptRequestEvent {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := len(s.pendingEvents) - 1; i >= 0; i-- {
+		event, ok := s.pendingEvents[i].(protocol.PromptRequestEvent)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(event.BlockingKind) != "permission" {
+			continue
+		}
+		if strings.TrimSpace(event.PermissionRequestID) != requestID {
+			continue
+		}
+		copy := event
+		return &copy
+	}
+	return nil
+}
+
 func (s *runtimeSession) markClientAction(clientActionID string) bool {
 	clientActionID = strings.TrimSpace(clientActionID)
 	if clientActionID == "" {
@@ -253,6 +277,34 @@ func (r *runtimeSessionRegistry) HasActiveConnection(sessionID string) bool {
 		return false
 	}
 	return entry.listenerCount() > 0
+}
+
+func (r *runtimeSessionRegistry) FindByResumeSessionID(resumeSessionID string) (string, *runtimeSession) {
+	resumeSessionID = strings.TrimSpace(resumeSessionID)
+	if resumeSessionID == "" {
+		return "", nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for sessionID, entry := range r.sessions {
+		if entry == nil || entry.service == nil {
+			continue
+		}
+		snapshot := entry.service.RuntimeSnapshot()
+		if !snapshot.Running {
+			continue
+		}
+		candidates := []string{
+			snapshot.ResumeSessionID,
+			snapshot.ActiveMeta.ResumeSessionID,
+		}
+		for _, candidate := range candidates {
+			if strings.TrimSpace(candidate) == resumeSessionID {
+				return sessionID, entry
+			}
+		}
+	}
+	return "", nil
 }
 
 func (r *runtimeSessionRegistry) Attach(sessionID, listenerID string, listener func(any)) *runtimeSession {
