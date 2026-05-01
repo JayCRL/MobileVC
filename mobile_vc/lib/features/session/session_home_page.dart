@@ -188,9 +188,10 @@ class _SessionHomePageState extends State<SessionHomePage> {
                                       controller.pendingPlanProgressLabel,
                                   shouldShowPlanChoices:
                                       controller.shouldShowPlanChoices,
-                                  isAiRunning: controller.activityBannerVisible &&
-                                      !controller.isObservingRemoteActiveSession,
-                                  aiStatusLabel: controller.activityBannerTitle,
+                                  isAiRunning:
+                                      controller.aiStatusIndicatorVisible,
+                                  aiStatusLabel:
+                                      controller.aiStatusIndicatorLabel,
                                   onOpenDiff: () => _openDiff(context),
                                   onOpenRuntimeInfo: () =>
                                       _openRuntimeInfo(context),
@@ -412,7 +413,7 @@ class _SessionHomePageState extends State<SessionHomePage> {
                         decoration: const InputDecoration(labelText: 'CWD')),
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
-                      value: selectedEngine,
+                      initialValue: selectedEngine,
                       decoration: const InputDecoration(labelText: 'Engine'),
                       items: const [
                         DropdownMenuItem(

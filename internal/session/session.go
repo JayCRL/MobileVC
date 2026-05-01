@@ -1,16 +1,20 @@
 package session
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"mobilevc/internal/data"
+	"mobilevc/internal/engine"
 	"mobilevc/internal/protocol"
 )
 
 type State string
 
-type ControllerState string
+type ControllerState = data.ControllerState
 
 const (
 	StateActive      State = "active"
@@ -19,10 +23,10 @@ const (
 )
 
 const (
-	ControllerStateIdle        ControllerState = "IDLE"
-	ControllerStateThinking    ControllerState = "THINKING"
-	ControllerStateWaitInput   ControllerState = "WAIT_INPUT"
-	ControllerStateRunningTool ControllerState = "RUNNING_TOOL"
+	ControllerStateIdle        = data.ControllerStateIdle
+	ControllerStateThinking    = data.ControllerStateThinking
+	ControllerStateWaitInput   = data.ControllerStateWaitInput
+	ControllerStateRunningTool = data.ControllerStateRunningTool
 )
 
 type Session struct {
@@ -30,60 +34,40 @@ type Session struct {
 	State State
 }
 
-type DiffContext struct {
-	ContextID     string `json:"contextId,omitempty"`
-	Title         string `json:"title,omitempty"`
-	Path          string `json:"path,omitempty"`
-	Diff          string `json:"diff,omitempty"`
-	Lang          string `json:"lang,omitempty"`
-	PendingReview bool   `json:"pendingReview,omitempty"`
-	ExecutionID   string `json:"executionId,omitempty"`
-	GroupID       string `json:"groupId,omitempty"`
-	GroupTitle    string `json:"groupTitle,omitempty"`
-	ReviewStatus  string `json:"reviewStatus,omitempty"`
+type ExecuteRequest struct {
+	Command        string
+	CWD            string
+	Mode           engine.Mode
+	PermissionMode string
+	InitialInput   string
+	protocol.RuntimeMeta
 }
 
-type ReviewFile struct {
-	ContextID     string `json:"contextId,omitempty"`
-	Title         string `json:"title,omitempty"`
-	Path          string `json:"path,omitempty"`
-	Diff          string `json:"diff,omitempty"`
-	Lang          string `json:"lang,omitempty"`
-	PendingReview bool   `json:"pendingReview,omitempty"`
-	ExecutionID   string `json:"executionId,omitempty"`
-	ReviewStatus  string `json:"reviewStatus,omitempty"`
+type InputRequest struct {
+	Data string
+	protocol.RuntimeMeta
 }
 
-type ReviewGroup struct {
-	ID            string       `json:"id,omitempty"`
-	Title         string       `json:"title,omitempty"`
-	ExecutionID   string       `json:"executionId,omitempty"`
-	PendingReview bool         `json:"pendingReview,omitempty"`
-	ReviewStatus  string       `json:"reviewStatus,omitempty"`
-	CurrentFileID string       `json:"currentFileId,omitempty"`
-	CurrentPath   string       `json:"currentPath,omitempty"`
-	PendingCount  int          `json:"pendingCount,omitempty"`
-	AcceptedCount int          `json:"acceptedCount,omitempty"`
-	RevertedCount int          `json:"revertedCount,omitempty"`
-	RevisedCount  int          `json:"revisedCount,omitempty"`
-	Files         []ReviewFile `json:"files,omitempty"`
+type ReviewDecisionRequest struct {
+	Decision     string
+	IsReviewOnly bool
+	protocol.RuntimeMeta
 }
 
-type ControllerSnapshot struct {
-	SessionID       string               `json:"sessionId"`
-	State           ControllerState      `json:"state"`
-	CurrentCommand  string               `json:"currentCommand,omitempty"`
-	LastStep        string               `json:"lastStep,omitempty"`
-	LastTool        string               `json:"lastTool,omitempty"`
-	ResumeSession   string               `json:"resumeSession,omitempty"`
-	ClaudeLifecycle string               `json:"claudeLifecycle,omitempty"`
-	LastUserInput   string               `json:"lastUserInput,omitempty"`
-	ActiveMeta      protocol.RuntimeMeta `json:"activeMeta,omitempty"`
-	RecentDiffs     []DiffContext        `json:"recentDiffs,omitempty"`
-	RecentDiff      DiffContext          `json:"recentDiff,omitempty"`
-	ReviewGroups    []ReviewGroup        `json:"reviewGroups,omitempty"`
-	ActiveReviewID  string               `json:"activeReviewId,omitempty"`
+type PlanDecisionRequest struct {
+	Decision string
+	protocol.RuntimeMeta
 }
+
+type Dependencies struct {
+	NewExecRunner func() engine.Runner
+	NewPtyRunner  func() engine.Runner
+}
+
+type DiffContext = data.DiffContext
+type ReviewFile = data.ReviewFile
+type ReviewGroup = data.ReviewGroup
+type ControllerSnapshot = data.ControllerSnapshot
 
 type Controller struct {
 	mu              sync.Mutex
@@ -601,4 +585,38 @@ func (c *Controller) pickActiveRecentDiffLocked() DiffContext {
 		return c.recentDiffs[len(c.recentDiffs)-1]
 	}
 	return DiffContext{}
+}
+
+func ParseMode(raw string) (engine.Mode, error) {
+	mode := engine.Mode(strings.TrimSpace(raw))
+	if mode == "" {
+		return engine.ModeExec, nil
+	}
+	switch mode {
+	case engine.ModeExec, engine.ModePTY:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unknown mode: %s", raw)
+	}
+}
+
+func Enqueue(ctx context.Context, writeCh chan<- any, event any) {
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	case writeCh <- event:
+	}
+}
+
+func EmitWithMeta(emit func(any), meta protocol.RuntimeMeta, event any) {
+	if emit == nil {
+		return
+	}
+	emit(protocol.ApplyRuntimeMeta(event, meta))
 }

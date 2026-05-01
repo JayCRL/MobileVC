@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"mobilevc/internal/config"
+	"mobilevc/internal/data"
+	"mobilevc/internal/gateway"
 	"mobilevc/internal/logx"
 	"mobilevc/internal/push"
-	"mobilevc/internal/store"
 	"mobilevc/internal/tts"
-	"mobilevc/internal/ws"
 )
 
 const (
@@ -72,7 +72,7 @@ func main() {
 	)
 
 	logx.Info("bootstrap", "Initializing session store")
-	sessionStore, err := store.NewFileStore("")
+	sessionStore, err := data.NewFileStore("")
 	if err != nil {
 		logx.Error("bootstrap", "initialize session store failed: %v", err)
 		panic(err)
@@ -108,7 +108,7 @@ func main() {
 	}
 
 	logx.Info("bootstrap", "Preparing websocket handler")
-	wsHandler := ws.NewHandler(cfg.AuthToken, sessionStore)
+	wsHandler := gateway.NewHandler(cfg.AuthToken, sessionStore)
 	wsHandler.PushService = pushService
 	logx.Info("bootstrap", "WebSocket handler ready")
 

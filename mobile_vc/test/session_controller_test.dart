@@ -735,8 +735,7 @@ void main() {
       expect(controller.selectedSessionId, 'session-new');
     });
 
-    test('session_list 已同步且当前无会话时，首条 claude 输入会先自动创建会话再启动 Claude',
-        () async {
+    test('session_list 已同步且当前无会话时，首条 claude 输入会先自动创建会话再启动 Claude', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -777,11 +776,11 @@ void main() {
         'session_create',
         'session_context_get',
         'permission_rule_list',
-        'exec',
-        'input',
+        'ai_turn',
       ]);
-      expect(service.sentPayloads[3]['cmd'], 'claude --model sonnet');
-      expect(service.sentPayloads[4]['data'], '请帮我总结当前问题\n');
+      expect(service.sentPayloads[3]['engine'], 'claude');
+      expect(service.sentPayloads[3]['model'], 'sonnet');
+      expect(service.sentPayloads[3]['data'], '请帮我总结当前问题\n');
       expect(controller.selectedSessionId, 'session-new');
     });
 
@@ -800,7 +799,8 @@ void main() {
           sessionId: 'conn-1',
           runtimeMeta: const RuntimeMeta(),
           raw: const {'type': 'session_created'},
-          summary: const SessionSummary(id: 'session-current', title: 'Current'),
+          summary:
+              const SessionSummary(id: 'session-current', title: 'Current'),
         ),
       );
       await _flushEvents();
@@ -844,8 +844,9 @@ void main() {
       controller.sendInputText('claude');
 
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads[0]['action'], 'exec');
-      expect(service.sentPayloads[0]['cmd'], 'claude --model sonnet');
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
+      expect(service.sentPayloads[0]['engine'], 'claude');
+      expect(service.sentPayloads[0].containsKey('model'), isFalse);
     });
 
     test('Claude 模型切换会把选中的模型注入启动命令', () async {
@@ -866,11 +867,12 @@ void main() {
       controller.sendInputText('claude');
 
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads[0]['action'], 'exec');
-      expect(service.sentPayloads[0]['cmd'], 'claude --model opus');
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
+      expect(service.sentPayloads[0]['engine'], 'claude');
+      expect(service.sentPayloads[0]['model'], 'opus');
     });
 
-    test('Claude 启动时会忽略残留的 Codex 模型配置并回退到 sonnet', () async {
+    test('Claude 启动时不会把残留的 Codex 模型配置发给后端', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -889,9 +891,9 @@ void main() {
       controller.sendInputText('claude');
 
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads[0]['action'], 'exec');
-      expect(service.sentPayloads[0]['cmd'], 'claude --model sonnet');
-      expect(controller.selectedAiModel, 'sonnet');
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
+      expect(service.sentPayloads[0]['engine'], 'claude');
+      expect(service.sentPayloads[0].containsKey('model'), isFalse);
     });
 
     test('sendInputText 非等待态输入 claude 后跟正文时会启动 Claude 并通过 input 发送正文',
@@ -906,11 +908,11 @@ void main() {
 
       controller.sendInputText('claude 请帮我总结当前问题');
 
-      expect(service.sentPayloads, hasLength(2));
-      expect(service.sentPayloads[0]['action'], 'exec');
-      expect(service.sentPayloads[0]['cmd'], 'claude --model sonnet');
-      expect(service.sentPayloads[1]['action'], 'input');
-      expect(service.sentPayloads[1]['data'], '请帮我总结当前问题\n');
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
+      expect(service.sentPayloads[0]['engine'], 'claude');
+      expect(service.sentPayloads[0].containsKey('model'), isFalse);
+      expect(service.sentPayloads[0]['data'], '请帮我总结当前问题\n');
     });
 
     test('Codex 模型切换会把模型与推理强度注入启动命令', () async {
@@ -932,14 +934,13 @@ void main() {
       controller.sendInputText('codex');
 
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads[0]['action'], 'exec');
-      expect(
-        service.sentPayloads[0]['cmd'],
-        'codex -m gpt-5-codex --config model_reasoning_effort=high',
-      );
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
+      expect(service.sentPayloads[0]['engine'], 'codex');
+      expect(service.sentPayloads[0]['model'], 'gpt-5-codex');
+      expect(service.sentPayloads[0]['reasoningEffort'], 'high');
     });
 
-    test('Codex 启动时会忽略残留的 Claude 模型配置并回退到默认模型', () async {
+    test('Codex 启动时不会把残留的 Claude 模型配置发给后端', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -958,15 +959,13 @@ void main() {
       controller.sendInputText('codex');
 
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads[0]['action'], 'exec');
-      expect(
-        service.sentPayloads[0]['cmd'],
-        'codex -m gpt-5-codex --config model_reasoning_effort=high',
-      );
-      expect(controller.selectedAiModel, 'gpt-5-codex');
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
+      expect(service.sentPayloads[0]['engine'], 'codex');
+      expect(service.sentPayloads[0]['reasoningEffort'], 'high');
+      expect(service.sentPayloads[0].containsKey('model'), isFalse);
     });
 
-    test('输入 codex 后会立刻切到 Codex 模式，不再停留在 shell', () async {
+    test('输入 codex 后等待后端 runtime meta 确认模式', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -983,13 +982,12 @@ void main() {
 
       controller.sendInputText('codex');
 
-      expect(controller.shouldShowClaudeMode, isTrue);
-      expect(controller.commandBarEngine, 'codex');
+      expect(controller.commandBarEngine, 'shell');
       expect(service.sentPayloads, hasLength(1));
-      expect(
-        service.sentPayloads[0]['cmd'],
-        'codex -m gpt-5-codex --config model_reasoning_effort=medium',
-      );
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
+      expect(service.sentPayloads[0]['engine'], 'codex');
+      expect(service.sentPayloads[0].containsKey('model'), isFalse);
+      expect(service.sentPayloads[0].containsKey('reasoningEffort'), isFalse);
     });
 
     test('runtime_info /model 结果会自动回填 Claude 模型配置', () async {
@@ -1270,7 +1268,9 @@ void main() {
       claudeService.sentPayloads.clear();
       claudeController.sendInputText('claude');
 
-      expect(claudeService.sentPayloads[0]['cmd'], 'claude --model opus');
+      expect(claudeService.sentPayloads[0]['action'], 'ai_turn');
+      expect(claudeService.sentPayloads[0]['engine'], 'claude');
+      expect(claudeService.sentPayloads[0]['model'], 'opus');
 
       final codexService = _FakeMobileVcWsService();
       final codexController = SessionController(service: codexService);
@@ -1283,10 +1283,10 @@ void main() {
       codexService.sentPayloads.clear();
       codexController.sendInputText('codex');
 
-      expect(
-        codexService.sentPayloads[0]['cmd'],
-        'codex -m gpt-5.4 --config model_reasoning_effort=high',
-      );
+      expect(codexService.sentPayloads[0]['action'], 'ai_turn');
+      expect(codexService.sentPayloads[0]['engine'], 'codex');
+      expect(codexService.sentPayloads[0]['model'], 'gpt-5.4');
+      expect(codexService.sentPayloads[0]['reasoningEffort'], 'high');
     });
 
     test('Codex xhigh 配置会带入启动命令', () async {
@@ -1306,10 +1306,10 @@ void main() {
       service.sentPayloads.clear();
       controller.sendInputText('codex');
 
-      expect(
-        service.sentPayloads[0]['cmd'],
-        'codex -m gpt-5.4 --config model_reasoning_effort=xhigh',
-      );
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
+      expect(service.sentPayloads[0]['engine'], 'codex');
+      expect(service.sentPayloads[0]['model'], 'gpt-5.4');
+      expect(service.sentPayloads[0]['reasoningEffort'], 'xhigh');
       expect(controller.commandBarModelSummary, 'GPT-5.4 · XHIGH');
     });
 
@@ -1355,11 +1355,11 @@ void main() {
       controller.sendInputText('继续处理这个问题');
 
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads[0]['action'], 'input');
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
       expect(service.sentPayloads[0]['data'], '继续处理这个问题\n');
     });
 
-    test('Claude 空启动后首条正文不会被 busy guard 拦截', () async {
+    test('Claude 空启动后首条正文要等待后端进入输入态', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1370,7 +1370,7 @@ void main() {
 
       controller.sendInputText('claude');
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads[0]['action'], 'exec');
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
 
       service.emit(
         AgentStateEvent(
@@ -1389,19 +1389,9 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.isSessionBusy, isFalse);
-      expect(controller.activityVisible, isFalse);
-      expect(controller.activityBannerVisible, isTrue);
-      expect(controller.activityBannerAnimated, isFalse);
-      expect(controller.activityBannerShowsElapsed, isFalse);
-      expect(controller.activityBannerTitle, '待输入');
-      expect(controller.activityBannerDetail, 'Claude 已启动，请继续输入');
-
       controller.sendInputText('继续处理');
 
-      expect(service.sentPayloads, hasLength(2));
-      expect(service.sentPayloads[1]['action'], 'input');
-      expect(service.sentPayloads[1]['data'], '继续处理\n');
+      expect(service.sentPayloads, hasLength(1));
     });
 
     test('发送 claude 文本会走 slash 命令启动，不发送空 input', () async {
@@ -1420,7 +1410,8 @@ void main() {
       expect(service.sentPayloads[0]['command'], '/claude');
     });
 
-    test('continueWithCurrentFile 在 Claude 会话中只走 input continuation', () async {
+    test('continueWithCurrentFile 在 Claude 会话中走后端 ai_turn continuation',
+        () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1461,7 +1452,7 @@ void main() {
       controller.continueWithCurrentFile('基于当前文件继续处理');
 
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads[0]['action'], 'input');
+      expect(service.sentPayloads[0]['action'], 'ai_turn');
       expect(
         (service.sentPayloads[0]['data'] as String)
             .contains('TargetPath: /workspace/lib/main.dart'),
@@ -1508,7 +1499,7 @@ void main() {
       expect(controller.activityVisible, isFalse);
     });
 
-    test('收到 Claude 回复后不会因残留 RUNNING session state 卡住', () async {
+    test('收到 Claude 回复后等待后端 idle 状态退出运行态', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1558,7 +1549,11 @@ void main() {
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
           runtimeMeta:
-              const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+              const RuntimeMeta(
+                  command: 'claude',
+                  engine: 'claude',
+                  executionId: 'exec-1',
+                  claudeLifecycle: 'settled'),
           raw: const {'type': 'agent_state'},
           state: 'IDLE',
           message: '完成',
@@ -1567,11 +1562,11 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.activityVisible, isFalse);
-      expect(controller.isSessionBusy, isFalse);
+      expect(controller.activityVisible, isTrue);
+      expect(controller.isSessionBusy, isTrue);
     });
 
-    test('收到 Claude 最终回复时即使没有后续 idle 事件也会立即退出运行态', () async {
+    test('收到 Claude 最终回复后未有后端 idle 前保持运行态', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1620,9 +1615,9 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.activityVisible, isFalse);
-      expect(controller.isSessionBusy, isFalse);
-      expect(controller.canStopCurrentRun, isFalse);
+      expect(controller.activityVisible, isTrue);
+      expect(controller.isSessionBusy, isTrue);
+      expect(controller.canStopCurrentRun, isTrue);
     });
 
     test('执行中收到 assistant 文本日志时不会错误闪回空闲', () async {
@@ -1708,7 +1703,7 @@ void main() {
       expect(controller.activityBannerVisible, isTrue);
       expect(controller.activityBannerAnimated, isTrue);
       expect(controller.activityBannerShowsElapsed, isTrue);
-      expect(controller.activityBannerTitle, 'AI 助手正在运行中');
+      expect(controller.activityBannerTitle, '处理中');
 
       service.emit(
         AgentStateEvent(
@@ -1731,7 +1726,7 @@ void main() {
       expect(controller.activityBannerVisible, isFalse);
       expect(controller.activityBannerAnimated, isFalse);
       expect(controller.activityBannerShowsElapsed, isFalse);
-      expect(controller.activityBannerTitle, 'AI 助手正在运行中');
+      expect(controller.activityBannerTitle, '待输入');
 
       service.emit(
         LogEvent(
@@ -1747,7 +1742,7 @@ void main() {
       await _flushEvents();
 
       expect(controller.awaitInput, isTrue);
-      expect(controller.isSessionBusy, isFalse);
+      expect(controller.isSessionBusy, isTrue);
       expect(controller.activityVisible, isFalse);
       expect(controller.activityBannerAnimated, isFalse);
       expect(controller.activityBannerShowsElapsed, isFalse);
@@ -1807,7 +1802,7 @@ void main() {
       expect(controller.activityBannerShowsElapsed, isFalse);
     });
 
-    test('仅有 RUNNING session state 时也保持 busy，避免过早显示空闲', () async {
+    test('仅有 RUNNING session state 时等待后端状态确认退出运行态', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1842,7 +1837,7 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.isSessionBusy, isFalse);
+      expect(controller.isSessionBusy, isTrue);
       expect(
         controller.timeline.any((item) => item.body.contains('处理完成')),
         isTrue,
@@ -1877,7 +1872,7 @@ void main() {
       expect(service.sentPayloads.last['action'], 'stop');
     });
 
-    test('运行中点击 stop 后会立即退出 Claude 待输入占位态', () async {
+    test('运行中点击 stop 后只发送停止请求并显示停止中', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -1888,8 +1883,7 @@ void main() {
 
       controller.sendInputText('claude');
       expect(service.sentPayloads, hasLength(1));
-      expect(controller.activityBannerVisible, isTrue);
-      expect(controller.activityBannerTitle, '待输入');
+      expect(controller.activityBannerVisible, isFalse);
 
       service.emit(
         SessionStateEvent(
@@ -1909,7 +1903,7 @@ void main() {
       controller.stopCurrentRun();
 
       expect(service.sentPayloads.last['action'], 'stop');
-      expect(controller.activityBannerTitle, isNot('待输入'));
+      expect(controller.activityBannerTitle, '正在停止');
     });
 
     test('stop Claude 后会退出 AI 模式，后续 ls 重新走 shell exec', () async {
@@ -1923,7 +1917,7 @@ void main() {
 
       controller.sendInputText('claude');
       expect(service.sentPayloads, hasLength(1));
-      expect(service.sentPayloads.single['action'], 'exec');
+      expect(service.sentPayloads.single['action'], 'ai_turn');
 
       service.emit(
         SessionStateEvent(
@@ -2353,7 +2347,7 @@ void main() {
       controller.sendInputText('继续');
 
       expect(service.sentPayloads, isNotEmpty);
-      expect(service.sentPayloads.last['action'], 'input');
+      expect(service.sentPayloads.last['action'], 'ai_turn');
       expect(service.sentPayloads.last['data'], '继续\n');
     });
   });
@@ -2624,7 +2618,8 @@ void main() {
       expect(controller.agentPhaseLabel, '思考中');
     });
 
-    test('同 executionId 的 WAIT_INPUT 续聊会清空已 settled 状态并恢复 stop/busy/banner', () async {
+    test('同 executionId 的 WAIT_INPUT 续聊会清空已 settled 状态并恢复 stop/busy/banner',
+        () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -3377,7 +3372,8 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.notificationSignal?.type, AppNotificationType.assistantReply);
+      expect(controller.notificationSignal?.type,
+          AppNotificationType.assistantReply);
       expect(controller.timeline, isEmpty);
 
       service.emit(
@@ -4713,7 +4709,8 @@ void main() {
       await _flushEvents();
 
       expect(
-        controller.timeline.any((item) => item.body.contains('结论先说：这个问题我已经定位到实时展示链路了')),
+        controller.timeline
+            .any((item) => item.body.contains('结论先说：这个问题我已经定位到实时展示链路了')),
         isTrue,
       );
     });
@@ -6650,8 +6647,7 @@ void main() {
   });
 
   group('Bug fix: activityBannerTitle dynamic status', () {
-    test('returns default "运行中" when no step summary or phase label',
-        () async {
+    test('returns default "运行中" when no step summary or phase label', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -6693,7 +6689,8 @@ void main() {
       service.emit(AgentStateEvent(
         timestamp: _timestamp,
         sessionId: 'session-1',
-        runtimeMeta: const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
+        runtimeMeta:
+            const RuntimeMeta(command: 'claude', executionId: 'exec-1'),
         raw: const {'type': 'agent_state'},
         state: 'THINKING',
         message: '分析需求中',
@@ -6732,7 +6729,8 @@ void main() {
       service.emit(SessionStateEvent(
         timestamp: _timestamp,
         sessionId: 'session-1',
-        runtimeMeta: const RuntimeMeta(executionId: 'exec-1', command: 'claude'),
+        runtimeMeta:
+            const RuntimeMeta(executionId: 'exec-1', command: 'claude'),
         raw: const {'type': 'session_state'},
         state: 'THINKING',
         message: 'thinking...',
@@ -6781,9 +6779,182 @@ void main() {
     });
   });
 
+  group('AI status indicator', () {
+    test('follows backend ai_status and ignores stale snapshot', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionCreatedEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_created'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+      ));
+      service.emit(AgentStateEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'waiting_input',
+          executionId: 'exec-inline-stale',
+        ),
+        raw: const {'type': 'agent_state'},
+        state: 'WAIT_INPUT',
+        message: '等待输入',
+        awaitInput: true,
+        command: 'claude',
+      ));
+      await _flushEvents();
+
+      controller.sendInputText('hello');
+      await _flushEvents();
+
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 50)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+            command: 'claude', executionId: 'exec-inline-stale'),
+        raw: const {'type': 'ai_status'},
+        visible: true,
+        label: '思考中',
+        phase: 'thinking',
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+      expect(controller.aiStatusIndicatorLabel, '思考中');
+
+      service.emit(TaskSnapshotEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 100)),
+        sessionId: 'session-1',
+        runtimeMeta:
+            const RuntimeMeta(command: 'claude', claudeLifecycle: 'resumable'),
+        raw: const {'type': 'task_snapshot'},
+        state: 'IDLE',
+        message: 'Task resumable',
+        runtimeAlive: false,
+        command: 'claude',
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+      expect(controller.aiStatusIndicatorLabel, '思考中');
+    });
+
+    test('hides when backend ai_status marks settled', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta:
+            const RuntimeMeta(command: 'claude', executionId: 'exec-inline-1'),
+        raw: const {'type': 'ai_status'},
+        visible: true,
+        label: '思考中',
+        phase: 'thinking',
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(seconds: 1)),
+        sessionId: 'session-1',
+        runtimeMeta:
+            const RuntimeMeta(command: 'claude', executionId: 'exec-inline-1'),
+        raw: const {'type': 'ai_status'},
+        visible: false,
+        phase: 'settled',
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isFalse);
+    });
+
+    test('shows concrete tool detail while Claude is running a tool', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          executionId: 'exec-inline-tool',
+          targetPath: '/workspace/lib/main.dart',
+        ),
+        raw: const {'type': 'ai_status'},
+        visible: true,
+        label: '正在修改 · main.dart',
+        phase: 'running_tool',
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+      expect(controller.aiStatusIndicatorLabel, '正在修改 · main.dart');
+    });
+
+    test('does not derive visibility from agent_state alone', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionCreatedEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_created'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+      ));
+      await _flushEvents();
+
+      service.emit(AgentStateEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta:
+            const RuntimeMeta(command: 'claude', executionId: 'exec-inline-2'),
+        raw: const {'type': 'agent_state'},
+        state: 'THINKING',
+        message: '思考中',
+        command: 'claude',
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isFalse);
+
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 100)),
+        sessionId: 'session-1',
+        runtimeMeta:
+            const RuntimeMeta(command: 'claude', executionId: 'exec-inline-2'),
+        raw: const {'type': 'ai_status'},
+        visible: true,
+        label: '正在读取 · README.md',
+        phase: 'running_tool',
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+      expect(controller.aiStatusIndicatorLabel, '正在读取 · README.md');
+    });
+  });
+
   group('Bug fix: delta/history do not overwrite during loading', () {
-    test(
-        'SessionDeltaEvent does not overwrite selectedSessionId while loading',
+    test('SessionDeltaEvent does not overwrite selectedSessionId while loading',
         () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -6838,7 +7009,8 @@ void main() {
       expect(controller.isLoadingSession, isTrue);
     });
 
-    test('SessionHistoryEvent does not overwrite selectedSessionId while loading',
+    test(
+        'SessionHistoryEvent does not overwrite selectedSessionId while loading',
         () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);

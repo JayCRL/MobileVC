@@ -697,6 +697,32 @@ class AgentStateEvent extends AppEvent {
       );
 }
 
+class AIStatusEvent extends AppEvent {
+  const AIStatusEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.visible = false,
+    this.label = '',
+    this.phase = '',
+  }) : super(type: 'ai_status');
+
+  final bool visible;
+  final String label;
+  final String phase;
+
+  factory AIStatusEvent.fromJson(Map<String, dynamic> json) => AIStatusEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        visible: json['visible'] == true,
+        label: (json['label'] ?? '').toString(),
+        phase: (json['phase'] ?? '').toString(),
+      );
+}
+
 class FSListResultEvent extends AppEvent {
   const FSListResultEvent({
     required super.timestamp,

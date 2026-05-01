@@ -18,7 +18,7 @@
   },
   "scripts": {
     "start": "node ./bin/mobilevc.js",
-    "test:launcher": "node --test test/mobilevc-launcher.test.js",
+    "test:launcher": "node --test tests/launcher/mobilevc-launcher.test.js",
     "install:cmd": "npm install -g .",
     "remove:cmd": "npm uninstall -g mobilevc",
     "link:cmd": "npm link",

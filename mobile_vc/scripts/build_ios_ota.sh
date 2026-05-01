@@ -259,7 +259,7 @@ cat > "$EXPORT_OPTIONS_PLIST" <<EOF
   <key>destination</key>
   <string>export</string>
   <key>method</key>
-  <string>release-testing</string>
+  <string>ad-hoc</string>
   <key>signingStyle</key>
   <string>automatic</string>
   <key>signingCertificate</key>
@@ -285,6 +285,7 @@ if ! xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY="" \
+  CODE_SIGN_ENTITLEMENTS="Runner/Runner.entitlements" \
   FLUTTER_BUILD_NUMBER="$BUILD_NUMBER" \
   archive >"$ARCHIVE_LOG" 2>&1; then
   tail -n 200 "$ARCHIVE_LOG" >&2 || true

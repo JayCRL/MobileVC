@@ -117,7 +117,8 @@ void main() {
         message: 'ok',
         items: const [
           RuntimeInfoItem(label: 'sonnet', value: 'Sonnet', status: 'default'),
-          RuntimeInfoItem(label: 'Opus Plan', value: 'Opus Plan', status: 'ready'),
+          RuntimeInfoItem(
+              label: 'Opus Plan', value: 'Opus Plan', status: 'ready'),
         ],
       ),
     );
@@ -164,7 +165,7 @@ class _FakeMobileVcWsService extends MobileVcWsService {
   Future<void> disconnect() async {}
 
   @override
-  void send(Map<String, dynamic> payload) {}
+  bool send(Map<String, dynamic> payload) => true;
 
   void emit(AppEvent event) {
     _controller.add(event);

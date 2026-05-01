@@ -103,20 +103,6 @@ class _PermissionDecisionSelection {
   final String scope;
 }
 
-class _PermissionMatchContext {
-  const _PermissionMatchContext({
-    required this.engine,
-    required this.kind,
-    required this.commandHead,
-    required this.targetPath,
-  });
-
-  final String engine;
-  final String kind;
-  final String commandHead;
-  final String targetPath;
-}
-
 class _DeferredFirstInput {
   const _DeferredFirstInput(this.text);
 
@@ -199,7 +185,6 @@ class SessionController extends ChangeNotifier {
   bool _connected = false;
   bool _appInForeground = true;
   bool _autoReconnectEnabled = false;
-  int _sessionLoadEpoch = 0;
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
   Timer? _connectionHealthTimer;
@@ -220,7 +205,6 @@ class SessionController extends ChangeNotifier {
   bool _executionActive = false;
   bool _continueSameSessionEnabled = false;
   String _continuedSameSessionId = '';
-  DateTime? _lastContinuationInputAt;
   bool _isStopping = false;
   Timer? _sessionLoadingTimeout;
   static const Duration _sessionLoadingTimeoutDuration = Duration(seconds: 15);
@@ -279,6 +263,8 @@ class SessionController extends ChangeNotifier {
   bool _runtimeProcessLogLoading = false;
   RuntimeProcessLogResultEvent? _runtimeProcessLog;
   String _agentPhaseLabel = '未连接';
+  bool _aiStatusIndicatorVisible = false;
+  String _aiStatusIndicatorLabel = '思考中';
   bool _activityVisible = false;
   DateTime? _activityStartedAt;
   String _activityToolLabel = '';
@@ -302,8 +288,6 @@ class SessionController extends ChangeNotifier {
   String _pendingSessionTargetId = '';
   String _pendingNotificationSessionTargetId = '';
   _DeferredFirstInput? _deferredFirstInput;
-  String _pendingAiLaunchEngine = '';
-  bool _pendingAiLaunchAwaitingFirstInput = false;
   final Map<String, _PendingAiPreference> _pendingAiPreferences =
       <String, _PendingAiPreference>{};
   final Set<String> _pendingToggleSkillNames = <String>{};
@@ -313,7 +297,6 @@ class SessionController extends ChangeNotifier {
   bool _sessionPermissionRulesEnabled = true;
   bool _persistentPermissionRulesEnabled = false;
   SessionContext? _pendingSessionContextTarget;
-  SessionContext? _pendingSessionContextRollback;
   final List<AdbDevice> _adbDevices = [];
   final List<String> _adbAvailableAvds = [];
   Uint8List? _adbFrameBytes;
@@ -340,9 +323,7 @@ class SessionController extends ChangeNotifier {
         command: currentMeta.command,
         engine: currentMeta.engine,
       );
-  String get displayAiEngine => _pendingAiLaunchEngine.trim().isNotEmpty
-      ? _pendingAiLaunchEngine.trim()
-      : currentAiEngine;
+  String get displayAiEngine => currentAiEngine;
   String get selectedAiModel => _resolvedAiModel(
         currentAiEngine,
         currentMeta.model.isNotEmpty
@@ -651,11 +632,6 @@ class SessionController extends ChangeNotifier {
       _selectedSessionId.trim().isNotEmpty &&
       _continuedSameSessionId == _selectedSessionId.trim();
 
-  bool get _hasRecentContinuationInput {
-    final sentAt = _lastContinuationInputAt;
-    return sentAt != null && DateTime.now().difference(sentAt).inSeconds < 8;
-  }
-
   List<TimelineItem> get timeline => List.unmodifiable(_timeline);
   List<ReviewGroup> get reviewGroups => List.unmodifiable(_reviewGroups);
   ReviewGroup? get activeReviewGroup => _resolvedActiveReviewGroup();
@@ -845,14 +821,6 @@ class SessionController extends ChangeNotifier {
       _pushSystem('error', '当前没有待审核的 diff');
       return;
     }
-    final labels = diffs
-        .map((item) => item.title.isNotEmpty ? item.title : item.path)
-        .where((item) => item.trim().isNotEmpty)
-        .toList();
-    _pushUser(
-      '一键接受并继续\n${labels.take(3).join('\n')}${labels.length > 3 ? '\n…' : ''}',
-      '聚合审核',
-    );
     for (final diff in diffs) {
       if (!diff.pendingReview) {
         continue;
@@ -860,7 +828,6 @@ class SessionController extends ChangeNotifier {
       _sendReviewDecisionForDiff(
         diff,
         'accept',
-        pushTimeline: false,
       );
     }
     _syncDerivedState();
@@ -965,6 +932,9 @@ class SessionController extends ChangeNotifier {
   }
 
   String get agentPhaseLabel => _agentPhaseLabel;
+  bool get aiStatusIndicatorVisible => _aiStatusIndicatorVisible;
+  String get aiStatusIndicatorLabel => _aiStatusIndicatorLabel;
+
   bool get activityVisible => _activityVisible;
   bool get activityBannerVisible =>
       isObservingRemoteActiveSession ||
@@ -972,10 +942,7 @@ class SessionController extends ChangeNotifier {
       _isClaudePendingReadyForInput ||
       _isStopping;
   bool get activityBannerAnimated =>
-      !isObservingRemoteActiveSession &&
-      _activityVisible &&
-      !_isStopping &&
-      !_hasRecentContinuationInput;
+      !isObservingRemoteActiveSession && _activityVisible && !_isStopping;
   String get activityBannerTitle {
     if (isObservingRemoteActiveSession) {
       return '观察模式';
@@ -1054,16 +1021,13 @@ class SessionController extends ChangeNotifier {
     return claudeStates.contains(_liveRuntimeMeta.claudeLifecycle.trim());
   }
 
-  bool get shouldShowClaudeMode =>
-      inClaudeMode || _pendingAiLaunchEngine.trim().isNotEmpty;
-
-  bool get _canContinuePendingAiLaunch =>
-      _pendingAiLaunchEngine.trim().isNotEmpty &&
-      _pendingAiLaunchAwaitingFirstInput;
+  bool get shouldShowClaudeMode => inClaudeMode;
 
   bool get _isClaudePendingReadyForInput =>
-      _pendingAiLaunchAwaitingFirstInput &&
-      _pendingAiLaunchEngine.trim().toLowerCase() == 'claude';
+      _agentState?.awaitInput == true &&
+      _liveRuntimeMeta.claudeLifecycle.trim().toLowerCase() ==
+          'waiting_input' &&
+      _liveRuntimeMeta.engine.trim().toLowerCase() == 'claude';
 
   bool _isDefinitiveAgentState(String agentState, String sessionState) {
     return agentState == 'THINKING' ||
@@ -1102,110 +1066,17 @@ class SessionController extends ChangeNotifier {
     );
   }
 
-  String _preferredAiCommandForEngine(String engine) {
-    final normalizedEngine = engine.trim().toLowerCase();
-    final parts = <String>[];
-    switch (normalizedEngine) {
-      case 'codex':
-        parts.add('codex');
-        final model = _resolvedAiModel(
-          'codex',
-          _configuredModelForEngine('codex'),
-        );
-        if (model.isNotEmpty) {
-          parts.addAll(['-m', model]);
-        }
-        final effort = _resolvedAiReasoningEffort(
-          'codex',
-          _configuredReasoningEffortForEngine('codex'),
-        ).trim();
-        if (effort.isNotEmpty) {
-          parts.addAll(['--config', 'model_reasoning_effort=$effort']);
-        }
-        return parts.join(' ');
-      case 'gemini':
-        return 'gemini';
-      default:
-        parts.add('claude');
-        final model =
-            _resolvedAiModel('claude', _configuredModelForEngine('claude'))
-                .trim();
-        if (model.isNotEmpty && model != 'default') {
-          parts.addAll(['--model', model]);
-        }
-        return parts.join(' ');
-    }
-  }
-
-  void _setPendingAiLaunch(String engine) {
+  void _selectAiEngine(String engine) {
     final normalized = engine.trim().toLowerCase();
     if (normalized != 'claude' &&
         normalized != 'codex' &&
         normalized != 'gemini') {
       return;
     }
-    _pendingAiLaunchEngine = normalized;
     if (_config.engine.trim().toLowerCase() != normalized) {
       unawaited(saveConfig(_config.copyWith(engine: normalized)));
     }
-    // 不要立即移除 _pendingAiPreferences，等后端确认启动了新模型后再移除
-    // _pendingAiPreferences.remove(normalized);
     notifyListeners();
-  }
-
-  void _clearPendingAiLaunch() {
-    if (_pendingAiLaunchEngine.isEmpty) {
-      return;
-    }
-    _pendingAiLaunchEngine = '';
-    _pendingAiLaunchAwaitingFirstInput = false;
-  }
-
-  void _consumePendingAiLaunchInput() {
-    if (!_pendingAiLaunchAwaitingFirstInput) {
-      return;
-    }
-    _pendingAiLaunchAwaitingFirstInput = false;
-    final meta = currentMeta;
-    if (meta.command.trim().isNotEmpty ||
-        meta.claudeLifecycle.trim().isNotEmpty) {
-      _clearPendingAiLaunch();
-    }
-  }
-
-  void _syncPendingAiLaunchFromRuntime() {
-    if (_pendingAiLaunchEngine.isEmpty) {
-      return;
-    }
-    final meta = currentMeta;
-    final hasRuntimeOwnership = meta.command.trim().isNotEmpty ||
-        meta.claudeLifecycle.trim().isNotEmpty;
-    if (hasRuntimeOwnership && _pendingAiLaunchAwaitingFirstInput) {
-      _pendingAiLaunchAwaitingFirstInput = false;
-    }
-    if (_pendingAiLaunchAwaitingFirstInput) {
-      return;
-    }
-    final becameIdle = _isIdleLikeState(_agentState?.state ?? '') ||
-        _isIdleLikeState(_sessionState?.state ?? '');
-    if (hasRuntimeOwnership || becameIdle) {
-      _clearPendingAiLaunch();
-    }
-  }
-
-  void _clearPendingAiLaunchIfIdle() {
-    if (_pendingAiLaunchEngine.isEmpty || _pendingAiLaunchAwaitingFirstInput) {
-      return;
-    }
-    final noBlockingPrompt = !awaitInput &&
-        !hasPendingPermissionPrompt &&
-        !shouldShowReviewChoices &&
-        !hasPendingPlanQuestions;
-    final idle = _isIdleLikeState(_agentState?.state ?? '') ||
-        _isIdleLikeState(_sessionState?.state ?? '');
-    if (noBlockingPrompt && idle) {
-      _clearPendingAiLaunch();
-    }
   }
 
   bool _isAiCommand(String value) {
@@ -1427,7 +1298,6 @@ class SessionController extends ChangeNotifier {
       }
       flushed++;
       if (!action.displayed) {
-        _pushUser(action.userText, action.label);
         newlyDisplayed++;
       }
       _pendingOutboundActions.add(
@@ -1477,6 +1347,64 @@ class SessionController extends ChangeNotifier {
       return;
     }
     _flushPendingOutboundActions();
+  }
+
+  Map<String, dynamic> _aiTurnPayload({
+    required String engine,
+    required RuntimeMeta meta,
+    required String permissionMode,
+    String data = '',
+  }) {
+    final normalizedEngine = engine.trim().toLowerCase();
+    final payload = <String, dynamic>{
+      'action': 'ai_turn',
+      ...meta.toJson(),
+      'engine': normalizedEngine,
+      'cwd': effectiveCwd,
+      'permissionMode': permissionMode,
+    };
+    payload.remove('command');
+    payload.remove('claudeLifecycle');
+    final model = _aiTurnModelForEngine(normalizedEngine);
+    if (model.isNotEmpty) {
+      payload['model'] = model;
+    } else {
+      payload.remove('model');
+    }
+    final reasoningEffort = _aiTurnReasoningEffortForEngine(normalizedEngine);
+    if (reasoningEffort.isNotEmpty) {
+      payload['reasoningEffort'] = reasoningEffort;
+    } else {
+      payload.remove('reasoningEffort');
+    }
+    if (data.trim().isNotEmpty) {
+      payload['data'] = data;
+    }
+    return payload;
+  }
+
+  String _aiTurnModelForEngine(String engine) {
+    final normalizedEngine = engine.trim().toLowerCase();
+    final configured = _configuredModelForEngine(normalizedEngine).trim();
+    if (configured.isEmpty || configured.toLowerCase() == 'default') {
+      return '';
+    }
+    final resolved = _resolvedAiModel(normalizedEngine, configured).trim();
+    if (resolved.toLowerCase() == 'default') {
+      return '';
+    }
+    return resolved;
+  }
+
+  String _aiTurnReasoningEffortForEngine(String engine) {
+    if (engine.trim().toLowerCase() != 'codex') {
+      return '';
+    }
+    final configured = _configuredReasoningEffortForEngine('codex').trim();
+    if (configured.isEmpty || configured.toLowerCase() == 'default') {
+      return '';
+    }
+    return _resolvedAiReasoningEffort('codex', configured);
   }
 
   void setDevicePushToken(String token) {
@@ -1673,7 +1601,6 @@ class SessionController extends ChangeNotifier {
     _executionActive = false;
     _continueSameSessionEnabled = false;
     _continuedSameSessionId = '';
-    _lastContinuationInputAt = null;
     _currentDirectoryPath = '';
     _currentDirectoryItems.clear();
     _openedFile = null;
@@ -1688,7 +1615,6 @@ class SessionController extends ChangeNotifier {
     _lastServerEventAt = null;
     _canResumeCurrentSession = false;
     _resumeRuntimeMeta = const RuntimeMeta();
-    _pendingAiLaunchEngine = '';
     _runtimePermissionMode = '';
     _sessionContext = const SessionContext();
     _skillCatalogMeta = const CatalogMetadata(domain: 'skill');
@@ -1731,6 +1657,8 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
+    _aiStatusIndicatorVisible = false;
+    _aiStatusIndicatorLabel = '思考中';
     _activeReviewDiffId = '';
     _agentPhaseLabel = '未连接';
     _resetActionNeededTracking();
@@ -1750,14 +1678,11 @@ class SessionController extends ChangeNotifier {
     _pendingSessionTargetId = '';
     _pendingNotificationSessionTargetId = '';
     _clearDeferredFirstInput();
-    _pendingAiLaunchEngine = '';
-    _pendingAiLaunchAwaitingFirstInput = false;
     _sessionEventCursors.clear();
     _sessionDeltaKnown.clear();
     _sessionRuntimeAlive = false;
     _continueSameSessionEnabled = false;
     _continuedSameSessionId = '';
-    _lastContinuationInputAt = null;
     _agentState = null;
     _sessionState = null;
     _runtimePhase = null;
@@ -2019,10 +1944,8 @@ class SessionController extends ChangeNotifier {
 
   void _beginSessionLoading({String targetId = ''}) {
     _sessionLoadingTimeout?.cancel();
-    _sessionLoadEpoch++;
     _isLoadingSession = true;
     _pendingSessionTargetId = targetId.trim();
-    _pendingAiLaunchEngine = '';
     _pendingPrompt = null;
     _pendingInteraction = null;
     _clearPlanInteractionState();
@@ -2038,6 +1961,8 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
+    _aiStatusIndicatorVisible = false;
+    _aiStatusIndicatorLabel = '思考中';
     _resetRuntimeProcessState();
     _sessionPermissionRules.clear();
     _persistentPermissionRules.clear();
@@ -2049,7 +1974,6 @@ class SessionController extends ChangeNotifier {
   }
 
   void _resetNewSessionState() {
-    _clearPendingAiLaunch();
     _canResumeCurrentSession = false;
     _resumeRuntimeMeta = const RuntimeMeta();
     _runtimePermissionMode = '';
@@ -2067,6 +1991,8 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
+    _aiStatusIndicatorVisible = false;
+    _aiStatusIndicatorLabel = '思考中';
     _currentDiff = null;
     _latestError = null;
     _recentDiffs.clear();
@@ -2082,7 +2008,6 @@ class SessionController extends ChangeNotifier {
     _resetRuntimeProcessState();
     _sessionContext = const SessionContext();
     _pendingSessionContextTarget = null;
-    _pendingSessionContextRollback = null;
     _pendingToggleSkillNames.clear();
     _pendingToggleMemoryIds.clear();
     _lastLogMessage = '';
@@ -2686,19 +2611,17 @@ class SessionController extends ChangeNotifier {
     if (_pendingSessionContextTarget != null) {
       return;
     }
-    _pendingSessionContextRollback = _sessionContext;
     _pendingSessionContextTarget = next;
-    _sessionContext = next;
     _pendingToggleSkillNames
       ..clear()
       ..addAll(_diffPendingNames(
-        _pendingSessionContextRollback!.enabledSkillNames,
+        _sessionContext.enabledSkillNames,
         next.enabledSkillNames,
       ));
     _pendingToggleMemoryIds
       ..clear()
       ..addAll(_diffPendingNames(
-        _pendingSessionContextRollback!.enabledMemoryIds,
+        _sessionContext.enabledMemoryIds,
         next.enabledMemoryIds,
       ));
     _service.send({
@@ -2754,7 +2677,6 @@ class SessionController extends ChangeNotifier {
       ...currentMeta.toJson(),
       ...?meta,
     });
-    _pushUser('/$skillName', 'Skill');
   }
 
   void _dispatchContextualClaudeRequest(
@@ -2813,46 +2735,23 @@ class SessionController extends ChangeNotifier {
             ))
         .trim()
         .toLowerCase();
-    final preferredCommand = _preferredAiCommandForEngine(resolvedEngine);
-    _setPendingAiLaunch(resolvedEngine);
-    final mergedMeta = (meta ?? currentMeta).merge(
-      RuntimeMeta(
-        engine: resolvedEngine,
-        command: resolvedEngine,
-        cwd: effectiveCwd,
-        permissionMode: _config.permissionMode,
-      ),
-    );
+    _selectAiEngine(resolvedEngine);
     _lastAssistantReplyExecutionKey = '';
-    final launchPayload = {
-      'action': 'exec',
-      'cmd': preferredCommand,
-      'cwd': effectiveCwd,
-      'mode': 'pty',
-      ...mergedMeta.toJson(),
-      'permissionMode': _config.permissionMode,
-      if (value.isNotEmpty) 'inputData': '$value\n',
-    };
+    final launchPayload = _aiTurnPayload(
+      engine: resolvedEngine,
+      meta: meta ?? currentMeta,
+      permissionMode: _config.permissionMode,
+      data: value.isNotEmpty ? '$value\n' : '',
+    );
     final launchSent = _sendUserVisibleAction(
       launchPayload,
-      userText: preferredCommand,
+      userText: value.isNotEmpty ? value : resolvedEngine,
       label: '命令',
       queueOnFailure: true,
     );
     if (!launchSent) {
       return;
     }
-    _executionActive = true;
-    if (value.isEmpty) {
-      _pendingAiLaunchAwaitingFirstInput = true;
-      _syncDerivedState();
-      return;
-    }
-    _pendingAiLaunchAwaitingFirstInput = false;
-    _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
-    _lastContinuationInputAt = DateTime.now();
-    _sessionRuntimeAlive = true;
-    _syncDerivedState();
   }
 
   void _submitClaudeContinuation(
@@ -2864,26 +2763,16 @@ class SessionController extends ChangeNotifier {
     if (value.isEmpty) {
       return;
     }
-    _consumePendingAiLaunchInput();
     final continuationEngine = _resolvedAiEngine(
       command: (meta ?? currentMeta).command,
       engine: (meta ?? currentMeta).engine,
     );
-    final mergedMeta = (meta ?? currentMeta).merge(
-      RuntimeMeta(
-        engine: continuationEngine,
-        command: continuationEngine,
-        cwd: effectiveCwd,
-        permissionMode: _config.permissionMode,
-      ),
+    final payload = _aiTurnPayload(
+      engine: continuationEngine,
+      meta: meta ?? currentMeta,
+      permissionMode: _config.permissionMode,
+      data: '$value\n',
     );
-    final payload = {
-      'action': 'input',
-      'data': '$value\n',
-      'cwd': effectiveCwd,
-      ...mergedMeta.toJson(),
-      'permissionMode': _config.permissionMode,
-    };
     final sent = _sendUserVisibleAction(
       payload,
       userText: value,
@@ -2892,12 +2781,6 @@ class SessionController extends ChangeNotifier {
     if (!sent) {
       return;
     }
-    _executionActive = true;
-    _optimisticallyResumeAiProcessingAfterInput(metaOverride: mergedMeta);
-    _lastContinuationInputAt = DateTime.now();
-    _sessionRuntimeAlive = true;
-    _syncDerivedState();
-    _pushUser(value, label);
     _lastAssistantReplyExecutionKey = '';
   }
 
@@ -3005,7 +2888,6 @@ class SessionController extends ChangeNotifier {
     final lower = value.toLowerCase();
     final isAiCommand = _isAiCommand(lower);
     if (isAiCommand) {
-      _clearPendingAiLaunch();
       _continueSameSessionEnabled = false;
       _continuedSameSessionId = '';
     }
@@ -3046,15 +2928,13 @@ class SessionController extends ChangeNotifier {
         label: '命令',
         targetEngine: aiHead,
       );
-      if (lower == aiHead) {
-        _pushUser(value, '命令');
-      }
       return;
     }
     if (shouldShowClaudeMode) {
+      final backendAwaitInput = _agentState?.awaitInput == true;
       if (isSessionBusy &&
           !_canBypassBusyGuardForCodexContinuation &&
-          !_canContinuePendingAiLaunch) {
+          !backendAwaitInput) {
         _pushSystem('session', '当前 AI 助手会话仍在处理中，请稍后再试。');
         return;
       }
@@ -3062,7 +2942,6 @@ class SessionController extends ChangeNotifier {
       _submitClaudeContinuation(value, label: '回复');
       return;
     }
-    _clearPendingAiLaunch();
     _lastAssistantReplyExecutionKey = '';
     final payload = {
       'action': 'exec',
@@ -3075,7 +2954,6 @@ class SessionController extends ChangeNotifier {
     if (!_sendUserVisibleAction(payload, userText: value, label: '命令')) {
       return;
     }
-    _pushUser(value, '命令');
   }
 
   void submitPromptOption(String value) {
@@ -3205,24 +3083,6 @@ class SessionController extends ChangeNotifier {
       lastDecision: normalized,
       planQuestions: planQuestions,
     );
-    _pendingPlanAnswers.clear();
-    _pendingPlanQuestions.clear();
-    _pendingPlanQuestionIndex = 0;
-    _pendingInteraction = null;
-    _optimisticallyResumeAiProcessingAfterInput(
-      metaOverride: currentMeta.merge(
-        RuntimeMeta(
-          resumeSessionId: interaction.resumeSessionId,
-          executionId: interaction.executionId,
-          groupId: interaction.groupId,
-          groupTitle: interaction.groupTitle,
-          contextId: interaction.contextId,
-          contextTitle: interaction.contextTitle,
-          targetPath: interaction.targetPath,
-          permissionMode: _currentDecisionPermissionMode,
-        ),
-      ),
-    );
     _service.send({
       'action': 'plan_decision',
       'decision': payload,
@@ -3242,8 +3102,6 @@ class SessionController extends ChangeNotifier {
       'targetPath': interaction.targetPath,
       'targetText': currentMeta.targetText,
     });
-    _pushUser('Plan: $payload', promptLabel);
-    _syncDerivedState();
     notifyListeners();
   }
 
@@ -3314,7 +3172,6 @@ class SessionController extends ChangeNotifier {
       if (selection == null) {
         return;
       }
-      _pendingInteraction = null;
       final decisionMeta = interaction.runtimeMeta.merge(
         RuntimeMeta(
           resumeSessionId: interaction.resumeSessionId,
@@ -3323,9 +3180,6 @@ class SessionController extends ChangeNotifier {
           targetPath: interaction.targetPath,
           permissionMode: _currentDecisionPermissionMode,
         ),
-      );
-      _optimisticallyResumeAiProcessingAfterInput(
-        metaOverride: currentMeta.merge(decisionMeta),
       );
       _service.send({
         'action': 'permission_decision',
@@ -3347,10 +3201,6 @@ class SessionController extends ChangeNotifier {
         'target': decisionMeta.target,
         'targetType': decisionMeta.targetType,
       });
-      _pushUser(
-          'Permission: ${selection.decision}${selection.scope.isNotEmpty ? ' (${selection.scope})' : ''}',
-          promptLabel);
-      _syncDerivedState();
       notifyListeners();
       return;
     }
@@ -3362,9 +3212,6 @@ class SessionController extends ChangeNotifier {
   }
 
   void _submitAwaitingInput(String value, {String promptLabel = '回复'}) {
-    _pendingPrompt = null;
-    _pendingInteraction = null;
-    _clearPlanInteractionState();
     _lastAssistantReplyExecutionKey = '';
     final payload = {
       'action': 'input',
@@ -3374,60 +3221,7 @@ class SessionController extends ChangeNotifier {
     if (!_sendUserVisibleAction(payload, userText: value, label: promptLabel)) {
       return;
     }
-    _optimisticallyResumeAiProcessingAfterInput();
-    _pushUser(value, promptLabel);
-    _syncDerivedState();
     notifyListeners();
-  }
-
-  void _optimisticallyResumeAiProcessingAfterInput({
-    RuntimeMeta? metaOverride,
-  }) {
-    final meta = metaOverride ?? currentMeta;
-    final engine = _resolvedAiEngine(
-      command: meta.command,
-      engine: meta.engine,
-    );
-    final lifecycle = meta.claudeLifecycle.trim().toLowerCase();
-    final shouldResumeAiProcessing = shouldShowClaudeMode ||
-        meta.resumeSessionId.trim().isNotEmpty ||
-        lifecycle == 'waiting_input' ||
-        lifecycle == 'resumable' ||
-        _isAiCommand(meta.command);
-    if (!shouldResumeAiProcessing) {
-      return;
-    }
-    final nextCommand = meta.command.trim().isNotEmpty
-        ? meta.command
-        : _preferredAiCommandForEngine(engine);
-    final normalizedEngine =
-        engine.trim().isNotEmpty ? engine.trim() : _config.engine.trim();
-    final statusLabel =
-        normalizedEngine.isNotEmpty ? normalizedEngine.toUpperCase() : 'AI';
-    final nextMeta = meta.merge(
-      RuntimeMeta(
-        command: nextCommand,
-        engine: normalizedEngine,
-        cwd: effectiveCwd,
-        permissionMode: _config.permissionMode,
-        claudeLifecycle: 'active',
-      ),
-    );
-    _agentState = AgentStateEvent(
-      timestamp: DateTime.now(),
-      sessionId: _selectedSessionId,
-      runtimeMeta: nextMeta,
-      raw: const {
-        'type': 'agent_state',
-        'source': 'mobilevc-local-optimistic',
-      },
-      state: 'THINKING',
-      message: '$statusLabel 处理中',
-      awaitInput: false,
-      command: nextCommand,
-      step: _agentState?.step ?? '',
-      tool: _agentState?.tool ?? '',
-    );
   }
 
   void _sendPermissionDecision(
@@ -3465,12 +3259,6 @@ class SessionController extends ChangeNotifier {
         permissionMode: _currentDecisionPermissionMode,
       ),
     );
-    _pendingPrompt = null;
-    _pendingInteraction = null;
-    _runtimePhase = null;
-    _optimisticallyResumeAiProcessingAfterInput(
-      metaOverride: decisionMeta,
-    );
     _service.send({
       'action': 'permission_decision',
       'sessionId': _selectedSessionId,
@@ -3490,10 +3278,6 @@ class SessionController extends ChangeNotifier {
       'target': decisionMeta.target,
       'targetType': decisionMeta.targetType,
     });
-    _pushUser(
-        'Permission: ${selection.decision}${selection.scope.isNotEmpty ? ' (${selection.scope})' : ''}',
-        promptLabel);
-    _syncDerivedState();
     notifyListeners();
   }
 
@@ -3630,8 +3414,6 @@ class SessionController extends ChangeNotifier {
     if (!canStopCurrentRun) {
       return;
     }
-    _pendingAiLaunchEngine = '';
-    _pendingAiLaunchAwaitingFirstInput = false;
     _canResumeCurrentSession = false;
     _resumeRuntimeMeta = const RuntimeMeta();
     _runtimeInfo = null;
@@ -3747,7 +3529,6 @@ class SessionController extends ChangeNotifier {
         if (!_sendUserVisibleAction(payload, userText: raw, label: 'Slash')) {
           return;
         }
-        _pushUser(raw, 'Slash');
     }
   }
 
@@ -3826,8 +3607,7 @@ class SessionController extends ChangeNotifier {
         _selectedSessionTitle = sessionDisplayTitle(resolvedHistorySummary);
         _selectedSessionExternalNative =
             _isExternalNativeSession(resolvedHistorySummary);
-        _executionActive =
-            _executionActive || resolvedHistorySummary.executionActive;
+        _executionActive = resolvedHistorySummary.executionActive;
         _sendCachedPushTokenIfPossible();
         _sessionContext = history.sessionContext;
         _skillCatalogMeta = history.skillCatalogMeta;
@@ -3859,7 +3639,6 @@ class SessionController extends ChangeNotifier {
         _sessionRuntimeAlive = history.runtimeAlive;
         _continueSameSessionEnabled = false;
         _continuedSameSessionId = '';
-        _lastContinuationInputAt = null;
         _terminalExecutions
           ..clear()
           ..addAll(history.terminalExecutions);
@@ -4022,12 +3801,9 @@ class SessionController extends ChangeNotifier {
               !snapshot.syncing &&
               !snapshot.runtimeAlive;
           if (!isExternalHeartbeatIdle) {
-            _sessionRuntimeAlive =
-                snapshot.runtimeAlive || _hasRecentContinuationInput;
+            _sessionRuntimeAlive = snapshot.runtimeAlive;
           }
-          if (!snapshot.runtimeAlive &&
-              !_hasRecentContinuationInput &&
-              !canSendToContinuedSameSession) {
+          if (!snapshot.runtimeAlive && !canSendToContinuedSameSession) {
             _continueSameSessionEnabled = false;
             _continuedSameSessionId = '';
           }
@@ -4081,6 +3857,14 @@ class SessionController extends ChangeNotifier {
         );
         _syncDerivedState();
         _syncObservedSessionPolling();
+        break;
+      case AIStatusEvent status:
+        if (!_eventTargetsCurrentSession(status.sessionId)) {
+          break;
+        }
+        _aiStatusIndicatorVisible = status.visible;
+        _aiStatusIndicatorLabel =
+            status.label.trim().isNotEmpty ? status.label.trim() : '思考中';
         break;
       case RuntimePhaseEvent runtimePhase:
         _runtimePhase = runtimePhase;
@@ -4406,14 +4190,6 @@ class SessionController extends ChangeNotifier {
         _isSavingMemory = false;
         break;
       case CatalogAuthoringResultEvent result:
-        if (result.skill != null) {
-          _upsertSkillDefinition(result.skill!);
-          _isSavingSkill = false;
-        }
-        if (result.memory != null) {
-          _upsertMemoryItem(result.memory!);
-          _isSavingMemory = false;
-        }
         final message = result.message.trim();
         if (message.isNotEmpty) {
           _pushSystem('catalog', message);
@@ -4422,7 +4198,6 @@ class SessionController extends ChangeNotifier {
       case SessionContextResultEvent result:
         _sessionContext = result.sessionContext;
         _pendingSessionContextTarget = null;
-        _pendingSessionContextRollback = null;
         _pendingToggleSkillNames.clear();
         _pendingToggleMemoryIds.clear();
         break;
@@ -4592,7 +4367,6 @@ class SessionController extends ChangeNotifier {
         break;
     }
     if (needsDerivedSync) {
-      _syncPendingAiLaunchFromRuntime();
       _syncDerivedState();
     }
     notifyListeners();
@@ -4617,9 +4391,7 @@ class SessionController extends ChangeNotifier {
     if (_autoSessionCreating) {
       _clearDeferredFirstInput();
     }
-    if (_pendingSessionContextRollback != null) {
-      _sessionContext = _pendingSessionContextRollback!;
-      _pendingSessionContextRollback = null;
+    if (_pendingSessionContextTarget != null) {
       _pendingSessionContextTarget = null;
       _pendingToggleSkillNames.clear();
       _pendingToggleMemoryIds.clear();
@@ -4707,9 +4479,8 @@ class SessionController extends ChangeNotifier {
 
   void _sendReviewDecisionForDiff(
     HistoryContext diff,
-    String normalized, {
-    bool pushTimeline = true,
-  }) {
+    String normalized,
+  ) {
     final reviewedDiffId = _diffIdentity(diff);
     final reviewOnly = normalized != 'revert';
     _activeReviewDiffId = reviewedDiffId;
@@ -4743,9 +4514,6 @@ class SessionController extends ChangeNotifier {
     );
     _syncReviewGroupsFromRecentDiffs();
     _advanceReviewSelectionAfterDecision(diff, reviewedDiffId: reviewedDiffId);
-    if (pushTimeline) {
-      _pushUser('Review: $normalized', '审阅');
-    }
     _syncDerivedState();
     notifyListeners();
   }
@@ -4813,7 +4581,7 @@ class SessionController extends ChangeNotifier {
       _selectedSessionTitle = sessionDisplayTitle(resolvedSummary);
       _selectedSessionExternalNative =
           _isExternalNativeSession(resolvedSummary);
-      _executionActive = _executionActive || resolvedSummary.executionActive;
+      _executionActive = resolvedSummary.executionActive;
       _upsertSession(resolvedSummary);
     }
     _sessionContext = delta.sessionContext;
@@ -4822,10 +4590,8 @@ class SessionController extends ChangeNotifier {
     _runtimePermissionMode = delta.resumeRuntimeMeta.permissionMode.trim();
     _canResumeCurrentSession = delta.canResume;
     _resumeRuntimeMeta = delta.resumeRuntimeMeta;
-    _sessionRuntimeAlive = delta.runtimeAlive || _hasRecentContinuationInput;
-    if (!delta.runtimeAlive &&
-        !_hasRecentContinuationInput &&
-        !canSendToContinuedSameSession) {
+    _sessionRuntimeAlive = delta.runtimeAlive;
+    if (!delta.runtimeAlive && !canSendToContinuedSameSession) {
       _continueSameSessionEnabled = false;
       _continuedSameSessionId = '';
     }
@@ -5023,32 +4789,6 @@ class SessionController extends ChangeNotifier {
     }
   }
 
-  void _upsertSkillDefinition(SkillDefinition skill) {
-    final name = skill.name.trim();
-    if (name.isEmpty) {
-      return;
-    }
-    final index = _skills.indexWhere((item) => item.name == name);
-    if (index == -1) {
-      _skills.insert(0, skill);
-    } else {
-      _skills[index] = skill;
-    }
-  }
-
-  void _upsertMemoryItem(MemoryItem memory) {
-    final id = memory.id.trim();
-    if (id.isEmpty) {
-      return;
-    }
-    final index = _memoryItems.indexWhere((item) => item.id == id);
-    if (index == -1) {
-      _memoryItems.insert(0, memory);
-    } else {
-      _memoryItems[index] = memory;
-    }
-  }
-
   bool _isExternalNativeSession(SessionSummary summary) {
     final ownership = summary.ownership.trim().toLowerCase();
     // Authoritative ownership field set by backend at session creation.
@@ -5187,19 +4927,6 @@ class SessionController extends ChangeNotifier {
       return body;
     }
     return '';
-  }
-
-  void _pushUser(String text, String label) {
-    _pushTimelineItem(
-      TimelineItem(
-        id: 'user-${DateTime.now().microsecondsSinceEpoch}',
-        kind: 'user',
-        timestamp: DateTime.now(),
-        title: label,
-        body: text,
-      ),
-    );
-    notifyListeners();
   }
 
   void _pushSystem(String kind, String text) {
@@ -5527,7 +5254,6 @@ class SessionController extends ChangeNotifier {
     if (kind == 'markdown') {
       final executionKey = _runtimeExecutionKey(mergedMeta);
       _lastAssistantReplyExecutionKey = executionKey;
-      _lastContinuationInputAt = null;
       _markTerminalExecutionFinished(
         mergedMeta,
         finishedAt: log.timestamp,
@@ -6681,7 +6407,6 @@ class SessionController extends ChangeNotifier {
   }
 
   void _syncDerivedState() {
-    _clearPendingAiLaunchIfIdle();
     _syncRuntimePermissionMode();
     _syncReviewGroupsFromRecentDiffs();
     _agentPhaseLabel = _compactAgentMessage();
@@ -6720,6 +6445,7 @@ class SessionController extends ChangeNotifier {
       _activityToolLabel = '';
       _activityVisible = false;
     } else if (active) {
+      _activityVisible = true;
       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
       if (_activityToolLabel.isEmpty) {
         _activityToolLabel = _currentStep?.tool.isNotEmpty == true
@@ -6843,7 +6569,7 @@ class SessionController extends ChangeNotifier {
         key: 'continue::$identity',
         message: 'AI 助手需要你继续输入',
         revision: _actionNeededRevisionToken(
-          prompt?.timestamp,
+          prompt.timestamp,
           _agentState?.timestamp,
           _sessionState?.timestamp,
           null,
@@ -6929,9 +6655,6 @@ class SessionController extends ChangeNotifier {
     if (sessionId.isNotEmpty && sessionId != _selectedSessionId.trim()) {
       return true;
     }
-    if (_shouldIgnoreStaleSnapshotAfterInput(snapshot)) {
-      return true;
-    }
     if (sessionId.isNotEmpty && snapshot.latestCursor > 0) {
       final previous = _sessionEventCursors[sessionId] ?? 0;
       if (snapshot.latestCursor > previous) {
@@ -6948,7 +6671,6 @@ class SessionController extends ChangeNotifier {
         return false;
       }
       _sessionRuntimeAlive = false;
-      _lastContinuationInputAt = null;
       _syncDerivedState();
       notifyListeners();
       return false;
@@ -7001,19 +6723,6 @@ class SessionController extends ChangeNotifier {
     _syncDerivedState();
     notifyListeners();
     return false;
-  }
-
-  bool _shouldIgnoreStaleSnapshotAfterInput(TaskSnapshotEvent snapshot) {
-    if (!_hasRecentContinuationInput) {
-      return false;
-    }
-    final state = snapshot.state.trim().toLowerCase();
-    final lifecycle = snapshot.runtimeMeta.claudeLifecycle.trim().toLowerCase();
-    return snapshot.awaitInput ||
-        state == 'wait_input' ||
-        state == 'idle' ||
-        lifecycle == 'waiting_input' ||
-        lifecycle == 'resumable';
   }
 
   bool _isHeartbeatIdleSnapshot(TaskSnapshotEvent snapshot, String state) {
@@ -7528,10 +7237,7 @@ class SessionController extends ChangeNotifier {
       command: meta.command.isNotEmpty ? meta.command : currentMeta.command,
       engine: meta.engine.isNotEmpty ? meta.engine : currentMeta.engine,
     );
-    if (engine == 'codex') {
-      return;
-    }
-    if (engine != 'claude') {
+    if (engine != 'claude' && engine != 'codex') {
       return;
     }
 

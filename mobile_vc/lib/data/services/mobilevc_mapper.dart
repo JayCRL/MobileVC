@@ -29,6 +29,8 @@ class MobileVcMapper {
         return TaskSnapshotEvent.fromJson(json);
       case 'agent_state':
         return AgentStateEvent.fromJson(json);
+      case 'ai_status':
+        return AIStatusEvent.fromJson(json);
       case 'fs_list_result':
         return FSListResultEvent.fromJson(json);
       case 'fs_read_result':

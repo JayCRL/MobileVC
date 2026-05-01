@@ -404,6 +404,10 @@ class _FakeLocalNotificationService implements LocalNotificationService {
   Future<void> initialize() async {}
 
   @override
+  void onMessageOpenedApp(
+      void Function(Map<String, dynamic> message) callback) {}
+
+  @override
   Future<void> showNotification(NotificationPayload payload) async {
     payloads.add(payload);
   }
@@ -425,7 +429,7 @@ class _FakeMobileVcWsService extends MobileVcWsService {
   Future<void> disconnect() async {}
 
   @override
-  void send(Map<String, dynamic> payload) {}
+  bool send(Map<String, dynamic> payload) => true;
 
   void emit(AppEvent event) {
     _controller.add(event);

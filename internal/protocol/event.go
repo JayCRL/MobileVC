@@ -16,6 +16,7 @@ const (
 	EventTypeSessionResumeNotice      = "session_resume_notice"
 	EventTypeSessionState             = "session_state"
 	EventTypeAgentState               = "agent_state"
+	EventTypeAIStatus                 = "ai_status"
 	EventTypeRuntimePhase             = "runtime_phase"
 	EventTypeTaskSnapshot             = "task_snapshot"
 	EventTypeFSListResult             = "fs_list_result"
@@ -99,6 +100,15 @@ type ExecRequestEvent struct {
 type InputRequestEvent struct {
 	ClientEvent
 	Data           string `json:"data"`
+	PermissionMode string `json:"permissionMode,omitempty"`
+	RuntimeMeta
+}
+
+type AITurnRequestEvent struct {
+	ClientEvent
+	Engine         string `json:"engine,omitempty"`
+	Data           string `json:"data,omitempty"`
+	CWD            string `json:"cwd,omitempty"`
 	PermissionMode string `json:"permissionMode,omitempty"`
 	RuntimeMeta
 }
@@ -772,6 +782,15 @@ type AgentStateEvent struct {
 	Tool       string `json:"tool,omitempty"`
 }
 
+type AIStatusEvent struct {
+	Event
+	Visible bool   `json:"visible"`
+	Label   string `json:"label,omitempty"`
+	Phase   string `json:"phase,omitempty"`
+}
+
+func (e AIStatusEvent) GetRuntimeMeta() RuntimeMeta { return e.RuntimeMeta }
+
 type RuntimePhaseEvent struct {
 	Event
 	Phase   string `json:"phase"`
@@ -999,6 +1018,17 @@ func NewAgentStateEvent(sessionID, state, message string, awaitInput bool, comma
 		Step:       step,
 		Tool:       tool,
 	}
+}
+
+func NewAIStatusEvent(sessionID string, visible bool, label, phase string, meta RuntimeMeta) AIStatusEvent {
+	event := AIStatusEvent{
+		Event:   NewBaseEvent(EventTypeAIStatus, sessionID),
+		Visible: visible,
+		Label:   label,
+		Phase:   phase,
+	}
+	event.RuntimeMeta = MergeRuntimeMeta(event.RuntimeMeta, meta)
+	return event
 }
 
 func NewRuntimePhaseEvent(sessionID, phase, kind, message string) RuntimePhaseEvent {
@@ -1449,6 +1479,9 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 	case AgentStateEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
+	case AIStatusEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
 	case RuntimePhaseEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
@@ -1556,6 +1589,9 @@ func ApplyEventCursor(event any, cursor int64) any {
 		e.EventCursor = cursor
 		return e
 	case AgentStateEvent:
+		e.EventCursor = cursor
+		return e
+	case AIStatusEvent:
 		e.EventCursor = cursor
 		return e
 	case RuntimePhaseEvent:
