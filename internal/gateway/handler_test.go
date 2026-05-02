@@ -3075,6 +3075,9 @@ func TestHandlerInputInjectsEnabledSkillsIntoAIConversation(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("did not receive input payload")
 	}
+	// 主动收尾：避免 t.TempDir RemoveAll 与后台 SaveProjection 的竞争。
+	_ = conn.Close()
+	h.runtimeSessions.CleanupAll()
 }
 
 func TestHandlerInputInjectsEnabledMemoryIntoAIConversation(t *testing.T) {
@@ -3995,6 +3998,10 @@ func TestHandlerPermissionDecisionBeforeResumeBindsSelectedSession(t *testing.T)
 	case <-time.After(5 * time.Second):
 		t.Fatal("did not receive direct permission response after reconnect")
 	}
+	// 主动收尾：先关 conn 让 read loop 退出，再 cleanup runtime sessions，
+	// 等任何后台 SaveProjection 完成后再让 t.TempDir 自动 RemoveAll，避免竞态。
+	_ = conn2.Close()
+	h.runtimeSessions.CleanupAll()
 }
 
 func TestHandlerPermissionDecisionApproveForCodexUsesDirectPermissionResponse(t *testing.T) {
@@ -4050,6 +4057,9 @@ func TestHandlerPermissionDecisionApproveForCodexUsesDirectPermissionResponse(t 
 	if runnerIndex != 1 {
 		t.Fatalf("expected no runner restart for codex, got runner count=%d", runnerIndex)
 	}
+	// 主动收尾：避免 t.TempDir RemoveAll 与后台 SaveProjection 的竞争。
+	_ = conn.Close()
+	h.runtimeSessions.CleanupAll()
 }
 
 func TestHandlerPermissionDecisionApproveForCodexWithExpiredPendingRequestReturnsError(t *testing.T) {

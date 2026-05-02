@@ -466,7 +466,14 @@ func TestClaudeSessionFileWritePermission(t *testing.T) {
 // TestClaudeSessionBackgroundTask tests mobile background→foreground seamless continuation.
 // Simulates: user starts a multi-step task → app goes to background → Claude keeps running →
 // app returns to foreground → events still flowing, task completes.
+//
+// 默认 skip：该测试依赖真实 Claude CLI 多步权限流程，单次运行 ≥100s 且会因 Claude
+// 行为/速度变化偶发失败。需要手动验证多步任务+权限审批链路时设置：
+//   MOBILEVC_RUN_CLAUDE_INTEGRATION=1 go test ./tests/unit/... -run TestClaudeSessionBackgroundTask
 func TestClaudeSessionBackgroundTask(t *testing.T) {
+	if os.Getenv("MOBILEVC_RUN_CLAUDE_INTEGRATION") != "1" {
+		t.Skip("set MOBILEVC_RUN_CLAUDE_INTEGRATION=1 to run this Claude e2e test")
+	}
 	if !hasClaude(t) {
 		return
 	}
@@ -590,7 +597,15 @@ func TestClaudeSessionBackgroundTask(t *testing.T) {
 // TestClaudeSessionDisconnectReconnect tests mobile disconnect → reconnect → seamless resume.
 // Simulates: user chats → connection lost (app backgrounded) → reconnects →
 // session resumes with full context preserved.
+//
+// 默认 skip：是否记得跨 resume 的名字属于 Claude CLI 的实际行为，会随版本变化波动。
+// 后端层面的"resume 后能再起 session 并响应输入"已被 P0 单测覆盖。需要手动联调
+// 完整 disconnect/reconnect 链路时设置：
+//   MOBILEVC_RUN_CLAUDE_INTEGRATION=1 go test ./tests/unit/... -run TestClaudeSessionDisconnectReconnect
 func TestClaudeSessionDisconnectReconnect(t *testing.T) {
+	if os.Getenv("MOBILEVC_RUN_CLAUDE_INTEGRATION") != "1" {
+		t.Skip("set MOBILEVC_RUN_CLAUDE_INTEGRATION=1 to run this Claude e2e test")
+	}
 	if !hasClaude(t) {
 		return
 	}

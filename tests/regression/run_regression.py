@@ -18,12 +18,13 @@ from datetime import datetime
 from pathlib import Path
 
 TEST_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = TEST_DIR.parent
+PROJECT_ROOT = TEST_DIR.parent.parent
 SERVER_LOG = PROJECT_ROOT / "server.log"
 
 TESTS = [
     "test_permission_input_guard",
     "test_session_resume_permission",
+    "test_push_token_lifecycle",
 ]
 
 
