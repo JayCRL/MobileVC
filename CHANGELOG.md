@@ -4,6 +4,17 @@ This changelog tracks repository-facing npm package changes. Current package ver
 
 ## Unreleased
 
+### Added
+
+- **Claude 会话交互列表可见**：Session 结束时引擎自动归一化 JSONL，将 `queue-operation` 头替换为正常的 `permission-mode` + `file-history-snapshot`，使 MobileVC 创建的会话在原生 Claude 交互式 resume 列表中可见。
+- **后端基础功能测试 (68 用例)**：覆盖 config → data → push → engine → session 五层，含 Controller 状态机全生命周期、权限规则匹配、投影快照等。
+- **完整 Claude 会话集成测试**：基础对话、文件写入+权限批准、后台长任务、断联重连无感续上（resume）。
+
+### Changed
+
+- **后端四层架构重组**：`internal/` 按 data / engine / session / gateway 四层重构，删除旧包 ws/ runner/ runtime/ store/ adapter/。
+- **项目目录整理**：文档归入 docs/，开发工具归入 tools/，测试合并到 tests/。
+
 ### Fixed
 
 - **切后台误入观察模式**：新增 `Ownership` 字段标记会话归属（`mobilevc` / `claude-native` / `codex-native`），创建时确定，只升级不降级。Flutter 端 `_isExternalNativeSession` 优先读此字段，断连时重置 `_selectedSessionExternalNative`。

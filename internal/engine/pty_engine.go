@@ -796,6 +796,7 @@ func (r *PtyRunner) commandContext() context.Context {
 }
 
 func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd string, sink EventSink) error {
+	defer r.normalizeSessionJSONL(cwd, req.SessionID)
 	generation := r.nextRunGeneration()
 	cmd := newClaudeStreamCommand(ctx, req.Command, r.claudeSessionID, r.permissionMode)
 	logx.Info("pty", "run claude stream: sessionID=%s cwd=%q permissionMode=%q resumeSessionID=%q commandPreview=%q", req.SessionID, cwd, r.permissionMode, r.claudeSessionID, ptyDebugPreview(req.Command))
@@ -2843,4 +2844,61 @@ func shouldEmitClaudeTextAsPrompt(text string) bool {
 	result := len(options) > 0
 	logx.Info("pty", "shouldEmitClaudeTextAsPrompt: result=%t reason=options_check options=%v preview=%q", result, options, ptyDebugPreview(trimmed))
 	return result
+}
+
+func (r *PtyRunner) normalizeSessionJSONL(cwd, mobilevcSessionID string) {
+	r.mu.Lock()
+	claudeID := r.claudeSessionID
+	r.mu.Unlock()
+	if claudeID == "" || cwd == "" {
+		return
+	}
+	resolved := cwd
+	if abs, err := filepath.Abs(cwd); err == nil {
+		resolved = abs
+	}
+	if eval, err := filepath.EvalSymlinks(resolved); err == nil {
+		resolved = eval
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	encoded := strings.Map(func(rn rune) rune {
+		if (rn >= 'a' && rn <= 'z') || (rn >= 'A' && rn <= 'Z') || (rn >= '0' && rn <= '9') {
+			return rn
+		}
+		return '-'
+	}, resolved)
+	filePath := filepath.Join(home, ".claude", "projects", encoded, claudeID+".jsonl")
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	var newLines []string
+	headerWritten := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !headerWritten && strings.Contains(line, `"type":"queue-operation"`) {
+			continue
+		}
+		if !headerWritten {
+			ts := time.Now().UTC().Format(time.RFC3339Nano)
+			newLines = append(newLines,
+				`{"type":"permission-mode","permissionMode":"default","sessionId":"`+claudeID+`","cwd":"`+resolved+`","timestamp":"`+ts+`","version":"2.1.119","entrypoint":"cli"}`,
+				`{"type":"file-history-snapshot","sessionId":"`+claudeID+`","cwd":"`+resolved+`","timestamp":"`+ts+`","version":"2.1.119","entrypoint":"cli"}`,
+			)
+			headerWritten = true
+		}
+		newLines = append(newLines, line)
+	}
+	if len(newLines) > 0 {
+		if err := os.WriteFile(filePath, []byte(strings.Join(newLines, "\n")+"\n"), 0o644); err != nil {
+			logx.Warn("pty", "normalize jsonl failed: sessionID=%s err=%v", mobilevcSessionID, err)
+		}
+	}
 }
