@@ -7099,6 +7099,59 @@ void main() {
       expect(controller.aiStatusIndicatorVisible, isFalse);
     });
 
+    test('提交后 SessionDelta 携带 stale waiting_input 不应熄灭状态球', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionCreatedEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_created'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+      ));
+      service.emit(AgentStateEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'waiting_input',
+        ),
+        raw: const {'type': 'agent_state'},
+        state: 'WAIT_INPUT',
+        message: '等待输入',
+        awaitInput: true,
+        command: 'claude',
+      ));
+      await _flushEvents();
+
+      controller.sendInputText('hello');
+      await _flushEvents();
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+
+      // 后端紧接着回流 delta，resumeRuntimeMeta 仍是上一轮残留的 waiting_input。
+      service.emit(SessionDeltaEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 30)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'claude'),
+        raw: const {'type': 'session_delta'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+        base: const SessionDeltaKnown(),
+        latest: const SessionDeltaKnown(),
+        resumeRuntimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'waiting_input',
+        ),
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue,
+          reason: '用户提交保护锁应屏蔽 stale waiting_input 的强制熄灭');
+    });
+
     test('keeps submitted turn visible after fresh run then stale hide',
         () async {
       final service = _FakeMobileVcWsService();

@@ -1408,6 +1408,13 @@ class SessionController extends ChangeNotifier {
     if (meta.claudeLifecycle.trim().toLowerCase() != 'waiting_input') {
       return;
     }
+    // 用户刚点击发送后 _isSubmitting=true，此时 delta/history 携带的
+    // resumeRuntimeMeta 仍可能是上一轮残留的 waiting_input。若此时强制
+    // 收起状态球，会出现"思考中→消失→又出现"的闪烁。本轮 settle 由
+    // _shouldEndUserSubmissionForAiStatus 处理，这里不抢着关。
+    if (_isSubmitting) {
+      return;
+    }
     _endUserSubmissionProtection();
     _setAiStatusVisible(false, phase: 'waiting_input', immediate: true);
   }
