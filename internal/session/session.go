@@ -283,13 +283,19 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		if e.Path != "" {
 			c.lastTool = e.Path
 		}
+		pendingReview := !shouldAutoAcceptReviewForPermissionMode(e.PermissionMode, c.activeMeta.PermissionMode)
+		reviewStatus := "pending"
+		if !pendingReview {
+			reviewStatus = "accepted"
+		}
 		c.recentDiff = DiffContext{
 			ContextID:     firstNonEmpty(e.ContextID, e.Path, e.Title),
 			Title:         firstNonEmpty(e.Title, e.ContextTitle, "Diff 预览"),
 			Path:          firstNonEmpty(e.Path, e.TargetPath),
 			Diff:          e.Diff,
 			Lang:          e.Lang,
-			PendingReview: true,
+			PendingReview: pendingReview,
+			ReviewStatus:  reviewStatus,
 		}
 		c.upsertRecentDiffLocked(c.recentDiff)
 		c.recentDiff = c.pickActiveRecentDiffLocked()

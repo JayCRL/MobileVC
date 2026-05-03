@@ -686,3 +686,23 @@ func TestBuildResumeRecoveryStateEvent(t *testing.T) {
 		t.Errorf("expected default recovery message, got %q", got2.Message)
 	}
 }
+
+func TestShouldEmitResumeRecoveryStateEvent(t *testing.T) {
+	if ShouldEmitResumeRecoveryStateEvent(nil, data.ProjectionSnapshot{
+		Controller: data.ControllerSnapshot{State: ControllerStateWaitInput},
+		Runtime:    data.SessionRuntime{ClaudeLifecycle: "waiting_input"},
+	}, "RUNNING") {
+		t.Fatal("waiting input should not emit recovery even with stale busy client state")
+	}
+	if !ShouldEmitResumeRecoveryStateEvent(nil, data.ProjectionSnapshot{
+		Controller: data.ControllerSnapshot{State: ControllerStateThinking},
+		Runtime:    data.SessionRuntime{ClaudeLifecycle: "active"},
+	}, "") {
+		t.Fatal("active thinking state should emit recovery")
+	}
+	if !ShouldEmitResumeRecoveryStateEvent(nil, data.ProjectionSnapshot{
+		Runtime: data.SessionRuntime{ClaudeLifecycle: "starting"},
+	}, "") {
+		t.Fatal("starting lifecycle should emit recovery")
+	}
+}

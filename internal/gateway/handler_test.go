@@ -2353,6 +2353,31 @@ func TestProjectionBuildsReviewGroupsFromDiffs(t *testing.T) {
 	}
 }
 
+func TestProjectionAutoAcceptsReviewGroupsInAutoPermissionMode(t *testing.T) {
+	snapshot := data.ProjectionSnapshot{RawTerminalByStream: map[string]string{"stdout": "", "stderr": ""}}
+	event := protocol.ApplyRuntimeMeta(
+		protocol.NewFileDiffEvent("session-1", "internal/ws/handler.go", "handler diff", "diff --git a/internal/ws/handler.go b/internal/ws/handler.go", "go"),
+		protocol.RuntimeMeta{ContextID: "diff-auto-1", ExecutionID: "exec-auto-1", GroupID: "group-auto-1", PermissionMode: "auto"},
+	)
+	snapshot, changed := session.ApplyEventToProjection(snapshot, event)
+	if !changed {
+		t.Fatal("expected file_diff to change projection")
+	}
+	if len(snapshot.ReviewGroups) != 1 {
+		t.Fatalf("expected one review group, got %#v", snapshot.ReviewGroups)
+	}
+	group := snapshot.ReviewGroups[0]
+	if group.PendingReview || group.PendingCount != 0 || group.ReviewStatus != "accepted" {
+		t.Fatalf("expected auto-accepted review group, got %#v", group)
+	}
+	if len(group.Files) != 1 || group.Files[0].PendingReview || group.Files[0].ReviewStatus != "accepted" {
+		t.Fatalf("expected auto-accepted review file, got %#v", group.Files)
+	}
+	if snapshot.CurrentDiff == nil || snapshot.CurrentDiff.PendingReview || snapshot.CurrentDiff.ReviewStatus != "accepted" {
+		t.Fatalf("expected current diff to be auto-accepted, got %#v", snapshot.CurrentDiff)
+	}
+}
+
 func TestApplyReviewDecisionToProjectionUpdatesReviewState(t *testing.T) {
 	snapshot := session.NormalizeProjectionSnapshot(data.ProjectionSnapshot{
 		Diffs: []session.DiffContext{{
@@ -4790,6 +4815,13 @@ func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 	}
 	if ptyRunner.lastPermissionMode != "default" {
 		t.Fatalf("expected runner permission mode to update, got %q", ptyRunner.lastPermissionMode)
+	}
+	record, err := tempStore.GetSession(context.Background(), "permission-mode-session")
+	if err != nil {
+		t.Fatalf("get session projection: %v", err)
+	}
+	if record.Projection.Runtime.PermissionMode != "default" {
+		t.Fatalf("expected persisted permission mode default, got %#v", record.Projection.Runtime)
 	}
 }
 

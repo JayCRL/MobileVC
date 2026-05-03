@@ -245,6 +245,7 @@ class SessionController extends ChangeNotifier {
   FileReadResult? _openedFile;
   RuntimeMeta _resumeRuntimeMeta = const RuntimeMeta();
   String _runtimePermissionMode = '';
+  String _userSelectedPermissionMode = '';
   SessionContext _sessionContext = const SessionContext();
   CatalogMetadata _skillCatalogMeta = const CatalogMetadata(domain: 'skill');
   CatalogMetadata _memoryCatalogMeta = const CatalogMetadata(domain: 'memory');
@@ -656,9 +657,9 @@ class SessionController extends ChangeNotifier {
   AppNotificationSignal? get notificationSignal => _notificationSignal;
   bool get fastMode => _config.fastMode;
   String get displayPermissionMode => _normalizeDisplayPermissionMode(
-        _runtimePermissionMode.isNotEmpty
-            ? _runtimePermissionMode
-            : _config.permissionMode,
+        _config.permissionMode.isNotEmpty
+            ? _config.permissionMode
+            : _runtimePermissionMode,
       );
   bool get hasPendingReview => pendingDiffCount > 0;
   int get pendingDiffCount => _pendingDiffs.length;
@@ -674,46 +675,73 @@ class SessionController extends ChangeNotifier {
   HistoryContext? get openedFilePendingDiff => _pendingDiffForOpenedFile();
   HistoryContext? get reviewActionTargetDiff => _reviewActionTargetDiff();
   bool get openedFileMatchesPendingDiff => openedFilePendingDiff != null;
-  bool get isAutoAcceptMode => displayPermissionMode == 'auto';
+  bool get isAutoAcceptMode =>
+      _isAutoReviewPermissionMode(displayPermissionMode);
   bool get isBypassPermissionsMode =>
       displayPermissionMode == 'bypassPermissions';
   bool get isManualReviewMode => !isAutoAcceptMode;
 
+  bool _isAutoReviewPermissionMode(String permissionMode) {
+    final normalized = _normalizeDisplayPermissionMode(permissionMode);
+    return normalized == 'auto' || normalized == 'bypassPermissions';
+  }
+
+  bool get _autoReviewActive =>
+      _isAutoReviewPermissionMode(displayPermissionMode) &&
+      _hasAutoReviewRuntimeSignal();
+
+  bool _hasAutoReviewRuntimeSignal([RuntimeMeta meta = const RuntimeMeta()]) {
+    final modes = <String>[
+      meta.permissionMode,
+      _userSelectedPermissionMode,
+      _runtimePermissionMode,
+      _agentState?.runtimeMeta.permissionMode ?? '',
+      _sessionState?.runtimeMeta.permissionMode ?? '',
+      _resumeRuntimeMeta.permissionMode,
+    ];
+    for (final mode in modes) {
+      if (mode.trim().isNotEmpty && _isAutoReviewPermissionMode(mode)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   bool _reviewShouldAutoAccept(RuntimeMeta meta) {
     final source = meta.source.trim().toLowerCase();
-    return source == 'review-auto-accepted';
+    if (source == 'review-auto-accepted') {
+      return true;
+    }
+    return _isAutoReviewPermissionMode(displayPermissionMode) &&
+        _hasAutoReviewRuntimeSignal(meta);
   }
 
   bool get shouldShowReviewChoices {
+    if (_autoReviewActive) {
+      return false;
+    }
+    if (hasPendingPermissionPrompt) {
+      return false;
+    }
     final interaction = _pendingInteraction;
     final prompt = _pendingPrompt;
-    final permissionBlockingOnly =
-        (interaction?.isPermission == true || prompt?.isPermission == true) &&
-            interaction?.isReview != true &&
-            prompt?.isReview != true;
     final waitingForReviewInput = interaction?.isReview == true ||
         prompt?.isReview == true ||
-        (hasPendingReview &&
-            (!hasPendingPermissionPrompt || permissionBlockingOnly) &&
-            !hasPendingPlanPrompt &&
-            !hasPendingPlanQuestions);
+        (hasPendingReview && !hasPendingPlanPrompt && !hasPendingPlanQuestions);
     return currentReviewDiff != null &&
         waitingForReviewInput &&
-        (!hasPendingPermissionPrompt || permissionBlockingOnly) &&
         !hasPendingPlanPrompt &&
         !hasPendingPlanQuestions;
   }
 
   bool get canShowReviewActions {
-    final interaction = _pendingInteraction;
-    final prompt = _pendingPrompt;
-    final permissionBlockingOnly =
-        (interaction?.isPermission == true || prompt?.isPermission == true) &&
-            interaction?.isReview != true &&
-            prompt?.isReview != true;
-    return !isAutoAcceptMode &&
-        reviewActionTargetDiff != null &&
-        (!hasPendingPermissionPrompt || permissionBlockingOnly) &&
+    if (_autoReviewActive) {
+      return false;
+    }
+    if (hasPendingPermissionPrompt) {
+      return false;
+    }
+    return reviewActionTargetDiff != null &&
         !hasPendingPlanPrompt &&
         !hasPendingPlanQuestions;
   }
@@ -1374,6 +1402,14 @@ class SessionController extends ChangeNotifier {
     }
     final statusKey = _runtimeExecutionKey(status.runtimeMeta);
     return statusKey.isEmpty || statusKey == replyKey;
+  }
+
+  void _reconcileAiStatusFromRestoredRuntime(RuntimeMeta meta) {
+    if (meta.claudeLifecycle.trim().toLowerCase() != 'waiting_input') {
+      return;
+    }
+    _endUserSubmissionProtection();
+    _setAiStatusVisible(false, phase: 'waiting_input', immediate: true);
   }
 
   /// 用户点击"发送"后调用：清空旧的回复结算标记，记录基线 executionKey，
@@ -2197,20 +2233,45 @@ class SessionController extends ChangeNotifier {
   }
 
   void updatePermissionMode(String permissionMode) {
-    _config = _config.copyWith(permissionMode: permissionMode);
+    final normalizedMode = _normalizeDisplayPermissionMode(permissionMode);
+    _config = _config.copyWith(permissionMode: normalizedMode);
+    _userSelectedPermissionMode = normalizedMode;
+    unawaited(_persistCurrentConfig());
     final normalizedDiffs = _recentDiffs.map(_normalizeHistoryDiff).toList();
     _recentDiffs
       ..clear()
       ..addAll(normalizedDiffs);
+    if (_isAutoReviewPermissionMode(normalizedMode)) {
+      _acceptAllPendingReviewDiffs();
+      if (_pendingInteraction?.isReview == true) {
+        _pendingInteraction = null;
+      }
+      if (_pendingPrompt?.isReview == true) {
+        _pendingPrompt = null;
+      }
+      _runtimePhase = null;
+    }
     _service.send(
-        {'action': 'set_permission_mode', 'permissionMode': permissionMode});
+        {'action': 'set_permission_mode', 'permissionMode': normalizedMode});
     _pushSystem('session',
-        'Permission mode 已切换为 ${_permissionModeLabel(permissionMode)}，将对下一次交互生效');
+        'Permission mode 已切换为 ${_permissionModeLabel(normalizedMode)}，将对下一次交互生效');
     _syncDerivedState();
-    // 用户在 dropdown 的选择是权威意图，覆盖 sync 出来的旧 sessionState/agentState
-    // 缓存值，等后端回包刷新 _agentState 后再由后续 sync 接管。
-    _runtimePermissionMode = _normalizeDisplayPermissionMode(permissionMode);
+    _runtimePermissionMode = normalizedMode;
     notifyListeners();
+  }
+
+  Future<void> _persistCurrentConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKey, jsonEncode(_config.toJson()));
+    } catch (error, stack) {
+      _pushDebug('save permission mode failed',
+          'key=$_prefsKey errorType=${error.runtimeType}');
+      debugPrintStack(
+        stackTrace: stack,
+        label: '[session] save permission mode stack',
+      );
+    }
   }
 
   Future<void> updateAiModelSelection({
@@ -3305,6 +3366,22 @@ class SessionController extends ChangeNotifier {
     _pendingPlanQuestionIndex = 0;
   }
 
+  void _clearPermissionBlockingState() {
+    if (_pendingInteraction?.isPermission == true) {
+      _pendingInteraction = null;
+    }
+    if (_pendingPrompt?.isPermission == true) {
+      _pendingPrompt = null;
+    }
+    final phase = _runtimePhase;
+    if (phase != null &&
+        (phase.kind.trim().toLowerCase() == 'permission' ||
+            phase.runtimeMeta.blockingKind.trim().toLowerCase() ==
+                'permission')) {
+      _runtimePhase = null;
+    }
+  }
+
   void _sendInteractionDecision(
     InteractionRequestEvent interaction,
     String decision, {
@@ -3348,6 +3425,8 @@ class SessionController extends ChangeNotifier {
         'target': decisionMeta.target,
         'targetType': decisionMeta.targetType,
       });
+      _clearPermissionBlockingState();
+      _syncDerivedState();
       notifyListeners();
       return;
     }
@@ -3425,6 +3504,8 @@ class SessionController extends ChangeNotifier {
       'target': decisionMeta.target,
       'targetType': decisionMeta.targetType,
     });
+    _clearPermissionBlockingState();
+    _syncDerivedState();
     notifyListeners();
   }
 
@@ -3767,6 +3848,7 @@ class SessionController extends ChangeNotifier {
         _runtimePermissionMode =
             history.resumeRuntimeMeta.permissionMode.trim();
         _lastAssistantReplyExecutionKey = '';
+        _reconcileAiStatusFromRestoredRuntime(history.resumeRuntimeMeta);
         _upsertSession(resolvedHistorySummary);
         _restoreTimelineFromHistory(
           history.logEntries,
@@ -4108,6 +4190,15 @@ class SessionController extends ChangeNotifier {
         _handleMutationFailure(error.message);
         break;
       case PromptRequestEvent prompt:
+        if (prompt.isReview && _reviewShouldAutoAccept(prompt.runtimeMeta)) {
+          if (_pendingInteraction?.isReview == true) {
+            _pendingInteraction = null;
+          }
+          _pendingPrompt = null;
+          _runtimePhase = null;
+          _pushDebug('自动模式忽略 review prompt', _debugReviewStateSummary());
+          break;
+        }
         final currentInteraction = _pendingInteraction;
         final currentPrompt = _pendingPrompt;
         final keepBlockingPrompt = _shouldKeepExistingBlockingPrompt(
@@ -4127,6 +4218,24 @@ class SessionController extends ChangeNotifier {
         notifyListeners();
         break;
       case InteractionRequestEvent interaction:
+        if (interaction.isReview &&
+            _reviewShouldAutoAccept(interaction.runtimeMeta)) {
+          if (_pendingInteraction?.isReview == true) {
+            _pendingInteraction = null;
+          }
+          _pendingPrompt = null;
+          _runtimePhase = null;
+          _clearPlanInteractionState();
+          _pushDebug('自动模式忽略 review interaction', _debugReviewStateSummary());
+          break;
+        }
+        if ((_pendingInteraction?.isPermission == true ||
+                _pendingPrompt?.isPermission == true) &&
+            !interaction.isPermission) {
+          _pushDebug('保留权限 interaction，暂不切到其他阻塞',
+              'incoming=${interaction.kind}\n${_debugReviewStateSummary()}');
+          break;
+        }
         _pendingPrompt = null;
         _pendingInteraction = interaction;
         _endUserSubmissionProtection();
@@ -4220,34 +4329,38 @@ class SessionController extends ChangeNotifier {
         break;
       case FileDiffEvent diff:
         _currentDiff = diff;
-        if (_pendingInteraction?.isPermission == true &&
-            !_shouldPreserveBlockingPrompt()) {
-          _pendingInteraction = null;
-        }
-        if (_pendingPrompt?.isPermission == true &&
-            !_shouldPreserveBlockingPrompt()) {
-          _pendingPrompt = null;
-        }
-        if (_normalizeDisplayPermissionMode(_runtimePermissionMode) == 'auto' ||
-            _normalizeDisplayPermissionMode(diff.runtimeMeta.permissionMode) ==
-                'auto') {
-          _runtimePermissionMode = _config.permissionMode;
-        }
-        _runtimePhase = RuntimePhaseEvent(
-          timestamp: diff.timestamp,
-          sessionId: diff.sessionId,
-          runtimeMeta: diff.runtimeMeta.merge(
-            RuntimeMeta(
-              blockingKind: 'review',
-              permissionMode: _runtimePermissionMode,
-            ),
-          ),
-          raw: const {'type': 'runtime_phase'},
-          phase: 'reviewing',
-          kind: 'review',
-          message: '等待审核',
-        );
         final autoAccepted = _reviewShouldAutoAccept(diff.runtimeMeta);
+        final waitingForPermission = hasPendingPermissionPrompt;
+        if (autoAccepted) {
+          if (_pendingInteraction?.isPermission == true) {
+            _pendingInteraction = null;
+          }
+          if (_pendingPrompt?.isPermission == true) {
+            _pendingPrompt = null;
+          }
+          if (_pendingInteraction?.isReview == true) {
+            _pendingInteraction = null;
+          }
+          if (_pendingPrompt?.isReview == true) {
+            _pendingPrompt = null;
+          }
+          _runtimePhase = null;
+        } else if (!waitingForPermission) {
+          _runtimePhase = RuntimePhaseEvent(
+            timestamp: diff.timestamp,
+            sessionId: diff.sessionId,
+            runtimeMeta: diff.runtimeMeta.merge(
+              RuntimeMeta(
+                blockingKind: 'review',
+                permissionMode: displayPermissionMode,
+              ),
+            ),
+            raw: const {'type': 'runtime_phase'},
+            phase: 'reviewing',
+            kind: 'review',
+            message: '等待审核',
+          );
+        }
         final historyDiff = HistoryContext(
           id: diff.runtimeMeta.contextId,
           type: 'diff',
@@ -4647,6 +4760,46 @@ class SessionController extends ChangeNotifier {
     _syncActiveReviewDiff();
   }
 
+  void _acceptAllPendingReviewDiffs() {
+    var updatedAny = false;
+    for (var i = 0; i < _recentDiffs.length; i++) {
+      final item = _recentDiffs[i];
+      if (!item.pendingReview) {
+        continue;
+      }
+      _recentDiffs[i] = HistoryContext(
+        id: item.id,
+        type: item.type,
+        message: item.message,
+        status: item.status,
+        target: item.target,
+        targetPath: item.targetPath,
+        tool: item.tool,
+        command: item.command,
+        timestamp: item.timestamp,
+        title: item.title,
+        stack: item.stack,
+        code: item.code,
+        relatedStep: item.relatedStep,
+        path: item.path,
+        diff: item.diff,
+        lang: item.lang,
+        pendingReview: false,
+        source: item.source,
+        skillName: item.skillName,
+        executionId: item.executionId,
+        groupId: item.groupId,
+        groupTitle: item.groupTitle,
+        reviewStatus: 'accepted',
+      );
+      updatedAny = true;
+    }
+    if (updatedAny) {
+      _syncReviewGroupsFromRecentDiffs();
+      _syncActiveReviewDiff();
+    }
+  }
+
   void _sendReviewDecisionForDiff(
     HistoryContext diff,
     String normalized,
@@ -4673,7 +4826,8 @@ class SessionController extends ChangeNotifier {
     });
     if (normalized != 'revise') {
       _pendingPrompt = null;
-      if (_pendingInteraction?.isReview == true) {
+      if (_pendingInteraction?.isReview == true ||
+          _pendingInteraction?.isPermission == true) {
         _pendingInteraction = null;
       }
     }
@@ -4795,6 +4949,7 @@ class SessionController extends ChangeNotifier {
     _currentStep = _activeHistoryStep(delta.currentStep) ?? _currentStep;
     _currentStepSummary = _summaryFromHistoryContext(_currentStep);
     _latestError = delta.latestError ?? _latestError;
+    _reconcileAiStatusFromRestoredRuntime(delta.resumeRuntimeMeta);
     _mergeTerminalExecutions(delta.terminalExecutions);
     _appendTerminalLogs(delta.rawTerminalByStream);
     if (delta.currentDiff != null) {

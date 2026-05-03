@@ -222,6 +222,30 @@ func ApplyReviewDecisionToProjection(snapshot data.ProjectionSnapshot, reviewEve
 	return snapshot
 }
 
+func ApplyAutoReviewAcceptanceToProjection(snapshot data.ProjectionSnapshot) data.ProjectionSnapshot {
+	snapshot = NormalizeProjectionSnapshot(snapshot)
+	for i := range snapshot.Diffs {
+		if !snapshot.Diffs[i].PendingReview {
+			continue
+		}
+		snapshot.Diffs[i].PendingReview = false
+		snapshot.Diffs[i].ReviewStatus = "accepted"
+	}
+	snapshot.ReviewGroups = RebuildReviewGroups(snapshot.Diffs)
+	if active := PickActiveReviewGroup(snapshot.ReviewGroups); active != nil {
+		snapshot.ActiveReviewGroup = active
+	} else {
+		snapshot.ActiveReviewGroup = nil
+	}
+	activeDiff := PickActiveSnapshotDiff(snapshot.Diffs)
+	if strings.TrimSpace(activeDiff.ContextID+activeDiff.Path+activeDiff.Title) != "" {
+		snapshot.CurrentDiff = &activeDiff
+	} else {
+		snapshot.CurrentDiff = nil
+	}
+	return snapshot
+}
+
 func reviewStatusFromDecision(decision string) string {
 	switch strings.TrimSpace(strings.ToLower(decision)) {
 	case "accept":

@@ -272,6 +272,35 @@ func BuildResumeRecoveryStateEvent(sessionID string, svc *Service, projection da
 	return event
 }
 
+func ShouldEmitResumeRecoveryStateEvent(svc *Service, projection data.ProjectionSnapshot, lastKnownRuntimeState string) bool {
+	projection = NormalizeProjectionSnapshot(projection)
+	controller := projection.Controller
+	lifecycle := strings.TrimSpace(firstNonEmptyString(
+		controller.ClaudeLifecycle,
+		controller.ActiveMeta.ClaudeLifecycle,
+		projection.Runtime.ClaudeLifecycle,
+	))
+	if svc != nil {
+		controller = svc.ControllerSnapshot()
+		lifecycle = strings.TrimSpace(firstNonEmptyString(
+			controller.ClaudeLifecycle,
+			controller.ActiveMeta.ClaudeLifecycle,
+			lifecycle,
+		))
+	}
+	state := strings.TrimSpace(strings.ToUpper(string(controller.State)))
+	if state == string(ControllerStateWaitInput) || strings.EqualFold(lifecycle, "waiting_input") {
+		return false
+	}
+	if IsBusyRuntimeState(lastKnownRuntimeState) {
+		return true
+	}
+	if IsBusyRuntimeState(state) {
+		return true
+	}
+	return strings.EqualFold(lifecycle, "active") || strings.EqualFold(lifecycle, "starting")
+}
+
 func ResolvedResumeRuntimeState(restoredState string, record data.SessionRecord, svc *Service) string {
 	if strings.TrimSpace(restoredState) != "" {
 		return restoredState

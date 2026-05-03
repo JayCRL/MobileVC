@@ -107,6 +107,25 @@ func TestControllerKeepsRecentDiffContext(t *testing.T) {
 	}
 }
 
+func TestControllerAutoAcceptsRecentDiffInAutoPermissionMode(t *testing.T) {
+	controller := NewController("s1")
+	controller.UpdatePermissionMode("auto")
+	controller.OnRunnerEvent(protocol.FileDiffEvent{
+		Event: protocol.NewBaseEvent(protocol.EventTypeFileDiff, "s1"),
+		Path:  "internal/ws/handler.go",
+		Title: "Updating internal/ws/handler.go",
+		Diff:  "diff --git a/internal/ws/handler.go b/internal/ws/handler.go",
+		Lang:  "go",
+	})
+	diff := controller.RecentDiff()
+	if diff.PendingReview {
+		t.Fatal("expected pending review to be false in auto mode")
+	}
+	if diff.ReviewStatus != "accepted" {
+		t.Fatalf("expected accepted review status, got %q", diff.ReviewStatus)
+	}
+}
+
 func TestControllerReviewDecisionClearsPendingReview(t *testing.T) {
 	controller := NewController("s1")
 	controller.OnRunnerEvent(protocol.FileDiffEvent{

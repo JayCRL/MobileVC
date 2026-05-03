@@ -120,6 +120,14 @@ func runtimeEngineFromMeta(meta protocol.RuntimeMeta) string {
 	}
 }
 
+func shouldAutoAcceptReviewForPermissionMode(values ...string) bool {
+	mode := firstNonEmptyString(values...)
+	if mode == "" {
+		return false
+	}
+	return NormalizeClaudePermissionMode(mode) != "default"
+}
+
 func ApplyEventToProjection(snapshot data.ProjectionSnapshot, event any) (data.ProjectionSnapshot, bool) {
 	snapshot = NormalizeProjectionSnapshot(snapshot)
 	switch e := event.(type) {
@@ -225,7 +233,12 @@ func ApplyEventToProjection(snapshot data.ProjectionSnapshot, event any) (data.P
 		snapshot.LogEntries = append(snapshot.LogEntries, data.SnapshotLogEntry{Kind: "step", Context: ctx})
 		return snapshot, true
 	case protocol.FileDiffEvent:
-		diff := DiffContext{ContextID: firstNonEmptyString(e.ContextID, e.Path, e.Title), Title: firstNonEmptyString(e.Title, e.ContextTitle, "最近改动"), Path: firstNonEmptyString(e.Path, e.TargetPath), Diff: e.Diff, Lang: e.Lang, PendingReview: true, ExecutionID: e.ExecutionID, GroupID: firstNonEmptyString(e.GroupID, e.ExecutionID, e.ContextID, e.Path), GroupTitle: firstNonEmptyString(e.GroupTitle, e.ContextTitle, e.Title), ReviewStatus: "pending"}
+		pendingReview := !shouldAutoAcceptReviewForPermissionMode(e.PermissionMode, snapshot.Controller.ActiveMeta.PermissionMode, snapshot.Runtime.PermissionMode)
+		reviewStatus := "pending"
+		if !pendingReview {
+			reviewStatus = "accepted"
+		}
+		diff := DiffContext{ContextID: firstNonEmptyString(e.ContextID, e.Path, e.Title), Title: firstNonEmptyString(e.Title, e.ContextTitle, "最近改动"), Path: firstNonEmptyString(e.Path, e.TargetPath), Diff: e.Diff, Lang: e.Lang, PendingReview: pendingReview, ExecutionID: e.ExecutionID, GroupID: firstNonEmptyString(e.GroupID, e.ExecutionID, e.ContextID, e.Path), GroupTitle: firstNonEmptyString(e.GroupTitle, e.ContextTitle, e.Title), ReviewStatus: reviewStatus}
 		snapshot.Diffs = upsertSnapshotDiff(snapshot.Diffs, diff)
 		snapshot.ReviewGroups = RebuildReviewGroups(snapshot.Diffs)
 		activeGroup := PickActiveReviewGroup(snapshot.ReviewGroups)

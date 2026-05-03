@@ -912,7 +912,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			record.Projection = projection
 			record.Summary.Runtime = projection.Runtime
 			runtimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
-			if runtimeAlive {
+			if runtimeAlive && session.ShouldEmitResumeRecoveryStateEvent(runtimeSvc, projection, req.LastKnownRuntimeState) {
 				recovery := session.BuildResumeRecoveryStateEvent(record.Summary.ID, runtimeSvc, projection, req.LastKnownRuntimeState)
 				emit(recovery)
 				if status, ok := session.AIStatusEventForBackendEvent(record.Summary.ID, runtimeSvc, projection, recovery); ok {
@@ -1942,7 +1942,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			_, service := runtimeForSession(selectedSessionID)
 			service.UpdatePermissionMode(modeEvent.PermissionMode)
-			emit(protocol.ApplyRuntimeMeta(service.InitialEvent(), protocol.RuntimeMeta{PermissionMode: service.ControllerSnapshot().ActiveMeta.PermissionMode}))
+			effectivePermissionMode := service.ControllerSnapshot().ActiveMeta.PermissionMode
+			emitAndPersistFor(selectedSessionID)(protocol.ApplyRuntimeMeta(service.InitialEvent(), protocol.RuntimeMeta{PermissionMode: effectivePermissionMode}))
+			if strings.TrimSpace(effectivePermissionMode) != "" && session.NormalizeClaudePermissionMode(effectivePermissionMode) != "default" {
+				projection := session.ApplyAutoReviewAcceptanceToProjection(buildProjectionSnapshotFor(selectedSessionID))
+				persistProjectionFor(selectedSessionID, projection)
+				emitReviewStateFromProjection(emit, selectedSessionID, projection)
+			}
 		case "skill_exec":
 			var skillEvent protocol.SkillRequestEvent
 			if err := json.Unmarshal(payload, &skillEvent); err != nil {

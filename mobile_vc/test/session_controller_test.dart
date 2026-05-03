@@ -4253,7 +4253,7 @@ void main() {
       expect(controller.timeline.any((item) => item.body == '旧回复'), isTrue);
       expect(controller.recentDiffs, hasLength(1));
       expect(controller.currentStepSummary, '历史步骤');
-      expect(controller.displayPermissionMode, 'acceptEdits');
+      expect(controller.displayPermissionMode, 'auto');
       expect(controller.terminalExecutions, hasLength(2));
       expect(controller.terminalExecutions.first.completedAt, isNotNull);
       expect(controller.terminalExecutions.first.running, isFalse);
@@ -5156,7 +5156,7 @@ void main() {
       expect(controller.currentReviewDiff?.id, 'diff-2');
     });
 
-    test('后端临时 permission mode 不改写配置，但 displayPermissionMode 会跟随运行态', () async {
+    test('后端临时 permission mode 不改写配置和显示模式', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -5187,7 +5187,7 @@ void main() {
       await _flushEvents();
 
       expect(controller.config.permissionMode, 'default');
-      expect(controller.displayPermissionMode, 'acceptEdits');
+      expect(controller.displayPermissionMode, 'default');
 
       service.emit(
         SessionStateEvent(
@@ -5218,6 +5218,55 @@ void main() {
       expect(service.sentPayloads, hasLength(1));
       expect(service.sentPayloads.single['action'], 'set_permission_mode');
       expect(service.sentPayloads.single['permissionMode'], 'default');
+    });
+
+    test('用户切换权限模式后旧运行态不会把 UI 压回去', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.saveConfig(
+        const AppConfig(
+          cwd: '/workspace',
+          engine: 'claude',
+          permissionMode: 'auto',
+        ),
+      );
+
+      controller.updatePermissionMode('default');
+      expect(controller.displayPermissionMode, 'default');
+
+      service.emit(
+        SessionDeltaEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(),
+          raw: const {'type': 'session_delta'},
+          summary: const SessionSummary(id: 'session-1', title: 'session'),
+          base: const SessionDeltaKnown(),
+          latest: const SessionDeltaKnown(),
+          resumeRuntimeMeta: const RuntimeMeta(permissionMode: 'auto'),
+        ),
+      );
+      service.emit(
+        AgentStateEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            permissionMode: 'auto',
+          ),
+          raw: const {'type': 'agent_state'},
+          state: 'RUNNING',
+          message: '旧状态',
+          command: 'claude',
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.config.permissionMode, 'default');
+      expect(controller.displayPermissionMode, 'default');
     });
 
     test('permission decision 优先沿用当前交互的 permission mode', () async {
@@ -5262,7 +5311,7 @@ void main() {
 
       expect(service.sentPayloads, hasLength(1));
       expect(service.sentPayloads.single['action'], 'permission_decision');
-      expect(service.sentPayloads.single['permissionMode'], 'acceptEdits');
+      expect(service.sentPayloads.single['permissionMode'], 'auto');
       expect(controller.config.permissionMode, 'default');
     });
 
@@ -5794,7 +5843,7 @@ void main() {
       });
     });
 
-    test('仅凭 acceptEdits 不会把新 diff 标记为已自动接受', () async {
+    test('后端 acceptEdits 不会覆盖手动审核配置', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -5835,13 +5884,68 @@ void main() {
       );
       await _flushEvents();
 
-      expect(controller.isAutoAcceptMode, isTrue);
+      expect(controller.isAutoAcceptMode, isFalse);
       expect(controller.pendingDiffs, hasLength(1));
       expect(controller.pendingDiffs.single.reviewStatus, 'pending');
       expect(controller.pendingDiffs.single.pendingReview, isTrue);
     });
 
-    test('权限 interaction 残留时仍显示 review 按钮', () async {
+    test('自动模式下新 diff 直接通过且不显示审核阻塞', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.saveConfig(
+        const AppConfig(
+          cwd: '/workspace',
+          engine: 'claude',
+          permissionMode: 'default',
+        ),
+      );
+      controller.updatePermissionMode('auto');
+      service.sentPayloads.clear();
+
+      service.emit(
+        _reviewDiffEvent(
+          contextId: 'diff-auto-accept',
+          path: '/workspace/lib/main.dart',
+          title: 'main.dart diff',
+          groupId: 'group-auto-accept',
+          groupTitle: '自动接受',
+        ),
+      );
+      service.emit(
+        PromptRequestEvent(
+          timestamp: _timestamp,
+          sessionId: 'session-1',
+          runtimeMeta: const RuntimeMeta(
+            command: 'claude',
+            contextId: 'diff-auto-accept',
+            targetPath: '/workspace/lib/main.dart',
+            blockingKind: 'review',
+          ),
+          raw: const {'type': 'prompt_request'},
+          message: 'Please accept, revert, or revise this diff',
+          options: const [
+            PromptOption(value: 'accept'),
+            PromptOption(value: 'revert'),
+            PromptOption(value: 'revise'),
+          ],
+        ),
+      );
+      await _flushEvents();
+
+      expect(controller.isAutoAcceptMode, isTrue);
+      expect(controller.pendingDiffs, isEmpty);
+      expect(controller.hasPendingReview, isFalse);
+      expect(controller.shouldShowReviewChoices, isFalse);
+      expect(controller.pendingPrompt, isNull);
+      expect(controller.recentDiffs.single.reviewStatus, 'accepted');
+      expect(controller.recentDiffs.single.pendingReview, isFalse);
+    });
+
+    test('手动模式先授权，已有 diff 随后显示 review 按钮', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
       await controller.initialize();
@@ -5900,9 +6004,19 @@ void main() {
       await _flushEvents();
 
       expect(controller.currentReviewDiff?.path, '/workspace/README.md');
-      expect(controller.pendingInteraction, isNull);
+      expect(controller.pendingInteraction?.isPermission, isTrue);
       expect(controller.displayPermissionMode, 'default');
       expect(controller.isAutoAcceptMode, isFalse);
+      expect(controller.shouldShowPermissionChoices, isTrue);
+      expect(controller.shouldShowReviewChoices, isFalse);
+      expect(controller.canShowReviewActions, isFalse);
+
+      controller.submitPromptOption('approve');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'permission_decision');
+      expect(controller.pendingInteraction, isNull);
+      expect(controller.shouldShowPermissionChoices, isFalse);
       expect(controller.shouldShowReviewChoices, isTrue);
       expect(controller.canShowReviewActions, isTrue);
     });
@@ -6014,6 +6128,18 @@ void main() {
       expect(service.sentPayloads.single['action'], 'review_decision');
       expect(service.sentPayloads.single['decision'], 'accept');
       expect(service.sentPayloads.single['is_review_only'], isTrue);
+
+      service.sentPayloads.clear();
+      expect(controller.pendingPrompt, isNull);
+      expect(controller.pendingInteraction, isNull);
+      expect(controller.shouldShowPermissionChoices, isFalse);
+      expect(controller.shouldShowReviewChoices, isFalse);
+
+      controller.sendInputText('继续处理');
+
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'input');
+      expect(service.sentPayloads.single['data'], '继续处理\n');
     });
 
     test('review prompt 的 revert 会发送非 review-only 决策', () async {
@@ -7170,6 +7296,68 @@ void main() {
 
       expect(controller.aiStatusIndicatorVisible, isTrue);
       expect(controller.aiStatusIndicatorLabel, '思考中');
+    });
+
+    test('hides stale status when restored runtime is waiting input', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'ai_status'},
+        visible: true,
+        label: '思考中',
+        phase: 'thinking',
+      ));
+      await _flushEvents();
+
+      service.emit(SessionHistoryEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 10)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_history'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+        runtimeAlive: true,
+        resumeRuntimeMeta: const RuntimeMeta(
+          command: 'codex',
+          engine: 'codex',
+          claudeLifecycle: 'waiting_input',
+        ),
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isFalse);
+
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 20)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'ai_status'},
+        visible: true,
+        label: '思考中',
+        phase: 'thinking',
+      ));
+      service.emit(SessionDeltaEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 30)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_delta'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+        runtimeAlive: true,
+        resumeRuntimeMeta: const RuntimeMeta(
+          command: 'codex',
+          engine: 'codex',
+          claudeLifecycle: 'waiting_input',
+        ),
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isFalse);
     });
 
     test('shows concrete tool detail while Claude is running a tool', () async {
