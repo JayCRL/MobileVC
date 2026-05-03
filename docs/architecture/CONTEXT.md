@@ -24,23 +24,26 @@
 
 ### Go
 
+后端已重构为四层（2026-05-01）：`data` / `engine` / `session` / `gateway`。
+
 - 服务入口：`cmd/server/main.go`
-- WebSocket 编排：`internal/ws/handler.go`
-- Runtime 主实现：`internal/runtime/manager.go`
+- WebSocket 编排（gateway 层）：`internal/gateway/gateway.go`
+- 会话/Runtime 主实现（session 层）：`internal/session/manager.go`
+- AI 引擎与 PTY（engine 层）：`internal/engine/pty_engine.go`、`internal/engine/codex_transport.go`
 - 协议定义：`internal/protocol/event.go`
-- 会话/投影存储：`internal/store/`
+- 会话/投影存储（data 层）：`internal/data/store.go`、`internal/data/file_store.go`
 
 ### 主链路
 
 - Flutter 发 action
 - `MobileVcWsService` 通过 WebSocket 送到 Go
-- `ws.Handler` 分发到 session store / runtime service / runner / review / catalog 等模块
+- `gateway.Gateway` 分发到 session / engine / data 各层
 - Go 持续回推 event
 - `SessionController` 把 event 派生成 UI 状态
 
 可以直接把它理解成：
 
-`SessionController -> WebSocket -> ws.Handler -> runtime.Service / store -> event stream -> SessionController`
+`SessionController -> WebSocket -> gateway.Gateway -> session.Manager / engine.Engine / data.Store -> event stream -> SessionController`
 
 ## 3. 当前会话生命周期
 
@@ -277,12 +280,12 @@ Go 后端的核心不是”收到一个请求，跑完就结束”。
 - 对旧版本 Claude CLI 的连接也能保持兼容
 - 这是 6db330d “旧版本的最大化兼容” commit 引入的改动
 
-### runtime.Service 的主要实现位置
+### Session.Manager 的主要实现位置
 
 一个特别容易踩坑的地方：
 
-- `internal/runtime/service.go` 不是主要实现所在地
-- `runtime.Service` 的核心实现现在在：`internal/runtime/manager.go`
+- 重构后 `runtime` 包已废弃，整体迁入 `session` 包
+- 核心实现现在在：`internal/session/manager.go`（原 `internal/runtime/manager.go`）
 
 所以以后查运行时主逻辑，优先看 `manager.go`。
 
@@ -749,19 +752,36 @@ Claude 会话在 hot swap 或 resume 时，旧 runner 的 `defer clear()` 可能
 
 ### Go source of truth
 
-- `internal/ws/handler.go`
-- `internal/ws/runtime_sessions.go`
-- `internal/ws/push_helper.go`
-- `internal/ws/permission_grants.go`
-- `internal/ws/permission_decision.go`
-- `internal/runtime/manager.go`
-- `internal/runner/pty_runner.go`
-- `internal/runner/codex_app_server.go`
+后端四层架构（2026-05-01 重构后）：
+
+**gateway 层（移动端交接）**：
+- `internal/gateway/gateway.go`（原 `internal/ws/handler.go`）
+- `internal/gateway/registry.go`（原 `internal/ws/runtime_sessions.go`）
+- `internal/gateway/push.go`（原 `internal/ws/push_helper.go`）
+- `internal/gateway/permission_decision.go`（原 `internal/ws/permission_decision.go`）
+- `internal/gateway/permission_rules.go`、`internal/gateway/slash.go`、`internal/gateway/adb.go`
+
+**session 层（会话维护）**：
+- `internal/session/manager.go`（原 `internal/runtime/manager.go`）
+- `internal/session/permission_router.go`、`internal/session/permission_rules.go`
+- `internal/session/projector.go`、`internal/session/projection_apply.go`、`internal/session/projection_events.go`
+- `internal/session/session.go`、`internal/session/process.go`、`internal/session/info.go`
+
+**engine 层（AI 交互）**：
+- `internal/engine/pty_engine.go`（原 `internal/runner/pty_runner.go`）
+- `internal/engine/codex_transport.go`（原 `internal/runner/codex_app_server.go`）
+- `internal/engine/exec_engine.go`、`internal/engine/engine.go`、`internal/engine/shell.go`、`internal/engine/parser.go`
+
+**data 层（数据）**：
+- `internal/data/store.go`（原 `internal/store/store.go`）
+- `internal/data/file_store.go`（原 `internal/store/file_store.go`）
+- `internal/data/claudesync/`（原 `internal/claudesync/`）
+- `internal/data/codexsync/threads.go`（原 `internal/codexsync/threads.go`）
+- `internal/data/skills/`（原 `internal/skills/`）
+
+**协议与推送（不变）**：
 - `internal/protocol/event.go`
-- `internal/store/store.go`
-- `internal/store/file_store.go`
 - `internal/push/service.go`
-- `internal/codexsync/threads.go`
 
 ### 只能当参考、不能高于代码
 

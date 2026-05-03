@@ -281,6 +281,21 @@ func AIStatusEventForBackendEvent(sessionID string, svc *Service, projection dat
 			return protocol.AIStatusEvent{}, false
 		}
 		if IsVisibleAssistantReplyLog(e) {
+			// 流式输出期间不能让单条 LogEvent 把状态球打灭：
+			// ApplyEventToProjection 在可见回复时会就地把 projection.Controller.State
+			// 改写成 Idle（仅是值副本，不影响 svc 中的真实运行时状态）。
+			// 因此这里同时检查值副本与真实运行时控制器，只要任意一处仍在忙碌，
+			// 就抑制 settled 事件——状态球的关闭交给 AgentStateEvent 切到 IDLE/WAIT_INPUT 时统一管理。
+			projectionState := strings.TrimSpace(strings.ToUpper(string(projection.Controller.State)))
+			if IsBusyRuntimeState(projectionState) {
+				return protocol.AIStatusEvent{}, false
+			}
+			if svc != nil {
+				runtimeState := strings.TrimSpace(strings.ToUpper(string(svc.ControllerSnapshot().State)))
+				if IsBusyRuntimeState(runtimeState) {
+					return protocol.AIStatusEvent{}, false
+				}
+			}
 			return protocol.NewAIStatusEvent(sessionID, false, "", "settled", e.RuntimeMeta), true
 		}
 	case protocol.SessionStateEvent:

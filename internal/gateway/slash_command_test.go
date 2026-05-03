@@ -163,8 +163,8 @@ func TestBuildExecRequestFromSlashUsesCodexEngine(t *testing.T) {
 			if req.Command != tt.wantCommand {
 				t.Fatalf("expected %q, got %q", tt.wantCommand, req.Command)
 			}
-			if req.PermissionMode != "auto" || req.RuntimeMeta.PermissionMode != "auto" {
-				t.Fatalf("expected default permission mode to normalize to auto, got %#v", req)
+			if req.PermissionMode != "default" || req.RuntimeMeta.PermissionMode != "default" {
+				t.Fatalf("expected default permission mode preserved, got %#v", req)
 			}
 		})
 	}

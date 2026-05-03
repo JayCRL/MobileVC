@@ -275,6 +275,10 @@ class _CommandInputBarState extends State<CommandInputBar> {
                                     child: Text('自动模式'),
                                   ),
                                   DropdownMenuItem(
+                                    value: 'default',
+                                    child: Text('手动审核'),
+                                  ),
+                                  DropdownMenuItem(
                                     value: 'bypassPermissions',
                                     child: Text('跳过权限确认'),
                                   ),

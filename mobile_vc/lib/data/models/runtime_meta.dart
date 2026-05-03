@@ -20,6 +20,7 @@ class RuntimeMeta {
     this.cwd = '',
     this.permissionMode = '',
     this.permissionRequestId = '',
+    this.claudeSessionUuid = '',
     this.claudeLifecycle = '',
     this.blockingKind = '',
     this.targetDiff = '',
@@ -48,6 +49,7 @@ class RuntimeMeta {
   final String cwd;
   final String permissionMode;
   final String permissionRequestId;
+  final String claudeSessionUuid;
   final String claudeLifecycle;
   final String blockingKind;
   final String targetDiff;
@@ -93,6 +95,9 @@ class RuntimeMeta {
       permissionRequestId: other.permissionRequestId.isNotEmpty
           ? other.permissionRequestId
           : permissionRequestId,
+      claudeSessionUuid: other.claudeSessionUuid.isNotEmpty
+          ? other.claudeSessionUuid
+          : claudeSessionUuid,
       claudeLifecycle: other.claudeLifecycle.isNotEmpty
           ? other.claudeLifecycle
           : claudeLifecycle,
@@ -129,6 +134,8 @@ class RuntimeMeta {
         if (permissionMode.isNotEmpty) 'permissionMode': permissionMode,
         if (permissionRequestId.isNotEmpty)
           'permissionRequestId': permissionRequestId,
+        if (claudeSessionUuid.isNotEmpty)
+          'claudeSessionUUID': claudeSessionUuid,
         if (claudeLifecycle.isNotEmpty) 'claudeLifecycle': claudeLifecycle,
         if (blockingKind.isNotEmpty) 'blockingKind': blockingKind,
         if (targetDiff.isNotEmpty) 'targetDiff': targetDiff,
@@ -160,6 +167,7 @@ class RuntimeMeta {
       cwd: read('cwd'),
       permissionMode: read('permissionMode'),
       permissionRequestId: read('permissionRequestId'),
+      claudeSessionUuid: read('claudeSessionUUID'),
       claudeLifecycle: read('claudeLifecycle'),
       blockingKind: read('blockingKind'),
       targetDiff: read('targetDiff'),

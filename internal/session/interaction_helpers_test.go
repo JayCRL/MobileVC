@@ -53,7 +53,8 @@ func TestNormalizeClaudePermissionMode(t *testing.T) {
 		{"  bypassPermissions  ", "bypassPermissions"},
 		{"auto", "auto"},
 		{"", "auto"},
-		{"default", "auto"},
+		{"default", "default"},
+		{"  default  ", "default"},
 		{"acceptEdits", "auto"},
 		{"random", "auto"},
 	}

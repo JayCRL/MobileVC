@@ -674,12 +674,7 @@ func (s *Service) prepareExecuteRequest(req ExecuteRequest) ExecuteRequest {
 }
 
 func normalizeClaudePermissionMode(mode string) string {
-	switch strings.TrimSpace(mode) {
-	case "bypassPermissions":
-		return "bypassPermissions"
-	default:
-		return "auto"
-	}
+	return NormalizeClaudePermissionMode(mode)
 }
 
 func (s *Service) buildDetachedResumeRequest(req ExecuteRequest, targetPermissionMode string) (ExecuteRequest, error) {

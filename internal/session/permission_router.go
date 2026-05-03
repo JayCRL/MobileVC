@@ -57,10 +57,6 @@ func BuildPermissionDecisionPlan(req protocol.PermissionDecisionRequestEvent, pr
 		}
 		return PermissionDecisionPlan{Action: PermissionDecisionActionDenyThenInput, Decision: decision, Meta: meta, Prompt: prompt}, nil
 	}
-	if strings.TrimSpace(meta.PermissionMode) != "auto" {
-		meta.PermissionMode = "auto"
-		return PermissionDecisionPlan{Action: PermissionDecisionActionAutoThenDirect, Decision: decision, Meta: meta}, nil
-	}
 	return PermissionDecisionPlan{Action: PermissionDecisionActionDirect, Decision: decision, Meta: meta}, nil
 }
 

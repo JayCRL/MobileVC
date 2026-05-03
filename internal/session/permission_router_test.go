@@ -235,7 +235,7 @@ func TestBuildPermissionDecisionPlan_NonClaudeGoesDirect(t *testing.T) {
 	}
 }
 
-func TestBuildPermissionDecisionPlan_ClaudeApproveAutoElevates(t *testing.T) {
+func TestBuildPermissionDecisionPlan_ClaudeApprovePreservesDefaultMode(t *testing.T) {
 	plan, err := BuildPermissionDecisionPlan(
 		protocol.PermissionDecisionRequestEvent{
 			Decision:        "approve",
@@ -248,11 +248,11 @@ func TestBuildPermissionDecisionPlan_ClaudeApproveAutoElevates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Action != PermissionDecisionActionAutoThenDirect {
-		t.Errorf("expected AutoThenDirect, got %v", plan.Action)
+	if plan.Action != PermissionDecisionActionDirect {
+		t.Errorf("expected Direct (preserve default), got %v", plan.Action)
 	}
-	if plan.Meta.PermissionMode != "auto" {
-		t.Errorf("expected auto upgrade, got %q", plan.Meta.PermissionMode)
+	if plan.Meta.PermissionMode != "default" {
+		t.Errorf("expected default preserved, got %q", plan.Meta.PermissionMode)
 	}
 }
 

@@ -172,19 +172,11 @@ class _ChatTimelineState extends State<ChatTimeline> {
           body: visiblePlanQuestion.message,
           meta: visiblePrompt?.runtimeMeta ?? const RuntimeMeta(),
         ),
-      if (widget.isAiRunning)
-        TimelineItem(
-          id: 'ai-status-indicator',
-          kind: 'ai_status',
-          timestamp: DateTime.now(),
-          title: widget.aiStatusLabel,
-          body: '',
-        ),
     ];
-    if (items.isEmpty) {
+    if (items.isEmpty && !widget.isAiRunning) {
       return const SizedBox.shrink();
     }
-    return ListView.separated(
+    final listView = ListView.separated(
       controller: _scrollController,
       reverse: false,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 128),
@@ -192,12 +184,6 @@ class _ChatTimelineState extends State<ChatTimeline> {
         final item = items[index];
         if (item.kind == 'file_diff') {
           return const SizedBox.shrink();
-        }
-        if (item.kind == 'ai_status') {
-          return _AiStatusIndicator(
-            key: const ValueKey('ai-status-indicator'),
-            label: item.title,
-          );
         }
         if (item.kind == 'review_summary') {
           return _ReviewSummaryCard(
@@ -246,6 +232,26 @@ class _ChatTimelineState extends State<ChatTimeline> {
       },
       separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemCount: items.length,
+    );
+    return Stack(
+      children: [
+        Positioned.fill(child: listView),
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 8,
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              opacity: widget.isAiRunning ? 1.0 : 0.0,
+              child: _AiStatusIndicator(
+                label: widget.aiStatusLabel,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

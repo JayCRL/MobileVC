@@ -18,6 +18,8 @@ func NormalizeClaudePermissionMode(mode string) string {
 	switch strings.TrimSpace(mode) {
 	case "bypassPermissions":
 		return "bypassPermissions"
+	case "default":
+		return "default"
 	default:
 		return "auto"
 	}

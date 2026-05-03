@@ -3497,8 +3497,8 @@ func TestHandlerInputAutoResumesDetachedClaudeSession(t *testing.T) {
 	if thinking["claudeLifecycle"] != "active" {
 		t.Fatalf("expected active claudeLifecycle on transient thinking event, got %#v", thinking)
 	}
-	if thinking["permissionMode"] != "auto" {
-		t.Fatalf("expected auto permission mode on transient thinking event, got %#v", thinking)
+	if thinking["permissionMode"] != "default" {
+		t.Fatalf("expected default permission mode on transient thinking event, got %#v", thinking)
 	}
 	secondRunner.WaitStarted(t)
 	if !strings.Contains(secondRunner.lastReq.Command, "--resume ") {
@@ -3933,8 +3933,8 @@ func TestHandlerPermissionDecisionApproveUsesDirectPermissionResponse(t *testing
 	if thinking["source"] != "permission-decision" {
 		t.Fatalf("expected permission-decision source, got %#v", thinking)
 	}
-	if thinking["permissionMode"] != "auto" {
-		t.Fatalf("expected auto permission mode after approval, got %#v", thinking)
+	if thinking["permissionMode"] != "default" {
+		t.Fatalf("expected default permission mode after approval, got %#v", thinking)
 	}
 }
 
@@ -4621,8 +4621,8 @@ func TestHandlerReviewDecisionSendsPromptToRunner(t *testing.T) {
 	if thinking["source"] != "review-decision" {
 		t.Fatalf("expected review-decision source, got %#v", thinking)
 	}
-	if thinking["permissionMode"] != "auto" {
-		t.Fatalf("expected auto permission mode, got %#v", thinking)
+	if thinking["permissionMode"] != "default" {
+		t.Fatalf("expected default permission mode, got %#v", thinking)
 	}
 }
 
@@ -4777,7 +4777,7 @@ func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 	var state map[string]any
 	for i := 0; i < 5; i++ {
 		event := readUntilType(t, conn, protocol.EventTypeAgentState)
-		if event["permissionMode"] == "auto" {
+		if event["permissionMode"] == "default" {
 			state = event
 			break
 		}
@@ -4785,10 +4785,10 @@ func TestHandlerSetPermissionModeUpdatesRunner(t *testing.T) {
 	if state == nil {
 		t.Fatal("did not receive updated permissionMode agent state")
 	}
-	if state["permissionMode"] != "auto" {
+	if state["permissionMode"] != "default" {
 		t.Fatalf("expected updated permission mode, got %#v", state)
 	}
-	if ptyRunner.lastPermissionMode != "auto" {
+	if ptyRunner.lastPermissionMode != "default" {
 		t.Fatalf("expected runner permission mode to update, got %q", ptyRunner.lastPermissionMode)
 	}
 }
@@ -4826,7 +4826,7 @@ func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 	var state map[string]any
 	for i := 0; i < 5; i++ {
 		event := readUntilType(t, conn, protocol.EventTypeAgentState)
-		if event["permissionMode"] == "auto" {
+		if event["permissionMode"] == "default" {
 			state = event
 			break
 		}
@@ -4834,10 +4834,10 @@ func TestHandlerSetPermissionModeUpdatesActiveRunner(t *testing.T) {
 	if state == nil {
 		t.Fatal("did not receive updated permissionMode agent state")
 	}
-	if state["permissionMode"] != "auto" {
-		t.Fatalf("expected permissionMode to be auto, got %#v", state)
+	if state["permissionMode"] != "default" {
+		t.Fatalf("expected permissionMode to be default, got %#v", state)
 	}
-	if ptyRunner.lastPermissionMode != "auto" {
+	if ptyRunner.lastPermissionMode != "default" {
 		t.Fatalf("expected runner permission mode to update, got %q", ptyRunner.lastPermissionMode)
 	}
 }
@@ -4902,8 +4902,8 @@ func TestHandlerReviewDecisionAcceptAllowedInDefaultMode(t *testing.T) {
 	if thinking["state"] != "THINKING" {
 		t.Fatalf("expected THINKING state, got %#v", thinking)
 	}
-	if thinking["permissionMode"] != "auto" {
-		t.Fatalf("expected auto permission mode, got %#v", thinking)
+	if thinking["permissionMode"] != "default" {
+		t.Fatalf("expected default permission mode, got %#v", thinking)
 	}
 }
 

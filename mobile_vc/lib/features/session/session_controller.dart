@@ -216,6 +216,12 @@ class SessionController extends ChangeNotifier {
   String _terminalStderr = '';
   String _activeTerminalExecutionId = '';
   String _lastAssistantReplyExecutionKey = '';
+  // 用户点击发送后立即点亮的"提交保护锁"——后端流式 LogEvent 不会再瞬间打掉状态球。
+  // 收到带有新 executionKey 的 AgentStateEvent（或 IDLE/WAIT_INPUT）时解锁。
+  bool _isSubmitting = false;
+  String _isSubmittingBaselineKey = '';
+  // 用于把 _activityVisible=false 平滑延迟，避免瞬时跳变造成视觉闪烁。
+  Timer? _activityHideDebounce;
   AgentStateEvent? _agentState;
   RuntimePhaseEvent? _runtimePhase;
   SessionStateEvent? _sessionState;
@@ -265,6 +271,7 @@ class SessionController extends ChangeNotifier {
   String _agentPhaseLabel = '未连接';
   bool _aiStatusIndicatorVisible = false;
   String _aiStatusIndicatorLabel = '思考中';
+  Timer? _aiStatusHideDebounce;
   bool _activityVisible = false;
   DateTime? _activityStartedAt;
   String _activityToolLabel = '';
@@ -1158,6 +1165,8 @@ class SessionController extends ChangeNotifier {
     _connectionHealthTimer?.cancel();
     _pendingOutboundRetryTimer?.cancel();
     _sessionLoadingTimeout?.cancel();
+    _aiStatusHideDebounce?.cancel();
+    _activityHideDebounce?.cancel();
     await _subscription?.cancel();
     await _adbWebRtc.dispose();
     await _service.dispose();
@@ -1259,11 +1268,13 @@ class SessionController extends ChangeNotifier {
       _pendingOutboundActions.add(
         pendingAction.copyWith(displayed: true, sendAttempts: 1),
       );
+      _appendLocalUserTimeline(userText, clientActionId);
       _schedulePendingOutboundRetry();
       return true;
     }
     if (queueOnFailure) {
       _pendingOutboundActions.add(pendingAction);
+      _appendLocalUserTimeline(userText, clientActionId);
       _pushSystem('session', '网络暂不可用，消息已排队，恢复连接后自动发送');
       _scheduleReconnect(immediate: true);
       _schedulePendingOutboundRetry();
@@ -1271,6 +1282,82 @@ class SessionController extends ChangeNotifier {
       _pushSystem('error', '消息发送失败：WebSocket 未连接或写入失败');
     }
     return false;
+  }
+
+  void _appendLocalUserTimeline(String userText, String clientActionId) {
+    final body = userText.trim();
+    if (body.isEmpty) {
+      return;
+    }
+    _appendTimelineItem(
+      TimelineItem(
+        id: 'user-local-$clientActionId',
+        kind: 'user',
+        timestamp: DateTime.now(),
+        body: body,
+      ),
+      emitNotifications: false,
+    );
+    notifyListeners();
+  }
+
+  void _setAiStatusVisible(bool visible, {String label = '', bool immediate = false}) {
+    final resolvedLabel = label.trim().isNotEmpty ? label.trim() : '思考中';
+    if (visible) {
+      _aiStatusHideDebounce?.cancel();
+      _aiStatusHideDebounce = null;
+      final changed =
+          !_aiStatusIndicatorVisible || _aiStatusIndicatorLabel != resolvedLabel;
+      _aiStatusIndicatorVisible = true;
+      _aiStatusIndicatorLabel = resolvedLabel;
+      if (changed) {
+        notifyListeners();
+      }
+      return;
+    }
+    if (immediate) {
+      _aiStatusHideDebounce?.cancel();
+      _aiStatusHideDebounce = null;
+      if (_aiStatusIndicatorVisible) {
+        _aiStatusIndicatorVisible = false;
+        notifyListeners();
+      }
+      return;
+    }
+    if (!_aiStatusIndicatorVisible) {
+      return;
+    }
+    _aiStatusHideDebounce?.cancel();
+    _aiStatusHideDebounce = Timer(const Duration(milliseconds: 600), () {
+      _aiStatusHideDebounce = null;
+      if (!_aiStatusIndicatorVisible) {
+        return;
+      }
+      _aiStatusIndicatorVisible = false;
+      notifyListeners();
+    });
+  }
+
+  /// 用户点击"发送"后调用：清空旧的回复结算标记，记录基线 executionKey，
+  /// 打开 _isSubmitting 保护锁，并立即点亮 AI 状态球。
+  ///
+  /// 解锁逻辑统一在 AgentStateEvent 分支处理：当看到带有新 executionKey 的状态、
+  /// 或 IDLE / WAIT_INPUT / awaitInput 信号时把锁解开。
+  void _beginUserSubmission() {
+    _lastAssistantReplyExecutionKey = '';
+    _isSubmittingBaselineKey = _runtimeExecutionKey(
+      _agentState?.runtimeMeta ??
+          _sessionState?.runtimeMeta ??
+          const RuntimeMeta(),
+    );
+    _isSubmitting = true;
+    // 任何正在排队的"延迟消隐"都立即取消，保证发送瞬间状态球不会被旧 timer 打灭。
+    _activityHideDebounce?.cancel();
+    _activityHideDebounce = null;
+    // 立即点亮状态球——这是用户最直观的反馈。流式 LogEvent 在后端会被忙碌态保护，
+    // 不会再发 visible:false；本端不依赖 backend 即可拿到第一帧亮起。
+    _setAiStatusVisible(true, label: '思考中');
+    _syncDerivedState();
   }
 
   String _nextClientActionId() {
@@ -1657,6 +1744,12 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
+    _activityHideDebounce?.cancel();
+    _activityHideDebounce = null;
+    _isSubmitting = false;
+    _isSubmittingBaselineKey = '';
+    _aiStatusHideDebounce?.cancel();
+    _aiStatusHideDebounce = null;
     _aiStatusIndicatorVisible = false;
     _aiStatusIndicatorLabel = '思考中';
     _activeReviewDiffId = '';
@@ -1961,6 +2054,12 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
+    _activityHideDebounce?.cancel();
+    _activityHideDebounce = null;
+    _isSubmitting = false;
+    _isSubmittingBaselineKey = '';
+    _aiStatusHideDebounce?.cancel();
+    _aiStatusHideDebounce = null;
     _aiStatusIndicatorVisible = false;
     _aiStatusIndicatorLabel = '思考中';
     _resetRuntimeProcessState();
@@ -1991,6 +2090,12 @@ class SessionController extends ChangeNotifier {
     _activityToolLabel = '';
     _activityStartedAt = null;
     _activityVisible = false;
+    _activityHideDebounce?.cancel();
+    _activityHideDebounce = null;
+    _isSubmitting = false;
+    _isSubmittingBaselineKey = '';
+    _aiStatusHideDebounce?.cancel();
+    _aiStatusHideDebounce = null;
     _aiStatusIndicatorVisible = false;
     _aiStatusIndicatorLabel = '思考中';
     _currentDiff = null;
@@ -2063,6 +2168,9 @@ class SessionController extends ChangeNotifier {
     _pushSystem('session',
         'Permission mode 已切换为 ${_permissionModeLabel(permissionMode)}，将对下一次交互生效');
     _syncDerivedState();
+    // 用户在 dropdown 的选择是权威意图，覆盖 sync 出来的旧 sessionState/agentState
+    // 缓存值，等后端回包刷新 _agentState 后再由后续 sync 接管。
+    _runtimePermissionMode = _normalizeDisplayPermissionMode(permissionMode);
     notifyListeners();
   }
 
@@ -2736,7 +2844,7 @@ class SessionController extends ChangeNotifier {
         .trim()
         .toLowerCase();
     _selectAiEngine(resolvedEngine);
-    _lastAssistantReplyExecutionKey = '';
+    _beginUserSubmission();
     final launchPayload = _aiTurnPayload(
       engine: resolvedEngine,
       meta: meta ?? currentMeta,
@@ -2745,7 +2853,7 @@ class SessionController extends ChangeNotifier {
     );
     final launchSent = _sendUserVisibleAction(
       launchPayload,
-      userText: value.isNotEmpty ? value : resolvedEngine,
+      userText: value,
       label: '命令',
       queueOnFailure: true,
     );
@@ -2767,6 +2875,7 @@ class SessionController extends ChangeNotifier {
       command: (meta ?? currentMeta).command,
       engine: (meta ?? currentMeta).engine,
     );
+    _beginUserSubmission();
     final payload = _aiTurnPayload(
       engine: continuationEngine,
       meta: meta ?? currentMeta,
@@ -2781,7 +2890,6 @@ class SessionController extends ChangeNotifier {
     if (!sent) {
       return;
     }
-    _lastAssistantReplyExecutionKey = '';
   }
 
   void continueWithCurrentFile([String text = '基于当前文件继续处理']) {
@@ -2942,7 +3050,7 @@ class SessionController extends ChangeNotifier {
       _submitClaudeContinuation(value, label: '回复');
       return;
     }
-    _lastAssistantReplyExecutionKey = '';
+    _beginUserSubmission();
     final payload = {
       'action': 'exec',
       'cmd': value,
@@ -3212,7 +3320,7 @@ class SessionController extends ChangeNotifier {
   }
 
   void _submitAwaitingInput(String value, {String promptLabel = '回复'}) {
-    _lastAssistantReplyExecutionKey = '';
+    _beginUserSubmission();
     final payload = {
       'action': 'input',
       'data': '$value\n',
@@ -3423,6 +3531,10 @@ class SessionController extends ChangeNotifier {
     _agentState = null;
     _sessionState = null;
     _lastAssistantReplyExecutionKey = '';
+    _isSubmitting = false;
+    _isSubmittingBaselineKey = '';
+    _activityHideDebounce?.cancel();
+    _activityHideDebounce = null;
 
     // 设置停止中标记，按钮立即变灰，但状态栏继续显示
     _isStopping = true;
@@ -3716,6 +3828,9 @@ class SessionController extends ChangeNotifier {
         final targetCwd = restoredCwd.isNotEmpty ? restoredCwd : _config.cwd;
         await switchWorkingDirectory(targetCwd);
         _requestSessionDelta(reason: 'history_loaded');
+        if (!_timeline.any(_hasVisibleTimelineContent)) {
+          _pushSystem('session', '会话已就绪，可以继续输入');
+        }
         break;
       case SessionDeltaEvent delta:
         _handleSessionDelta(delta);
@@ -3825,6 +3940,20 @@ class SessionController extends ChangeNotifier {
             agentStateName == 'WAIT_INPUT') {
           _sessionRuntimeAlive = true;
         }
+        // 提交保护锁解锁：当后端回报新的 executionKey（说明本轮已经被运行时确认接管），
+        // 或进入 IDLE / WAIT_INPUT / awaitInput 等终止/阻塞态，就把保护锁解开。
+        if (_isSubmitting) {
+          final newKey = _runtimeExecutionKey(agent.runtimeMeta);
+          final freshTurnObserved =
+              newKey.isNotEmpty && newKey != _isSubmittingBaselineKey;
+          final terminalSignal = agent.awaitInput ||
+              agentStateName == 'IDLE' ||
+              agentStateName == 'WAIT_INPUT';
+          if (freshTurnObserved || terminalSignal) {
+            _isSubmitting = false;
+            _isSubmittingBaselineKey = '';
+          }
+        }
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
         // AI 正在运行中，清掉 pending prompt，防止阻塞态残留导致 awaitInput 误判。
@@ -3862,9 +3991,7 @@ class SessionController extends ChangeNotifier {
         if (!_eventTargetsCurrentSession(status.sessionId)) {
           break;
         }
-        _aiStatusIndicatorVisible = status.visible;
-        _aiStatusIndicatorLabel =
-            status.label.trim().isNotEmpty ? status.label.trim() : '思考中';
+        _setAiStatusVisible(status.visible, label: status.label);
         break;
       case RuntimePhaseEvent runtimePhase:
         _runtimePhase = runtimePhase;
@@ -6388,14 +6515,16 @@ class SessionController extends ChangeNotifier {
       _runtimePermissionMode = _normalizeDisplayPermissionMode(promptMode);
       return;
     }
-    final sessionMode = _sessionState?.runtimeMeta.permissionMode.trim() ?? '';
-    if (sessionMode.isNotEmpty) {
-      _runtimePermissionMode = _normalizeDisplayPermissionMode(sessionMode);
-      return;
-    }
+    // _agentState 是 set_permission_mode 的官方回包来源，优先于 _sessionState 缓存，
+    // 避免 SessionStateEvent 携带的滞后 mode 把刚切换的值压回去。
     final agentMode = _agentState?.runtimeMeta.permissionMode.trim() ?? '';
     if (agentMode.isNotEmpty) {
       _runtimePermissionMode = _normalizeDisplayPermissionMode(agentMode);
+      return;
+    }
+    final sessionMode = _sessionState?.runtimeMeta.permissionMode.trim() ?? '';
+    if (sessionMode.isNotEmpty) {
+      _runtimePermissionMode = _normalizeDisplayPermissionMode(sessionMode);
       return;
     }
     final resumeMode = _resumeRuntimeMeta.permissionMode.trim();
@@ -6435,16 +6564,23 @@ class SessionController extends ChangeNotifier {
         sessionState == 'RUNNING_TOOL';
     final isDefinitiveAgentState =
         _isDefinitiveAgentState(agentState, sessionState);
+    // _activityVisible（banner）保留原有由后端运行信号驱动的语义，不被 _isSubmitting 强制点亮。
+    // 状态球（_aiStatusIndicatorVisible）在 _beginUserSubmission 中已直接点亮，与 banner 解耦。
     final active = _connected &&
         !hasBlockingPrompt &&
         !_isClaudePendingReadyForInput &&
         hasRealRunningSignal &&
         (!assistantReplySettled || isDefinitiveAgentState || _executionActive);
-    if (hasPendingPermission) {
-      _activityStartedAt = null;
-      _activityToolLabel = '';
-      _activityVisible = false;
-    } else if (active) {
+    // 何时立即隐藏（不延迟）：焦点已被切走或会话被打断时——权限/审核/计划/await/未连接/Claude 待输入。
+    // 何时平滑消隐：仅在"自然结算"路径上（turn 结束 → 无新 active 信号 & 也无阻塞），避免后端瞬态打灭。
+    final hideImmediately = hasPendingPermission ||
+        hasBlockingPrompt ||
+        _isClaudePendingReadyForInput ||
+        !_connected;
+    if (active) {
+      // 一旦本轮重新激活，立即取消任何延迟消隐计时器，保证状态球瞬间点亮。
+      _activityHideDebounce?.cancel();
+      _activityHideDebounce = null;
       _activityVisible = true;
       _activityStartedAt ??= _agentState?.timestamp ?? DateTime.now();
       if (_activityToolLabel.isEmpty) {
@@ -6454,10 +6590,34 @@ class SessionController extends ChangeNotifier {
                 ? _agentState!.tool
                 : _toolLabelFromCommand(_agentState?.command ?? '');
       }
-    } else {
+    } else if (hideImmediately) {
+      _activityHideDebounce?.cancel();
+      _activityHideDebounce = null;
+      _activityVisible = false;
       _activityStartedAt = null;
       _activityToolLabel = '';
-      _activityVisible = false;
+    } else {
+      // 平滑消隐：仅在自然结算路径上启动一次 600ms 延迟 timer，避免后端瞬间状态跳变造成视觉闪烁。
+      // 期间若 active 重新变 true（新一轮开始），上面分支会 cancel 掉 timer。
+      if (_activityVisible) {
+        _activityHideDebounce ??= Timer(
+          const Duration(milliseconds: 600),
+          () {
+            _activityHideDebounce = null;
+            if (_activityVisible) {
+              _activityVisible = false;
+              _activityStartedAt = null;
+              _activityToolLabel = '';
+              notifyListeners();
+            }
+          },
+        );
+      } else {
+        _activityHideDebounce?.cancel();
+        _activityHideDebounce = null;
+        _activityStartedAt = null;
+        _activityToolLabel = '';
+      }
     }
     if (_currentStepSummary.isEmpty && _currentStep != null) {
       _currentStepSummary = _summaryFromHistoryContext(_currentStep);
@@ -7211,9 +7371,10 @@ class SessionController extends ChangeNotifier {
     switch (permissionMode.trim()) {
       case 'bypassPermissions':
         return '跳过权限确认';
+      case 'default':
+        return '手动审核';
       case 'auto':
       case 'acceptEdits':
-      case 'default':
       default:
         return '自动模式';
     }
@@ -7223,6 +7384,8 @@ class SessionController extends ChangeNotifier {
     switch (permissionMode.trim()) {
       case 'bypassPermissions':
         return 'bypassPermissions';
+      case 'default':
+        return 'default';
       default:
         return 'auto';
     }
