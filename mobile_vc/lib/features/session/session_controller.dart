@@ -2216,6 +2216,23 @@ class SessionController extends ChangeNotifier {
     return normalized == targetId;
   }
 
+  /// 加载会话期间，判定一条 history/delta 是否属于"我们正在等的那个会话"。
+  /// 区别于 [_matchesPendingSessionTarget] 在 target 为空时无差别放行 ——
+  /// 这里要求至少有一个明确锚点（loadSession 指定的 target，或已经被
+  /// SessionCreatedEvent 设定的 selected），否则视为来自其他会话的 stale 事件。
+  bool _isHistoryEventForActiveTarget(String sessionId) {
+    final incoming = sessionId.trim();
+    if (incoming.isEmpty) {
+      return false;
+    }
+    final target = _pendingSessionTargetId.trim();
+    if (target.isNotEmpty) {
+      return incoming == target;
+    }
+    final selected = _selectedSessionId.trim();
+    return selected.isNotEmpty && incoming == selected;
+  }
+
   bool _eventTargetsCurrentSession(String sessionId) {
     final normalized = sessionId.trim();
     if (normalized.isEmpty) {
@@ -3825,8 +3842,11 @@ class SessionController extends ChangeNotifier {
         _handleAutoSessionBinding(mergedItems);
         break;
       case SessionHistoryEvent history:
-        // 正在创建或加载会话中，不覆盖 _selectedSessionId，避免与 auto-create 竞态
-        if (_isLoadingSession) {
+        // 加载/auto-create 期间不能让无关会话的 history 覆盖 _selectedSessionId，
+        // 但用户主动 loadSession 请求回的合法 history 必须放行，否则 timeline
+        // 永远不会从 logo 切换到历史内容。
+        if (_isLoadingSession &&
+            !_isHistoryEventForActiveTarget(history.sessionId)) {
           break;
         }
         _connectionStage = SessionConnectionStage.ready;
@@ -4895,8 +4915,10 @@ class SessionController extends ChangeNotifier {
       _requestSessionResume(reason: 'delta_base_mismatch');
       return;
     }
-    // 正在创建或加载会话中，不覆盖 _selectedSessionId，避免与 auto-create 竞态
-    if (_isLoadingSession) {
+    // 加载/auto-create 期间只丢弃不属于当前目标的 delta；用户主动 loadSession
+    // 之后回流的匹配 delta 必须放行，否则增量内容永远不会落到 timeline。
+    if (_isLoadingSession &&
+        !_isHistoryEventForActiveTarget(delta.sessionId)) {
       return;
     }
     _connectionStage = SessionConnectionStage.ready;

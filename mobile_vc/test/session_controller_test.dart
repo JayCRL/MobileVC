@@ -7595,6 +7595,74 @@ void main() {
       expect(controller.selectedSessionId, isNot('stale-history-session'));
       expect(controller.isLoadingSession, isTrue);
     });
+
+    test('loadSession 后匹配的 SessionHistoryEvent 必须还原 timeline', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+
+      controller.loadSession('session-target');
+      expect(controller.isLoadingSession, isTrue);
+      expect(controller.timeline, isEmpty);
+
+      service.emit(SessionHistoryEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-target',
+        runtimeMeta: const RuntimeMeta(command: 'claude'),
+        raw: const {'type': 'session_history'},
+        summary: const SessionSummary(id: 'session-target', title: '历史会话'),
+        logEntries: const [
+          HistoryLogEntry(
+            kind: 'markdown',
+            message: '历史里的助手回复',
+            timestamp: '2026-01-01T00:00:00Z',
+          ),
+        ],
+        resumeRuntimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'resumable',
+        ),
+        runtimeAlive: false,
+        canResume: true,
+      ));
+      await _flushEvents();
+
+      expect(controller.isLoadingSession, isFalse,
+          reason: '匹配 target 的 history 应该被处理而不是被早返回丢弃');
+      expect(controller.selectedSessionId, 'session-target');
+      expect(controller.timeline, isNotEmpty,
+          reason: '主界面不能在 loadSession 之后仍停留在 logo');
+      expect(controller.timeline.any((item) => item.body.contains('历史里的助手回复')),
+          isTrue);
+    });
+
+    test('loadSession 期间不属于目标的 stale history 仍会被丢弃', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+
+      controller.loadSession('session-target');
+      expect(controller.isLoadingSession, isTrue);
+
+      service.emit(SessionHistoryEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-other',
+        runtimeMeta: const RuntimeMeta(command: 'claude'),
+        raw: const {'type': 'session_history'},
+        summary: const SessionSummary(id: 'session-other', title: 'Stale'),
+        resumeRuntimeMeta: const RuntimeMeta(),
+      ));
+      await _flushEvents();
+
+      expect(controller.selectedSessionId, isNot('session-other'));
+      expect(controller.isLoadingSession, isTrue);
+    });
   });
 }
 
