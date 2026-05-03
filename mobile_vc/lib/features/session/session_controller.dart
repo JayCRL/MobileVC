@@ -1301,18 +1301,26 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _setAiStatusVisible(bool visible, {String label = '', bool immediate = false}) {
+  void _setAiStatusVisible(
+    bool visible, {
+    String label = '',
+    String phase = '',
+    bool immediate = false,
+  }) {
     final resolvedLabel = label.trim().isNotEmpty ? label.trim() : '思考中';
     if (visible) {
       _aiStatusHideDebounce?.cancel();
       _aiStatusHideDebounce = null;
-      final changed =
-          !_aiStatusIndicatorVisible || _aiStatusIndicatorLabel != resolvedLabel;
+      final changed = !_aiStatusIndicatorVisible ||
+          _aiStatusIndicatorLabel != resolvedLabel;
       _aiStatusIndicatorVisible = true;
       _aiStatusIndicatorLabel = resolvedLabel;
       if (changed) {
         notifyListeners();
       }
+      return;
+    }
+    if (!immediate && _shouldSuppressAiStatusHide()) {
       return;
     }
     if (immediate) {
@@ -1338,11 +1346,42 @@ class SessionController extends ChangeNotifier {
     });
   }
 
+  bool _shouldSuppressAiStatusHide() {
+    if (!_isSubmitting) {
+      return false;
+    }
+    return true;
+  }
+
+  void _endUserSubmissionProtection() {
+    if (!_isSubmitting && _isSubmittingBaselineKey.isEmpty) {
+      return;
+    }
+    _isSubmitting = false;
+    _isSubmittingBaselineKey = '';
+  }
+
+  bool _shouldEndUserSubmissionForAiStatus(AIStatusEvent status) {
+    if (!_isSubmitting || status.visible) {
+      return false;
+    }
+    if (status.phase.trim().toLowerCase() != 'settled') {
+      return false;
+    }
+    final replyKey = _lastAssistantReplyExecutionKey;
+    if (replyKey.isEmpty) {
+      return false;
+    }
+    final statusKey = _runtimeExecutionKey(status.runtimeMeta);
+    return statusKey.isEmpty || statusKey == replyKey;
+  }
+
   /// 用户点击"发送"后调用：清空旧的回复结算标记，记录基线 executionKey，
   /// 打开 _isSubmitting 保护锁，并立即点亮 AI 状态球。
   ///
-  /// 解锁逻辑统一在 AgentStateEvent 分支处理：当看到带有新 executionKey 的状态、
-  /// 或 IDLE / WAIT_INPUT / awaitInput 信号时把锁解开。
+  /// 解锁逻辑统一在明确的运行接管或真实 prompt 分支处理：
+  /// 看到带有新 executionKey 的状态时，说明本轮已进入新执行上下文；
+  /// 收到后端真实 prompt/interaction 时，说明本轮已进入等待用户输入。
   void _beginUserSubmission() {
     _lastAssistantReplyExecutionKey = '';
     _isSubmittingBaselineKey = _runtimeExecutionKey(
@@ -3743,8 +3782,8 @@ class SessionController extends ChangeNotifier {
         _activeReviewGroupId = history.activeReviewGroup?.id ?? '';
         _syncReviewGroupsFromRecentDiffs();
         _syncActiveReviewSelection();
-        _currentStep = history.currentStep;
-        _currentStepSummary = _summaryFromHistoryContext(history.currentStep);
+        _currentStep = _activeHistoryStep(history.currentStep);
+        _currentStepSummary = _summaryFromHistoryContext(_currentStep);
         _latestError = history.latestError;
         _canResumeCurrentSession = history.canResume;
         _resumeRuntimeMeta = history.resumeRuntimeMeta;
@@ -3940,20 +3979,9 @@ class SessionController extends ChangeNotifier {
             agentStateName == 'WAIT_INPUT') {
           _sessionRuntimeAlive = true;
         }
-        // 提交保护锁解锁：当后端回报新的 executionKey（说明本轮已经被运行时确认接管），
-        // 或进入 IDLE / WAIT_INPUT / awaitInput 等终止/阻塞态，就把保护锁解开。
-        if (_isSubmitting) {
-          final newKey = _runtimeExecutionKey(agent.runtimeMeta);
-          final freshTurnObserved =
-              newKey.isNotEmpty && newKey != _isSubmittingBaselineKey;
-          final terminalSignal = agent.awaitInput ||
-              agentStateName == 'IDLE' ||
-              agentStateName == 'WAIT_INPUT';
-          if (freshTurnObserved || terminalSignal) {
-            _isSubmitting = false;
-            _isSubmittingBaselineKey = '';
-          }
-        }
+        // 提交保护锁不能在“看到新 executionKey”时马上解除：运行时接管和
+        // stale WAIT_INPUT / idle snapshot 经常相邻到达，会把刚点亮的状态球打灭。
+        // 解除交给真实 prompt/interaction 或助手回复后的 settled 分支。
         _maybeAutoSyncAiModel(agent.runtimeMeta);
         _syncRuntimePermissionMode();
         // AI 正在运行中，清掉 pending prompt，防止阻塞态残留导致 awaitInput 误判。
@@ -3991,7 +4019,17 @@ class SessionController extends ChangeNotifier {
         if (!_eventTargetsCurrentSession(status.sessionId)) {
           break;
         }
-        _setAiStatusVisible(status.visible, label: status.label);
+        if (status.visible && _isTerminalStepMessage(status.label)) {
+          break;
+        }
+        if (_shouldEndUserSubmissionForAiStatus(status)) {
+          _endUserSubmissionProtection();
+        }
+        _setAiStatusVisible(
+          status.visible,
+          label: status.label,
+          phase: status.phase,
+        );
         break;
       case RuntimePhaseEvent runtimePhase:
         _runtimePhase = runtimePhase;
@@ -4081,6 +4119,7 @@ class SessionController extends ChangeNotifier {
         }
         _pendingInteraction = null;
         _pendingPrompt = prompt;
+        _endUserSubmissionProtection();
         _syncRuntimePermissionMode();
         _pushDebug('收到 prompt_request', _debugReviewStateSummary());
         // 后端会自动检查权限规则并应用，前端只需等待 PermissionAutoAppliedEvent
@@ -4090,6 +4129,7 @@ class SessionController extends ChangeNotifier {
       case InteractionRequestEvent interaction:
         _pendingPrompt = null;
         _pendingInteraction = interaction;
+        _endUserSubmissionProtection();
         if (interaction.isPlan) {
           _pendingPlanQuestions
             ..clear()
@@ -4140,29 +4180,32 @@ class SessionController extends ChangeNotifier {
         );
         break;
       case StepUpdateEvent step:
-        _currentStep = HistoryContext(
-          id: step.runtimeMeta.contextId,
-          type: 'step',
-          message: step.message,
-          status: step.status,
-          target: step.target,
-          tool: step.tool,
-          command: step.command,
-          title: step.message,
-          targetPath: step.runtimeMeta.targetPath,
-        );
-        _syncStepSummary(
-          message: step.message,
-          status: step.status,
-          tool: step.tool,
-          command: step.command,
-          targetPath: step.runtimeMeta.targetPath,
-        );
-        // 步骤更新说明 AI 正在工作中，清掉等待输入状态
-        // 但保留权限/审查/计划等阻塞型提示
-        if (!_shouldPreserveBlockingPrompt()) {
-          _pendingPrompt = null;
-          _pendingInteraction = null;
+        if (!_isTerminalStepStatus(step.status) &&
+            !_isTerminalStepMessage(step.message)) {
+          _currentStep = HistoryContext(
+            id: step.runtimeMeta.contextId,
+            type: 'step',
+            message: step.message,
+            status: step.status,
+            target: step.target,
+            tool: step.tool,
+            command: step.command,
+            title: step.message,
+            targetPath: step.runtimeMeta.targetPath,
+          );
+          _syncStepSummary(
+            message: step.message,
+            status: step.status,
+            tool: step.tool,
+            command: step.command,
+            targetPath: step.runtimeMeta.targetPath,
+          );
+          // 步骤更新说明 AI 正在工作中，清掉等待输入状态
+          // 但保留权限/审查/计划等阻塞型提示
+          if (!_shouldPreserveBlockingPrompt()) {
+            _pendingPrompt = null;
+            _pendingInteraction = null;
+          }
         }
         _syncDerivedState();
         break;
@@ -4749,7 +4792,7 @@ class SessionController extends ChangeNotifier {
       _syncReviewGroupsFromRecentDiffs();
       _syncActiveReviewSelection();
     }
-    _currentStep = delta.currentStep ?? _currentStep;
+    _currentStep = _activeHistoryStep(delta.currentStep) ?? _currentStep;
     _currentStepSummary = _summaryFromHistoryContext(_currentStep);
     _latestError = delta.latestError ?? _latestError;
     _mergeTerminalExecutions(delta.terminalExecutions);
@@ -6336,6 +6379,9 @@ class SessionController extends ChangeNotifier {
     required String command,
     required String targetPath,
   }) {
+    if (_isTerminalStepStatus(status) || _isTerminalStepMessage(message)) {
+      return;
+    }
     if (message == _lastStepMessage && status == _lastStepStatus) {
       return;
     }
@@ -6349,6 +6395,36 @@ class SessionController extends ChangeNotifier {
       _toolLabelFromPath(targetPath)
     ].where((item) => item.isNotEmpty).toList();
     _activityToolLabel = labels.isNotEmpty ? labels.first : _activityToolLabel;
+  }
+
+  bool _isTerminalStepStatus(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'done':
+      case 'completed':
+      case 'complete':
+      case 'success':
+      case 'succeeded':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  bool _isTerminalStepMessage(String message) {
+    final normalized = message.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return false;
+    }
+    switch (normalized) {
+      case 'command completed':
+      case 'tool completed':
+        return true;
+    }
+    return normalized.startsWith('completed ') ||
+        normalized.startsWith('done') ||
+        normalized.startsWith('finished') ||
+        normalized.startsWith('resolved') ||
+        normalized.startsWith('applied file changes');
   }
 
   String _normalizeToolLabel(String value) {
@@ -6456,7 +6532,22 @@ class SessionController extends ChangeNotifier {
     if (context == null) {
       return '';
     }
+    if (_isTerminalStepStatus(context.status) ||
+        _isTerminalStepMessage(context.message) ||
+        _isTerminalStepMessage(context.title)) {
+      return '';
+    }
     return context.message.isNotEmpty ? context.message : context.title;
+  }
+
+  HistoryContext? _activeHistoryStep(HistoryContext? context) {
+    if (context == null ||
+        _isTerminalStepStatus(context.status) ||
+        _isTerminalStepMessage(context.message) ||
+        _isTerminalStepMessage(context.title)) {
+      return null;
+    }
+    return context;
   }
 
   bool _shouldPreserveBlockingPrompt() {

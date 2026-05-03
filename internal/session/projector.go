@@ -181,7 +181,10 @@ func (s *Service) BuildTaskSnapshotEvent(sessionID string, cursor TaskCursorSnap
 	if runtimeAlive {
 		state = "RUNNING"
 		message = "Task running on desktop"
-		if snapshot.CanAcceptInteractiveInput || strings.EqualFold(strings.TrimSpace(snapshot.ClaudeLifecycle), "waiting_input") {
+		if controllerState := strings.TrimSpace(strings.ToUpper(string(controller.State))); shouldPreserveBusyTaskSnapshotState(controllerState, meta.ClaudeLifecycle, snapshot.ClaudeLifecycle) {
+			state = controllerState
+			message = "Task running on desktop"
+		} else if snapshot.CanAcceptInteractiveInput || strings.EqualFold(strings.TrimSpace(snapshot.ClaudeLifecycle), "waiting_input") {
 			state = "WAIT_INPUT"
 			message = "Task waiting for input"
 			awaitInput = true
@@ -208,6 +211,22 @@ func (s *Service) BuildTaskSnapshotEvent(sessionID string, cursor TaskCursorSnap
 	)
 	event.Syncing = syncing
 	return &event
+}
+
+func shouldPreserveBusyTaskSnapshotState(state string, lifecycles ...string) bool {
+	state = strings.TrimSpace(strings.ToUpper(state))
+	if !IsBusyRuntimeState(state) {
+		return false
+	}
+	if state != string(ControllerStateThinking) {
+		return true
+	}
+	for _, lifecycle := range lifecycles {
+		if strings.EqualFold(strings.TrimSpace(lifecycle), "active") {
+			return true
+		}
+	}
+	return false
 }
 
 func BuildResumeRecoveryStateEvent(sessionID string, svc *Service, projection data.ProjectionSnapshot, lastKnownRuntimeState string) protocol.AgentStateEvent {

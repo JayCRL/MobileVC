@@ -219,7 +219,9 @@ func ApplyEventToProjection(snapshot data.ProjectionSnapshot, event any) (data.P
 		return snapshot, true
 	case protocol.StepUpdateEvent:
 		ctx := &data.SnapshotContext{ID: firstNonEmptyString(e.ContextID, fmt.Sprintf("step:%s", e.Timestamp.Format(time.RFC3339Nano))), Type: "step", Message: e.Message, Status: e.Status, Target: e.Target, TargetPath: firstNonEmptyString(e.TargetPath, e.Target), Tool: e.Tool, Command: e.Command, Timestamp: e.Timestamp.Format(time.RFC3339), Title: firstNonEmptyString(e.ContextTitle, e.Message, "当前步骤")}
-		snapshot.CurrentStep = ctx
+		if !isTerminalStepStatus(e.Status) && !isTerminalStepMessage(e.Message) {
+			snapshot.CurrentStep = ctx
+		}
 		snapshot.LogEntries = append(snapshot.LogEntries, data.SnapshotLogEntry{Kind: "step", Context: ctx})
 		return snapshot, true
 	case protocol.FileDiffEvent:
@@ -301,13 +303,27 @@ func AIStatusEventForBackendEvent(sessionID string, svc *Service, projection dat
 	case protocol.SessionStateEvent:
 		projection = NormalizeProjectionSnapshot(projection)
 		meta := projection.Controller.ActiveMeta
+		state := strings.TrimSpace(strings.ToUpper(string(projection.Controller.State)))
+		step := projection.Controller.LastStep
+		tool := projection.Controller.LastTool
+		command := projection.Controller.CurrentCommand
 		if svc != nil {
-			meta = protocol.MergeRuntimeMeta(meta, svc.ControllerSnapshot().ActiveMeta)
+			controller := svc.ControllerSnapshot()
+			meta = protocol.MergeRuntimeMeta(meta, controller.ActiveMeta)
+			if runtimeState := strings.TrimSpace(strings.ToUpper(string(controller.State))); IsBusyRuntimeState(runtimeState) {
+				state = runtimeState
+				step = firstNonEmptyString(controller.LastStep, step)
+				tool = firstNonEmptyString(controller.LastTool, tool)
+				command = firstNonEmptyString(controller.CurrentCommand, command)
+			}
 		}
-		if !isAIStatusContext(projection.Controller.CurrentCommand, meta, projection) {
+		if state == "" || !IsBusyRuntimeState(state) {
+			state = e.State
+		}
+		if !isAIStatusContext(command, meta, projection) {
 			return protocol.AIStatusEvent{}, false
 		}
-		return buildAIStatusEvent(sessionID, e.State, false, projection.Controller.LastStep, projection.Controller.LastTool, projection.Controller.CurrentCommand, meta, projection)
+		return buildAIStatusEvent(sessionID, state, false, step, tool, command, meta, projection)
 	}
 	return protocol.AIStatusEvent{}, false
 }
@@ -369,7 +385,9 @@ func buildAIStatusEvent(sessionID, state string, awaitInput bool, step, tool, co
 
 func aiStatusLabelFromState(state, step, tool, command string, meta protocol.RuntimeMeta, projection data.ProjectionSnapshot) string {
 	if step = strings.TrimSpace(step); step != "" {
-		return step
+		if !isTerminalStepMessage(step) {
+			return step
+		}
 	}
 	verb := aiStatusVerbForTool(tool)
 	target := pathBase(firstNonEmptyString(meta.TargetPath, meta.Target, projection.Controller.ActiveMeta.TargetPath))

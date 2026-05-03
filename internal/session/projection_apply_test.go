@@ -486,7 +486,7 @@ func TestApplyEventToProjection_AgentStateEvent(t *testing.T) {
 func TestApplyEventToProjection_PromptRequestSetsWaitInput(t *testing.T) {
 	out, applied := ApplyEventToProjection(data.ProjectionSnapshot{},
 		protocol.PromptRequestEvent{
-			Event: protocol.Event{Type: "prompt_request", SessionID: "s1"},
+			Event:   protocol.Event{Type: "prompt_request", SessionID: "s1"},
 			Message: "ok?",
 		})
 	if !applied {
@@ -554,6 +554,26 @@ func TestApplyEventToProjection_StepUpdate(t *testing.T) {
 	}
 	if out.CurrentStep == nil || out.CurrentStep.Tool != "Read" {
 		t.Errorf("current step: %+v", out.CurrentStep)
+	}
+}
+
+func TestApplyEventToProjection_TerminalStepDoesNotReplaceCurrentStep(t *testing.T) {
+	previous := &data.SnapshotContext{Type: "step", Message: "Running command", Status: "running"}
+	out, applied := ApplyEventToProjection(data.ProjectionSnapshot{CurrentStep: previous},
+		protocol.StepUpdateEvent{
+			Event:   protocol.Event{Type: "step_update", SessionID: "s1", Timestamp: time.Now()},
+			Message: "Completed command",
+			Status:  "done",
+			Tool:    "commandExecution",
+		})
+	if !applied {
+		t.Fatal("expected applied")
+	}
+	if out.CurrentStep == nil || out.CurrentStep.Message != "Running command" {
+		t.Fatalf("terminal step should not replace current step, got %+v", out.CurrentStep)
+	}
+	if len(out.LogEntries) == 0 || out.LogEntries[len(out.LogEntries)-1].Kind != "step" {
+		t.Fatalf("expected terminal step to remain in log entries, got %+v", out.LogEntries)
 	}
 }
 

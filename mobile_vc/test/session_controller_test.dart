@@ -1548,12 +1548,11 @@ void main() {
         AgentStateEvent(
           timestamp: _timestamp.add(const Duration(seconds: 1)),
           sessionId: 'session-1',
-          runtimeMeta:
-              const RuntimeMeta(
-                  command: 'claude',
-                  engine: 'claude',
-                  executionId: 'exec-1',
-                  claudeLifecycle: 'settled'),
+          runtimeMeta: const RuntimeMeta(
+              command: 'claude',
+              engine: 'claude',
+              executionId: 'exec-1',
+              claudeLifecycle: 'settled'),
           raw: const {'type': 'agent_state'},
           state: 'IDLE',
           message: '完成',
@@ -5206,6 +5205,21 @@ void main() {
       expect(controller.displayPermissionMode, 'default');
     });
 
+    test('用户切换到手动审核时配置和后端 payload 都保留 default', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      controller.updatePermissionMode('default');
+
+      expect(controller.config.permissionMode, 'default');
+      expect(controller.displayPermissionMode, 'default');
+      expect(service.sentPayloads, hasLength(1));
+      expect(service.sentPayloads.single['action'], 'set_permission_mode');
+      expect(service.sentPayloads.single['permissionMode'], 'default');
+    });
+
     test('permission decision 优先沿用当前交互的 permission mode', () async {
       final service = _FakeMobileVcWsService();
       final controller = SessionController(service: service);
@@ -6876,8 +6890,286 @@ void main() {
         phase: 'settled',
       ));
       await _flushEvents();
+      await Future<void>.delayed(const Duration(milliseconds: 650));
 
       expect(controller.aiStatusIndicatorVisible, isFalse);
+    });
+
+    test('keeps submitted turn visible through stale waiting_input status',
+        () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionCreatedEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_created'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+      ));
+      service.emit(AgentStateEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'waiting_input',
+        ),
+        raw: const {'type': 'agent_state'},
+        state: 'WAIT_INPUT',
+        message: '等待输入',
+        awaitInput: true,
+        command: 'claude',
+      ));
+      await _flushEvents();
+
+      controller.sendInputText('hello');
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 100)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'waiting_input',
+        ),
+        raw: const {'type': 'ai_status'},
+        visible: false,
+        phase: 'waiting_input',
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+
+      service.emit(PromptRequestEvent(
+        timestamp: _timestamp.add(const Duration(seconds: 1)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'waiting_input',
+          blockingKind: 'ready',
+        ),
+        raw: const {'type': 'prompt_request', 'msg': '等待输入'},
+        message: '等待输入',
+      ));
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(seconds: 1)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'waiting_input',
+        ),
+        raw: const {'type': 'ai_status'},
+        visible: false,
+        phase: 'waiting_input',
+      ));
+      await _flushEvents();
+      await Future<void>.delayed(const Duration(milliseconds: 650));
+
+      expect(controller.aiStatusIndicatorVisible, isFalse);
+    });
+
+    test('keeps submitted turn visible after fresh run then stale hide',
+        () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionCreatedEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_created'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+      ));
+      service.emit(AgentStateEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'waiting_input',
+          executionId: 'exec-old',
+        ),
+        raw: const {'type': 'agent_state'},
+        state: 'WAIT_INPUT',
+        message: '等待输入',
+        awaitInput: true,
+        command: 'claude',
+      ));
+      await _flushEvents();
+
+      controller.sendInputText('hello');
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+
+      service.emit(AgentStateEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 50)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'active',
+          executionId: 'exec-new',
+        ),
+        raw: const {'type': 'agent_state'},
+        state: 'THINKING',
+        message: '思考中',
+        command: 'claude',
+      ));
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 60)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'active',
+          executionId: 'exec-new',
+        ),
+        raw: const {'type': 'ai_status'},
+        visible: true,
+        label: '思考中',
+        phase: 'thinking',
+      ));
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 70)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(
+          command: 'claude',
+          claudeLifecycle: 'waiting_input',
+          executionId: 'exec-old',
+        ),
+        raw: const {'type': 'ai_status'},
+        visible: false,
+        phase: 'waiting_input',
+      ));
+      await _flushEvents();
+      await Future<void>.delayed(const Duration(milliseconds: 650));
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+
+      service.emit(LogEvent(
+        timestamp: _timestamp.add(const Duration(seconds: 1)),
+        sessionId: 'session-1',
+        runtimeMeta:
+            const RuntimeMeta(command: 'claude', executionId: 'exec-new'),
+        raw: const {'type': 'log'},
+        message: '处理好了，可以继续。',
+        stream: 'stdout',
+      ));
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(seconds: 1)),
+        sessionId: 'session-1',
+        runtimeMeta:
+            const RuntimeMeta(command: 'claude', executionId: 'exec-new'),
+        raw: const {'type': 'ai_status'},
+        visible: false,
+        phase: 'settled',
+      ));
+      await _flushEvents();
+      await Future<void>.delayed(const Duration(milliseconds: 650));
+
+      expect(controller.aiStatusIndicatorVisible, isFalse);
+    });
+
+    test('does not use completed step as active status text', () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(SessionCreatedEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(),
+        raw: const {'type': 'session_created'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+      ));
+      service.emit(StepUpdateEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 10)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'step_update'},
+        message: '正在运行命令',
+        status: 'running',
+        target: 'command',
+        tool: 'commandExecution',
+        command: 'codex',
+      ));
+      await _flushEvents();
+
+      expect(controller.currentStepSummary, '正在运行命令');
+
+      service.emit(StepUpdateEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 20)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'step_update'},
+        message: 'command completed',
+        status: 'done',
+        target: 'command',
+        tool: 'commandExecution',
+        command: 'codex',
+      ));
+      await _flushEvents();
+
+      expect(controller.currentStepSummary, '正在运行命令');
+
+      service.emit(SessionDeltaEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 30)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'session_delta'},
+        summary: const SessionSummary(id: 'session-1', title: 'Test'),
+        currentStep: const HistoryContext(
+          type: 'step',
+          message: 'Completed command',
+          status: 'done',
+          title: 'Completed command',
+        ),
+      ));
+      await _flushEvents();
+
+      expect(controller.currentStepSummary, '正在运行命令');
+    });
+
+    test('ignores completed ai_status labels from stale backend events',
+        () async {
+      final service = _FakeMobileVcWsService();
+      final controller = SessionController(service: service);
+      await controller.initialize();
+      addTearDown(controller.disposeController);
+
+      await controller.connect();
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp,
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'ai_status'},
+        visible: true,
+        label: '思考中',
+        phase: 'thinking',
+      ));
+      await _flushEvents();
+
+      service.emit(AIStatusEvent(
+        timestamp: _timestamp.add(const Duration(milliseconds: 10)),
+        sessionId: 'session-1',
+        runtimeMeta: const RuntimeMeta(command: 'codex', engine: 'codex'),
+        raw: const {'type': 'ai_status'},
+        visible: true,
+        label: 'Completed command',
+        phase: 'running_tool',
+      ));
+      await _flushEvents();
+
+      expect(controller.aiStatusIndicatorVisible, isTrue);
+      expect(controller.aiStatusIndicatorLabel, '思考中');
     });
 
     test('shows concrete tool detail while Claude is running a tool', () async {

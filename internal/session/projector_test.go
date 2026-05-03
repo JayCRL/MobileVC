@@ -533,6 +533,53 @@ func TestService_BuildTaskSnapshotEvent_RunningWaitInput(t *testing.T) {
 	}
 }
 
+func TestService_BuildTaskSnapshotEvent_BusyControllerBeatsInteractiveRunner(t *testing.T) {
+	runner := newPermissionStubRunner()
+	runner.interactive = true
+	svc := makeServiceWithPermissionRunner(t, runner)
+	startPermissionRunner(t, svc, "s1", runner)
+
+	svc.controller.OnRunnerEvent(protocol.ApplyRuntimeMeta(
+		protocol.NewStepUpdateEvent("s1", "Running command", "running", "", "Bash", "codex"),
+		protocol.RuntimeMeta{Command: "codex", Engine: "codex", ClaudeLifecycle: "active"},
+	))
+
+	got := svc.BuildTaskSnapshotEvent("s1", TaskCursorSnapshot{}, "", false)
+	if got == nil {
+		t.Fatal("expected event")
+	}
+	if !got.RuntimeAlive {
+		t.Errorf("runtimeAlive should be true")
+	}
+	if got.State != string(ControllerStateRunningTool) {
+		t.Errorf("expected busy controller state, got %q", got.State)
+	}
+	if got.AwaitInput {
+		t.Errorf("busy controller should not await input")
+	}
+	status, ok := AIStatusEventForBackendEvent("s1", svc, data.ProjectionSnapshot{
+		Controller: data.ControllerSnapshot{
+			State:          ControllerStateRunningTool,
+			CurrentCommand: "codex",
+			ActiveMeta: protocol.RuntimeMeta{
+				Command:         "codex",
+				Engine:          "codex",
+				ClaudeLifecycle: "active",
+			},
+		},
+		Runtime: data.SessionRuntime{Command: "codex", Engine: "codex", ClaudeLifecycle: "active"},
+	}, *got)
+	if !ok {
+		t.Fatal("expected ai status")
+	}
+	if !status.Visible {
+		t.Fatalf("expected visible ai status, got %#v", status)
+	}
+	if status.Phase != "running_tool" {
+		t.Errorf("phase: %q", status.Phase)
+	}
+}
+
 func TestService_WaitForInteractive_NoActive(t *testing.T) {
 	svc := NewService("s1", Dependencies{})
 	t.Cleanup(svc.Cleanup)

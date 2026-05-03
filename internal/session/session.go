@@ -247,6 +247,9 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 		}
 		c.lastStepMsg = e.Message
 		c.lastStepStatus = e.Status
+		if isTerminalStepStatus(e.Status) {
+			return nil
+		}
 		if e.Message != "" {
 			c.lastStep = e.Message
 		}
@@ -330,6 +333,38 @@ func (c *Controller) OnRunnerEvent(event any) []any {
 	default:
 		return nil
 	}
+}
+
+func isTerminalStepStatus(status string) bool {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "done", "completed", "complete", "success", "succeeded":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalStepMessage(message string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(message))
+	if normalized == "" {
+		return false
+	}
+	switch normalized {
+	case "command completed", "tool completed":
+		return true
+	}
+	for _, prefix := range []string{
+		"completed ",
+		"done",
+		"finished",
+		"resolved",
+		"applied file changes",
+	} {
+		if strings.HasPrefix(normalized, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) OnInputSent(meta protocol.RuntimeMeta) []any {

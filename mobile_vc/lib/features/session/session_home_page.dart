@@ -158,7 +158,9 @@ class _SessionHomePageState extends State<SessionHomePage> {
                             controller.pendingPrompt?.hasVisiblePrompt !=
                                 true &&
                             controller.pendingInteraction?.hasVisiblePrompt !=
-                                true)
+                                true &&
+                            !controller.shouldShowPlanChoices &&
+                            !controller.aiStatusIndicatorVisible)
                         ? const Center(child: _LandingBrand())
                         : Column(
                             children: [

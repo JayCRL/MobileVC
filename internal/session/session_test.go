@@ -52,6 +52,40 @@ func TestControllerPermissionPromptReplacesPreviousPermissionMeta(t *testing.T) 
 	}
 }
 
+func TestControllerDoneStepDoesNotOverwriteRunningToolState(t *testing.T) {
+	controller := NewController("s1")
+	controller.OnExecStart("claude", protocol.RuntimeMeta{Command: "claude"})
+	events := controller.OnRunnerEvent(protocol.ApplyRuntimeMeta(
+		protocol.NewStepUpdateEvent("s1", "正在修改 main.dart", "running", "/repo/main.dart", "Edit", "claude"),
+		protocol.RuntimeMeta{Command: "claude", Engine: "claude"},
+	))
+	if len(events) != 1 {
+		t.Fatalf("expected running step agent event, got %#v", events)
+	}
+	snapshot := controller.Snapshot()
+	if snapshot.State != ControllerStateRunningTool {
+		t.Fatalf("expected running tool state, got %q", snapshot.State)
+	}
+	if snapshot.LastStep != "正在修改 main.dart" {
+		t.Fatalf("expected running step to be kept, got %q", snapshot.LastStep)
+	}
+
+	events = controller.OnRunnerEvent(protocol.ApplyRuntimeMeta(
+		protocol.NewStepUpdateEvent("s1", "tool completed", "done", "/repo/main.dart", "Edit", "claude"),
+		protocol.RuntimeMeta{Command: "claude", Engine: "claude"},
+	))
+	if len(events) != 0 {
+		t.Fatalf("expected done step not to emit agent event, got %#v", events)
+	}
+	snapshot = controller.Snapshot()
+	if snapshot.State != ControllerStateRunningTool {
+		t.Fatalf("expected running tool state to remain, got %q", snapshot.State)
+	}
+	if snapshot.LastStep != "正在修改 main.dart" {
+		t.Fatalf("done step should not become status label, got %q", snapshot.LastStep)
+	}
+}
+
 func TestControllerKeepsRecentDiffContext(t *testing.T) {
 	controller := NewController("s1")
 	controller.OnRunnerEvent(protocol.FileDiffEvent{

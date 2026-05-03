@@ -246,6 +246,8 @@ class AppConfig {
     switch (value.trim()) {
       case 'bypassPermissions':
         return 'bypassPermissions';
+      case 'default':
+        return 'default';
       default:
         return 'auto';
     }

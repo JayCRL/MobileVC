@@ -604,6 +604,9 @@ func (s *codexAppSession) handleItemEvent(raw json.RawMessage, status string) {
 		}
 		return
 	}
+	if status == "done" {
+		return
+	}
 	message, target := codexItemStepSummary(payload.Item, status)
 	if message == "" {
 		return

@@ -1689,6 +1689,40 @@ func TestCodexAppSessionReadLoopHandlesLongJSONLines(t *testing.T) {
 	}
 }
 
+func TestCodexAppSessionCompletedCommandDoesNotEmitStepUpdate(t *testing.T) {
+	params, err := json.Marshal(map[string]any{
+		"threadId": "thread-123",
+		"turnId":   "turn-1",
+		"item": map[string]any{
+			"type":    "commandExecution",
+			"command": "go test ./internal/session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	var steps []protocol.StepUpdateEvent
+	app := &codexAppSession{
+		sessionID: "s-codex-completed-command",
+		sink: func(event any) {
+			if step, ok := event.(protocol.StepUpdateEvent); ok {
+				steps = append(steps, step)
+			}
+		},
+	}
+
+	app.handleItemEvent(params, "running")
+	app.handleItemEvent(params, "done")
+
+	if len(steps) != 1 {
+		t.Fatalf("expected only running step, got %#v", steps)
+	}
+	if steps[0].Message == "Completed command" || steps[0].Status == "done" {
+		t.Fatalf("completed command step should not be emitted, got %#v", steps[0])
+	}
+}
+
 func TestReadOutputDoesNotDuplicateChunkedStderrLiveTail(t *testing.T) {
 	runner := NewPtyRunner()
 	reader := &chunkReader{

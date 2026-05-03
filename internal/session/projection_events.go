@@ -438,7 +438,7 @@ func RestoredAgentStateEventFromRecord(record data.SessionRecord, hasActiveRunne
 	}
 	awaitInput := state == ControllerStateWaitInput
 	currentStepMessage := ""
-	if projection.CurrentStep != nil {
+	if projection.CurrentStep != nil && !isTerminalStepStatus(projection.CurrentStep.Status) && !isTerminalStepMessage(projection.CurrentStep.Message) {
 		currentStepMessage = projection.CurrentStep.Message
 	}
 	message := firstNonEmptyString(projection.Controller.LastStep, currentStepMessage)
