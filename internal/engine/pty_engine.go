@@ -1871,6 +1871,11 @@ func extractControlRequestPrompt(envelope claudeStreamEnvelope) string {
 	}
 	if strings.EqualFold(strings.TrimSpace(envelope.Request.Subtype), "can_use_tool") {
 		toolName := strings.TrimSpace(envelope.Request.ToolName)
+		if strings.EqualFold(toolName, "Bash") {
+			if cmd := extractBashCommandPreview(envelope.Request.Input); cmd != "" {
+				return fmt.Sprintf("Claude requested permissions to use Bash: %s", cmd)
+			}
+		}
 		target := strings.TrimSpace(extractToolTarget(toolName, envelope.Request.Input))
 		switch {
 		case toolName != "" && target != "":
@@ -1880,6 +1885,36 @@ func extractControlRequestPrompt(envelope claudeStreamEnvelope) string {
 		}
 	}
 	return "Claude requested permissions to continue"
+}
+
+// extractBashCommandPreview 提取 Bash 工具调用的 command 字段并截断为可读预览，
+// 用于权限提示的标题，让连续的 Bash 权限请求能从文案上区分开。
+func extractBashCommandPreview(rawInput json.RawMessage) string {
+	if len(rawInput) == 0 {
+		return ""
+	}
+	var input map[string]any
+	if err := json.Unmarshal(rawInput, &input); err != nil {
+		return ""
+	}
+	cmdVal, ok := input["command"]
+	if !ok {
+		return ""
+	}
+	cmdStr, ok := cmdVal.(string)
+	if !ok {
+		return ""
+	}
+	cmd := strings.TrimSpace(cmdStr)
+	if cmd == "" {
+		return ""
+	}
+	const maxLen = 80
+	if len(cmd) > maxLen {
+		// 注意：截断按字节，可能切到多字节字符的中间，但 Bash 命令绝大多数是 ASCII，足够。
+		cmd = cmd[:maxLen-3] + "..."
+	}
+	return cmd
 }
 
 type claudeCatalogAuthoringPayload struct {

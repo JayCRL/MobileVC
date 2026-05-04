@@ -4152,7 +4152,7 @@ func TestHandlerPermissionDecisionApproveForCodexWithExpiredPendingRequestReturn
 	}
 }
 
-func TestHandlerPermissionDecisionApproveForCodexWithMismatchedRequestIDRefreshesPrompt(t *testing.T) {
+func TestHandlerPermissionDecisionApproveForCodexWithMismatchedRequestIDAutoAppliesToCurrent(t *testing.T) {
 	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "需要权限确认", []string{"approve", "deny"}))
 	firstRunner.currentPermissionRequestID = "perm-codex-1"
 	h := newTestHandler()
@@ -4190,8 +4190,59 @@ func TestHandlerPermissionDecisionApproveForCodexWithMismatchedRequestIDRefreshe
 		t.Fatalf("write permission decision request: %v", err)
 	}
 
+	// 客户端的 approve 用的是已经过期的 perm-codex-2，但当前 pending 是 perm-codex-1。
+	// 新行为：服务端把 approve 套到当前 pending 上直接执行，runner 应该收到 approve。
+	select {
+	case decision := <-firstRunner.permissionResponseWriteCh:
+		if decision != "approve" {
+			t.Fatalf("expected runner to receive approve, got %q", decision)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner did not receive auto-applied approve decision")
+	}
+}
+
+func TestHandlerPermissionDecisionDenyForCodexWithMismatchedRequestIDStillRefreshesPrompt(t *testing.T) {
+	firstRunner := newHoldingStubRunner(protocol.NewPromptRequestEvent("ignored", "需要权限确认", []string{"approve", "deny"}))
+	firstRunner.currentPermissionRequestID = "perm-deny-current"
+	h := newTestHandler()
+	tempStore, err := data.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new temp store: %v", err)
+	}
+	h.SessionStore = tempStore
+	h.NewPtyRunner = func() engine.Runner { return firstRunner }
+	conn := newTestConn(t, h)
+	_, _ = readInitialEvents(t, conn)
+	_ = createHistorySessionForHandlerTest(t, h, conn, "permission-deny-codex-mismatch")
+
+	if err := conn.WriteJSON(protocol.ExecRequestEvent{
+		ClientEvent:    protocol.ClientEvent{Action: "exec"},
+		Command:        "codex",
+		Mode:           "pty",
+		PermissionMode: "default",
+	}); err != nil {
+		t.Fatalf("write exec request: %v", err)
+	}
+	firstRunner.WaitStarted(t)
+	_ = readUntilType(t, conn, protocol.EventTypePromptRequest)
+	_ = readUntilType(t, conn, protocol.EventTypeAgentState)
+
+	if err := conn.WriteJSON(protocol.PermissionDecisionRequestEvent{
+		ClientEvent:         protocol.ClientEvent{Action: "permission_decision"},
+		Decision:            "deny",
+		PermissionMode:      "default",
+		PermissionRequestID: "perm-deny-stale",
+		PromptMessage:       "需要权限确认",
+		FallbackCommand:     "codex",
+		FallbackEngine:      "codex",
+	}); err != nil {
+		t.Fatalf("write permission decision request: %v", err)
+	}
+
+	// deny 仍要求用户对真正的当前请求做明确拒绝，不应自动套到 current pending。
 	event := readUntilType(t, conn, protocol.EventTypePromptRequest)
-	if event["permissionRequestId"] != "perm-codex-1" {
+	if event["permissionRequestId"] != "perm-deny-current" {
 		t.Fatalf("expected refreshed current permission request id, got %#v", event)
 	}
 	if event["blockingKind"] != "permission" {
@@ -4199,7 +4250,7 @@ func TestHandlerPermissionDecisionApproveForCodexWithMismatchedRequestIDRefreshe
 	}
 	select {
 	case decision := <-firstRunner.permissionResponseWriteCh:
-		t.Fatalf("unexpected direct permission response: %q", decision)
+		t.Fatalf("unexpected direct permission response on stale deny: %q", decision)
 	case <-time.After(200 * time.Millisecond):
 	}
 }

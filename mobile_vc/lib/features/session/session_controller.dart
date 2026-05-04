@@ -626,7 +626,6 @@ class SessionController extends ChangeNotifier {
       : '正在同步电脑端进度。点击继续后，手机会向同一个会话发送输入。';
   bool get shouldShowSessionObservationBanner =>
       _selectedSessionId.trim().isNotEmpty &&
-      _sessionRuntimeAlive &&
       _selectedSessionExternalNative &&
       !hasPendingPermissionPrompt &&
       !shouldShowReviewChoices &&

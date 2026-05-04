@@ -1756,17 +1756,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if requestedID := strings.TrimSpace(permissionEvent.PermissionRequestID); requestedID != "" {
 				currentID := strings.TrimSpace(service.CurrentPermissionRequestID(sessionID))
 				if currentID != "" && currentID != requestedID {
-					var refreshed *protocol.PromptRequestEvent
-					if sessionRuntime != nil {
-						refreshed = sessionRuntime.latestPendingPermissionPrompt(currentID)
-					}
-					if refreshed == nil {
-						refreshed = session.RefreshedPermissionPromptEvent(sessionID, permissionEvent, service)
-					}
-					if refreshed != nil {
-						logx.Info("ws", "permission decision request id stale, refreshing current request id: connectionID=%s sessionID=%s remoteAddr=%s clientRequestID=%q currentRequestID=%q", connectionID, sessionID, remoteAddr, requestedID, currentID)
-						emit(*refreshed)
-						continue
+					// 用户的 approve 是"对当前可见提示放行"的意图。若客户端拿到的还是上一轮提示的 id，
+					// 直接把当前 pending 的 id 套上去执行，避免出现"点击没反应"的二次往返。
+					// deny 仍走 refresh 路径，要求用户对真正的当前请求做明确拒绝。
+					if decision == "approve" {
+						logx.Info("ws", "permission decision request id stale, auto-applying approve to current pending: connectionID=%s sessionID=%s remoteAddr=%s clientRequestID=%q currentRequestID=%q", connectionID, sessionID, remoteAddr, requestedID, currentID)
+						permissionEvent.PermissionRequestID = currentID
+					} else {
+						var refreshed *protocol.PromptRequestEvent
+						if sessionRuntime != nil {
+							refreshed = sessionRuntime.latestPendingPermissionPrompt(currentID)
+						}
+						if refreshed == nil {
+							refreshed = session.RefreshedPermissionPromptEvent(sessionID, permissionEvent, service)
+						}
+						if refreshed != nil {
+							logx.Info("ws", "permission decision request id stale, refreshing current request id: connectionID=%s sessionID=%s remoteAddr=%s clientRequestID=%q currentRequestID=%q decision=%q", connectionID, sessionID, remoteAddr, requestedID, currentID, decision)
+							emit(*refreshed)
+							continue
+						}
 					}
 				}
 			}
