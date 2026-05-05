@@ -29,6 +29,14 @@ const (
 	ptyErrNoActiveRunner    = "no active runner"
 	ptyErrNotInteractive    = "runner is not ready for interactive input"
 	textPermissionRequestID = "__text_permission_prompt__"
+
+	// stall watchdog 阈值：检测引擎（Claude/Codex）输出沉默时长。
+	// 设计：每 10s 巡检；60s/90s 仅记录日志（"试几下"——给 AI 长思考留余地）；
+	// 120s 仍无任何输出则强制关闭 runner，并向前端发 ErrorEvent。
+	stallWatchdogTickInterval = 10 * time.Second
+	stallWatchdogWarn1        = 60 * time.Second
+	stallWatchdogWarn2        = 90 * time.Second
+	stallWatchdogAbort        = 120 * time.Second
 )
 
 type PtyRunner struct {
@@ -60,6 +68,10 @@ type PtyRunner struct {
 	catalogAuthoringBuffer  strings.Builder
 	lastAssistantTextKey    string
 	runGeneration           uint64
+	// stall watchdog 状态：lastEngineOutputAt 由 markOutputSeen 在每次读到字节/行后更新；
+	// stallWatchdogCancel 用于在 runner 关闭时停止后台巡检 goroutine。
+	lastEngineOutputAt  time.Time
+	stallWatchdogCancel context.CancelFunc
 }
 
 type fileSnapshot struct {
@@ -755,12 +767,104 @@ func (r *PtyRunner) nextRunGeneration() uint64 {
 	return r.runGeneration
 }
 
+// markOutputSeen 在每次从引擎读到输出（字节或 JSON 行）时调用，刷新 stall watchdog 的活性时间戳。
+func (r *PtyRunner) markOutputSeen() {
+	r.mu.Lock()
+	r.lastEngineOutputAt = time.Now()
+	r.mu.Unlock()
+}
+
+// startStallWatchdog 启动后台 goroutine 巡检引擎输出沉默时长。调用方需保证：
+//   - 在 mu 锁外调用
+//   - 同一 generation 内只调用一次
+//   - 通过 clearGeneration 触发的 cancel 来停止 watchdog
+//
+// 行为："试几下" + 直接停：
+//   - 60s 沉默：记录第 1 次警告（仅日志，不改 UI）
+//   - 90s 沉默：记录第 2 次警告
+//   - 120s 沉默：强制 r.Close() + 向前端发 ErrorEvent，由 IDLE 状态自然让 UI 退出运行态
+//   - 一旦再次有输出（lastEngineOutputAt 更新），警告计数自动重置
+func (r *PtyRunner) startStallWatchdog(parentCtx context.Context, sessionID string, sink EventSink) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parentCtx)
+
+	r.mu.Lock()
+	if existing := r.stallWatchdogCancel; existing != nil {
+		// 上一次的 watchdog 还在跑，先关掉
+		r.stallWatchdogCancel = nil
+		r.mu.Unlock()
+		existing()
+		r.mu.Lock()
+	}
+	r.lastEngineOutputAt = time.Now()
+	r.stallWatchdogCancel = cancel
+	r.mu.Unlock()
+
+	go r.runStallWatchdog(ctx, sessionID, sink)
+}
+
+func (r *PtyRunner) runStallWatchdog(ctx context.Context, sessionID string, sink EventSink) {
+	ticker := time.NewTicker(stallWatchdogTickInterval)
+	defer ticker.Stop()
+
+	var warnedLevel int // 0=未警告, 1=已发 60s 警告, 2=已发 90s 警告
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		r.mu.Lock()
+		lastAt := r.lastEngineOutputAt
+		closed := r.closed
+		r.mu.Unlock()
+
+		if closed {
+			return
+		}
+		if lastAt.IsZero() {
+			continue
+		}
+
+		silent := time.Since(lastAt)
+
+		// 引擎重新有输出后，重置警告等级
+		if silent < stallWatchdogWarn1 {
+			warnedLevel = 0
+			continue
+		}
+
+		if silent >= stallWatchdogAbort {
+			logx.Warn("pty", "stall watchdog: aborting runner due to %s of silence: sessionID=%s", silent.Round(time.Second), sessionID)
+			sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("AI 长时间无响应（%d 秒），已自动停止。请重新发送请求。", int(silent.Seconds())), ""))
+			_ = r.Close()
+			return
+		}
+
+		if silent >= stallWatchdogWarn2 && warnedLevel < 2 {
+			logx.Warn("pty", "stall watchdog: silence %s (warn2) sessionID=%s", silent.Round(time.Second), sessionID)
+			warnedLevel = 2
+			continue
+		}
+
+		if silent >= stallWatchdogWarn1 && warnedLevel < 1 {
+			logx.Warn("pty", "stall watchdog: silence %s (warn1) sessionID=%s", silent.Round(time.Second), sessionID)
+			warnedLevel = 1
+		}
+	}
+}
+
 func (r *PtyRunner) clearGeneration(generation uint64) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if generation != 0 && r.runGeneration != generation {
+		r.mu.Unlock()
 		return
 	}
+	cancel := r.stallWatchdogCancel
+	r.stallWatchdogCancel = nil
 	r.runCtx = nil
 	r.writer = nil
 	r.closer = nil
@@ -780,6 +884,10 @@ func (r *PtyRunner) clearGeneration(generation uint64) {
 	r.pendingPromptOptions = nil
 	r.closed = true
 	r.suppressExitError = false
+	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (r *PtyRunner) clear() {
@@ -847,6 +955,8 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 			_ = stdin.Close()
 		}
 	}()
+
+	r.startStallWatchdog(ctx, req.SessionID, sink)
 
 	// 稍候片刻以确认进程未即崩。若 50ms 内退出，则不标 interactive，
 	// 使 Run() 经 r.processDone 直获其误，不发 PromptRequestEvent。
@@ -930,6 +1040,8 @@ func (r *PtyRunner) runCodexAppServer(ctx context.Context, req ExecRequest, cwd 
 	r.mu.Unlock()
 	defer r.clearGeneration(generation)
 
+	r.startStallWatchdog(ctx, req.SessionID, sink)
+
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, "active", "command started"))
 
 	if strings.TrimSpace(initialPrompt) != "" {
@@ -998,6 +1110,8 @@ func (r *PtyRunner) runClaudeResumeInteractive(ctx context.Context, req ExecRequ
 			_ = interactive.closer.Close()
 		}
 	}()
+
+	r.startStallWatchdog(ctx, req.SessionID, sink)
 
 	sendEvent(sink, protocol.NewSessionStateEvent(req.SessionID, "active", "command started"))
 
@@ -1135,6 +1249,8 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 		r.runGeneration = generation
 		r.mu.Unlock()
 
+		r.startStallWatchdog(ctx, req.SessionID, sink)
+
 		go func() {
 			var readWG sync.WaitGroup
 			readWG.Add(2)
@@ -1207,6 +1323,8 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 	r.writer = nil
 	r.runGeneration = generation
 	r.mu.Unlock()
+
+	r.startStallWatchdog(ctx, req.SessionID, sink)
 
 	go func() {
 		var readWG sync.WaitGroup
@@ -1941,6 +2059,7 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			return ctx.Err()
 		default:
 		}
+		r.markOutputSeen()
 		line := strings.TrimSpace(string(rawLine))
 		if line == "" {
 			return nil
@@ -2424,6 +2543,7 @@ func (r *PtyRunner) readOutput(ctx context.Context, reader io.Reader, sessionID 
 
 		n, err := reader.Read(buf)
 		if n > 0 {
+			r.markOutputSeen()
 			rawChunk := string(buf[:n])
 			chunk, nextCarry := StripANSIChunk(rawChunk, ansiCarry)
 			ansiCarry = nextCarry

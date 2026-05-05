@@ -321,7 +321,9 @@ class InteractionRequestEvent extends AppEvent {
     return runtimeMeta.blockingKind.trim().toLowerCase();
   }
 
-  bool get isPermission => blockingKind == 'permission';
+  bool get isPermission =>
+      blockingKind == 'permission' ||
+      runtimeMeta.permissionRequestId.trim().isNotEmpty;
   bool get isReview => blockingKind == 'review';
   bool get isChoice => blockingKind == 'choice';
   bool get isInput => blockingKind == 'input';
@@ -376,7 +378,9 @@ class PromptRequestEvent extends AppEvent {
       options.any((option) => option.displayText.isNotEmpty);
 
   String get blockingKind => runtimeMeta.blockingKind.trim().toLowerCase();
-  bool get isPermission => blockingKind == 'permission';
+  bool get isPermission =>
+      blockingKind == 'permission' ||
+      runtimeMeta.permissionRequestId.trim().isNotEmpty;
   bool get isReview => blockingKind == 'review';
   bool get isPlan => blockingKind == 'plan';
   bool get isReply => blockingKind == 'reply';

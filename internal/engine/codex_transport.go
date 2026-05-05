@@ -404,6 +404,9 @@ func (s *codexAppSession) readLoop(ctx context.Context, reader io.Reader) {
 			return ctx.Err()
 		default:
 		}
+		if s.runner != nil {
+			s.runner.markOutputSeen()
+		}
 		line := strings.TrimSpace(string(rawLine))
 		if line == "" {
 			return nil
