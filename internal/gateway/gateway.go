@@ -4240,7 +4240,13 @@ func mergeClaudeJSONLToRecord(ctx context.Context, sessionStore data.Store, reco
 		snapshot := runtimeSvc.RuntimeSnapshot()
 		runtimeManaged = snapshot.Running && strings.TrimSpace(snapshot.ActiveSession) == strings.TrimSpace(record.Summary.ID)
 	}
-	if !runtimeManaged {
+	// 守卫：会话之前已被明确标记为 mobilevc 所有时，即使 runtimeSvc 暂时不存活
+	// （例如 server 进程刚重启、runner 尚未恢复），也不要因为 JSONL 出现新条目就升级
+	// 为 claude-native。这些"新条目"通常是 mobilevc 自己之前的 runner 写下后未及时
+	// 同步到 record 里的 catch-up，并非桌面端 Claude CLI 真的接管。
+	previousOwnership := strings.ToLower(strings.TrimSpace(record.Summary.Ownership))
+	mobilevcOwned := previousOwnership == "mobilevc"
+	if !runtimeManaged && !mobilevcOwned {
 		record.Summary.External = true
 		record.Summary.Ownership = "claude-native"
 		if record.Summary.Source == "" || record.Summary.Source == "mobilevc" {
@@ -4249,7 +4255,7 @@ func mergeClaudeJSONLToRecord(ctx context.Context, sessionStore data.Store, reco
 		if record.Summary.Runtime.Source == "" || record.Summary.Runtime.Source == "mobilevc" {
 			record.Summary.Runtime.Source = "claude-native"
 		}
-	} else {
+	} else if runtimeManaged {
 		// Reset stale ownership when MobileVC runtime is actively managing
 		// this session — undo any External/ownership from previous sessions.
 		record.Summary.External = false
