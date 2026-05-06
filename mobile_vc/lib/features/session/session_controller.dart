@@ -3428,13 +3428,20 @@ class SessionController extends ChangeNotifier {
           permissionMode: _currentDecisionPermissionMode,
         ),
       );
+      // 取最新 _pendingPrompt 的 permissionRequestId 优先，避免 interaction 缓存里
+      // 是上一轮已处理的 ID，导致后端 stale 兜底失败时整个权限态被清空。
+      final livePromptRequestId =
+          _pendingPrompt?.runtimeMeta.permissionRequestId.trim() ?? '';
+      final effectivePermissionRequestId = livePromptRequestId.isNotEmpty
+          ? livePromptRequestId
+          : decisionMeta.permissionRequestId;
       _service.send({
         'action': 'permission_decision',
         'sessionId': _selectedSessionId,
         'decision': selection.decision,
         if (selection.scope.isNotEmpty) 'scope': selection.scope,
         'permissionMode': _currentDecisionPermissionMode,
-        'permissionRequestId': decisionMeta.permissionRequestId,
+        'permissionRequestId': effectivePermissionRequestId,
         'resumeSessionId': interaction.resumeSessionId,
         'targetPath': interaction.targetPath,
         'contextId': interaction.contextId,

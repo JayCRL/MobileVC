@@ -72,6 +72,9 @@ type PtyRunner struct {
 	// stallWatchdogCancel 用于在 runner 关闭时停止后台巡检 goroutine。
 	lastEngineOutputAt  time.Time
 	stallWatchdogCancel context.CancelFunc
+	// streamFirstLineSeen 用于在 claude stream 启动期 emit "engine_starting" phase，
+	// 在收到首条 raw line 时清掉，避免 resume 启动 + 首字延迟期间前端无反馈。
+	streamFirstLineSeen bool
 }
 
 type fileSnapshot struct {
@@ -774,6 +777,17 @@ func (r *PtyRunner) markOutputSeen() {
 	r.mu.Unlock()
 }
 
+// emitClaudeStartingPhase 在 claude stream 进程刚启动、尚未吐出首条 stream 行的窗口期，
+// 给客户端一条临时 phase 事件，避免 resume 启动 + Anthropic 首字延迟期间界面无反馈。
+// 文案上 resume 与首启分开，便于前端区分展示。
+func emitClaudeStartingPhase(sink EventSink, sessionID, resumeSessionID string) {
+	message := "正在启动 Claude..."
+	if strings.TrimSpace(resumeSessionID) != "" {
+		message = "正在恢复 Claude 会话..."
+	}
+	sendEvent(sink, protocol.NewRuntimePhaseEvent(sessionID, "engine_starting", "engine", message))
+}
+
 // startStallWatchdog 启动后台 goroutine 巡检引擎输出沉默时长。调用方需保证：
 //   - 在 mu 锁外调用
 //   - 同一 generation 内只调用一次
@@ -945,7 +959,10 @@ func (r *PtyRunner) runClaudeStream(ctx context.Context, req ExecRequest, cwd st
 	r.awaitingReadyPrompt = false
 	r.closed = false
 	r.runGeneration = generation
+	r.streamFirstLineSeen = false
+	resumeID := r.claudeSessionID
 	r.mu.Unlock()
+	emitClaudeStartingPhase(sink, req.SessionID, resumeID)
 	defer r.clearGeneration(generation)
 	defer func() {
 		r.mu.Lock()
@@ -1247,7 +1264,9 @@ func (r *PtyRunner) startClaudeStreamOnFirstInput(ctx context.Context, req ExecR
 		r.pendingCWD = cwd
 		r.permissionMode = permMode
 		r.runGeneration = generation
+		r.streamFirstLineSeen = false
 		r.mu.Unlock()
+		emitClaudeStartingPhase(sink, req.SessionID, resumeSessionID)
 
 		r.startStallWatchdog(ctx, req.SessionID, sink)
 
@@ -2063,6 +2082,16 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 		line := strings.TrimSpace(string(rawLine))
 		if line == "" {
 			return nil
+		}
+		// 首条 raw line 到达后，立即 emit "engine_ready" 清掉启动期 phase 提示。
+		r.mu.Lock()
+		firstLine := !r.streamFirstLineSeen
+		if firstLine {
+			r.streamFirstLineSeen = true
+		}
+		r.mu.Unlock()
+		if firstLine {
+			sendEvent(sink, protocol.NewRuntimePhaseEvent(sessionID, "engine_ready", "engine", ""))
 		}
 		logx.Info("pty", "claude stream raw line: sessionID=%s preview=%q", sessionID, ptyDebugPreview(line))
 		var envelope claudeStreamEnvelope
