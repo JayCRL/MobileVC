@@ -1,0 +1,26 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "sk-chCeBuSpGtW1VcnzOsdSsYHXJy0bk7LVeZlcxzIUKsC42kno", "ANTHROPIC_BASE_URL": 
+    "https://a-ocnfniawgw.cn-shanghai.fcapp.run", 
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-4-7[1m]", 
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7[1m]", 
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-4-7[1m]", 
+    "ANTHROPIC_MODEL": "claude-opus-4-7[1m]", 
+    "ANTHROPIC_REASONING_MODEL": "claude-opus-4-7[1m]", 
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0", 
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1", 
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", 
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1", "CLAUDE_CODE_NEW_INIT": "1", 
+    "ENABLE_TOOL_SEARCH": "1"
+  }, "attribution": {
+    "commit": "", "pr": ""
+  }, "effortLevel": "high", "permissions": {
+    "allow": [], "deny": []
+  }, "model": "opus[1m]", "language": "Chinese", "alwaysThinkingEnabled": 
+  true, "enabledPlugins": {
+    "csharp-lsp@claude-plugins-official": true, 
+    "skill-creator@claude-plugins-official": true
+  }, "includeCoAuthoredBy": false, "statusLine": {
+    "type": "command", "command": "ccline", "padding": 0
+  }, "enableAllProjectMcpServers": true
+}

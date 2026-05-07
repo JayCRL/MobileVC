@@ -110,6 +110,36 @@ import UserNotifications
       }
     }
     self.pushChannel = pushChannel
+
+    // iSH Linux bridge
+    let ishChannel = FlutterMethodChannel(
+      name: "mobilevc/ish",
+      binaryMessenger: controller.binaryMessenger
+    )
+    ishChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "init":
+        guard let alpinePath = Bundle.main.path(forResource: "alpine", ofType: nil) else {
+          result(FlutterError(code: "no_rootfs", message: "Alpine rootfs not found", details: nil))
+          return
+        }
+        let status = ish_init(alpinePath)
+        result(status == 0)
+      case "exec":
+        guard let command = call.arguments as? String else {
+          result(FlutterError(code: "bad_args", message: "command required", details: nil))
+          return
+        }
+        var output: UnsafeMutablePointer<CChar>?
+        var outputLen: Int = 0
+        let exitCode = ish_exec(command, &output, &outputLen)
+        let outputStr = output.map { String(cString: $0) } ?? ""
+        if let ptr = output { free(ptr) }
+        result(["exitCode": exitCode, "output": outputStr])
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
   }
 
   private func requestPushPermission(application: UIApplication, result: @escaping FlutterResult) {

@@ -28,19 +28,6 @@
 		};
 /* End PBXContainerItemProxy section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		9705A1C41CF9048500538489 /* Embed Frameworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-			);
-			name = "Embed Frameworks";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
-
 /* Begin PBXFileReference section */
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
@@ -49,6 +36,9 @@
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
 		3C2E71D30668A4820B1530EA /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
+		73E7826E2FAD039A00E9DA7A /* python3_ios.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = python3_ios.xcframework; sourceTree = "<group>"; };
+		73E782712FAD03A400E9DA7A /* pythonA.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = pythonA.xcframework; sourceTree = "<group>"; };
+		73E7827B2FAD072500E9DA7A /* ios_system.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = ios_system.xcframework; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
@@ -98,6 +88,9 @@
 		75EADD4BF9FED54E9C5F8731 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				73E7827B2FAD072500E9DA7A /* ios_system.xcframework */,
+				73E782712FAD03A400E9DA7A /* pythonA.xcframework */,
+				73E7826E2FAD039A00E9DA7A /* python3_ios.xcframework */,
 				A445683A7A443A449C841B4F /* Pods_Runner.framework */,
 				A298D0550CC215A6DB8B8095 /* Pods_RunnerTests.framework */,
 			);
@@ -195,10 +188,11 @@
 				97C146EA1CF9000F007C117D /* Sources */,
 				97C146EB1CF9000F007C117D /* Frameworks */,
 				97C146EC1CF9000F007C117D /* Resources */,
-				9705A1C41CF9048500538489 /* Embed Frameworks */,
 				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
 				D57ECBEE81B935B770EBE3E0 /* [CP] Embed Pods Frameworks */,
 				D98B71E4CD4725BCEE7BD291 /* [CP] Copy Pods Resources */,
+				7BCFD5FCEC75B8A834D6F491 /* Copy Python stdlib */,
+				9CED68E4EEF5CB225820CE84 /* Copy Alpine rootfs */,
 			);
 			buildRules = (
 			);
@@ -286,6 +280,24 @@
 			shellPath = /bin/sh;
 			shellScript = "/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" embed_and_thin";
 		};
+		7BCFD5FCEC75B8A834D6F491 /* Copy Python stdlib */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Python stdlib";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "SRC=\"${SRCROOT}/../python39\"\nDST=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/python39\"\nif [ -d \"$SRC\" ]; then rm -rf \"$DST\"; cp -Rn \"$SRC\" \"$DST\"; fi\n";
+		};
 		8A71ABF87EE2D45A6A3D45CC /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -321,7 +333,25 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"$CONFIGURATION\" = \"Release\" ] || [ \"$CONFIGURATION\" = \"Profile\" ]; then\n  unset EXPANDED_CODE_SIGN_IDENTITY\n  unset EXPANDED_CODE_SIGN_IDENTITY_NAME\nfi\n/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" build";
+			shellScript = "if [ \"$CONFIGURATION\" = \"Release\" ] || [ \"$CONFIGURATION\" = \"Profile\" ]; then\n  unset EXPANDED_CODE_SIGN_IDENTITY\n  unset EXPANDED_CODE_SIGN_IDENTITY_NAME\nfi\n/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" build\n";
+		};
+		9CED68E4EEF5CB225820CE84 /* Copy Alpine rootfs */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Alpine rootfs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "SRC=\"${SRCROOT}/../alpine\"\nDST=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/alpine\"\nif [ -d \"$SRC\" ]; then rm -rf \"$DST\"; cp -Rn \"$SRC\" \"$DST\"; fi\n";
 		};
 		A23642BE440B89A3BAB5D7A3 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;

@@ -1,6 +1,5 @@
 platform :ios, '15.5'
 
-# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {
@@ -26,8 +25,6 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 
 flutter_ios_podfile_setup
 
-# Flutter 3.27 still includes some dev-only plugins in the generated iOS plugin
-# list. Exclude test plugins from app pods so release archives don't embed them.
 def flutter_install_plugin_pods(application_path = nil, relative_symlink_dir, platform)
   application_path ||= File.dirname(defined_in_file.realpath) if respond_to?(:defined_in_file)
   raise 'Could not find application path' unless application_path
@@ -72,6 +69,9 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
+  # iSH Linux emulator (provides full Alpine Linux: python3, nodejs, go, gcc, etc.)
+  pod 'ish', :path => File.dirname(__FILE__)
+
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths
@@ -83,6 +83,22 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.5'
+    end
+  end
+
+  # Copy Python stdlib and Alpine rootfs into app bundle
+  project = installer.aggregate_targets.first.user_project
+  runner = project.targets.find { |t| t.name == 'Runner' }
+  if runner
+    # Alpine Linux rootfs for iSH
+    phase2 = runner.shell_script_build_phases.find { |p| p.name == 'Copy Alpine rootfs' }
+    unless phase2
+      phase2 = runner.new_shell_script_build_phase('Copy Alpine rootfs')
+      phase2.shell_script = <<-SCRIPT
+SRC="${SRCROOT}/../alpine"
+DST="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/alpine"
+if [ -d "$SRC" ]; then rm -rf "$DST"; cp -Rn "$SRC" "$DST"; fi
+SCRIPT
     end
   end
 end
