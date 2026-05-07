@@ -2317,6 +2317,15 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			}
 			if shouldEmitClaudeReadyPrompt(envelope) {
 				r.markInteractiveReady()
+				// AI 已结束本轮，清除所有未决权限状态，避免 HasPendingPermissionRequest()
+				// 继续返回旧请求 ID 导致前端显示已过期的授权卡片。
+				r.mu.Lock()
+				r.pendingControlRequestID = ""
+				r.pendingControlRequestIDPrev = ""
+				r.pendingControlInput = nil
+				r.pendingControlInputPrev = nil
+				r.pendingPromptOptions = nil
+				r.mu.Unlock()
 				sendEvent(sink, protocol.ApplyRuntimeMeta(
 					protocol.NewPromptRequestEvent(sessionID, "等待输入", nil),
 					protocol.RuntimeMeta{ResumeSessionID: envelope.SessionID, BlockingKind: "ready"},

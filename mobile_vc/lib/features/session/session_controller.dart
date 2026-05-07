@@ -3390,19 +3390,12 @@ class SessionController extends ChangeNotifier {
   }
 
   void _clearPermissionBlockingState() {
-    if (_pendingInteraction?.isPermission == true) {
-      _pendingInteraction = null;
-    }
-    if (_pendingPrompt?.isPermission == true) {
-      _pendingPrompt = null;
-    }
-    final phase = _runtimePhase;
-    if (phase != null &&
-        (phase.kind.trim().toLowerCase() == 'permission' ||
-            phase.runtimeMeta.blockingKind.trim().toLowerCase() ==
-                'permission')) {
-      _runtimePhase = null;
-    }
+    // 权限决策发出后无条件清除本地阻塞状态。
+    // 后端通过 pendingControlRequestID/PendingControlRequestIDPrev 队列管理未决权限，
+    // 若有下一项会在下次 PromptRequestEvent 中推送，前端无需缓存。
+    _pendingInteraction = null;
+    _pendingPrompt = null;
+    _runtimePhase = null;
   }
 
   void _sendInteractionDecision(
@@ -6757,6 +6750,11 @@ class SessionController extends ChangeNotifier {
     if (currentInteraction?.isPermission == true ||
         currentPrompt?.isPermission == true) {
       if (!incoming.isPermission) {
+        // AI 结束（end_turn）发送的 ready prompt 应替换陈旧权限提示，
+        // 避免_clearPermissionBlockingState 未生效时用户看到已批准的授权卡片。
+        if (incoming.isReady) {
+          return false;
+        }
         return true;
       }
       final currentID = (currentInteraction?.runtimeMeta.permissionRequestId ??
