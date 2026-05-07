@@ -80,7 +80,7 @@ class _CommandInputBarState extends State<CommandInputBar> {
           widget.isBusy);
 
   bool get _showStopAction =>
-      !_inputLocked && !widget.awaitInput && widget.canStop;
+      !_inputLocked && widget.canStop;
 
   String get _lockedHintText {
     if (widget.isExternallyLocked) {

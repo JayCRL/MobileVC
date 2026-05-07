@@ -1,11 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../data/models/events.dart';
 
-class EventCard extends StatelessWidget {
+class EventCard extends StatefulWidget {
   const EventCard({
     super.key,
     required this.item,
@@ -16,35 +17,51 @@ class EventCard extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
+  State<EventCard> createState() => _EventCardState();
+}
+
+class _EventCardState extends State<EventCard> {
+  bool _selectionMode = false;
+
+  @override
+  void didUpdateWidget(covariant EventCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.id != widget.item.id) {
+      _selectionMode = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final style = _styleForKind(scheme, item.kind);
-    final compact = _isCompactKind(item.kind);
-    final isUser = item.kind == 'user';
-    final isMarkdown = item.kind == 'markdown';
+    final style = _styleForKind(scheme, widget.item.kind);
+    final compact = _isCompactKind(widget.item.kind);
+    final isUser = widget.item.kind == 'user';
+    final isMarkdown = widget.item.kind == 'markdown';
 
     if (isMarkdown) {
       final bubbleColor = Color.alphaBlend(
         scheme.primary.withValues(alpha: 0.04),
         scheme.surfaceContainerLowest,
       );
+      final markdownChild = DecoratedBox(
+        decoration: BoxDecoration(
+          color: bubbleColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: scheme.outlineVariant.withValues(alpha: 0.45),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          child: _buildMarkdownText(context, style),
+        ),
+      );
       return Align(
         alignment: Alignment.centerLeft,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: bubbleColor,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: scheme.outlineVariant.withValues(alpha: 0.45),
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-              child: _buildMarkdownText(context, style),
-            ),
-          ),
+          child: _wrapWithLongPress(context, markdownChild),
         ),
       );
     }
@@ -53,7 +70,9 @@ class EventCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: style.background,
         borderRadius: BorderRadius.circular(style.radius),
-        border: Border.all(color: style.border),
+        border: Border.all(
+          color: style.border,
+        ),
         boxShadow: compact
             ? null
             : [
@@ -75,32 +94,124 @@ class EventCard extends StatelessWidget {
       ),
     );
 
+    final tappable = Material(
+      color: Colors.transparent,
+      child: widget.onTap == null
+          ? bubble
+          : InkWell(
+              onTap: widget.onTap,
+              borderRadius: BorderRadius.circular(style.radius),
+              child: bubble,
+            ),
+    );
+
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: isUser ? 320 : 760),
-        child: Material(
-          color: Colors.transparent,
-          child: onTap == null
-              ? bubble
-              : InkWell(
-                  onTap: onTap,
-                  borderRadius: BorderRadius.circular(style.radius),
-                  child: bubble,
-                ),
-        ),
+        child: _wrapWithLongPress(context, tappable),
       ),
     );
   }
 
-  Widget _buildUserBubble(BuildContext context, _EventCardStyle style) {
-    return SelectableText(
-      item.body,
-      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            height: 1.5,
-            color: style.bodyColor,
-            fontWeight: FontWeight.w500,
+  Widget _wrapWithLongPress(BuildContext context, Widget child) {
+    if (widget.item.body.trim().isEmpty) {
+      return child;
+    }
+    if (_selectionMode) {
+      return child;
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPressStart: _handleLongPressStart,
+      child: child,
+    );
+  }
+
+  Future<void> _handleLongPressStart(LongPressStartDetails details) async {
+    HapticFeedback.mediumImpact();
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) {
+      return;
+    }
+    final position = RelativeRect.fromRect(
+      Rect.fromCenter(
+        center: details.globalPosition,
+        width: 1,
+        height: 1,
+      ),
+      Offset.zero & overlay.size,
+    );
+    final scheme = Theme.of(context).colorScheme;
+    final selected = await showMenu<String>(
+      context: context,
+      position: position,
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      items: [
+        PopupMenuItem<String>(
+          value: 'copy',
+          child: Row(
+            children: [
+              Icon(Icons.copy_rounded, size: 18, color: scheme.primary),
+              const SizedBox(width: 10),
+              const Text('复制'),
+            ],
           ),
+        ),
+        PopupMenuItem<String>(
+          value: 'select',
+          child: Row(
+            children: [
+              Icon(Icons.text_fields_rounded, size: 18, color: scheme.primary),
+              const SizedBox(width: 10),
+              const Text('选择文字'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (!mounted || selected == null) {
+      return;
+    }
+    switch (selected) {
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: widget.item.body));
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('已复制'),
+              duration: Duration(milliseconds: 1200),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        break;
+      case 'select':
+        setState(() => _selectionMode = true);
+        break;
+    }
+  }
+
+  Widget _buildUserBubble(BuildContext context, _EventCardStyle style) {
+    final textStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          height: 1.5,
+          color: style.bodyColor,
+          fontWeight: FontWeight.w500,
+        );
+    if (_selectionMode) {
+      return SelectableText(
+        widget.item.body,
+        style: textStyle,
+        textAlign: TextAlign.left,
+        contextMenuBuilder: _buildEditableContextMenu,
+      );
+    }
+    return Text(
+      widget.item.body,
+      style: textStyle,
       textAlign: TextAlign.left,
     );
   }
@@ -112,20 +223,27 @@ class EventCard extends StatelessWidget {
       shadow: Colors.transparent,
       iconBackground: Colors.transparent,
     );
+    final inner = !widget.item.animateBody
+        ? _BodyContent(
+            item: widget.item,
+            style: plainStyle,
+            plain: true,
+            useSelectionArea: _selectionMode,
+            selectable: _selectionMode,
+          )
+        : _TypewriterMarkdown(
+            item: widget.item,
+            style: plainStyle,
+            plain: true,
+            useSelectionArea: _selectionMode,
+            selectable: _selectionMode,
+          );
+    if (!_selectionMode) {
+      return inner;
+    }
     return SelectionArea(
-      child: !item.animateBody
-          ? _BodyContent(
-              item: item,
-              style: plainStyle,
-              plain: true,
-              useSelectionArea: true,
-            )
-          : _TypewriterMarkdown(
-              item: item,
-              style: plainStyle,
-              plain: true,
-              useSelectionArea: true,
-            ),
+      contextMenuBuilder: _buildSelectionAreaContextMenu,
+      child: inner,
     );
   }
 
@@ -133,7 +251,7 @@ class EventCard extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _LeadingBadge(item: item, style: style),
+        _LeadingBadge(item: widget.item, style: style),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -143,19 +261,19 @@ class EventCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      item.title.isEmpty
-                          ? _titleForKind(item.kind)
-                          : item.title,
+                      widget.item.title.isEmpty
+                          ? _titleForKind(widget.item.kind)
+                          : widget.item.title,
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
                             fontWeight: FontWeight.w800,
                             color: style.titleColor,
                           ),
                     ),
                   ),
-                  if (!_isCompactKind(item.kind)) ...[
+                  if (!_isCompactKind(widget.item.kind)) ...[
                     const SizedBox(width: 8),
                     Text(
-                      _time(item.timestamp),
+                      _time(widget.item.timestamp),
                       style: Theme.of(context)
                           .textTheme
                           .bodySmall
@@ -164,14 +282,19 @@ class EventCard extends StatelessWidget {
                   ],
                 ],
               ),
-              if (item.body.isNotEmpty) ...[
+              if (widget.item.body.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                _BodyContent(item: item, style: style),
+                _BodyContent(
+                  item: widget.item,
+                  style: style,
+                  selectable: _selectionMode,
+                  contextMenuBuilder: _buildEditableContextMenu,
+                ),
               ],
-              if ((item.context?.path ?? '').isNotEmpty) ...[
+              if ((widget.item.context?.path ?? '').isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(
-                  item.context!.path,
+                  widget.item.context!.path,
                   style: Theme.of(context)
                       .textTheme
                       .bodySmall
@@ -185,6 +308,101 @@ class EventCard extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Widget _buildEditableContextMenu(
+    BuildContext context,
+    EditableTextState state,
+  ) {
+    final value = state.textEditingValue;
+    final selection = value.selection;
+    final hasSelection = selection.isValid && !selection.isCollapsed;
+    final selectedText =
+        hasSelection ? selection.textInside(value.text) : '';
+    final fullText = widget.item.body;
+
+    final items = <ContextMenuButtonItem>[];
+    if (hasSelection) {
+      items.add(ContextMenuButtonItem(
+        label: '复制选中',
+        onPressed: () => _copyAndDismiss(state, selectedText),
+      ));
+    }
+    items.add(ContextMenuButtonItem(
+      label: '复制全部',
+      onPressed: () => _copyAndDismiss(state, fullText),
+    ));
+    if (!hasSelection) {
+      items.add(ContextMenuButtonItem(
+        label: '全选',
+        onPressed: () {
+          state.selectAll(SelectionChangedCause.toolbar);
+        },
+      ));
+    }
+
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: state.contextMenuAnchors,
+      buttonItems: items,
+    );
+  }
+
+  Widget _buildSelectionAreaContextMenu(
+    BuildContext context,
+    SelectableRegionState state,
+  ) {
+    final fullText = widget.item.body;
+    // Reuse system items (复制选中 / 全选) and prepend our 复制全部.
+    final systemItems =
+        List<ContextMenuButtonItem>.from(state.contextMenuButtonItems);
+    final items = <ContextMenuButtonItem>[
+      ContextMenuButtonItem(
+        label: '复制全部',
+        onPressed: () {
+          Clipboard.setData(ClipboardData(text: fullText));
+          ContextMenuController.removeAny();
+          state.hideToolbar();
+          _showCopiedSnack();
+        },
+      ),
+      ...systemItems.map(
+        (item) => ContextMenuButtonItem(
+          type: item.type,
+          label: item.label,
+          onPressed: () {
+            item.onPressed?.call();
+            if (item.type == ContextMenuButtonType.copy) {
+              _showCopiedSnack();
+            }
+          },
+        ),
+      ),
+    ];
+
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: state.contextMenuAnchors,
+      buttonItems: items,
+    );
+  }
+
+  void _copyAndDismiss(EditableTextState state, String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    state.hideToolbar();
+    ContextMenuController.removeAny();
+    _showCopiedSnack();
+  }
+
+  void _showCopiedSnack() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('已复制'),
+          duration: Duration(milliseconds: 1200),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   bool _isCompactKind(String kind) {
@@ -287,12 +505,14 @@ class _TypewriterMarkdown extends StatefulWidget {
     required this.style,
     this.plain = false,
     this.useSelectionArea = false,
+    this.selectable = false,
   });
 
   final TimelineItem item;
   final _EventCardStyle style;
   final bool plain;
   final bool useSelectionArea;
+  final bool selectable;
 
   @override
   State<_TypewriterMarkdown> createState() => _TypewriterMarkdownState();
@@ -368,6 +588,7 @@ class _TypewriterMarkdownState extends State<_TypewriterMarkdown> {
       style: widget.style,
       plain: widget.plain,
       useSelectionArea: widget.useSelectionArea,
+      selectable: widget.selectable,
     );
   }
 
@@ -417,19 +638,23 @@ class _BodyContent extends StatelessWidget {
     required this.style,
     this.plain = false,
     this.useSelectionArea = false,
+    this.selectable = false,
+    this.contextMenuBuilder,
   });
 
   final TimelineItem item;
   final _EventCardStyle style;
   final bool plain;
   final bool useSelectionArea;
+  final bool selectable;
+  final EditableTextContextMenuBuilder? contextMenuBuilder;
 
   @override
   Widget build(BuildContext context) {
     if (item.kind == 'markdown') {
       return MarkdownBody(
         data: item.body,
-        selectable: !useSelectionArea,
+        selectable: selectable && !useSelectionArea,
         styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
           p: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 height: 1.62,
@@ -486,12 +711,20 @@ class _BodyContent extends StatelessWidget {
         ),
       );
     }
-    return SelectableText(
+    final textStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          height: 1.55,
+          color: style.bodyColor,
+        );
+    if (selectable) {
+      return SelectableText(
+        item.body,
+        style: textStyle,
+        contextMenuBuilder: contextMenuBuilder,
+      );
+    }
+    return Text(
       item.body,
-      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            height: 1.55,
-            color: style.bodyColor,
-          ),
+      style: textStyle,
     );
   }
 }

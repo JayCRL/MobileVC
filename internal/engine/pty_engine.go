@@ -37,6 +37,7 @@ const (
 	stallWatchdogWarn1        = 60 * time.Second
 	stallWatchdogWarn2        = 90 * time.Second
 	stallWatchdogAbort        = 120 * time.Second
+	stallWatchdogAbortToolUse = 600 * time.Second // 工具执行中：10 分钟
 )
 
 type PtyRunner struct {
@@ -59,9 +60,11 @@ type PtyRunner struct {
 	claudeSessionID         string
 	codexSession            *codexAppSession
 	permissionMode          string
-	pendingControlRequestID string
-	pendingControlInput     json.RawMessage
-	pendingPromptOptions    []string
+	pendingControlRequestID     string
+	pendingControlRequestIDPrev string
+	pendingControlInput         json.RawMessage
+	pendingControlInputPrev     json.RawMessage
+	pendingPromptOptions        []string
 	lastToolName            string
 	lastToolTarget          string
 	fileSnapshots           map[string]fileSnapshot
@@ -72,6 +75,11 @@ type PtyRunner struct {
 	// stallWatchdogCancel 用于在 runner 关闭时停止后台巡检 goroutine。
 	lastEngineOutputAt  time.Time
 	stallWatchdogCancel context.CancelFunc
+	// toolUsePending is set true when Claude issues a tool_use (e.g. Bash)
+	// and reset false when the next assistant message with no tool_use arrives.
+	// During the pending window the stall watchdog uses an extended abort threshold
+	// so long-running tool executions (build scripts, publish, etc.) are not killed.
+	toolUsePending bool
 	// streamFirstLineSeen 用于在 claude stream 启动期 emit "engine_starting" phase，
 	// 在收到首条 raw line 时清掉，避免 resume 启动 + 首字延迟期间前端无反馈。
 	streamFirstLineSeen bool
@@ -558,7 +566,7 @@ func (r *PtyRunner) HasPendingPermissionRequest() bool {
 	if r.codexSession != nil {
 		return r.codexSession.HasPendingPermissionRequest()
 	}
-	return strings.TrimSpace(r.pendingControlRequestID) != ""
+	return strings.TrimSpace(r.pendingControlRequestID) != "" || strings.TrimSpace(r.pendingControlRequestIDPrev) != ""
 }
 
 func (r *PtyRunner) CurrentPermissionRequestID() string {
@@ -567,7 +575,10 @@ func (r *PtyRunner) CurrentPermissionRequestID() string {
 	if r.codexSession != nil {
 		return r.codexSession.CurrentPermissionRequestID()
 	}
-	return strings.TrimSpace(r.pendingControlRequestID)
+	if id := strings.TrimSpace(r.pendingControlRequestID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(r.pendingControlRequestIDPrev)
 }
 
 func (r *PtyRunner) ClaudeSessionID() string {
@@ -667,6 +678,9 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 			r.pendingControlRequestID = ""
 			r.pendingControlInput = nil
 			r.pendingPromptOptions = nil
+			// Clear queued previous request as well
+			r.pendingControlRequestIDPrev = ""
+			r.pendingControlInputPrev = nil
 		}
 		r.mu.Unlock()
 		return nil
@@ -718,6 +732,12 @@ func (r *PtyRunner) WritePermissionResponse(ctx context.Context, decision string
 		r.pendingControlRequestID = ""
 		r.pendingControlInput = nil
 		r.pendingPromptOptions = nil
+		if r.pendingControlRequestIDPrev != "" {
+			r.pendingControlRequestID = r.pendingControlRequestIDPrev
+			r.pendingControlInput = r.pendingControlInputPrev
+			r.pendingControlRequestIDPrev = ""
+			r.pendingControlInputPrev = nil
+		}
 	}
 	r.mu.Unlock()
 	return nil
@@ -834,6 +854,7 @@ func (r *PtyRunner) runStallWatchdog(ctx context.Context, sessionID string, sink
 		r.mu.Lock()
 		lastAt := r.lastEngineOutputAt
 		closed := r.closed
+		toolRunning := r.toolUsePending
 		r.mu.Unlock()
 
 		if closed {
@@ -851,8 +872,13 @@ func (r *PtyRunner) runStallWatchdog(ctx context.Context, sessionID string, sink
 			continue
 		}
 
-		if silent >= stallWatchdogAbort {
-			logx.Warn("pty", "stall watchdog: aborting runner due to %s of silence: sessionID=%s", silent.Round(time.Second), sessionID)
+		abortThreshold := stallWatchdogAbort
+		if toolRunning {
+			abortThreshold = stallWatchdogAbortToolUse
+		}
+
+		if silent >= abortThreshold {
+			logx.Warn("pty", "stall watchdog: aborting runner due to %s of silence: sessionID=%s toolRunning=%v", silent.Round(time.Second), sessionID, toolRunning)
 			sendEvent(sink, protocol.NewErrorEvent(sessionID, fmt.Sprintf("AI 长时间无响应（%d 秒），已自动停止。请重新发送请求。", int(silent.Seconds())), ""))
 			_ = r.Close()
 			return
@@ -894,8 +920,11 @@ func (r *PtyRunner) clearGeneration(generation uint64) {
 	r.interactive = false
 	r.awaitingReadyPrompt = false
 	r.pendingControlRequestID = ""
+	r.pendingControlRequestIDPrev = ""
 	r.pendingControlInput = nil
+	r.pendingControlInputPrev = nil
 	r.pendingPromptOptions = nil
+	r.toolUsePending = false
 	r.closed = true
 	r.suppressExitError = false
 	r.mu.Unlock()
@@ -2118,6 +2147,10 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 			requestID := strings.TrimSpace(envelope.RequestID)
 			if requestID != "" {
 				r.mu.Lock()
+				if r.pendingControlRequestID != "" && r.pendingControlRequestID != requestID {
+					r.pendingControlRequestIDPrev = r.pendingControlRequestID
+					r.pendingControlInputPrev = r.pendingControlInput
+				}
 				r.pendingControlRequestID = requestID
 				r.pendingControlInput = cloneRawMessage(envelope.Request.Input)
 				r.mu.Unlock()
@@ -2221,6 +2254,23 @@ func (r *PtyRunner) readClaudeStreamJSON(ctx context.Context, reader io.Reader, 
 					}
 				}
 			}
+			// Update tool-use-pending flag for stall watchdog: when the assistant
+			// message contains a tool_use, a long-running execution (build, publish,
+			// etc.) may follow — the watchdog extends its abort threshold accordingly.
+			// Reset when the next assistant message (with no tool_use) arrives,
+			// indicating the tool result has been processed and Claude is thinking.
+			hasToolUse := false
+			for _, block := range envelope.Message.Content {
+				if block.Type == "tool_use" {
+					hasToolUse = true
+					break
+				}
+			}
+			r.mu.Lock()
+			if r.toolUsePending || hasToolUse {
+				r.toolUsePending = hasToolUse
+			}
+			r.mu.Unlock()
 		case "user":
 			// Check message content for tool_result errors (Claude internal retries)
 			for _, block := range envelope.Message.Content {

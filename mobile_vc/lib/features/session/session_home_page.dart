@@ -1555,8 +1555,7 @@ class _ModelSwitcherSheetState extends State<_ModelSwitcherSheet> {
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton.icon(
-                        onPressed: !supportsModels ||
-                                selectedModel.trim().isEmpty
+                        onPressed: !supportsModels
                             ? null
                             : showEffortStep
                                 ? () async {
