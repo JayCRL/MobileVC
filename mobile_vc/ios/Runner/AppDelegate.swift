@@ -119,23 +119,53 @@ import UserNotifications
     ishChannel.setMethodCallHandler { call, result in
       switch call.method {
       case "init":
-        guard let alpinePath = Bundle.main.path(forResource: "alpine", ofType: nil) else {
-          result(FlutterError(code: "no_rootfs", message: "Alpine rootfs not found", details: nil))
+        NSLog("[iSH] init requested")
+        let bundleAlpine = Bundle.main.bundlePath + "/alpine"
+        let writableAlpine = NSTemporaryDirectory() + "alpine"
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: bundleAlpine, isDirectory: &isDir), isDir.boolValue else {
+          NSLog("[iSH] ERROR: Alpine not found at \(bundleAlpine)")
+          result(FlutterError(code: "no_rootfs", message: "Alpine rootfs not found at \(bundleAlpine)", details: nil))
           return
         }
-        let status = ish_init(alpinePath)
-        result(status == 0)
+        NSLog("[iSH] Alpine found, copying to \(writableAlpine)")
+        if !fm.fileExists(atPath: writableAlpine + "/data") {
+          try? fm.removeItem(atPath: writableAlpine)
+          do {
+            try fm.copyItem(atPath: bundleAlpine, toPath: writableAlpine)
+            NSLog("[iSH] Alpine copied OK")
+          } catch {
+            NSLog("[iSH] ERROR copy: \(error)")
+            result(FlutterError(code: "copy_failed", message: "\(error)", details: nil))
+            return
+          }
+        }
+        NSLog("[iSH] Calling ish_init on bg thread...")
+        DispatchQueue.global(qos: .userInitiated).async {
+          let status = ish_init(writableAlpine)
+          NSLog("[iSH] ish_init returned \(status)")
+          DispatchQueue.main.async {
+            result(status == 0)
+          }
+        }
       case "exec":
         guard let command = call.arguments as? String else {
           result(FlutterError(code: "bad_args", message: "command required", details: nil))
           return
         }
-        var output: UnsafeMutablePointer<CChar>?
-        var outputLen: Int = 0
-        let exitCode = ish_exec(command, &output, &outputLen)
-        let outputStr = output.map { String(cString: $0) } ?? ""
-        if let ptr = output { free(ptr) }
-        result(["exitCode": exitCode, "output": outputStr])
+        NSLog("[iSH] exec cmd: \(command.prefix(200))")
+        DispatchQueue.global(qos: .userInitiated).async {
+          var output: UnsafeMutablePointer<CChar>?
+          var outputLen: Int = 0
+          let exitCode = ish_exec(command, &output, &outputLen)
+          NSLog("[iSH] exec done code=\(exitCode) len=\(outputLen)")
+          let outputStr = output.map { String(cString: $0) } ?? ""
+          if let ptr = output { free(ptr) }
+          DispatchQueue.main.async {
+            result(["exitCode": exitCode, "output": outputStr])
+          }
+        }
       default:
         result(FlutterMethodNotImplemented)
       }

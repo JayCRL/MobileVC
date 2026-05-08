@@ -33,6 +33,13 @@ class ToolRegistry {
         _gitEmail = gitEmail,
         _gitCredentials = gitCredentials;
 
+  String _normalizeIOS(String p) {
+    // iOS symlinks: /var -> /private/var, /tmp -> /private/tmp
+    // Strip /private prefix so both forms compare equal
+    if (p.startsWith('/private/')) return p.substring(8);
+    return p;
+  }
+
   String _safePath(String raw) {
     final resolved = raw.startsWith('/')
         ? raw
@@ -41,7 +48,6 @@ class ToolRegistry {
     try {
       canonical = Directory(resolved).resolveSymbolicLinksSync();
     } catch (_) {
-      // iOS sandbox paths may not support symlink resolution; use as-is
       canonical = Directory(resolved).absolute.path;
     }
     String root;
@@ -50,8 +56,13 @@ class ToolRegistry {
     } catch (_) {
       root = Directory(workingDir).absolute.path;
     }
-    if (!canonical.startsWith(root + Platform.pathSeparator) &&
-        canonical != root) {
+
+    // Normalize for iOS /var -> /private/var symlink
+    final normCanonical = _normalizeIOS(canonical);
+    final normRoot = _normalizeIOS(root);
+
+    if (!normCanonical.startsWith(normRoot + Platform.pathSeparator) &&
+        normCanonical != normRoot) {
       throw Exception('Path escapes working directory: $raw');
     }
     return canonical;
@@ -454,7 +465,8 @@ class ToolRegistry {
     try {
       await IshBridge.ensureInitialized();
       if (!IshBridge.ready) {
-        return ToolResult.error('iSH Linux not ready. Try again in a moment.');
+        final detail = IshBridge.lastError ?? 'kernel initialization failed';
+        return ToolResult.error('iSH Linux not ready: $detail');
       }
       final result = await IshBridge.exec(command);
       if (result.ok) {
@@ -549,9 +561,9 @@ class ToolRegistry {
       }
 
       if (!repo.exists) {
-        return ToolResult.error(
-          'Not a git repository. Run "git init" first.',
-        );
+        // Auto-init repo
+        repo.init();
+        // Continue after init instead of returning error
       }
 
       if (lower == 'status' || lower == 'status --short' || lower == 'status -s') {

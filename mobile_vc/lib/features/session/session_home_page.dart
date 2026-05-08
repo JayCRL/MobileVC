@@ -18,7 +18,6 @@ import '../../features/files/file_viewer_sheet.dart';
 import '../../features/memory/memory_management_sheet.dart';
 import '../../features/permissions/permission_rule_management_sheet.dart';
 import '../../features/runtime_info/runtime_info_sheet.dart';
-import '../../features/mini_claude/mini_claude_page.dart';
 import '../../features/skills/skill_management_sheet.dart';
 import '../../features/status/status_detail_sheet.dart';
 import '../../features/status/terminal_log_sheet.dart';
@@ -117,11 +116,6 @@ class _SessionHomePageState extends State<SessionHomePage> {
                   : 1,
               child: const Icon(Icons.difference_outlined),
             ),
-          ),
-          IconButton(
-            onPressed: () => _openMiniClaude(context),
-            tooltip: 'Mini Claude (离线)',
-            icon: const Icon(Icons.smartphone_outlined),
           ),
           IconButton(
             onPressed: () => _openAdbDebug(context),
@@ -254,12 +248,6 @@ class _SessionHomePageState extends State<SessionHomePage> {
   void _openFileDrawer() {
     controller.refreshFileList();
     _scaffoldKey.currentState?.openDrawer();
-  }
-
-  Future<void> _openMiniClaude(BuildContext context) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const MiniClaudePage()),
-    );
   }
 
   Future<void> _openConnectionConfig(BuildContext context) async {

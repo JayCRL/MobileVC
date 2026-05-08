@@ -1,7 +1,11 @@
-import 'package:file_picker/file_picker.dart';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'git.dart';
+import 'git_remote.dart';
 import 'mini_claude_controller.dart';
 
 class MiniClaudePage extends StatefulWidget {
@@ -54,16 +58,100 @@ class _MiniClaudePageState extends State<MiniClaudePage> {
   }
 
   Future<void> _pickAndAddWorkspace() async {
-    final path = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: '选择项目文件夹',
+    // On iOS, File Provider Storage restricts direct file access.
+    // Guide users to use the Files app to copy projects into the app's folder.
+    final docs = await getApplicationDocumentsDirectory();
+    final workspacesDir = Directory('${docs.path}/workspaces');
+    if (!workspacesDir.existsSync()) workspacesDir.createSync(recursive: true);
+
+    // Look for existing projects in the app sandbox
+    final existing = workspacesDir
+        .listSync()
+        .whereType<Directory>()
+        .toList();
+
+    if (existing.isNotEmpty) {
+      // Let user pick from already-imported projects or add new
+      final result = await showDialog<String>(
+        context: context,
+        builder: (ctx) => SimpleDialog(
+          title: const Text('导入工作区'),
+          children: [
+            ...existing.map((d) => SimpleDialogOption(
+                  onPressed: () => Navigator.pop(ctx, d.path),
+                  child: Text(d.path.split('/').last),
+                )),
+            const Divider(),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, '__new__'),
+              child: const Text('+ 添加新项目...'),
+            ),
+          ],
+        ),
+      );
+
+      if (result == '__new__') {
+        _showImportGuide();
+        return;
+      }
+      if (result != null) {
+        final name = await _showAliasDialog(result.split('/').last);
+        if (name != null && name.trim().isNotEmpty) {
+          await _controller.addWorkspace(name: name, path: result);
+        }
+        return;
+      }
+    } else {
+      _showImportGuide();
+    }
+  }
+
+  void _showImportGuide() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('导入项目到工作区'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('请通过 iOS 文件 App 操作：'),
+            const SizedBox(height: 12),
+            _guideStepText('1', '打开 iOS「文件」App → 浏览 → 我的 iPhone'),
+            _guideStepText('2', '找到「Mobile Vc」文件夹'),
+            _guideStepText('3', '把项目文件夹拖入 Mobile Vc/workspaces/'),
+            _guideStepText('4', '回到这里，重新点「选择文件夹」'),
+            const SizedBox(height: 8),
+            Text(
+              '项目会自动出现在工作区列表中。',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(ctx).colorScheme.outline,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
     );
-    if (path == null || path.trim().isEmpty) return;
+  }
 
-    final folderName = path.split('/').last;
-    final name = await _showAliasDialog(folderName);
-    if (name == null || name.trim().isEmpty) return;
-
-    await _controller.addWorkspace(name: name, path: path);
+  Widget _guideStepText(String num, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('$num. ', style: const TextStyle(fontWeight: FontWeight.w600)),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
   }
 
   Future<String?> _showAliasDialog(String defaultName) async {
@@ -212,6 +300,8 @@ class _MiniClaudePageState extends State<MiniClaudePage> {
     );
   }
 
+  String _deviceAuthVerificationUri = '';
+
   void _startDeviceAuth(BuildContext ctx, String platform) async {
     final controller = _controller;
     if (controller.gitHubClientId.isEmpty) {
@@ -221,25 +311,48 @@ class _MiniClaudePageState extends State<MiniClaudePage> {
       return;
     }
 
-    // Show progress dialog
+    _deviceAuthVerificationUri = '';
+
     showDialog(
       context: ctx,
       barrierDismissible: false,
       builder: (dCtx) {
         String status = '正在连接 ${platform}...';
+        String userCode = '';
         return StatefulBuilder(
           builder: (sCtx, setDialogState) {
-            // Start the flow
             if (status.startsWith('正在连接')) {
               controller.startDeviceFlow(
                 platform: platform,
-                onStatus: (s) => setDialogState(() => status = s),
+                onStatus: (s) {
+                  setDialogState(() {
+                    status = s;
+                    // Parse out verification URI and user code
+                    if (s.contains('http')) {
+                      final lines = s.split('\n');
+                      for (final line in lines) {
+                        final trimmed = line.trim();
+                        if (trimmed.startsWith('http')) {
+                          _deviceAuthVerificationUri = trimmed;
+                        }
+                      }
+                      // Auto-open browser
+                      if (_deviceAuthVerificationUri.isNotEmpty) {
+                        launchUrl(Uri.parse(_deviceAuthVerificationUri));
+                      }
+                    }
+                    final codeMatch = RegExp(r'输入代码\s+([A-Z0-9-]+)').firstMatch(s);
+                    if (codeMatch != null) {
+                      userCode = codeMatch.group(1)!;
+                    }
+                  });
+                },
               ).then((token) {
                 Navigator.pop(dCtx);
                 ScaffoldMessenger.of(ctx).showSnackBar(
                   SnackBar(content: Text('$platform 登录成功！token 已自动保存')),
                 );
-                setState(() {}); // refresh credential list
+                setState(() {});
               }).catchError((e) {
                 Navigator.pop(dCtx);
                 ScaffoldMessenger.of(ctx).showSnackBar(
@@ -253,30 +366,33 @@ class _MiniClaudePageState extends State<MiniClaudePage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  if (status.startsWith('请在'))
-                    ...[
-                      Icon(Icons.login, size: 48,
-                          color: Theme.of(dCtx).colorScheme.primary),
-                      const SizedBox(height: 16),
-                      SelectableText(
-                        status.replaceFirst('请在浏览器打开\n', '请在浏览器打开\n\n'),
-                        textAlign: TextAlign.center,
-                        style: Theme.of(dCtx).textTheme.bodyMedium,
-                      ),
-                      const SizedBox(height: 12),
+                  if (userCode.isNotEmpty) ...[
+                    Icon(Icons.login, size: 48,
+                        color: Theme.of(dCtx).colorScheme.primary),
+                    const SizedBox(height: 16),
+                    SelectableText(
+                      '验证码: $userCode',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(dCtx).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '浏览器应该已自动打开。\n如未打开，点击下方按钮。',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(dCtx).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    if (_deviceAuthVerificationUri.isNotEmpty)
                       FilledButton.icon(
                         icon: const Icon(Icons.open_in_browser, size: 16),
-                        label: Text(
-                            '打开 ${platform == 'github' ? 'github.com/login/device' : 'gitee.com/oauth/authorize_device'}'),
-                        onPressed: () {
-                          final url = status.contains('http')
-                              ? status.split('\n')[0].replaceFirst('请在浏览器打开', '').trim()
-                              : 'https://${platform}.com/login/device';
-                          launchUrl(Uri.parse(url));
-                        },
+                        label: const Text('打开授权页面'),
+                        onPressed: () =>
+                            launchUrl(Uri.parse(_deviceAuthVerificationUri)),
                       ),
-                    ]
-                  else
+                    const SizedBox(height: 12),
+                    Text(status.contains('等待') ? '等待你在浏览器中确认...' : status,
+                        style: Theme.of(dCtx).textTheme.bodySmall),
+                  ] else
                     ...[
                       const CircularProgressIndicator(),
                       const SizedBox(height: 16),
@@ -470,6 +586,42 @@ class _MiniClaudePageState extends State<MiniClaudePage> {
                 style: TextStyle(color: theme.colorScheme.onErrorContainer),
               ),
             ),
+          // Streaming status bar
+          if (_controller.status == MiniClaudeStatus.running)
+            Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              color: theme.colorScheme.primaryContainer.withAlpha(80),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${_controller.elapsedDisplay}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '↑${_formatTokens(_controller.currentInputTokens)} '
+                    '↓${_formatTokens(_controller.currentOutputTokens)}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: _controller.messages.isEmpty
                 ? _buildEmptyState(theme)
@@ -494,26 +646,199 @@ class _MiniClaudePageState extends State<MiniClaudePage> {
                 style: theme.textTheme.titleLarge
                     ?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
-            Text(
-              '选择一个本地文件夹作为工作区，\nMini Claude 将在其中读写文件。\n\n通过 iOS 文件 App 或 Mac Finder\n把项目文件夹放到手机后即可导入。',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(color: theme.colorScheme.outline),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _pickAndAddWorkspace,
-              icon: const Icon(Icons.create_new_folder_outlined),
-              label: const Text('选择本地文件夹'),
-            ),
-            const SizedBox(height: 8),
-            Text('也支持直接选择 iOS 文件 App 共享的目录',
-                style: theme.textTheme.bodySmall
+            Text('选择导入方式',
+                style: theme.textTheme.bodyMedium
                     ?.copyWith(color: theme.colorScheme.outline)),
+            const SizedBox(height: 24),
+
+            // Option 1: Git clone
+            Card(
+              child: InkWell(
+                onTap: () => _cloneFromGit(),
+                borderRadius: BorderRadius.circular(24),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 48, height: 48,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withAlpha(30),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(Icons.cloud_download_outlined,
+                            color: theme.colorScheme.primary),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('从 Git 克隆',
+                                style: theme.textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w600)),
+                            Text('输入仓库 URL，自动 clone 到工作区',
+                                style: theme.textTheme.bodySmall
+                                    ?.copyWith(color: theme.colorScheme.outline)),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.arrow_forward_ios, size: 16,
+                          color: theme.colorScheme.outline),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Option 2: Local files
+            Card(
+              child: InkWell(
+                onTap: _pickAndAddWorkspace,
+                borderRadius: BorderRadius.circular(24),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 48, height: 48,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.tertiary.withAlpha(30),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(Icons.folder_outlined,
+                            color: theme.colorScheme.tertiary),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('从本地文件夹',
+                                style: theme.textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w600)),
+                            Text('选择已通过文件 App 放入的文件夹',
+                                style: theme.textTheme.bodySmall
+                                    ?.copyWith(color: theme.colorScheme.outline)),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.arrow_forward_ios, size: 16,
+                          color: theme.colorScheme.outline),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  void _cloneFromGit() {
+    final urlCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('从 Git 克隆'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: urlCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: 'https://github.com/user/repo.git',
+                labelText: '仓库 URL',
+              ),
+              keyboardType: TextInputType.url,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final url = urlCtrl.text.trim();
+              if (url.isEmpty) return;
+              Navigator.pop(ctx);
+
+              // Parse repo name from URL
+              final repoName = url.split('/').last.replaceAll('.git', '');
+              final name = await _showAliasDialog(repoName);
+              if (name == null || name.trim().isEmpty) return;
+
+              // Create workspace dir and clone
+              final docs = await getApplicationDocumentsDirectory();
+              final destPath = '${docs.path}/workspaces/$repoName';
+
+              setState(() {
+                _cloneStatus = '正在 clone...';
+              });
+              _showCloneProgress(name, url, destPath);
+            },
+            child: const Text('克隆'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _cloneStatus = '';
+
+  void _showCloneProgress(String name, String url, String destPath) {
+    _cloneStatus = '正在 clone $name...';
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        _doClone(name, url, destPath).then((_) {
+          Navigator.pop(ctx);
+          _controller.addWorkspace(name: name, path: destPath);
+        }).catchError((e) {
+          Navigator.pop(ctx);
+          ScaffoldMessenger.of(this.context).showSnackBar(
+            SnackBar(content: Text('克隆失败: $e')),
+          );
+        });
+
+        return StatefulBuilder(
+          builder: (sCtx, setDialogState) {
+            _cloneStatus;
+            return AlertDialog(
+              title: Text('克隆 $name'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(_cloneStatus),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _doClone(
+      String name, String url, String destPath) async {
+    // Ensure target directory exists and is empty
+    final destDir = Directory(destPath);
+    if (destDir.existsSync()) destDir.deleteSync(recursive: true);
+    destDir.createSync(recursive: true);
+
+    // Init empty git repo and clone using pure Dart implementation
+    final repo = GitRepo(workTree: destPath);
+    repo.init();
+    final network = GitNetwork(repo: repo);
+    await network.clone(url);
   }
 
   Widget _buildEmptyState(ThemeData theme) {
@@ -626,6 +951,11 @@ class _MiniClaudePageState extends State<MiniClaudePage> {
     );
   }
 
+  String _formatTokens(int tokens) {
+    if (tokens >= 1000) return '${(tokens / 1000).toStringAsFixed(1)}k';
+    return tokens.toString();
+  }
+
   Widget _buildInputBar(ThemeData theme) {
     final busy = _controller.status == MiniClaudeStatus.running;
 
@@ -660,9 +990,13 @@ class _MiniClaudePageState extends State<MiniClaudePage> {
           ),
           const SizedBox(width: 10),
           busy
-              ? IconButton(
+              ? IconButton.filled(
+                  style: IconButton.styleFrom(
+                    backgroundColor: theme.colorScheme.error,
+                    foregroundColor: theme.colorScheme.onError,
+                  ),
                   icon: const Icon(Icons.stop),
-                  onPressed: () {},
+                  onPressed: () => _controller.cancel(),
                 )
               : IconButton.filled(
                   icon: const Icon(Icons.send_rounded),

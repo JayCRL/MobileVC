@@ -8,10 +8,13 @@ Pod::Spec.new do |s|
   s.platform         = :ios, '15.5'
   s.source           = { :git => 'https://github.com/ish-app/ish.git' }
   s.source_files     = 'ish-bridge/*.{h,c}'
+  s.public_header_files = 'ish-bridge/ish_bridge.h'
   s.vendored_libraries = 'libish.a', 'libish_emu.a', 'libfakefs.a'
+  s.static_framework = true
+  s.libraries        = 'sqlite3', 'archive', 'z'
   s.pod_target_xcconfig = {
-    'HEADER_SEARCH_PATHS' => '$(PODS_TARGET_SRCROOT)/ish-headers',
-    'OTHER_LDFLAGS' => '-lsqlite3 -larchive',
+    'HEADER_SEARCH_PATHS' => '$(PODS_TARGET_SRCROOT)/ish-headers $(PODS_TARGET_SRCROOT)/ish-bridge',
+    'OTHER_LDFLAGS' => '-lsqlite3 -larchive -lz',
   }
   s.requires_arc = false
 end

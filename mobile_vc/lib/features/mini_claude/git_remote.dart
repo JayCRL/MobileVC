@@ -125,8 +125,13 @@ class PackParser {
     final version = _be32(packData, 4);
     if (version < 2) throw Exception('Unsupported pack version $version');
     final count = _be32(packData, 8);
+    if (count <= 0 || count > 100000) throw Exception('Invalid object count: $count');
     final parser = PackParser._(packData, count);
-    return parser._parse();
+    try {
+      return parser._parse();
+    } catch (e) {
+      throw Exception('Packfile parse error: $e');
+    }
   }
 
   Map<String, Uint8List> _parse() {
@@ -140,6 +145,7 @@ class PackParser {
     final rawObjs = <_RawObj>[];
 
     for (var i = 0; i < _objCount; i++) {
+      if (_pos >= _data.length) break;
       final start = _pos;
       boundaries.add(start);
       var b = _data[_pos++];
@@ -148,28 +154,32 @@ class PackParser {
         _ObjectType.tag, null, _ObjectType.ofsDelta, _ObjectType.refDelta];
       final type = typeMap[typeIdx] ?? _ObjectType.blob;
 
-      // Read size
+      // Read size (with bounds + iteration limit)
       var size = b & 0x0f;
       var shift = 4;
-      while ((b & 0x80) != 0) {
+      var sizeIter = 0;
+      while ((b & 0x80) != 0 && _pos < _data.length && sizeIter < 10) {
         b = _data[_pos++];
         size |= (b & 0x7f) << shift;
         shift += 7;
+        sizeIter++;
       }
 
       // Read extra header
       Uint8List extraHeader = Uint8List(0);
-      if (type == _ObjectType.refDelta) {
+      if (type == _ObjectType.refDelta && _pos + 20 <= _data.length) {
         extraHeader = _data.sublist(_pos, _pos + 20);
         _pos += 20;
-      } else if (typeIdx == 6) {
+      } else if (typeIdx == 6 && _pos < _data.length) {
         // OFS_DELTA: negative offset
         final extraStart = _pos;
         var negOffset = _data[_pos] & 0x7f;
-        while ((_data[_pos++] & 0x80) != 0) {
+        var ofsIter = 0;
+        while ((_data[_pos++] & 0x80) != 0 && _pos < _data.length && ofsIter < 10) {
           negOffset = ((negOffset + 1) << 7) | (_data[_pos] & 0x7f);
+          ofsIter++;
         }
-        extraHeader = _data.sublist(extraStart, _pos);
+        extraHeader = _data.sublist(extraStart, _pos.clamp(0, _data.length));
         // Store negative offset for base lookup
         final baseOffset = start - negOffset;
         rawObjs.add(_RawObj(
@@ -191,19 +201,27 @@ class PackParser {
 
     for (var i = 0; i < rawObjs.length; i++) {
       final raw = rawObjs[i];
-      final zlibEnd = (i + 1 < rawObjs.length) ? rawObjs[i + 1].offset : (_data.length - 20);
-      // Find zlib start: right after the header
-      // We need to recompute the header size
+      if (raw.offset >= _data.length) continue;
+      final zlibEnd = (i + 1 < rawObjs.length)
+          ? rawObjs[i + 1].offset.clamp(0, _data.length)
+          : (_data.length - 20).clamp(0, _data.length);
       var headerPos = raw.offset;
-      var b = _data[headerPos++];
-      while ((b & 0x80) != 0) {
-        b = _data[headerPos++]; // skip size bytes
+      if (headerPos >= _data.length) continue;
+      var b = _data[headerPos];
+      var hdrIter = 0;
+      while ((b & 0x80) != 0 && headerPos < _data.length - 1 && hdrIter < 10) {
+        headerPos++;
+        b = _data[headerPos];
+        hdrIter++;
       }
+      headerPos++; // skip last size byte
       if (raw.type == _ObjectType.refDelta) headerPos += 20;
       else if (raw.type == _ObjectType.ofsDelta) headerPos += raw.extraHeader.length;
 
-      final zlibStart = headerPos;
-      final compressed = _data.sublist(zlibStart, zlibEnd);
+      final zlibStart = headerPos.clamp(0, _data.length);
+      final zlibEnd2 = zlibEnd.clamp(0, _data.length);
+      if (zlibStart >= zlibEnd2) continue;
+      final compressed = _data.sublist(zlibStart, zlibEnd2);
       final decompressed = compressed.isNotEmpty ? zLibDecode(compressed) : Uint8List(0);
 
       objects.add(_PackObject(
@@ -279,37 +297,41 @@ class PackParser {
       if ((b & 0x80) == 0) break;
     }
 
+    if (targetSize <= 0 || targetSize > 100 * 1024 * 1024) {
+      return Uint8List(0);
+    }
     final result = Uint8List(targetSize);
     var outPos = 0;
 
     while (pos < delta.length && outPos < targetSize) {
+      if (pos >= delta.length) break;
       final cmd = delta[pos++];
 
       if ((cmd & 0x80) == 0) {
-        // Insert
         final len = cmd;
-        if (len > 0) {
+        if (len > 0 && pos + len <= delta.length && outPos + len <= targetSize) {
           result.setRange(outPos, outPos + len, delta.sublist(pos, pos + len));
           outPos += len;
           pos += len;
         }
       } else {
-        // Copy from base
         var copyOffset = 0;
         var size = 0;
 
-        if ((cmd & 0x01) != 0) copyOffset |= delta[pos++];
-        if ((cmd & 0x02) != 0) copyOffset |= (delta[pos++] << 8);
-        if ((cmd & 0x04) != 0) copyOffset |= (delta[pos++] << 16);
-        if ((cmd & 0x08) != 0) copyOffset |= (delta[pos++] << 24);
+        if ((cmd & 0x01) != 0 && pos < delta.length) copyOffset |= delta[pos++];
+        if ((cmd & 0x02) != 0 && pos < delta.length) copyOffset |= (delta[pos++] << 8);
+        if ((cmd & 0x04) != 0 && pos < delta.length) copyOffset |= (delta[pos++] << 16);
+        if ((cmd & 0x08) != 0 && pos < delta.length) copyOffset |= (delta[pos++] << 24);
 
-        if ((cmd & 0x10) != 0) size |= delta[pos++];
-        if ((cmd & 0x20) != 0) size |= (delta[pos++] << 8);
-        if ((cmd & 0x40) != 0) size |= (delta[pos++] << 16);
+        if ((cmd & 0x10) != 0 && pos < delta.length) size |= delta[pos++];
+        if ((cmd & 0x20) != 0 && pos < delta.length) size |= (delta[pos++] << 8);
+        if ((cmd & 0x40) != 0 && pos < delta.length) size |= (delta[pos++] << 16);
         if (size == 0) size = 0x10000;
 
-        result.setRange(outPos, outPos + size, base.sublist(copyOffset, copyOffset + size));
-        outPos += size;
+        if (copyOffset + size <= base.length && outPos + size <= targetSize) {
+          result.setRange(outPos, outPos + size, base.sublist(copyOffset, copyOffset + size));
+          outPos += size;
+        }
       }
     }
     return result;

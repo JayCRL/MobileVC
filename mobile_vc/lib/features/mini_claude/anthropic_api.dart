@@ -190,6 +190,46 @@ class AnthropicApiException implements Exception {
   String toString() => 'AnthropicApiException($statusCode): $body';
 }
 
+class AnthropicStreamEvent {
+  final String type; // text_delta, tool_input_delta, tool_start, usage, stop
+  final String? text;
+  final String? toolId;
+  final String? toolName;
+  final String? partialJson;
+  final int? inputTokens;
+  final int? outputTokens;
+  final String? stopReason;
+
+  const AnthropicStreamEvent._({
+    required this.type,
+    this.text,
+    this.toolId,
+    this.toolName,
+    this.partialJson,
+    this.inputTokens,
+    this.outputTokens,
+    this.stopReason,
+  });
+
+  factory AnthropicStreamEvent.textDelta(String text) =>
+      AnthropicStreamEvent._(type: 'text_delta', text: text);
+
+  factory AnthropicStreamEvent.toolStart(String id, String name) =>
+      AnthropicStreamEvent._(
+          type: 'tool_start', toolId: id, toolName: name);
+
+  factory AnthropicStreamEvent.toolInputDelta(String partialJson) =>
+      AnthropicStreamEvent._(
+          type: 'tool_input_delta', partialJson: partialJson);
+
+  factory AnthropicStreamEvent.usage(int input, int output) =>
+      AnthropicStreamEvent._(
+          type: 'usage', inputTokens: input, outputTokens: output);
+
+  factory AnthropicStreamEvent.stop(String reason) =>
+      AnthropicStreamEvent._(type: 'stop', stopReason: reason);
+}
+
 class AnthropicApi {
   final String apiKey;
   final String baseUrl;
@@ -236,6 +276,141 @@ class AnthropicApi {
     }
 
     return AnthropicResponse.fromJson(jsonDecode(response.body));
+  }
+
+  /// Streaming version — yields events as they arrive via SSE.
+  Stream<AnthropicStreamEvent> createMessageStream({
+    required String model,
+    required String system,
+    required List<AnthropicMessage> messages,
+    required List<AnthropicTool> tools,
+    int maxTokens = 16000,
+  }) async* {
+    final uri = Uri.parse('$baseUrl/v1/messages');
+
+    final body = <String, dynamic>{
+      'model': model,
+      'max_tokens': maxTokens,
+      'thinking': {'type': 'disabled'},
+      'system': system,
+      'messages': messages.map((m) => m.toJson()).toList(),
+      'tools': tools.map((t) => t.toJson()).toList(),
+      'stream': true,
+    };
+
+    final request = http.StreamedRequest('POST', uri);
+    request.headers['x-api-key'] = apiKey;
+    request.headers['anthropic-version'] = '2023-06-01';
+    request.headers['content-type'] = 'application/json';
+    request.sink.add(utf8.encode(jsonEncode(body)));
+    request.sink.close();
+
+    final response = await _client.send(request);
+
+    if (response.statusCode != 200) {
+      final errorBody = await response.stream.bytesToString();
+      throw AnthropicApiException(
+        statusCode: response.statusCode,
+        body: errorBody,
+      );
+    }
+
+    // Parse SSE stream
+    String buffer = '';
+    String currentEvent = '';
+    final contentBlocks = <int, Map<String, dynamic>>{}; // index → accumulated content
+
+    await for (final chunk in response.stream.transform(utf8.decoder)) {
+      buffer += chunk;
+      while (buffer.contains('\n')) {
+        final newline = buffer.indexOf('\n');
+        final line = buffer.substring(0, newline).trim();
+        buffer = buffer.substring(newline + 1);
+
+        if (line.isEmpty) continue;
+
+        if (line.startsWith('event: ')) {
+          currentEvent = line.substring(7).trim();
+          continue;
+        }
+
+        if (line.startsWith('data: ')) {
+          final data = line.substring(6);
+          try {
+            final json = jsonDecode(data) as Map<String, dynamic>;
+            final type = json['type'] as String?;
+
+            switch (type) {
+              case 'message_start':
+                final msg = json['message'] as Map<String, dynamic>?;
+                final usage = msg?['usage'] as Map<String, dynamic>?;
+                if (usage != null) {
+                  yield AnthropicStreamEvent.usage(
+                    (usage['input_tokens'] as int?) ?? 0,
+                    0,
+                  );
+                }
+                break;
+
+              case 'content_block_start':
+                final idx = json['index'] as int? ?? 0;
+                final block = json['content_block'] as Map<String, dynamic>?;
+                if (block != null) {
+                  contentBlocks[idx] = block;
+                  if (block['type'] == 'tool_use') {
+                    yield AnthropicStreamEvent.toolStart(
+                      (block['id'] ?? '').toString(),
+                      (block['name'] ?? '').toString(),
+                    );
+                  }
+                }
+                break;
+
+              case 'content_block_delta':
+                final idx = json['index'] as int? ?? 0;
+                final delta = json['delta'] as Map<String, dynamic>?;
+                if (delta != null) {
+                  if (delta['type'] == 'text_delta') {
+                    yield AnthropicStreamEvent.textDelta(
+                        (delta['text'] ?? '').toString());
+                  } else if (delta['type'] == 'input_json_delta') {
+                    yield AnthropicStreamEvent.toolInputDelta(
+                        (delta['partial_json'] ?? '').toString());
+                    // Accumulate
+                    final block = contentBlocks[idx];
+                    if (block != null) {
+                      final existing = (block['input_str'] as String?) ?? '';
+                      block['input_str'] =
+                          existing + (delta['partial_json'] ?? '');
+                    }
+                  }
+                }
+                break;
+
+              case 'content_block_stop':
+                break;
+
+              case 'message_delta':
+                final delta = json['delta'] as Map<String, dynamic>?;
+                final usage = json['usage'] as Map<String, dynamic>?;
+                if (usage != null) {
+                  yield AnthropicStreamEvent.usage(
+                    (usage['input_tokens'] as int?) ?? 0,
+                    (usage['output_tokens'] as int?) ?? 0,
+                  );
+                }
+                break;
+
+              case 'message_stop':
+                yield AnthropicStreamEvent.stop('completed');
+                break;
+            }
+          } catch (_) {
+            // Skip malformed JSON lines
+          }
+        }
+      }
+    }
   }
 
   void dispose() {
