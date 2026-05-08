@@ -1,5 +1,6 @@
 # 编译产物
 server
+/official-server
 packages/
 
 # 依赖

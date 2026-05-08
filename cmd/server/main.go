@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"mime"
@@ -15,6 +17,7 @@ import (
 	"mobilevc/internal/data"
 	"mobilevc/internal/gateway"
 	"mobilevc/internal/logx"
+	"mobilevc/internal/officialclient"
 	"mobilevc/internal/push"
 	"mobilevc/internal/tts"
 )
@@ -70,6 +73,42 @@ func main() {
 		summary.TTSMaxTextLength,
 		summary.TTSDefaultFormat,
 	)
+
+	// Optional: register with official server
+	if cfg.OfficialServerURL != "" && cfg.OfficialAccessToken != "" {
+		logx.Info("bootstrap", "Official server configured: url=%s", cfg.OfficialServerURL)
+		nodeName := cfg.OfficialNodeName
+		if nodeName == "" {
+			nodeName = officialclient.ResolveNodeName()
+		}
+		nodeID := cfg.OfficialNodeID
+		oc := officialclient.NewClient(cfg.OfficialServerURL, cfg.OfficialAccessToken, cfg.OfficialRefreshToken, nodeID, nodeName, version)
+		if err := oc.Register(context.Background()); err != nil {
+			logx.Warn("bootstrap", "register with official server failed: %v", err)
+		} else {
+			oc.StartHeartbeatLoop(context.Background(), 60*time.Second)
+			logx.Info("bootstrap", "Heartbeat loop started (60s)")
+
+			// Build WebRTC + signaling
+			signaler := officialclient.NewSignaler(cfg.OfficialServerURL, cfg.OfficialAccessToken, oc.NodeID)
+			pm := officialclient.NewPeerManager(
+				func(peerID string, data json.RawMessage) { signaler.SendWebRTC(peerID, data) },
+				func(peerID string, msg []byte) { logx.Info("p2p", "data from %s: %d bytes", peerID, len(msg)) },
+			)
+			signaler.SetPeerManager(pm)
+			if err := signaler.Connect(context.Background()); err != nil {
+				logx.Warn("bootstrap", "signaling connect failed: %v", err)
+			} else {
+				logx.Info("bootstrap", "Signaling connected, waiting for P2P requests")
+			}
+
+			defer func() {
+				oc.Stop()
+				signaler.Close()
+				oc.Deregister(context.Background())
+			}()
+		}
+	}
 
 	logx.Info("bootstrap", "Initializing session store")
 	sessionStore, err := data.NewFileStore("")

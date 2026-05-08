@@ -8,8 +8,9 @@ import 'package:web_socket_channel/io.dart';
 import '../models/events.dart';
 import '../models/runtime_meta.dart';
 import 'mobilevc_mapper.dart';
+import 'session_transport.dart';
 
-class MobileVcWsService {
+class MobileVcWsService implements SessionTransport {
   MobileVcWsService({MobileVcMapper? mapper})
       : _mapper = mapper ?? const MobileVcMapper();
 

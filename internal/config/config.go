@@ -32,6 +32,13 @@ type Config struct {
 	AuthToken string
 	Runtime   RuntimeConfig
 	TTS       TTSConfig
+
+	// Official server registration (optional)
+	OfficialServerURL    string
+	OfficialNodeID       string
+	OfficialNodeName     string
+	OfficialAccessToken  string
+	OfficialRefreshToken string
 }
 
 type Summary struct {
@@ -51,6 +58,8 @@ type Summary struct {
 	TTSRequestTimeout      int
 	TTSMaxTextLength       int
 	TTSDefaultFormat       string
+	OfficialServerURL      string
+	OfficialNodeID         string
 }
 
 func Load() (Config, error) {
@@ -75,6 +84,11 @@ func Load() (Config, error) {
 			MaxTextLength:         getEnvInt("TTS_MAX_TEXT_LENGTH", 200),
 			DefaultFormat:         strings.TrimSpace(getEnv("TTS_DEFAULT_FORMAT", "wav")),
 		},
+		OfficialServerURL:    strings.TrimSpace(os.Getenv("OFFICIAL_SERVER_URL")),
+		OfficialNodeID:       strings.TrimSpace(os.Getenv("OFFICIAL_NODE_ID")),
+		OfficialNodeName:     strings.TrimSpace(os.Getenv("OFFICIAL_NODE_NAME")),
+		OfficialAccessToken:  strings.TrimSpace(os.Getenv("OFFICIAL_ACCESS_TOKEN")),
+		OfficialRefreshToken: strings.TrimSpace(os.Getenv("OFFICIAL_REFRESH_TOKEN")),
 	}
 
 	if cfg.AuthToken == "" {
@@ -105,6 +119,8 @@ func (c Config) Summary() Summary {
 		TTSRequestTimeout:      c.TTS.RequestTimeoutSeconds,
 		TTSMaxTextLength:       c.TTS.MaxTextLength,
 		TTSDefaultFormat:       c.TTS.DefaultFormat,
+		OfficialServerURL:      c.OfficialServerURL,
+		OfficialNodeID:         c.OfficialNodeID,
 	}
 }
 

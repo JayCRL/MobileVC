@@ -11,6 +11,9 @@ import '../../data/models/runtime_meta.dart';
 import '../../data/models/session_models.dart';
 import '../../data/services/adb_webrtc_service.dart';
 import '../../data/services/mobilevc_ws_service.dart';
+import '../../data/services/official_session_transport.dart';
+import '../../data/services/official_api_service.dart';
+import '../../data/services/session_transport.dart';
 import 'claude_model_utils.dart';
 import 'session_display_text.dart';
 
@@ -175,7 +178,8 @@ class SessionController extends ChangeNotifier {
   static const Duration _connectionSilenceTimeout = Duration(seconds: 45);
   static const Duration _observedSessionSyncInterval = Duration(seconds: 3);
   static const Duration _outboundAckRetryDelay = Duration(seconds: 6);
-  final MobileVcWsService _service;
+  SessionTransport _service;
+  OfficialSessionTransport? _officialTransport;
   final AdbWebRtcService _adbWebRtc = AdbWebRtcService();
 
   StreamSubscription<AppEvent>? _subscription;
@@ -1672,7 +1676,20 @@ class SessionController extends ChangeNotifier {
     _syncDerivedState();
     notifyListeners();
     try {
-      await _service.connect(_config.wsUrl);
+      if (_config.connectionMode == 'official' && _config.officialNodeId.isNotEmpty) {
+        // Use official server P2P
+        if (_officialTransport == null) {
+          final apiService = OfficialApiService(
+            baseUrl: _config.officialServerUrl,
+            accessToken: _config.officialAccessToken,
+          );
+          _officialTransport = OfficialSessionTransport(apiService: apiService);
+        }
+        _service = _officialTransport!;
+        await _officialTransport!.connectToNode(_config.officialNodeId);
+      } else {
+        await _service.connect(_config.wsUrl);
+      }
       _connected = true;
       _reconnectAttempt = 0;
       _connectionStage = SessionConnectionStage.connected;

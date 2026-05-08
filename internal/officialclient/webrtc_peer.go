@@ -1,0 +1,175 @@
+package officialclient
+
+import (
+	"encoding/json"
+	"sync"
+
+	"mobilevc/internal/logx"
+
+	"github.com/pion/webrtc/v4"
+)
+
+type PeerManager struct {
+	mu     sync.Mutex
+	peers  map[string]*webrtc.PeerConnection
+	dcs    map[string]*webrtc.DataChannel
+	signal func(peerID string, data json.RawMessage)
+	onData func(peerID string, msg []byte)
+}
+
+func NewPeerManager(signalFn func(peerID string, data json.RawMessage), onDataFn func(peerID string, msg []byte)) *PeerManager {
+	return &PeerManager{
+		peers:  make(map[string]*webrtc.PeerConnection),
+		dcs:    make(map[string]*webrtc.DataChannel),
+		signal: signalFn,
+		onData: onDataFn,
+	}
+}
+
+func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) error {
+	pm.mu.Lock()
+	existing, exists := pm.peers[peerID]
+	pm.mu.Unlock()
+
+	if exists {
+		existing.Close()
+	}
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{URLs: []string{"stun:stun.l.google.com:19302"}},
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	pm.mu.Lock()
+	pm.peers[peerID] = pc
+	pm.mu.Unlock()
+
+	// Handle DataChannel from mobile
+	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		logx.Info("webrtc", "DataChannel received: %s peer=%s", dc.Label(), peerID)
+		pm.mu.Lock()
+		pm.dcs[peerID] = dc
+		pm.mu.Unlock()
+
+		dc.OnOpen(func() {
+			logx.Info("webrtc", "DataChannel open: peer=%s", peerID)
+		})
+		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+			if pm.onData != nil {
+				pm.onData(peerID, msg.Data)
+			}
+		})
+		dc.OnClose(func() {
+			logx.Info("webrtc", "DataChannel closed: peer=%s", peerID)
+		})
+	})
+
+	// Handle ICE candidates
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c == nil {
+			return
+		}
+		candidate := c.ToJSON()
+		data, _ := json.Marshal(map[string]interface{}{
+			"candidate":     candidate.Candidate,
+			"sdpMid":        candidate.SDPMid,
+			"sdpMLineIndex": candidate.SDPMLineIndex,
+		})
+		if pm.signal != nil {
+			pm.signal(peerID, data)
+		}
+	})
+
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		logx.Info("webrtc", "ICE state: %s peer=%s", state.String(), peerID)
+		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
+			pc.Close()
+			pm.mu.Lock()
+			delete(pm.peers, peerID)
+			delete(pm.dcs, peerID)
+			pm.mu.Unlock()
+		}
+	})
+
+	// Set remote description (offer from mobile)
+	sdpTypeEnum := webrtc.SDPTypeOffer
+	if sdpType == "answer" {
+		sdpTypeEnum = webrtc.SDPTypeAnswer
+	}
+	if err := pc.SetRemoteDescription(webrtc.SessionDescription{
+		Type: sdpTypeEnum,
+		SDP:  sdp,
+	}); err != nil {
+		return err
+	}
+
+	// Create answer
+	answer, err := pc.CreateAnswer(nil)
+	if err != nil {
+		return err
+	}
+	if err := pc.SetLocalDescription(answer); err != nil {
+		return err
+	}
+
+	// Send answer back via signaling
+	answerData, _ := json.Marshal(map[string]string{
+		"type": answer.Type.String(),
+		"sdp":  answer.SDP,
+	})
+	if pm.signal != nil {
+		pm.signal(peerID, answerData)
+	}
+
+	logx.Info("webrtc", "answer sent to peer=%s", peerID)
+	return nil
+}
+
+func (pm *PeerManager) HandleRemoteCandidate(peerID string, candidateData json.RawMessage) error {
+	pm.mu.Lock()
+	pc, ok := pm.peers[peerID]
+	pm.mu.Unlock()
+	if !ok {
+		return nil
+	}
+
+	var c struct {
+		Candidate     string `json:"candidate"`
+		SDPMid        string `json:"sdpMid"`
+		SDPMLineIndex uint16 `json:"sdpMLineIndex"`
+	}
+	if err := json.Unmarshal(candidateData, &c); err != nil {
+		return err
+	}
+
+	return pc.AddICECandidate(webrtc.ICECandidateInit{
+		Candidate: c.Candidate,
+	})
+}
+
+func (pm *PeerManager) Send(peerID string, data []byte) error {
+	pm.mu.Lock()
+	dc, ok := pm.dcs[peerID]
+	pm.mu.Unlock()
+	if !ok || dc == nil {
+		return nil
+	}
+	return dc.Send(data)
+}
+
+func (pm *PeerManager) ClosePeer(peerID string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if pc, ok := pm.peers[peerID]; ok {
+		pc.Close()
+		delete(pm.peers, peerID)
+	}
+	if dc, ok := pm.dcs[peerID]; ok {
+		dc.Close()
+		delete(pm.dcs, peerID)
+	}
+}

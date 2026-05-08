@@ -22,6 +22,36 @@ import UserNotifications
     return launched
   }
 
+  // Deep link — OAuth callback
+  var pendingDeepLinkUri: String?
+  var deeplinkEventSink: FlutterEventSink?
+
+  override func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    let uri = url.absoluteString
+    NSLog("[deeplink] received: \(uri)")
+    if let sink = deeplinkEventSink {
+      sink(uri)
+    } else if let controller = window?.rootViewController as? FlutterViewController {
+      let channel = FlutterMethodChannel(name: "mobilevc/deeplink", binaryMessenger: controller.binaryMessenger)
+      channel.invokeMethod("onUri", arguments: uri)
+    }
+    pendingDeepLinkUri = uri
+    return true
+  }
+
+  private func flushPendingDeepLinkIfNeeded() {
+    guard let uri = pendingDeepLinkUri else { return }
+    pendingDeepLinkUri = nil
+    if let controller = window?.rootViewController as? FlutterViewController {
+      let channel = FlutterMethodChannel(name: "mobilevc/deeplink", binaryMessenger: controller.binaryMessenger)
+      channel.invokeMethod("onUri", arguments: uri)
+    }
+  }
+
   override func applicationWillTerminate(_ application: UIApplication) {
     endBackgroundKeepAlive()
     super.applicationWillTerminate(application)
@@ -110,6 +140,32 @@ import UserNotifications
       }
     }
     self.pushChannel = pushChannel
+
+    // Deep link channel
+    let deeplinkChannel = FlutterMethodChannel(
+      name: "mobilevc/deeplink",
+      binaryMessenger: controller.binaryMessenger
+    )
+    deeplinkChannel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "getInitialUri":
+        result(self?.pendingDeepLinkUri)
+        self?.pendingDeepLinkUri = nil
+      case "onUri":
+        // Handled via invokeMethod from application(_:open:)
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    // EventChannel for streaming URIs
+    let deeplinkEventChannel = FlutterEventChannel(
+      name: "mobilevc/deeplink_uri",
+      binaryMessenger: controller.binaryMessenger
+    )
+    deeplinkEventChannel.setStreamHandler(DeeplinkStreamHandler(appDelegate: self))
+
+    flushPendingDeepLinkIfNeeded()
 
     // iSH Linux bridge
     let ishChannel = FlutterMethodChannel(
@@ -231,5 +287,23 @@ import UserNotifications
     }
     UIApplication.shared.endBackgroundTask(backgroundTask)
     backgroundTask = .invalid
+  }
+}
+
+private class DeeplinkStreamHandler: NSObject, FlutterStreamHandler {
+  private weak var appDelegate: AppDelegate?
+
+  init(appDelegate: AppDelegate) {
+    self.appDelegate = appDelegate
+  }
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    appDelegate?.deeplinkEventSink = events
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    appDelegate?.deeplinkEventSink = nil
+    return nil
   }
 }
