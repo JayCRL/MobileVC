@@ -23,6 +23,7 @@ import (
 	"mobilevc/internal/data/skills"
 	"mobilevc/internal/engine"
 	"mobilevc/internal/logx"
+	"mobilevc/internal/planning"
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/push"
 	"mobilevc/internal/session"
@@ -1296,6 +1297,219 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
+		case "planning_check":
+			planningMgr := &planning.Manager{}
+			result := planningMgr.CheckClaude(ctx)
+			emit(protocol.NewPlanningCheckEvent(selectedSessionID,
+				result.Installed, result.Version, result.Error, result.InstallHint))
+		case "planning_set_key":
+			var setKeyReq protocol.PlanningSetKeyRequestEvent
+			if err := json.Unmarshal(payload, &setKeyReq); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid planning_set_key request: %v", err), ""))
+				continue
+			}
+			ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+			if err := ks.Set(strings.TrimSpace(setKeyReq.APIKey)); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("failed to save API key: %v", err), ""))
+				continue
+			}
+			emit(protocol.NewPlanningStateEvent(selectedSessionID, "idle", "", "", "API key saved", nil))
+		case "planning_start":
+			var planReq protocol.PlanningStartRequestEvent
+			if err := json.Unmarshal(payload, &planReq); err != nil {
+				logx.Warn("ws", "invalid planning_start request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid planning_start request: %v", err), ""))
+				continue
+			}
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=planning_start task=%q", connectionID, selectedSessionID, remoteAddr, wsDebugPreview(planReq.Task))
+			sessionID := strings.TrimSpace(firstNonEmptyString(planReq.SessionID, selectedSessionID))
+			if sessionID == "" || sessionID == connectionID {
+				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
+				continue
+			}
+			if sessionID != strings.TrimSpace(selectedSessionID) {
+				switchRuntimeSession(sessionID)
+			}
+			if !ackClientAction(sessionID, "planning_start", planReq.ClientEvent) {
+				logx.Info("ws", "duplicate client action ignored: connectionID=%s sessionID=%s remoteAddr=%s action=planning_start clientActionID=%s", connectionID, sessionID, remoteAddr, planReq.ClientActionID)
+				continue
+			}
+			// Load API key
+			apiKey := strings.TrimSpace(planReq.APIKey)
+			if apiKey == "" {
+				ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+				var err error
+				apiKey, err = ks.Get()
+				if err != nil || apiKey == "" {
+					emit(protocol.NewErrorEvent(sessionID, "请先设置 Anthropic API Key", ""))
+					continue
+				}
+			}
+			// Check claude
+			mgr := &planning.Manager{APIKey: apiKey}
+			checkResult := mgr.CheckClaude(ctx)
+			if !checkResult.Installed {
+				emit(protocol.NewPlanningCheckEvent(sessionID, false, "", checkResult.Error, checkResult.InstallHint))
+				emit(protocol.NewErrorEvent(sessionID, "Claude Code CLI 未安装，请先运行 planning_check 查看安装指引", ""))
+				continue
+			}
+			// Get session runtime
+			sessionRuntime, service := runtimeForSession(sessionID)
+			emitAndPersist := emitAndPersistFor(sessionID)
+			// Start initial planning phase notification
+			emit(protocol.NewPlanningStateEvent(sessionID, "planning", "", "", "Starting planning session...", nil))
+			// Track planning progress
+			tracker := planning.NewTracker()
+			// Wrap emitAndPersist to extract planning phases
+			wrappedEmitAndPersist := func(event any) {
+				if rp, ok := event.(protocol.RuntimePhaseEvent); ok {
+					if planning.IsPlanningPhase(rp.Phase) {
+						p := &planning.PhasePayload{
+							Phase:   rp.Phase,
+							Kind:    rp.Kind,
+							Message: rp.Message,
+						}
+						if state := tracker.Apply(p); state != nil {
+							tasks := make([]protocol.PlanTask, len(state.Tasks))
+							for i, t := range state.Tasks {
+								tasks[i] = protocol.PlanTask{
+									ID:     t.ID,
+									Title:  t.Title,
+									Status: string(t.Status),
+									Agent:  t.Agent,
+								}
+							}
+							emitAndPersist(protocol.NewPlanningStateEvent(
+								sessionID, string(state.Phase),
+								state.CurrentTask, state.CurrentAgent,
+								state.Message, tasks,
+							))
+							return
+						}
+					}
+				}
+				emitAndPersist(event)
+			}
+			if sessionRuntime != nil {
+				service.SetSink(sessionRuntime.EnsureBufferedSinkWithProcessor(wrappedEmitAndPersist))
+			}
+			// Build planning command with API key inline
+			args := mgr.BuildCommand("")
+			quotedArgs := make([]string, len(args))
+			for i, a := range args {
+				quotedArgs[i] = "'" + strings.ReplaceAll(a, "'", "'\\''") + "'"
+			}
+			cmdStr := ""
+			if strings.TrimSpace(planReq.BaseURL) != "" {
+				cmdStr += "ANTHROPIC_BASE_URL='" + strings.ReplaceAll(strings.TrimSpace(planReq.BaseURL), "'", "'\\''") + "' "
+			}
+			cmdStr += "ANTHROPIC_API_KEY='" + strings.ReplaceAll(apiKey, "'", "'\\''") + "' " + strings.Join(quotedArgs, " ")
+			cwd := firstNonEmptyString(planReq.CWD, "/")
+			execReq := session.ExecuteRequest{
+				Command:        cmdStr,
+				CWD:            cwd,
+				Mode:           engine.ModePTY,
+				PermissionMode: "acceptEdits",
+				InitialInput:   planReq.Task + "\n",
+				RuntimeMeta: protocol.RuntimeMeta{
+					Source:         "planning",
+					Command:        cmdStr,
+					Engine:         "claude",
+					CWD:            cwd,
+					PermissionMode: "acceptEdits",
+				},
+			}
+			if err := service.Execute(ctx, sessionID, execReq, wrappedEmitAndPersist); err != nil {
+				logx.Error("ws", "planning_start execute failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+				continue
+			}
+		case "planning_confirm":
+			var confirmReq protocol.PlanningConfirmRequestEvent
+			if err := json.Unmarshal(payload, &confirmReq); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid planning_confirm request: %v", err), ""))
+				continue
+			}
+			sessionID := strings.TrimSpace(firstNonEmptyString(confirmReq.SessionID, selectedSessionID))
+			_, service := runtimeForSession(sessionID)
+			decision := strings.TrimSpace(strings.ToLower(confirmReq.Decision))
+			permMode := "acceptEdits" // pre-agreed permissions
+			switch decision {
+			case "confirm":
+				// After plan confirmation: execute
+				input := "CONFIRMED. Execute the plan step by step. Report progress using mobilevcRuntimePhase markers."
+				if strings.TrimSpace(confirmReq.Notes) != "" {
+					input += "\n\nDeveloper notes: " + confirmReq.Notes
+				}
+				inputReq := session.InputRequest{
+					Data: input,
+					RuntimeMeta: protocol.RuntimeMeta{
+						Source: "planning", PermissionMode: permMode,
+					},
+				}
+				emitAndPersist := emitAndPersistFor(sessionID)
+				execReq := session.ExecuteRequest{
+					Command: "claude", Mode: engine.ModePTY, PermissionMode: permMode,
+					RuntimeMeta: protocol.RuntimeMeta{Source: "planning", Engine: "claude", PermissionMode: permMode},
+				}
+				if err := service.SendInputOrResume(ctx, sessionID, execReq, inputReq, emitAndPersist); err != nil {
+					logx.Warn("ws", "planning_confirm failed: sessionID=%s err=%v", sessionID, err)
+					emit(protocol.NewErrorEvent(sessionID, "failed to send confirmation: "+err.Error(), ""))
+				}
+			case "continue":
+				// After checkpoint: continue
+				input := "CONTINUE."
+				if strings.TrimSpace(confirmReq.Notes) != "" {
+					input = "CONTINUE. Notes: " + confirmReq.Notes
+				}
+				inputReq := session.InputRequest{
+					Data: input,
+					RuntimeMeta: protocol.RuntimeMeta{
+						Source: "planning", PermissionMode: permMode,
+					},
+				}
+				emitAndPersist := emitAndPersistFor(sessionID)
+				execReq := session.ExecuteRequest{
+					Command: "claude", Mode: engine.ModePTY, PermissionMode: permMode,
+					RuntimeMeta: protocol.RuntimeMeta{Source: "planning", Engine: "claude", PermissionMode: permMode},
+				}
+				if err := service.SendInputOrResume(ctx, sessionID, execReq, inputReq, emitAndPersist); err != nil {
+					logx.Warn("ws", "planning_confirm continue failed: sessionID=%s err=%v", sessionID, err)
+					emit(protocol.NewErrorEvent(sessionID, "failed to continue: "+err.Error(), ""))
+				}
+			case "adjust":
+				notes := strings.TrimSpace(confirmReq.Notes)
+				if notes == "" {
+					notes = "Please adjust."
+				}
+				input := "ADJUST: " + notes + "\n\nRevise based on this feedback, then wait for confirmation again."
+				inputReq := session.InputRequest{
+					Data: input,
+					RuntimeMeta: protocol.RuntimeMeta{
+						Source: "planning", PermissionMode: permMode,
+					},
+				}
+				emitAndPersist := emitAndPersistFor(sessionID)
+				execReq := session.ExecuteRequest{
+					Command: "claude", Mode: engine.ModePTY, PermissionMode: permMode,
+					RuntimeMeta: protocol.RuntimeMeta{Source: "planning", Engine: "claude", PermissionMode: permMode},
+				}
+				if err := service.SendInputOrResume(ctx, sessionID, execReq, inputReq, emitAndPersist); err != nil {
+					logx.Warn("ws", "planning_confirm adjust failed: sessionID=%s err=%v", sessionID, err)
+					emit(protocol.NewErrorEvent(sessionID, "failed to send adjustment: "+err.Error(), ""))
+				}
+			case "cancel":
+				service.StopActive(sessionID, emitAndPersistFor(sessionID))
+				emit(protocol.NewPlanningStateEvent(sessionID, "completed", "", "", "Planning cancelled by developer", nil))
+			}
+		case "planning_adjust":
+			var adjustReq protocol.PlanningAdjustRequestEvent
+			if err := json.Unmarshal(payload, &adjustReq); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid planning_adjust request: %v", err), ""))
+				continue
+			}
+			// planning_adjust is a convenience alias for planning_confirm with decision=adjust
+			// handled the same way
 		case "ai_turn":
 			var aiReq protocol.AITurnRequestEvent
 			if err := json.Unmarshal(payload, &aiReq); err != nil {

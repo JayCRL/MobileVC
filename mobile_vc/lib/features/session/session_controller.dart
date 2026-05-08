@@ -330,6 +330,7 @@ class SessionController extends ChangeNotifier {
   bool _adbWebRtcStarting = false;
 
   AppConfig get config => _config;
+  Stream<AppEvent> get events => _service.events;
   SessionConnectionStage get connectionStage => _connectionStage;
   String get currentAiEngine => _resolvedAiEngine(
         command: currentMeta.command,
@@ -2405,6 +2406,14 @@ class SessionController extends ChangeNotifier {
 
   void requestSkillCatalog() {
     _service.send({'action': 'skill_catalog_get'});
+  }
+
+  void sendRawAction(String action, [Map<String, dynamic>? extra]) {
+    final payload = <String, dynamic>{'action': action};
+    if (extra != null) {
+      payload.addAll(extra);
+    }
+    _service.send(payload);
   }
 
   void saveSkill(SkillDefinition definition) {

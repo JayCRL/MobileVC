@@ -5,7 +5,7 @@ import '../../core/oauth_deeplink.dart';
 import '../../data/services/official_auth_service.dart';
 import '../../data/services/official_api_service.dart';
 import '../mini_claude/mini_claude_page.dart';
-import 'session_home_page.dart';
+import '../planning/mode_choice_page.dart';
 import 'session_controller.dart';
 
 class ModeSelectPage extends StatefulWidget {
@@ -141,7 +141,7 @@ class _ModeSelectPageState extends State<ModeSelectPage> with WidgetsBindingObse
         if (mounted) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
-              builder: (_) => SessionHomePage(
+              builder: (_) => ModeChoicePage(
                 controller: widget.controller,
                 darkModeEnabled: widget.darkModeEnabled,
                 onToggleTheme: widget.onToggleTheme,
@@ -204,7 +204,7 @@ class _ModeSelectPageState extends State<ModeSelectPage> with WidgetsBindingObse
                 color: theme.colorScheme.primary,
                 onTap: () => Navigator.of(context).pushReplacement(
                   MaterialPageRoute(
-                    builder: (_) => SessionHomePage(
+                    builder: (_) => ModeChoicePage(
                       controller: widget.controller,
                       darkModeEnabled: widget.darkModeEnabled,
                       onToggleTheme: widget.onToggleTheme,

@@ -1822,3 +1822,92 @@ class TimelineItem {
   final HistoryContext? context;
   final bool animateBody;
 }
+
+// ── Planning Events ────────────────────────────────────────────────────────
+
+class PlanningCheckEvent extends AppEvent {
+  const PlanningCheckEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.installed = false,
+    this.version = '',
+    this.error = '',
+    this.installHint = '',
+  }) : super(type: 'planning_check');
+
+  final bool installed;
+  final String version;
+  final String error;
+  final String installHint;
+
+  factory PlanningCheckEvent.fromJson(Map<String, dynamic> json) =>
+      PlanningCheckEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        installed: (json['installed'] ?? false) == true,
+        version: (json['version'] ?? '').toString(),
+        error: (json['error'] ?? '').toString(),
+        installHint: (json['installHint'] ?? '').toString(),
+      );
+}
+
+class PlanTask {
+  const PlanTask({
+    this.id = '',
+    this.title = '',
+    this.status = 'pending',
+    this.agent = '',
+  });
+
+  final String id;
+  final String title;
+  final String status;
+  final String agent;
+
+  factory PlanTask.fromJson(Map<String, dynamic> json) => PlanTask(
+        id: (json['id'] ?? '').toString(),
+        title: (json['title'] ?? '').toString(),
+        status: (json['status'] ?? 'pending').toString(),
+        agent: (json['agent'] ?? '').toString(),
+      );
+}
+
+class PlanningStateEvent extends AppEvent {
+  const PlanningStateEvent({
+    required super.timestamp,
+    required super.sessionId,
+    required super.runtimeMeta,
+    required super.raw,
+    this.phase = 'idle',
+    this.currentTask = '',
+    this.currentAgent = '',
+    this.message = '',
+    this.tasks = const [],
+  }) : super(type: 'planning_state');
+
+  final String phase;
+  final String currentTask;
+  final String currentAgent;
+  final String message;
+  final List<PlanTask> tasks;
+
+  factory PlanningStateEvent.fromJson(Map<String, dynamic> json) =>
+      PlanningStateEvent(
+        timestamp: _readTimestamp(json),
+        sessionId: (json['sessionId'] ?? '').toString(),
+        runtimeMeta: RuntimeMeta.fromJson(json),
+        raw: json,
+        phase: (json['phase'] ?? 'idle').toString(),
+        currentTask: (json['currentTask'] ?? '').toString(),
+        currentAgent: (json['currentAgent'] ?? '').toString(),
+        message: (json['msg'] ?? '').toString(),
+        tasks: (json['tasks'] as List<dynamic>?)
+                ?.map((t) => PlanTask.fromJson(t as Map<String, dynamic>))
+                .toList() ??
+            const [],
+      );
+}
