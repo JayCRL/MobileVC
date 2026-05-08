@@ -91,6 +91,106 @@ func NewHandler(authToken string, sessionStore data.Store) *Handler {
 	return handler
 }
 
+// P2PMessageEnvelope is a planning message received via P2P data channel.
+type P2PMessageEnvelope struct {
+	Action    string `json:"action"`
+	SessionID string `json:"sessionId"`
+	APIKey    string `json:"apiKey"`
+	Task      string `json:"task"`
+	BaseURL   string `json:"baseUrl"`
+}
+
+// HandleP2PMessage processes a planning message from a P2P (WebRTC) data channel.
+func (h *Handler) HandleP2PMessage(ctx context.Context, msg []byte, replyFn func(any)) {
+	var envelope P2PMessageEnvelope
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid message: %v", err), ""))
+		return
+	}
+	switch envelope.Action {
+	case "planning_check":
+		mgr := &planning.Manager{}
+		result := mgr.CheckClaude(ctx)
+		replyFn(protocol.NewPlanningCheckEvent(envelope.SessionID, result.Installed, result.Version, result.Error, result.InstallHint))
+	case "planning_set_key":
+		ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+		if err := ks.Set(strings.TrimSpace(envelope.APIKey)); err != nil {
+			replyFn(protocol.NewErrorEvent(envelope.SessionID, fmt.Sprintf("failed to save API key: %v", err), ""))
+			return
+		}
+		replyFn(protocol.NewPlanningStateEvent(envelope.SessionID, "idle", "", "", "API key saved", nil))
+	case "planning_start":
+		h.handleP2PPlanningStart(ctx, envelope, replyFn)
+	default:
+		logx.Info("p2p", "unhandled action: %s", envelope.Action)
+	}
+}
+
+func (h *Handler) handleP2PPlanningStart(ctx context.Context, envelope P2PMessageEnvelope, replyFn func(any)) {
+	apiKey := strings.TrimSpace(envelope.APIKey)
+	if apiKey == "" {
+		ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+		var err error
+		apiKey, err = ks.Get()
+		if err != nil || apiKey == "" {
+			replyFn(protocol.NewErrorEvent(envelope.SessionID, "请先设置 Anthropic API Key", ""))
+			return
+		}
+	}
+	mgr := &planning.Manager{APIKey: apiKey}
+	if result := mgr.CheckClaude(ctx); !result.Installed {
+		replyFn(protocol.NewPlanningCheckEvent(envelope.SessionID, false, "", result.Error, result.InstallHint))
+		replyFn(protocol.NewErrorEvent(envelope.SessionID, "Claude Code CLI 未安装", ""))
+		return
+	}
+	sessionID := envelope.SessionID
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("session-%d", time.Now().UTC().UnixNano())
+	}
+	args := mgr.BuildCommand("")
+	quotedArgs := make([]string, len(args))
+	for i, a := range args {
+		quotedArgs[i] = "'" + strings.ReplaceAll(a, "'", "'\\''") + "'"
+	}
+	cmdStr := ""
+	if strings.TrimSpace(envelope.BaseURL) != "" {
+		cmdStr += "ANTHROPIC_BASE_URL='" + strings.ReplaceAll(strings.TrimSpace(envelope.BaseURL), "'", "'\\''") + "' "
+	}
+	cmdStr += "ANTHROPIC_API_KEY='" + strings.ReplaceAll(apiKey, "'", "'\\''") + "' " + strings.Join(quotedArgs, " ")
+
+	deps := session.Dependencies{NewPtyRunner: h.NewPtyRunner, NewExecRunner: h.NewExecRunner}
+	svc := session.NewService(sessionID, deps)
+	replyFn(protocol.NewPlanningStateEvent(sessionID, "planning", "", "", "Starting planning session...", nil))
+
+	tracker := planning.NewTracker()
+	wrappedEmit := func(event any) {
+		if rp, ok := event.(protocol.RuntimePhaseEvent); ok {
+			if planning.IsPlanningPhase(rp.Phase) {
+				p := &planning.PhasePayload{Phase: rp.Phase, Kind: rp.Kind, Message: rp.Message}
+				if state := tracker.Apply(p); state != nil {
+					tasks := make([]protocol.PlanTask, len(state.Tasks))
+					for i, t := range state.Tasks {
+						tasks[i] = protocol.PlanTask{ID: t.ID, Title: t.Title, Status: string(t.Status), Agent: t.Agent}
+					}
+					replyFn(protocol.NewPlanningStateEvent(sessionID, string(state.Phase), state.CurrentTask, state.CurrentAgent, state.Message, tasks))
+					return
+				}
+			}
+		}
+		replyFn(event)
+	}
+
+	execReq := session.ExecuteRequest{
+		Command: cmdStr, CWD: "/", Mode: engine.ModePTY, PermissionMode: "acceptEdits",
+		InitialInput: envelope.Task + "\n",
+		RuntimeMeta:  protocol.RuntimeMeta{Source: "planning", Command: cmdStr, Engine: "claude", CWD: "/", PermissionMode: "acceptEdits"},
+	}
+	if err := svc.Execute(ctx, sessionID, execReq, wrappedEmit); err != nil {
+		logx.Error("p2p", "planning_start execute failed: sessionID=%s err=%v", sessionID, err)
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+	}
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	connectionID := fmt.Sprintf("conn-%d", time.Now().UTC().UnixNano())
 	selectedSessionID := ""

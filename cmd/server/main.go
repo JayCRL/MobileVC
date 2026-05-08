@@ -18,8 +18,6 @@ import (
 	"mobilevc/internal/gateway"
 	"mobilevc/internal/logx"
 	"mobilevc/internal/officialclient"
-	"mobilevc/internal/planning"
-	"mobilevc/internal/protocol"
 	"mobilevc/internal/push"
 	"mobilevc/internal/tts"
 )
@@ -76,6 +74,9 @@ func main() {
 		summary.TTSDefaultFormat,
 	)
 
+	// Declared early so P2P callbacks can reference it (assigned later)
+	var wsHandler *gateway.Handler
+
 	// Optional: register with official server
 	if cfg.OfficialServerURL != "" && cfg.OfficialAccessToken != "" {
 		logx.Info("bootstrap", "Official server configured: url=%s", cfg.OfficialServerURL)
@@ -97,60 +98,15 @@ func main() {
 			pm = officialclient.NewPeerManager(
 				func(peerID string, data json.RawMessage) { signaler.SendWebRTC(peerID, data) },
 				func(peerID string, msg []byte) {
-					logx.Info("p2p", "data from %s: %d bytes", peerID, len(msg))
-
-					// Parse incoming message
-					var envelope struct {
-						Action    string `json:"action"`
-						SessionID string `json:"sessionId"`
-						APIKey    string `json:"apiKey"`
-						Task      string `json:"task"`
-						BaseURL   string `json:"baseUrl"`
-					}
-					if err := json.Unmarshal(msg, &envelope); err != nil {
-						logx.Warn("p2p", "failed to parse message: %v", err)
-						return
-					}
-
 					sendReply := func(event any) {
 						data, err := json.Marshal(event)
 						if err == nil {
 							pm.Send(peerID, data)
 						}
 					}
-
-					switch envelope.Action {
-					case "planning_check":
-						mgr := &planning.Manager{}
-						result := mgr.CheckClaude(context.Background())
-						sendReply(protocol.NewPlanningCheckEvent(
-							envelope.SessionID,
-							result.Installed, result.Version,
-							result.Error, result.InstallHint,
-						))
-					case "planning_set_key":
-						ks := planning.NewKeyStore(
-							os.ExpandEnv("$HOME/.mobilevc"),
-							cfg.AuthToken,
-						)
-						if err := ks.Set(envelope.APIKey); err != nil {
-							sendReply(protocol.NewErrorEvent(
-								envelope.SessionID,
-								fmt.Sprintf("failed to save API key: %v", err), "",
-							))
-							return
-						}
-						sendReply(protocol.NewPlanningStateEvent(
-							envelope.SessionID, "idle", "", "",
-							"API key saved", nil,
-						))
-					case "planning_start":
-						sendReply(protocol.NewErrorEvent(
-							envelope.SessionID,
-							"planning_start via P2P not yet supported. Use LAN mode for Boss mode.", "",
-						))
-					default:
-						logx.Info("p2p", "unhandled action: %s", envelope.Action)
+					// Delegate to gateway handler (initialized later, must be non-nil)
+					if wsHandler != nil {
+						wsHandler.HandleP2PMessage(context.Background(), msg, sendReply)
 					}
 				},
 			)
@@ -206,7 +162,7 @@ func main() {
 	}
 
 	logx.Info("bootstrap", "Preparing websocket handler")
-	wsHandler := gateway.NewHandler(cfg.AuthToken, sessionStore)
+	wsHandler = gateway.NewHandler(cfg.AuthToken, sessionStore)
 	wsHandler.PushService = pushService
 	logx.Info("bootstrap", "WebSocket handler ready")
 
