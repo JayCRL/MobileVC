@@ -85,7 +85,8 @@ func main() {
 			nodeName = officialclient.ResolveNodeName()
 		}
 		nodeID := cfg.OfficialNodeID
-		oc := officialclient.NewClient(cfg.OfficialServerURL, cfg.OfficialAccessToken, cfg.OfficialRefreshToken, nodeID, nodeName, version)
+		oc := officialclient.NewClient(cfg.OfficialServerURL, cfg.OfficialAccessToken, cfg.OfficialRefreshToken, nodeID, nodeName, version,
+			cfg.OfficialStunHost, cfg.OfficialTurnPort, cfg.OfficialTurnUser, cfg.OfficialTurnPass)
 		if err := oc.Register(context.Background()); err != nil {
 			logx.Warn("bootstrap", "register with official server failed: %v", err)
 		} else {

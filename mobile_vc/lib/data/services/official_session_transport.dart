@@ -13,13 +13,18 @@ class OfficialSessionTransport implements SessionTransport {
   final MobileVcMapper mapper;
 
   final _eventCtrl = StreamController<AppEvent>.broadcast();
+  final _errorCtrl = StreamController<String>.broadcast();
+
   @override
   Stream<AppEvent> get events => _eventCtrl.stream;
+  Stream<String> get errors => _errorCtrl.stream;
+
   bool _connected = false;
   @override
   bool get isConnected => _connected;
 
   StreamSubscription? _sigSub;
+  StreamSubscription? _sigErrorSub;
   String? _peerId;
   String? _nodeId;
 
@@ -44,7 +49,17 @@ class OfficialSessionTransport implements SessionTransport {
     // 1. Connect signaling WebSocket
     final wsUrl = apiService.baseUrl;
     final token = apiService.accessToken;
-    await signaling.connect(wsUrl, token);
+    try {
+      await signaling.connect(wsUrl, token);
+    } catch (e) {
+      _errorCtrl.add('无法连接信令服务器: $e');
+      rethrow;
+    }
+
+    // Listen for signaling errors
+    _sigErrorSub = signaling.errors.listen((err) {
+      _errorCtrl.add(err);
+    });
 
     // Listen for signaling messages
     final completer = Completer<void>();
@@ -156,6 +171,7 @@ class OfficialSessionTransport implements SessionTransport {
   Future<void> disconnect() async {
     _connected = false;
     _sigSub?.cancel();
+    _sigErrorSub?.cancel();
     await webrtc.disconnect();
     await signaling.disconnect();
   }
@@ -166,5 +182,6 @@ class OfficialSessionTransport implements SessionTransport {
     await webrtc.dispose();
     signaling.dispose();
     await _eventCtrl.close();
+    await _errorCtrl.close();
   }
 }

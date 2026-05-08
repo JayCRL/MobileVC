@@ -24,6 +24,10 @@ type Client struct {
 	NodeID       string
 	NodeName     string
 	NodeVersion  string
+	StunHost     string
+	TurnPort     string
+	TurnUser     string
+	TurnPass     string
 	httpClient   *http.Client
 	cancel       context.CancelFunc
 }
@@ -38,7 +42,7 @@ type NodeInfo struct {
 	TurnPass string `json:"turnPass"`
 }
 
-func NewClient(serverURL, accessToken, refreshToken, nodeID, nodeName, version string) *Client {
+func NewClient(serverURL, accessToken, refreshToken, nodeID, nodeName, version, stunHost, turnPort, turnUser, turnPass string) *Client {
 	// Load persisted node ID if available
 	if nodeID == "" {
 		nodeID = loadNodeID()
@@ -50,15 +54,23 @@ func NewClient(serverURL, accessToken, refreshToken, nodeID, nodeName, version s
 		NodeID:       nodeID,
 		NodeName:     nodeName,
 		NodeVersion:  version,
+		StunHost:     stunHost,
+		TurnPort:     turnPort,
+		TurnUser:     turnUser,
+		TurnPass:     turnPass,
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
 func (c *Client) Register(ctx context.Context) error {
 	body := NodeInfo{
-		NodeID:  c.NodeID,
-		Name:    c.NodeName,
-		Version: c.NodeVersion,
+		NodeID:   c.NodeID,
+		Name:     c.NodeName,
+		Version:  c.NodeVersion,
+		StunHost: c.StunHost,
+		TurnPort: c.TurnPort,
+		TurnUser: c.TurnUser,
+		TurnPass: c.TurnPass,
 	}
 
 	data, err := json.Marshal(body)

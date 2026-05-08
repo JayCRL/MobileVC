@@ -18,12 +18,12 @@ class SignalingMessage {
   });
 
   Map<String, dynamic> toJson() => {
-    'type': type,
-    if (nodeId != null) 'nodeId': nodeId,
-    if (peerId != null) 'peerId': peerId,
-    if (data != null) 'data': data,
-    if (accept != null) 'accept': accept,
-  };
+        'type': type,
+        if (nodeId != null) 'nodeId': nodeId,
+        if (peerId != null) 'peerId': peerId,
+        if (data != null) 'data': data,
+        if (accept != null) 'accept': accept,
+      };
 
   factory SignalingMessage.fromJson(Map<String, dynamic> json) =>
       SignalingMessage(
@@ -38,7 +38,10 @@ class SignalingMessage {
 class OfficialSignalingService {
   WebSocketChannel? _channel;
   final _messageCtrl = StreamController<SignalingMessage>.broadcast();
+  final _errorCtrl = StreamController<String>.broadcast();
+
   Stream<SignalingMessage> get messages => _messageCtrl.stream;
+  Stream<String> get errors => _errorCtrl.stream;
 
   bool get isConnected => _channel != null;
 
@@ -48,15 +51,29 @@ class OfficialSignalingService {
         .replaceFirst('https://', 'wss://');
     final uri = Uri.parse('$wsUrl/ws/signaling?token=$accessToken');
 
-    _channel = WebSocketChannel.connect(uri);
+    final wsChannel = WebSocketChannel.connect(uri);
+    _channel = wsChannel;
 
-    _channel!.stream.listen(
+    // Wait for connection to establish (or fail)
+    try {
+      await wsChannel.ready;
+    } catch (e) {
+      _channel = null;
+      final msg = '信令连接失败: $e';
+      _errorCtrl.add(msg);
+      rethrow;
+    }
+
+    wsChannel.stream.listen(
       (data) {
-        final json = jsonDecode(data as String) as Map<String, dynamic>;
-        _messageCtrl.add(SignalingMessage.fromJson(json));
+        try {
+          final json = jsonDecode(data as String) as Map<String, dynamic>;
+          _messageCtrl.add(SignalingMessage.fromJson(json));
+        } catch (_) {}
       },
       onError: (e) {
-        _messageCtrl.addError(e);
+        _channel = null;
+        _errorCtrl.add('信令错误: $e');
       },
       onDone: () {
         _channel = null;
@@ -102,5 +119,6 @@ class OfficialSignalingService {
   void dispose() {
     disconnect();
     _messageCtrl.close();
+    _errorCtrl.close();
   }
 }
