@@ -156,6 +156,7 @@ func (h *Hub) Route(client *Client, msg Message) {
 
 	case "webrtc":
 		// Forward WebRTC signaling (offer/answer/ICE candidates)
+		log.Printf("[signaling] webrtc: user=%s node=%s peer=%s", client.UserID, msg.NodeID, msg.PeerID)
 		if msg.NodeID != "" {
 			h.forwardToNode(client.UserID, msg.NodeID, msg)
 		} else if msg.PeerID != "" {
@@ -175,6 +176,7 @@ func (h *Hub) forwardToNode(userID, nodeID string, msg Message) {
 	defer h.mu.RUnlock()
 	clients, ok := h.users[userID]
 	if !ok {
+		log.Printf("[signaling] forwardToNode: no clients for user=%s", userID)
 		return
 	}
 	for c := range clients {
@@ -183,6 +185,7 @@ func (h *Hub) forwardToNode(userID, nodeID string, msg Message) {
 			return
 		}
 	}
+	log.Printf("[signaling] forwardToNode: node not found: user=%s node=%s", userID, nodeID)
 }
 
 func (h *Hub) forwardToPeer(userID, peerID string, msg Message) {

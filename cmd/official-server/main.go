@@ -119,6 +119,8 @@ func main() {
 	// Auth
 	mux.HandleFunc("POST /api/auth/refresh", authHandler.RefreshToken())
 	mux.Handle("GET /api/auth/me", authMw(http.HandlerFunc(authHandler.Me())))
+	mux.HandleFunc("POST /api/auth/register", authHandler.EmailRegister())
+	mux.HandleFunc("POST /api/auth/login", authHandler.EmailLogin())
 
 	// Nodes (all require auth)
 	mux.Handle("GET /api/nodes", authMw(http.HandlerFunc(nodesHandler.ListNodes())))

@@ -20,7 +20,7 @@ func (h *NodesHandler) ListNodes() http.HandlerFunc {
 			return
 		}
 
-		nodes, err := h.DB.ListAllNodes()
+		nodes, err := h.DB.ListNodesByUser(claims.UserID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list nodes")
 			return

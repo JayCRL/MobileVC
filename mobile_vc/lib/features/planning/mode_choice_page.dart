@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 
@@ -25,11 +26,21 @@ class _ModeChoicePageState extends State<ModeChoicePage> {
   bool _connecting = true;
   String _error = '';
   final _diagResults = <String>[];
+  final _webRtcLogs = <String>[];
+  int _debugCount = 0;
+  StreamSubscription<String>? _debugSub;
 
   @override
   void initState() {
     super.initState();
     _connect();
+  }
+
+  @override
+  void dispose() {
+    _debugSub?.cancel();
+    widget.controller.onOfficialDebug = null;
+    super.dispose();
   }
 
   void _addDiag(String msg) {
@@ -88,9 +99,29 @@ class _ModeChoicePageState extends State<ModeChoicePage> {
 
     _addDiag('mode=${c.connectionMode} node=${c.officialNodeId} url=${c.officialServerUrl}');
 
+    // Set up WebRTC debug log listener
+    _debugSub?.cancel();
+    _webRtcLogs.clear();
+    if (c.connectionMode == 'official') {
+      widget.controller.onOfficialDebug = (msg) {
+        _addDiag('webrtc: $msg');
+        if (mounted) {
+          setState(() {
+            _webRtcLogs.add(msg);
+            _debugCount++;
+          });
+        }
+      };
+    }
+
+    final preCfg = widget.controller.config;
+    _addDiag('pre-connect: mode=${preCfg.connectionMode} nodeId=${preCfg.officialNodeId}');
+    _addDiag('--- calling controller.connect ---');
     try {
       await widget.controller.connect();
+      _addDiag('connect OK: ${widget.controller.lastConnectDiag}');
     } catch (e) {
+      _addDiag('connect FAILED: $e');
       if (mounted) {
         setState(() {
           _connecting = false;
@@ -151,7 +182,11 @@ class _ModeChoicePageState extends State<ModeChoicePage> {
         const SizedBox(width: 48, height: 48, child: CircularProgressIndicator(strokeWidth: 3)),
         const SizedBox(height: 16),
         Text('连接诊断中...', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 4),
+        Text('WebRTC 调试: $_debugCount 条消息',
+            style: TextStyle(fontSize: 11, color: _debugCount > 0 ? Colors.green : Colors.red)),
+        const SizedBox(height: 12),
+        // WebSocket 诊断
         SizedBox(
           width: double.infinity,
           height: 280,
@@ -177,6 +212,38 @@ class _ModeChoicePageState extends State<ModeChoicePage> {
             ),
           ),
         ),
+        // WebRTC 信令日志
+        if (_webRtcLogs.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          const Text('WebRTC 日志', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          SizedBox(
+            width: double.infinity,
+            height: 200,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: ListView.builder(
+                itemCount: _webRtcLogs.length,
+                itemBuilder: (_, i) => Text(
+                  _webRtcLogs[i],
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontFamily: 'monospace',
+                    fontSize: 10,
+                    color: _webRtcLogs[i].contains('FAILED') || _webRtcLogs[i].contains('error')
+                        ? Colors.red
+                        : _webRtcLogs[i].contains('OK') || _webRtcLogs[i].contains('opened')
+                            ? Colors.green
+                            : theme.colorScheme.outline,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
         if (_error.isNotEmpty) ...[
           const SizedBox(height: 12),
           Text(_error, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error)),
@@ -220,6 +287,38 @@ class _ModeChoicePageState extends State<ModeChoicePage> {
                       color: _diagResults[i].contains('失败')
                           ? Colors.red
                           : _diagResults[i].contains('OK')
+                              ? Colors.green
+                              : theme.colorScheme.outline,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+
+          if (_webRtcLogs.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Text('WebRTC 日志', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            SizedBox(
+              width: double.infinity,
+              height: 150,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ListView.builder(
+                  itemCount: _webRtcLogs.length,
+                  itemBuilder: (_, i) => Text(
+                    _webRtcLogs[i],
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      color: _webRtcLogs[i].contains('FAILED') || _webRtcLogs[i].contains('error')
+                          ? Colors.red
+                          : _webRtcLogs[i].contains('OK') || _webRtcLogs[i].contains('opened')
                               ? Colors.green
                               : theme.colorScheme.outline,
                     ),

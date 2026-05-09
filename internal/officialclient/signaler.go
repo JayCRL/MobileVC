@@ -122,11 +122,16 @@ func (s *Signaler) readLoop(ctx context.Context) {
 					Type      string `json:"type"`
 					Candidate string `json:"candidate"`
 				}
-				if err := json.Unmarshal(msg.Data, &wr); err == nil {
-					if wr.SDP != "" {
-						s.peerManager.HandleOffer(msg.PeerID, wr.Type, wr.SDP)
-					} else if wr.Candidate != "" {
-						s.peerManager.HandleRemoteCandidate(msg.PeerID, msg.Data)
+				if err := json.Unmarshal(msg.Data, &wr); err != nil {
+					logx.Error("signaling", "webrtc unmarshal error: %v", err)
+				} else if wr.SDP != "" {
+					logx.Info("webrtc", "HandleOffer: peer=%s type=%s sdp_len=%d", msg.PeerID, wr.Type, len(wr.SDP))
+					if err := s.peerManager.HandleOffer(msg.PeerID, wr.Type, wr.SDP); err != nil {
+						logx.Error("webrtc", "HandleOffer error: %v", err)
+					}
+				} else if wr.Candidate != "" {
+					if err := s.peerManager.HandleRemoteCandidate(msg.PeerID, msg.Data); err != nil {
+						logx.Error("webrtc", "HandleRemoteCandidate error: %v", err)
 					}
 				}
 			}

@@ -151,5 +151,14 @@ func runMigrations(conn *sql.DB) error {
 			return fmt.Errorf("exec %q: %w", m[:40], err)
 		}
 	}
+
+	// Add password_hash column if it doesn't exist yet (idempotent migration)
+	var hasCol int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='password_hash'`).Scan(&hasCol); err == nil && hasCol == 0 {
+		if _, err := conn.Exec(`ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add password_hash column: %w", err)
+		}
+	}
+
 	return nil
 }

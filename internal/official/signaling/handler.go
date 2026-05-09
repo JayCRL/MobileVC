@@ -46,6 +46,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	claims, err := h.JWT.ParseAccessToken(token)
 	if err != nil {
+		log.Printf("[signaling] token rejected: %v", err)
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}

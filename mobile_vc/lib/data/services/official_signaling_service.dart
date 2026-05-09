@@ -88,8 +88,8 @@ class OfficialSignalingService {
     ));
   }
 
-  void sendWebRTC(String peerId, Map<String, dynamic> data) {
-    _send(SignalingMessage(type: 'webrtc', peerId: peerId, data: data));
+  void sendWebRTC(String nodeId, String peerId, Map<String, dynamic> data) {
+    _send(SignalingMessage(type: 'webrtc', nodeId: nodeId, peerId: peerId, data: data));
   }
 
   void sendConnectResponse(String peerId, bool accept) {

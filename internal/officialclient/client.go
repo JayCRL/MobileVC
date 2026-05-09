@@ -256,3 +256,93 @@ func loadNodeID() string {
 func saveNodeID(id string) {
 	os.WriteFile(nodeIDPath(), []byte(id), 0o600)
 }
+
+// Credentials for official server login.
+const credsFile = ".mobilevc/credentials.json"
+
+type Credentials struct {
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+}
+
+func credsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, credsFile)
+}
+
+func SaveCredentials(accessToken, refreshToken string) {
+	creds := Credentials{AccessToken: accessToken, RefreshToken: refreshToken}
+	data, err := json.Marshal(creds)
+	if err != nil {
+		return
+	}
+	os.WriteFile(credsPath(), data, 0o600)
+}
+
+func LoadCredentials() (*Credentials, error) {
+	data, err := os.ReadFile(credsPath())
+	if err != nil {
+		return nil, err
+	}
+	var creds Credentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return nil, err
+	}
+	return &creds, nil
+}
+
+func ClearCredentials() {
+	os.Remove(credsPath())
+}
+
+// LoginResult contains tokens returned from email/password login.
+type LoginResult struct {
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	UserID       string
+}
+
+// LoginWithEmail authenticates with the official server using email/password.
+func LoginWithEmail(ctx context.Context, serverURL, email, password string) (*LoginResult, error) {
+	body, _ := json.Marshal(map[string]string{
+		"email":    email,
+		"password": password,
+	})
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		serverURL+"/api/auth/login", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("login request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("login failed %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		AccessToken  string `json:"accessToken"`
+		RefreshToken string `json:"refreshToken"`
+		ExpiresIn    int    `json:"expiresIn"`
+		User         struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("login response decode: %w", err)
+	}
+
+	logx.Info("official", "login successful: user_id=%s", result.User.ID)
+	return &LoginResult{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		UserID:       result.User.ID,
+	}, nil
+}

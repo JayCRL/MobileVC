@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../../core/oauth_deeplink.dart';
 import '../../data/services/official_auth_service.dart';
@@ -101,6 +103,52 @@ class _ModeSelectPageState extends State<ModeSelectPage> with WidgetsBindingObse
     await _authService.launchOAuthLogin(serverUrl, provider);
   }
 
+  Future<void> _emailAuth({
+    required String serverUrl,
+    required String email,
+    required String password,
+    String? name,
+    required bool isRegister,
+    required VoidCallback onSuccess,
+  }) async {
+    final url = isRegister
+        ? '$serverUrl/api/auth/register'
+        : '$serverUrl/api/auth/login';
+
+    final body = isRegister
+        ? {'email': email, 'password': password, 'name': name ?? ''}
+        : {'email': email, 'password': password};
+
+    try {
+      final resp = await http.post(
+        Uri.parse(url),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final result = OfficialAuthResult.fromJson(data);
+        await _authService.saveTokens(result);
+        if (mounted) setState(() => _authResult = result);
+        onSuccess();
+      } else {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final error = data['error'] ?? '请求失败 (${resp.statusCode})';
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error.toString())),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('网络错误: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _openNodeSelector() async {
     if (_authResult == null) return;
     final serverUrl = _serverUrlCtrl.text.trim();
@@ -167,6 +215,86 @@ class _ModeSelectPageState extends State<ModeSelectPage> with WidgetsBindingObse
     }
   }
 
+  Future<void> _showLanConfigDialog() async {
+    final config = widget.controller.config;
+    final hostCtrl = TextEditingController(text: config.host);
+    final portCtrl = TextEditingController(text: config.port);
+    final tokenCtrl = TextEditingController(text: config.token);
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('局域网配置'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: hostCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'IP 地址',
+                  hintText: '192.168.1.x',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: portCtrl,
+                decoration: const InputDecoration(
+                  labelText: '端口',
+                  hintText: '19080',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: tokenCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Token',
+                  hintText: 'test',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('连接'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      widget.controller.saveConfig(config.copyWith(
+        host: hostCtrl.text.trim(),
+        port: portCtrl.text.trim(),
+        token: tokenCtrl.text.trim(),
+      ));
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => ModeChoicePage(
+              controller: widget.controller,
+              darkModeEnabled: widget.darkModeEnabled,
+              onToggleTheme: widget.onToggleTheme,
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -208,15 +336,7 @@ class _ModeSelectPageState extends State<ModeSelectPage> with WidgetsBindingObse
                 title: '局域网模式',
                 subtitle: '配置局域网 IP 直连电脑后端\n完整 Claude Code 功能',
                 color: theme.colorScheme.primary,
-                onTap: () => Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(
-                    builder: (_) => ModeChoicePage(
-                      controller: widget.controller,
-                      darkModeEnabled: widget.darkModeEnabled,
-                      onToggleTheme: widget.onToggleTheme,
-                    ),
-                  ),
-                ),
+                onTap: _showLanConfigDialog,
               ),
               const SizedBox(height: 16),
 
@@ -258,41 +378,154 @@ class _ModeSelectPageState extends State<ModeSelectPage> with WidgetsBindingObse
   }
 
   void _showLoginSheet(BuildContext context) {
+    bool isRegister = false;
+    bool emailLoading = false;
+    final emailCtrl = TextEditingController();
+    final passwordCtrl = TextEditingController();
+    final nameCtrl = TextEditingController();
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('官方服务器地址',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _serverUrlCtrl,
-              decoration: const InputDecoration(
-                hintText: 'http://8.162.1.176:8989',
-                border: OutlineInputBorder(),
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            left: 24,
+            right: 24,
+            top: 24,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('官方服务器地址',
+                  style: Theme.of(ctx).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _serverUrlCtrl,
+                decoration: const InputDecoration(
+                  hintText: 'https://mobilevc.top',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Text('选择登录方式',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () {
-                Navigator.pop(context);
-                _login('github');
-              },
-              icon: const Icon(Icons.code),
-              label: const Text('GitHub 登录'),
-            ),
-            // Google login omitted until credentials are configured
-          ],
+              const SizedBox(height: 20),
+              Text('社交登录',
+                  style: Theme.of(ctx).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _login('github');
+                },
+                icon: const Icon(Icons.code),
+                label: const Text('GitHub 登录'),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  const Expanded(child: Divider()),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text('或使用邮箱',
+                        style: Theme.of(ctx).textTheme.bodySmall),
+                  ),
+                  const Expanded(child: Divider()),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: emailCtrl,
+                decoration: const InputDecoration(
+                  labelText: '邮箱',
+                  hintText: 'user@example.com',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passwordCtrl,
+                decoration: const InputDecoration(
+                  labelText: '密码',
+                  border: OutlineInputBorder(),
+                ),
+                obscureText: true,
+              ),
+              if (isRegister) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '昵称（选填）',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _ModeToggleButton(
+                      label: '登录',
+                      selected: !isRegister,
+                      onTap: () => setSheetState(() => isRegister = false),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _ModeToggleButton(
+                      label: '注册',
+                      selected: isRegister,
+                      onTap: () => setSheetState(() => isRegister = true),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 44,
+                child: emailLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : FilledButton(
+                        onPressed: () {
+                          final serverUrl =
+                              _serverUrlCtrl.text.trim();
+                          final email =
+                              emailCtrl.text.trim();
+                          final password = passwordCtrl.text;
+                          if (serverUrl.isEmpty ||
+                              email.isEmpty ||
+                              password.isEmpty) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(
+                                  content: Text('请填写完整信息')),
+                            );
+                            return;
+                          }
+                          setSheetState(
+                              () => emailLoading = true);
+                          _emailAuth(
+                            serverUrl: serverUrl,
+                            email: email,
+                            password: password,
+                            name: nameCtrl.text.trim(),
+                            isRegister: isRegister,
+                            onSuccess: () {
+                              Navigator.pop(ctx);
+                              _openNodeSelector();
+                            },
+                          );
+                        },
+                        child:
+                            Text(isRegister ? '注册并登录' : '登录'),
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -436,6 +669,28 @@ class _ModeCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ModeToggleButton extends StatelessWidget {
+  const _ModeToggleButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 40,
+      child: selected
+          ? FilledButton(onPressed: onTap, child: Text(label))
+          : OutlinedButton(onPressed: onTap, child: Text(label)),
     );
   }
 }

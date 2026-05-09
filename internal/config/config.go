@@ -39,6 +39,8 @@ type Config struct {
 	OfficialNodeName     string
 	OfficialAccessToken  string
 	OfficialRefreshToken string
+	OfficialEmail        string
+	OfficialPassword     string
 	OfficialStunHost     string
 	OfficialTurnPort     string
 	OfficialTurnUser     string
@@ -93,6 +95,8 @@ func Load() (Config, error) {
 		OfficialNodeName:     strings.TrimSpace(os.Getenv("OFFICIAL_NODE_NAME")),
 		OfficialAccessToken:  strings.TrimSpace(os.Getenv("OFFICIAL_ACCESS_TOKEN")),
 		OfficialRefreshToken: strings.TrimSpace(os.Getenv("OFFICIAL_REFRESH_TOKEN")),
+		OfficialEmail:        strings.TrimSpace(os.Getenv("OFFICIAL_EMAIL")),
+		OfficialPassword:     os.Getenv("OFFICIAL_PASSWORD"),
 		OfficialStunHost:     strings.TrimSpace(os.Getenv("OFFICIAL_STUN_HOST")),
 		OfficialTurnPort:     strings.TrimSpace(os.Getenv("OFFICIAL_TURN_PORT")),
 		OfficialTurnUser:     strings.TrimSpace(os.Getenv("OFFICIAL_TURN_USER")),

@@ -28,7 +28,7 @@ func (db *DB) UpsertNode(nodeID, userID, name, version, stunHost, turnPort, turn
 		`INSERT INTO nodes (id, user_id, name, version, status, stun_host, turn_port, turn_user, turn_pass, last_seen, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
-		   name=excluded.name, version=excluded.version, status='online',
+		   user_id=excluded.user_id, name=excluded.name, version=excluded.version, status='online',
 		   stun_host=excluded.stun_host, turn_port=excluded.turn_port,
 		   turn_user=excluded.turn_user, turn_pass=excluded.turn_pass,
 		   last_seen=excluded.last_seen, updated_at=excluded.updated_at`,
@@ -86,6 +86,7 @@ func (db *DB) ListNodesByUser(userID string) ([]Node, error) {
 	}
 	return nodes, rows.Err()
 }
+
 
 func (db *DB) GetNode(nodeID string) (*Node, error) {
 	var n Node

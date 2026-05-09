@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"mobilevc/internal/official/auth"
 	"mobilevc/internal/official/db"
 )
@@ -254,6 +256,121 @@ func htmlEscape(s string) string {
 	s = strings.ReplaceAll(s, "\"", "&quot;")
 	s = strings.ReplaceAll(s, "'", "&#39;")
 	return s
+}
+
+func (h *AuthHandler) EmailRegister() http.HandlerFunc {
+	type reqBody struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Name     string `json:"name"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body reqBody
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		email := strings.TrimSpace(strings.ToLower(body.Email))
+		password := strings.TrimSpace(body.Password)
+		name := strings.TrimSpace(body.Name)
+		if email == "" || password == "" {
+			writeError(w, http.StatusBadRequest, "email and password are required")
+			return
+		}
+		if len(password) < 6 {
+			writeError(w, http.StatusBadRequest, "password must be at least 6 characters")
+			return
+		}
+		if name == "" {
+			name = email[:strings.IndexByte(email, '@')]
+		}
+
+		existing, _ := h.DB.GetUserByEmail(email)
+		if existing != nil {
+			writeError(w, http.StatusConflict, "email already registered")
+			return
+		}
+
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to hash password")
+			return
+		}
+
+		user, err := h.DB.CreateEmailUser(email, name, string(hash))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create user: "+err.Error())
+			return
+		}
+
+		accessToken, err := h.JWT.GenerateAccessToken(user.ID, "email", user.Name, user.Email)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "generate token failed")
+			return
+		}
+		_, refreshToken, err := h.DB.CreateRefreshToken(user.ID, h.JWT.RefreshTokenTTLDays())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "generate refresh token failed")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"accessToken":  accessToken,
+			"refreshToken": refreshToken,
+			"expiresIn":    h.JWT.AccessTokenTTLMinutes() * 60,
+			"user":         user,
+		})
+	}
+}
+
+func (h *AuthHandler) EmailLogin() http.HandlerFunc {
+	type reqBody struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body reqBody
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		email := strings.TrimSpace(strings.ToLower(body.Email))
+		password := strings.TrimSpace(body.Password)
+		if email == "" || password == "" {
+			writeError(w, http.StatusBadRequest, "email and password are required")
+			return
+		}
+
+		user, err := h.DB.GetUserByEmail(email)
+		if err != nil || user == nil {
+			writeError(w, http.StatusUnauthorized, "invalid email or password")
+			return
+		}
+
+		hash, err := h.DB.GetUserPasswordHash(user.ID)
+		if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+			writeError(w, http.StatusUnauthorized, "invalid email or password")
+			return
+		}
+
+		accessToken, err := h.JWT.GenerateAccessToken(user.ID, "email", user.Name, user.Email)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "generate token failed")
+			return
+		}
+		_, refreshToken, err := h.DB.CreateRefreshToken(user.ID, h.JWT.RefreshTokenTTLDays())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "generate refresh token failed")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"accessToken":  accessToken,
+			"refreshToken": refreshToken,
+			"expiresIn":    h.JWT.AccessTokenTTLMinutes() * 60,
+			"user":         user,
+		})
+	}
 }
 
 func generateState() string {

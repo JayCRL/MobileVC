@@ -67,6 +67,48 @@ func (db *DB) GetUserByProvider(provider, providerID string) (*User, error) {
 	return &u, nil
 }
 
+func (db *DB) GetUserByEmail(email string) (*User, error) {
+	var u User
+	err := db.conn.QueryRow(
+		`SELECT id, provider, provider_id, email, name, avatar_url, created_at, updated_at
+		 FROM users WHERE email=? AND provider='email'`, email,
+	).Scan(&u.ID, &u.Provider, &u.ProviderID, &u.Email, &u.Name, &u.AvatarURL, &u.CreatedAt, &u.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (db *DB) CreateEmailUser(email, name, passwordHash string) (*User, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	id := uuid.New().String()
+	_, err := db.conn.Exec(
+		`INSERT INTO users (id, provider, provider_id, email, name, password_hash, created_at, updated_at)
+		 VALUES (?, 'email', ?, ?, ?, ?, ?, ?)`,
+		id, email, email, name, passwordHash, now, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &User{
+		ID: id, Provider: "email", ProviderID: email,
+		Email: email, Name: name,
+		CreatedAt: now, UpdatedAt: now,
+	}, nil
+}
+
+func (db *DB) GetUserPasswordHash(userID string) (string, error) {
+	var hash string
+	err := db.conn.QueryRow(`SELECT password_hash FROM users WHERE id=?`, userID).Scan(&hash)
+	if err != nil {
+		return "", err
+	}
+	return hash, nil
+}
+
 func (db *DB) GetUserByID(id string) (*User, error) {
 	var u User
 	err := db.conn.QueryRow(

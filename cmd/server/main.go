@@ -96,7 +96,17 @@ func main() {
 			// Build WebRTC + signaling
 			signaler := officialclient.NewSignaler(cfg.OfficialServerURL, cfg.OfficialAccessToken, oc.NodeID)
 			var pm *officialclient.PeerManager
-			pm = officialclient.NewPeerManager(
+			pmCfg := officialclient.PeerManagerConfig{
+				STUNURLs: []string{"stun:stun.l.google.com:19302"},
+			}
+			if cfg.OfficialStunHost != "" && cfg.OfficialTurnPort != "" {
+				pmCfg.TURNURLs = []string{
+					"turn:" + cfg.OfficialStunHost + ":" + cfg.OfficialTurnPort + "?transport=udp",
+				}
+				pmCfg.TURNUser = cfg.OfficialTurnUser
+				pmCfg.TURNPass = cfg.OfficialTurnPass
+			}
+			pm = officialclient.NewPeerManager(pmCfg,
 				func(peerID string, data json.RawMessage) { signaler.SendWebRTC(peerID, data) },
 				func(peerID string, msg []byte) {
 					sendReply := func(event any) {

@@ -11,6 +11,8 @@ class OfficialWebRtcService {
   bool get isConnected => _connected;
   void Function(String)? _debugLog;
   Timer? _iceTimer;
+  bool _offerSent = false;
+  final List<RTCIceCandidate> _pendingCandidates = [];
 
   Future<void> createOffer({
     required List<Map<String, dynamic>> iceServers,
@@ -29,8 +31,11 @@ class OfficialWebRtcService {
 
     _pc!.onIceCandidate = (candidate) {
       final c = candidate.candidate;
-      if (c != null && c.isNotEmpty) {
+      if (c == null || c.isEmpty) return;
+      if (_offerSent) {
         onIceCandidate(candidate);
+      } else {
+        _pendingCandidates.add(candidate);
       }
     };
 
@@ -50,30 +55,26 @@ class OfficialWebRtcService {
     _dataChannel = await _pc!.createDataChannel('mobilevc-control', init);
     _setupDataChannel(_dataChannel!);
 
+    _pc!.onIceGatheringState = (state) {
+      _log('ICE gathering: ${_enumLabel(state)}');
+    };
+
     // Create SDP offer
     final offer = await _pc!.createOffer();
     await _pc!.setLocalDescription(offer);
 
-    // Wait for ICE gathering
-    final completer = Completer<void>();
-    _iceTimer = Timer(const Duration(seconds: 12), () {
-      if (!completer.isCompleted) completer.complete();
-    });
-
-    _pc!.onIceGatheringState = (state) {
-      _log('ICE gathering: ${_enumLabel(state)}');
-      if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
-        if (!completer.isCompleted) completer.complete();
-      }
-    };
-
-    await completer.future.timeout(const Duration(seconds: 15));
-    _iceTimer?.cancel();
-
+    // Send offer right away so desktop creates PeerConnection before candidates arrive
     final desc = await _pc!.getLocalDescription();
     if (desc != null && desc.sdp != null && desc.type != null) {
       onOfferReady(desc.type!, desc.sdp!);
     }
+
+    // Flush pending candidates now that offer is sent
+    _offerSent = true;
+    for (final c in _pendingCandidates) {
+      onIceCandidate(c);
+    }
+    _pendingCandidates.clear();
   }
 
   Future<void> applyAnswer(String sdpType, String sdp) async {
@@ -125,6 +126,8 @@ class OfficialWebRtcService {
 
   Future<void> _cleanup() async {
     _connected = false;
+    _offerSent = false;
+    _pendingCandidates.clear();
     _iceTimer?.cancel();
     _iceTimer = null;
     _dataChannel?.close();

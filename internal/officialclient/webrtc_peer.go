@@ -10,20 +10,49 @@ import (
 )
 
 type PeerManager struct {
-	mu     sync.Mutex
-	peers  map[string]*webrtc.PeerConnection
-	dcs    map[string]*webrtc.DataChannel
-	signal func(peerID string, data json.RawMessage)
-	onData func(peerID string, msg []byte)
+	mu                sync.Mutex
+	peers             map[string]*webrtc.PeerConnection
+	dcs               map[string]*webrtc.DataChannel
+	pendingCandidates map[string][]json.RawMessage
+	defaultConfig     webrtc.Configuration
+	signal            func(peerID string, data json.RawMessage)
+	onData            func(peerID string, msg []byte)
 }
 
-func NewPeerManager(signalFn func(peerID string, data json.RawMessage), onDataFn func(peerID string, msg []byte)) *PeerManager {
-	return &PeerManager{
-		peers:  make(map[string]*webrtc.PeerConnection),
-		dcs:    make(map[string]*webrtc.DataChannel),
-		signal: signalFn,
-		onData: onDataFn,
+type PeerManagerConfig struct {
+	STUNURLs []string
+	TURNURLs []string
+	TURNUser string
+	TURNPass string
+}
+
+func NewPeerManager(cfg PeerManagerConfig, signalFn func(peerID string, data json.RawMessage), onDataFn func(peerID string, msg []byte)) *PeerManager {
+	pm := &PeerManager{
+		peers:             make(map[string]*webrtc.PeerConnection),
+		dcs:               make(map[string]*webrtc.DataChannel),
+		pendingCandidates: make(map[string][]json.RawMessage),
+		signal:            signalFn,
+		onData:            onDataFn,
 	}
+	pm.defaultConfig = pm.buildConfig(cfg)
+	return pm
+}
+
+func (pm *PeerManager) buildConfig(cfg PeerManagerConfig) webrtc.Configuration {
+	var servers []webrtc.ICEServer
+	if len(cfg.STUNURLs) > 0 {
+		servers = append(servers, webrtc.ICEServer{URLs: cfg.STUNURLs})
+	} else {
+		servers = append(servers, webrtc.ICEServer{URLs: []string{"stun:stun.l.google.com:19302"}})
+	}
+	if len(cfg.TURNURLs) > 0 {
+		servers = append(servers, webrtc.ICEServer{
+			URLs:       cfg.TURNURLs,
+			Username:   cfg.TURNUser,
+			Credential: cfg.TURNPass,
+		})
+	}
+	return webrtc.Configuration{ICEServers: servers}
 }
 
 func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) error {
@@ -35,11 +64,7 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 		existing.Close()
 	}
 
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{URLs: []string{"stun:stun.l.google.com:19302"}},
-		},
-	})
+	pc, err := webrtc.NewPeerConnection(pm.defaultConfig)
 	if err != nil {
 		return err
 	}
@@ -91,6 +116,7 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 			pm.mu.Lock()
 			delete(pm.peers, peerID)
 			delete(pm.dcs, peerID)
+			delete(pm.pendingCandidates, peerID)
 			pm.mu.Unlock()
 		}
 	})
@@ -105,6 +131,30 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 		SDP:  sdp,
 	}); err != nil {
 		return err
+	}
+
+	// Replay any pending candidates that arrived before the PC was created
+	pm.mu.Lock()
+	pending := pm.pendingCandidates[peerID]
+	delete(pm.pendingCandidates, peerID)
+	pm.mu.Unlock()
+	for _, data := range pending {
+		var c struct {
+			Candidate     string `json:"candidate"`
+			SDPMid        string `json:"sdpMid"`
+			SDPMLineIndex uint16 `json:"sdpMLineIndex"`
+		}
+		if err := json.Unmarshal(data, &c); err != nil {
+			continue
+		}
+		if err := pc.AddICECandidate(webrtc.ICECandidateInit{
+			Candidate: c.Candidate,
+		}); err != nil {
+			logx.Error("webrtc", "replay candidate error: %v", err)
+		}
+	}
+	if len(pending) > 0 {
+		logx.Info("webrtc", "replayed %d pending candidates for peer=%s", len(pending), peerID)
 	}
 
 	// Create answer
@@ -134,6 +184,10 @@ func (pm *PeerManager) HandleRemoteCandidate(peerID string, candidateData json.R
 	pc, ok := pm.peers[peerID]
 	pm.mu.Unlock()
 	if !ok {
+		// PC not created yet — cache candidate for later replay
+		pm.mu.Lock()
+		pm.pendingCandidates[peerID] = append(pm.pendingCandidates[peerID], candidateData)
+		pm.mu.Unlock()
 		return nil
 	}
 
@@ -172,4 +226,5 @@ func (pm *PeerManager) ClosePeer(peerID string) {
 		dc.Close()
 		delete(pm.dcs, peerID)
 	}
+	delete(pm.pendingCandidates, peerID)
 }
