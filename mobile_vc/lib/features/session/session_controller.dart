@@ -1678,7 +1678,8 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
     try {
       if (_config.connectionMode == 'official' && _config.officialNodeId.isNotEmpty) {
-        // Use official server P2P
+        // ignore: avoid_print
+        print('[Controller] official mode: nodeId=${_config.officialNodeId} server=${_config.officialServerUrl}');
         if (_officialTransport == null) {
           final apiService = OfficialApiService(
             baseUrl: _config.officialServerUrl,
@@ -1687,7 +1688,11 @@ class SessionController extends ChangeNotifier {
           _officialTransport = OfficialSessionTransport(apiService: apiService);
         }
         _service = _officialTransport!;
+        // ignore: avoid_print
+        print('[Controller] calling connectToNode...');
         await _officialTransport!.connectToNode(_config.officialNodeId);
+        // ignore: avoid_print
+        print('[Controller] connectToNode returned');
       } else {
         await _service.connect(_config.wsUrl);
       }

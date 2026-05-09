@@ -51,15 +51,30 @@ class OfficialSignalingService {
         .replaceFirst('https://', 'wss://');
     final uri = Uri.parse('$wsUrl/ws/signaling?token=$accessToken');
 
-    final wsChannel = WebSocketChannel.connect(uri);
+    // ignore: avoid_print
+    print('[Signaling] connecting to $uri');
+
+    WebSocketChannel wsChannel;
+    try {
+      wsChannel = WebSocketChannel.connect(uri);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[Signaling] WebSocketChannel.connect threw: $e');
+      _errorCtrl.add('信令连接失败: $e');
+      rethrow;
+    }
     _channel = wsChannel;
 
     // Wait for connection to establish (or fail)
     try {
       await wsChannel.ready;
+      // ignore: avoid_print
+      print('[Signaling] connected OK');
     } catch (e) {
       _channel = null;
       final msg = '信令连接失败: $e';
+      // ignore: avoid_print
+      print('[Signaling] $msg');
       _errorCtrl.add(msg);
       rethrow;
     }
