@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'dart:io';
 
 class SignalingMessage {
   final String type;
@@ -36,14 +36,14 @@ class SignalingMessage {
 }
 
 class OfficialSignalingService {
-  WebSocketChannel? _channel;
+  WebSocket? _ws;
   final _messageCtrl = StreamController<SignalingMessage>.broadcast();
   final _errorCtrl = StreamController<String>.broadcast();
 
   Stream<SignalingMessage> get messages => _messageCtrl.stream;
   Stream<String> get errors => _errorCtrl.stream;
 
-  bool get isConnected => _channel != null;
+  bool get isConnected => _ws != null;
 
   Future<void> connect(String serverUrl, String accessToken) async {
     final wsUrl = serverUrl
@@ -54,32 +54,12 @@ class OfficialSignalingService {
     // ignore: avoid_print
     print('[Signaling] connecting to $uri');
 
-    WebSocketChannel wsChannel;
-    try {
-      wsChannel = WebSocketChannel.connect(uri);
-    } catch (e) {
-      // ignore: avoid_print
-      print('[Signaling] WebSocketChannel.connect threw: $e');
-      _errorCtrl.add('信令连接失败: $e');
-      rethrow;
-    }
-    _channel = wsChannel;
+    final ws = await WebSocket.connect(uri.toString());
+    _ws = ws;
+    // ignore: avoid_print
+    print('[Signaling] connected OK');
 
-    // Wait for connection to establish (or fail)
-    try {
-      await wsChannel.ready;
-      // ignore: avoid_print
-      print('[Signaling] connected OK');
-    } catch (e) {
-      _channel = null;
-      final msg = '信令连接失败: $e';
-      // ignore: avoid_print
-      print('[Signaling] $msg');
-      _errorCtrl.add(msg);
-      rethrow;
-    }
-
-    wsChannel.stream.listen(
+    ws.listen(
       (data) {
         try {
           final json = jsonDecode(data as String) as Map<String, dynamic>;
@@ -87,11 +67,11 @@ class OfficialSignalingService {
         } catch (_) {}
       },
       onError: (e) {
-        _channel = null;
+        _ws = null;
         _errorCtrl.add('信令错误: $e');
       },
       onDone: () {
-        _channel = null;
+        _ws = null;
       },
     );
   }
@@ -121,14 +101,14 @@ class OfficialSignalingService {
   }
 
   void _send(SignalingMessage msg) {
-    if (_channel != null) {
-      _channel!.sink.add(jsonEncode(msg.toJson()));
+    if (_ws != null) {
+      _ws!.add(jsonEncode(msg.toJson()));
     }
   }
 
   Future<void> disconnect() async {
-    await _channel?.sink.close();
-    _channel = null;
+    await _ws?.close();
+    _ws = null;
   }
 
   void dispose() {
