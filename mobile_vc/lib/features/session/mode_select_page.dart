@@ -26,7 +26,7 @@ class ModeSelectPage extends StatefulWidget {
 
 class _ModeSelectPageState extends State<ModeSelectPage> with WidgetsBindingObserver {
   final _authService = OfficialAuthService();
-  final _serverUrlCtrl = TextEditingController(text: 'http://8.162.1.176:8989');
+  final _serverUrlCtrl = TextEditingController(text: 'https://mobilevc.top');
   OfficialAuthResult? _authResult;
   bool _loading = false;
   StreamSubscription<String>? _deeplinkSub;
