@@ -96,8 +96,11 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 	// Handle ICE candidates
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
+			logx.Info("webrtc", "ICE candidate gathering complete for peer=%s", peerID)
 			return
 		}
+		logx.Info("webrtc", "ICE candidate: type=%s address=%s port=%d peer=%s",
+			c.Typ.String(), c.Address, c.Port, peerID)
 		candidate := c.ToJSON()
 		data, _ := json.Marshal(map[string]interface{}{
 			"candidate":     candidate.Candidate,
@@ -105,19 +108,27 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 			"sdpMLineIndex": candidate.SDPMLineIndex,
 		})
 		if pm.signal != nil {
+			logx.Info("webrtc", "sending candidate via signaling: type=%s peer=%s mid=%s",
+				c.Typ.String(), peerID, candidate.SDPMid)
 			pm.signal(peerID, data)
+		} else {
+			logx.Error("webrtc", "signal callback is nil — candidate NOT sent! peer=%s", peerID)
 		}
 	})
 
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		logx.Info("webrtc", "ICE state: %s peer=%s", state.String(), peerID)
-		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
+		if state == webrtc.ICEConnectionStateFailed {
 			pc.Close()
 			pm.mu.Lock()
 			delete(pm.peers, peerID)
 			delete(pm.dcs, peerID)
 			delete(pm.pendingCandidates, peerID)
 			pm.mu.Unlock()
+		}
+		// Disconnected is transient — ICE agent can recover on its own.
+		if state == webrtc.ICEConnectionStateDisconnected {
+			logx.Info("webrtc", "ICE disconnected (transient), waiting for recovery: peer=%s", peerID)
 		}
 	})
 
@@ -172,7 +183,10 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 		"sdp":  answer.SDP,
 	})
 	if pm.signal != nil {
+		logx.Info("webrtc", "sending answer via signaling: peer=%s", peerID)
 		pm.signal(peerID, answerData)
+	} else {
+		logx.Error("webrtc", "signal callback is nil — answer NOT sent! peer=%s", peerID)
 	}
 
 	logx.Info("webrtc", "answer sent to peer=%s", peerID)

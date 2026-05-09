@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"mobilevc/internal/logx"
@@ -28,6 +29,7 @@ type Signaler struct {
 	token       string
 	nodeID      string
 	conn        *websocket.Conn
+	writeMu     sync.Mutex
 	peerManager *PeerManager
 	onRequest   func(peerID string)
 }
@@ -151,6 +153,8 @@ func (s *Signaler) sendMessage(msg SignalingMessage) {
 	if s.conn == nil {
 		return
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	if err := s.conn.WriteJSON(msg); err != nil {
 		logx.Error("signaling", "write error: %v", err)
 	}

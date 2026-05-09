@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 class OfficialWebRtcService {
@@ -13,6 +14,8 @@ class OfficialWebRtcService {
   Timer? _iceTimer;
   bool _offerSent = false;
   final List<RTCIceCandidate> _pendingCandidates = [];
+  bool _remoteDescSet = false;
+  final List<Map<String, dynamic>> _pendingPeerCandidates = [];
 
   Future<void> createOffer({
     required List<Map<String, dynamic>> iceServers,
@@ -31,7 +34,15 @@ class OfficialWebRtcService {
 
     _pc!.onIceCandidate = (candidate) {
       final c = candidate.candidate;
-      if (c == null || c.isEmpty) return;
+      if (c == null || c.isEmpty) {
+        _log('ICE candidate gathering complete');
+        return;
+      }
+      final candLower = c.toLowerCase();
+      final cType = candLower.contains('typ host') ? 'host' :
+          candLower.contains('typ srflx') ? 'srflx' :
+          candLower.contains('typ relay') ? 'relay' : 'unknown';
+      _log('ICE candidate: type=$cType candidate=${c.substring(0, min(c.length, 80))}');
       if (_offerSent) {
         onIceCandidate(candidate);
       } else {
@@ -41,6 +52,10 @@ class OfficialWebRtcService {
 
     _pc!.onIceConnectionState = (state) {
       _log('ICE state: ${_enumLabel(state)}');
+      if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+          state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+        _dumpStats();
+      }
     };
 
     _pc!.onDataChannel = (channel) {
@@ -57,6 +72,9 @@ class OfficialWebRtcService {
 
     _pc!.onIceGatheringState = (state) {
       _log('ICE gathering: ${_enumLabel(state)}');
+      if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+        _dumpStats();
+      }
     };
 
     // Create SDP offer
@@ -79,21 +97,44 @@ class OfficialWebRtcService {
 
   Future<void> applyAnswer(String sdpType, String sdp) async {
     if (_pc == null) return;
+    _log('applyAnswer: type=$sdpType sdpLen=${sdp.length}');
     await _pc!.setRemoteDescription(
       RTCSessionDescription(sdp, sdpType),
     );
-    _log('Remote answer applied');
+    _remoteDescSet = true;
+    _log('Remote answer applied, flushing ${_pendingPeerCandidates.length} pending candidates');
+    for (final c in _pendingPeerCandidates) {
+      await _addCandidateInternal(c, 'flushed');
+    }
+    _pendingPeerCandidates.clear();
   }
 
   Future<void> addIceCandidate(Map<String, dynamic> candidate) async {
     if (_pc == null) return;
-    await _pc!.addCandidate(
-      RTCIceCandidate(
-        candidate['candidate'] as String? ?? '',
-        candidate['sdpMid'] as String? ?? '',
-        candidate['sdpMLineIndex'] as int? ?? 0,
-      ),
-    );
+    if (!_remoteDescSet) {
+      String c = candidate['candidate'] as String? ?? '';
+      String t = c.toLowerCase().contains('typ relay') ? 'relay' :
+          c.toLowerCase().contains('typ srflx') ? 'srflx' :
+          c.toLowerCase().contains('typ host') ? 'host' : '?';
+      _log('buffering $t candidate (remote desc not set yet)');
+      _pendingPeerCandidates.add(candidate);
+      return;
+    }
+    await _addCandidateInternal(candidate, 'live');
+  }
+
+  Future<void> _addCandidateInternal(Map<String, dynamic> candidate, String tag) async {
+    final candStr = candidate['candidate'] as String? ?? '';
+    final mid = candidate['sdpMid'] as String? ?? '';
+    final idx = candidate['sdpMLineIndex'] as int? ?? 0;
+    try {
+      await _pc!.addCandidate(RTCIceCandidate(candStr, mid, idx));
+      final cType = candStr.toLowerCase().contains('typ relay') ? 'relay' :
+          candStr.toLowerCase().contains('typ srflx') ? 'srflx' : 'host';
+      _log('addCandidate $tag OK: type=$cType mid=$mid idx=$idx');
+    } catch (e) {
+      _log('addCandidate $tag FAIL: $e | mid=$mid idx=$idx');
+    }
   }
 
   void _setupDataChannel(RTCDataChannel channel) {
@@ -118,6 +159,24 @@ class OfficialWebRtcService {
     };
   }
 
+  void _dumpStats() {
+    if (_pc == null) return;
+    _pc!.getStats().then((stats) {
+      final buf = StringBuffer();
+      for (final r in stats) {
+        if (r.type == 'candidate-pair') {
+          final s = r.values;
+          buf.writeln('  pair: local=${s['localCandidateId']} remote=${s['remoteCandidateId']} '
+              'state=${s['state']} nominated=${s['nominated']} '
+              'bytesSent=${s['bytesSent']} bytesRecv=${s['bytesReceived']}');
+        }
+      }
+      if (buf.isNotEmpty) {
+        _log('getStats candidate-pairs:\n$buf');
+      }
+    }).catchError((e) { _log('getStats error: $e'); });
+  }
+
   bool send(Map<String, dynamic> payload) {
     if (_dataChannel == null || !_connected) return false;
     _dataChannel!.send(RTCDataChannelMessage(jsonEncode(payload)));
@@ -127,7 +186,9 @@ class OfficialWebRtcService {
   Future<void> _cleanup() async {
     _connected = false;
     _offerSent = false;
+    _remoteDescSet = false;
     _pendingCandidates.clear();
+    _pendingPeerCandidates.clear();
     _iceTimer?.cancel();
     _iceTimer = null;
     _dataChannel?.close();

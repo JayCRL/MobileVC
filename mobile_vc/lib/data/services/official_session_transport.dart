@@ -103,15 +103,20 @@ class OfficialSessionTransport implements SessionTransport {
           final data = msg.data ?? {};
           final sdpType = data['type'] as String?;
           final sdp = data['sdp'] as String?;
-          final candidate = data['candidate'] as Map<String, dynamic>?;
-          _debugCtrl.add('webrtc msg: sdpType=$sdpType hasSdp=${sdp != null} hasCandidate=${candidate != null}');
+          final candRaw = data['candidate'];
+          // Desktop sends candidate as flat fields in `data` itself (not nested),
+          // so when candRaw is a String the entire `data` map IS the candidate payload.
+          final hasCandidate = candRaw is String || candRaw is Map;
+          _debugCtrl.add('webrtc msg: sdpType=$sdpType hasSdp=${sdp != null} hasCandidate=$hasCandidate');
 
           try {
             if (sdpType == 'answer' && sdp != null) {
               _debugCtrl.add('applying WebRTC answer...');
               await webrtc.applyAnswer(sdpType!, sdp);
-            } else if (candidate != null) {
-              await webrtc.addIceCandidate(candidate);
+            } else if (candRaw is String) {
+              await webrtc.addIceCandidate(data);
+            } else if (candRaw is Map<String, dynamic>) {
+              await webrtc.addIceCandidate(candRaw);
             }
           } catch (e, st) {
             _debugCtrl.add('webrtc processing error: $e\n$st');
