@@ -191,14 +191,22 @@ func (h *Hub) forwardToPeer(userID, peerID string, msg Message) {
 	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	clients, ok := h.users[userID]
-	if !ok {
-		return
+	// Try sender's userID first
+	if clients, ok := h.users[userID]; ok {
+		for c := range clients {
+			if c.PeerID == peerID {
+				c.Send(msg)
+				return
+			}
+		}
 	}
-	for c := range clients {
-		if c.PeerID == peerID || (c.PeerID == "" && c.NodeID == msg.NodeID) {
-			c.Send(msg)
-			return
+	// Fallback: search all users for matching peerID
+	for _, clients := range h.users {
+		for c := range clients {
+			if c.PeerID == peerID {
+				c.Send(msg)
+				return
+			}
 		}
 	}
 }

@@ -105,6 +105,12 @@ class _ModeSelectPageState extends State<ModeSelectPage> with WidgetsBindingObse
     if (_authResult == null) return;
     final serverUrl = _serverUrlCtrl.text.trim();
 
+    // Auto-refresh token if expired
+    final refreshed = await _authService.tryRefresh(serverUrl, _authResult!);
+    if (refreshed != null) {
+      _authResult = refreshed;
+    }
+
     setState(() => _loading = true);
     try {
       final api = OfficialApiService(

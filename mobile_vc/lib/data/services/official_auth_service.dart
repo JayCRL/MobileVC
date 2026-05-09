@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -34,13 +36,13 @@ class OfficialAuthResult {
   }
 
   Map<String, String> toPrefs() => {
-    'official_access_token': accessToken,
-    'official_refresh_token': refreshToken,
-    'official_user_id': userId,
-    'official_name': name,
-    'official_email': email,
-    'official_provider': provider,
-  };
+        'official_access_token': accessToken,
+        'official_refresh_token': refreshToken,
+        'official_user_id': userId,
+        'official_name': name,
+        'official_email': email,
+        'official_provider': provider,
+      };
 }
 
 class OfficialAuthService {
@@ -51,6 +53,7 @@ class OfficialAuthService {
     'name': 'official_name',
     'email': 'official_email',
     'provider': 'official_provider',
+    'serverUrl': 'official_server_url',
   };
 
   Future<OfficialAuthResult?> loadTokens() async {
@@ -67,6 +70,38 @@ class OfficialAuthService {
       provider: prefs.getString(_keys['provider']!) ?? '',
       expiresIn: 0,
     );
+  }
+
+  /// Try to refresh the access token using the refresh token.
+  /// Returns new [OfficialAuthResult] on success, or null if refresh fails.
+  Future<OfficialAuthResult?> tryRefresh(String serverUrl, OfficialAuthResult current) async {
+    if (current.refreshToken.isEmpty) return null;
+    try {
+      final resp = await http.post(
+        Uri.parse('$serverUrl/api/auth/refresh'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'refreshToken': current.refreshToken}),
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final newToken = data['accessToken'] as String? ?? '';
+        final newRefresh = data['refreshToken'] as String? ?? '';
+        if (newToken.isNotEmpty) {
+          final result = OfficialAuthResult(
+            accessToken: newToken,
+            refreshToken: newRefresh.isNotEmpty ? newRefresh : current.refreshToken,
+            userId: current.userId,
+            name: current.name,
+            email: current.email,
+            provider: current.provider,
+            expiresIn: data['expiresIn'] ?? 900,
+          );
+          await saveTokens(result);
+          return result;
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<void> saveTokens(OfficialAuthResult result) async {
