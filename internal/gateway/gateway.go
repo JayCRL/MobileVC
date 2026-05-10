@@ -21,6 +21,7 @@ import (
 	"mobilevc/internal/data/claudesync"
 	"mobilevc/internal/data/codexsync"
 	"mobilevc/internal/data/skills"
+	"mobilevc/internal/boss"
 	"mobilevc/internal/engine"
 	"mobilevc/internal/logx"
 	"mobilevc/internal/planning"
@@ -43,7 +44,9 @@ type Handler struct {
 	SkillLauncher   *skills.Launcher
 	SessionStore    data.Store
 	PushService     push.Service
+	WorkspaceRoot   string
 	runtimeSessions *runtimeSessionRegistry
+	Boss            *boss.Orchestrator
 
 	muProgressPush   sync.Mutex
 	lastProgressPush map[string]time.Time
@@ -98,6 +101,15 @@ type P2PMessageEnvelope struct {
 	APIKey    string `json:"apiKey"`
 	Task      string `json:"task"`
 	BaseURL   string `json:"baseUrl"`
+	Decision  string `json:"decision"`
+	Notes     string `json:"notes"`
+}
+
+func (h *Handler) workspaceRootOrSlash() string {
+	if h.WorkspaceRoot != "" {
+		return h.WorkspaceRoot
+	}
+	return "/"
 }
 
 // HandleP2PMessage processes a planning message from a P2P (WebRTC) data channel.
@@ -112,6 +124,18 @@ func (h *Handler) HandleP2PMessage(ctx context.Context, msg []byte, replyFn func
 		mgr := &planning.Manager{}
 		result := mgr.CheckClaude(ctx)
 		replyFn(protocol.NewPlanningCheckEvent(envelope.SessionID, result.Installed, result.Version, result.Error, result.InstallHint))
+	case "planning_install":
+		apiKey := strings.TrimSpace(envelope.APIKey)
+		if apiKey == "" {
+			ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+			apiKey, _ = ks.Get()
+		}
+		go func() {
+			result := boss.InstallClaude(ctx, apiKey, envelope.BaseURL, envelope.SessionID, replyFn)
+			if result.Error != "" {
+				replyFn(protocol.NewErrorEvent(envelope.SessionID, result.Error, ""))
+			}
+		}()
 	case "planning_set_key":
 		ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
 		if err := ks.Set(strings.TrimSpace(envelope.APIKey)); err != nil {
@@ -121,73 +145,52 @@ func (h *Handler) HandleP2PMessage(ctx context.Context, msg []byte, replyFn func
 		replyFn(protocol.NewPlanningStateEvent(envelope.SessionID, "idle", "", "", "API key saved", nil))
 	case "planning_start":
 		h.handleP2PPlanningStart(ctx, envelope, replyFn)
+	case "planning_confirm":
+		h.handleP2PPlanningConfirm(ctx, envelope, replyFn)
 	default:
 		logx.Info("p2p", "unhandled action: %s", envelope.Action)
 	}
 }
 
 func (h *Handler) handleP2PPlanningStart(ctx context.Context, envelope P2PMessageEnvelope, replyFn func(any)) {
-	apiKey := strings.TrimSpace(envelope.APIKey)
-	if apiKey == "" {
-		ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
-		var err error
-		apiKey, err = ks.Get()
-		if err != nil || apiKey == "" {
-			replyFn(protocol.NewErrorEvent(envelope.SessionID, "请先设置 Anthropic API Key", ""))
-			return
-		}
-	}
-	mgr := &planning.Manager{APIKey: apiKey}
-	if result := mgr.CheckClaude(ctx); !result.Installed {
-		replyFn(protocol.NewPlanningCheckEvent(envelope.SessionID, false, "", result.Error, result.InstallHint))
-		replyFn(protocol.NewErrorEvent(envelope.SessionID, "Claude Code CLI 未安装", ""))
+	params, ok := h.tryResolvePlanningParams(ctx, envelope, replyFn)
+	if !ok {
 		return
 	}
-	sessionID := envelope.SessionID
-	if sessionID == "" {
-		sessionID = fmt.Sprintf("session-%d", time.Now().UTC().UnixNano())
-	}
-	args := mgr.BuildCommand("")
-	quotedArgs := make([]string, len(args))
-	for i, a := range args {
-		quotedArgs[i] = "'" + strings.ReplaceAll(a, "'", "'\\''") + "'"
-	}
-	cmdStr := ""
-	if strings.TrimSpace(envelope.BaseURL) != "" {
-		cmdStr += "ANTHROPIC_BASE_URL='" + strings.ReplaceAll(strings.TrimSpace(envelope.BaseURL), "'", "'\\''") + "' "
-	}
-	cmdStr += "ANTHROPIC_API_KEY='" + strings.ReplaceAll(apiKey, "'", "'\\''") + "' " + strings.Join(quotedArgs, " ")
+	entry := h.runtimeSessions.Ensure(params.SessionID)
+	svc := entry.service
 
-	deps := session.Dependencies{NewPtyRunner: h.NewPtyRunner, NewExecRunner: h.NewExecRunner}
-	svc := session.NewService(sessionID, deps)
-	replyFn(protocol.NewPlanningStateEvent(sessionID, "planning", "", "", "Starting planning session...", nil))
+	// Create boss orchestrator for this planning session
+	h.Boss = boss.NewOrchestrator(replyFn)
+	if err := h.Boss.StartPlanning(ctx, svc, params.SessionID, params.Task, params.CWD); err != nil {
+		logx.Error("gateway", "boss start planning failed: sessionID=%s err=%v", params.SessionID, err)
+		replyFn(protocol.NewErrorEvent(params.SessionID, err.Error(), ""))
+	}
+}
 
-	tracker := planning.NewTracker()
-	wrappedEmit := func(event any) {
-		if rp, ok := event.(protocol.RuntimePhaseEvent); ok {
-			if planning.IsPlanningPhase(rp.Phase) {
-				p := &planning.PhasePayload{Phase: rp.Phase, Kind: rp.Kind, Message: rp.Message}
-				if state := tracker.Apply(p); state != nil {
-					tasks := make([]protocol.PlanTask, len(state.Tasks))
-					for i, t := range state.Tasks {
-						tasks[i] = protocol.PlanTask{ID: t.ID, Title: t.Title, Status: string(t.Status), Agent: t.Agent}
-					}
-					replyFn(protocol.NewPlanningStateEvent(sessionID, string(state.Phase), state.CurrentTask, state.CurrentAgent, state.Message, tasks))
-					return
-				}
-			}
+func (h *Handler) handleP2PPlanningConfirm(ctx context.Context, envelope P2PMessageEnvelope, replyFn func(any)) {
+	if h.Boss == nil {
+		replyFn(protocol.NewErrorEvent(envelope.SessionID, "no active planning session", ""))
+		return
+	}
+
+	decision := strings.TrimSpace(strings.ToLower(envelope.Decision))
+	logx.Info("boss", "p2p confirm: sessionID=%s decision=%s", envelope.SessionID, decision)
+
+	switch decision {
+	case "confirm":
+		if err := h.Boss.ConfirmPlan(ctx, envelope.Notes); err != nil {
+			logx.Error("boss", "confirm failed: sessionID=%s err=%v", envelope.SessionID, err)
+			replyFn(protocol.NewErrorEvent(envelope.SessionID, err.Error(), ""))
 		}
-		replyFn(event)
-	}
-
-	execReq := session.ExecuteRequest{
-		Command: cmdStr, CWD: "/", Mode: engine.ModePTY, PermissionMode: "acceptEdits",
-		InitialInput: envelope.Task + "\n",
-		RuntimeMeta:  protocol.RuntimeMeta{Source: "planning", Command: cmdStr, Engine: "claude", CWD: "/", PermissionMode: "acceptEdits"},
-	}
-	if err := svc.Execute(ctx, sessionID, execReq, wrappedEmit); err != nil {
-		logx.Error("p2p", "planning_start execute failed: sessionID=%s err=%v", sessionID, err)
-		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+	case "adjust":
+		if err := h.Boss.AdjustPlan(ctx, envelope.Notes); err != nil {
+			replyFn(protocol.NewErrorEvent(envelope.SessionID, err.Error(), ""))
+		}
+	case "cancel":
+		h.Boss.CancelPlan(ctx)
+	default:
+		replyFn(protocol.NewErrorEvent(envelope.SessionID, fmt.Sprintf("unknown decision: %s", envelope.Decision), ""))
 	}
 }
 
@@ -1402,6 +1405,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			result := planningMgr.CheckClaude(ctx)
 			emit(protocol.NewPlanningCheckEvent(selectedSessionID,
 				result.Installed, result.Version, result.Error, result.InstallHint))
+			case "planning_install":
+				var installReq protocol.PlanningSetKeyRequestEvent
+				_ = json.Unmarshal(payload, &installReq)
+				go func() {
+					apiKey := strings.TrimSpace(installReq.APIKey)
+					if apiKey == "" {
+						ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+						apiKey, _ = ks.Get()
+					}
+					result := boss.InstallClaude(ctx, apiKey, "", selectedSessionID, emit)
+					if result.Error != "" {
+						emit(protocol.NewErrorEvent(selectedSessionID, result.Error, ""))
+					}
+				}()
 		case "planning_set_key":
 			var setKeyReq protocol.PlanningSetKeyRequestEvent
 			if err := json.Unmarshal(payload, &setKeyReq); err != nil {
@@ -1434,19 +1451,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				logx.Info("ws", "duplicate client action ignored: connectionID=%s sessionID=%s remoteAddr=%s action=planning_start clientActionID=%s", connectionID, sessionID, remoteAddr, planReq.ClientActionID)
 				continue
 			}
-			// Load API key
-			apiKey := strings.TrimSpace(planReq.APIKey)
-			if apiKey == "" {
-				ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
-				var err error
-				apiKey, err = ks.Get()
-				if err != nil || apiKey == "" {
-					emit(protocol.NewErrorEvent(sessionID, "请先设置 Anthropic API Key", ""))
-					continue
-				}
-			}
 			// Check claude
-			mgr := &planning.Manager{APIKey: apiKey}
+			mgr := &planning.Manager{}
 			checkResult := mgr.CheckClaude(ctx)
 			if !checkResult.Installed {
 				emit(protocol.NewPlanningCheckEvent(sessionID, false, "", checkResult.Error, checkResult.InstallHint))
@@ -1454,76 +1460,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			// Get session runtime
-			sessionRuntime, service := runtimeForSession(sessionID)
+			_, service := runtimeForSession(sessionID)
 			emitAndPersist := emitAndPersistFor(sessionID)
-			// Start initial planning phase notification
-			emit(protocol.NewPlanningStateEvent(sessionID, "planning", "", "", "Starting planning session...", nil))
-			// Track planning progress
-			tracker := planning.NewTracker()
-			// Wrap emitAndPersist to extract planning phases
-			wrappedEmitAndPersist := func(event any) {
-				if rp, ok := event.(protocol.RuntimePhaseEvent); ok {
-					if planning.IsPlanningPhase(rp.Phase) {
-						p := &planning.PhasePayload{
-							Phase:   rp.Phase,
-							Kind:    rp.Kind,
-							Message: rp.Message,
-						}
-						if state := tracker.Apply(p); state != nil {
-							tasks := make([]protocol.PlanTask, len(state.Tasks))
-							for i, t := range state.Tasks {
-								tasks[i] = protocol.PlanTask{
-									ID:     t.ID,
-									Title:  t.Title,
-									Status: string(t.Status),
-									Agent:  t.Agent,
-								}
-							}
-							emitAndPersist(protocol.NewPlanningStateEvent(
-								sessionID, string(state.Phase),
-								state.CurrentTask, state.CurrentAgent,
-								state.Message, tasks,
-							))
-							return
-						}
-					}
-				}
-				emitAndPersist(event)
-			}
-			if sessionRuntime != nil {
-				service.SetSink(sessionRuntime.EnsureBufferedSinkWithProcessor(wrappedEmitAndPersist))
-			}
-			// Build planning command with API key inline
-			args := mgr.BuildCommand("")
-			quotedArgs := make([]string, len(args))
-			for i, a := range args {
-				quotedArgs[i] = "'" + strings.ReplaceAll(a, "'", "'\\''") + "'"
-			}
-			cmdStr := ""
-			if strings.TrimSpace(planReq.BaseURL) != "" {
-				cmdStr += "ANTHROPIC_BASE_URL='" + strings.ReplaceAll(strings.TrimSpace(planReq.BaseURL), "'", "'\\''") + "' "
-			}
-			cmdStr += "ANTHROPIC_API_KEY='" + strings.ReplaceAll(apiKey, "'", "'\\''") + "' " + strings.Join(quotedArgs, " ")
 			cwd := firstNonEmptyString(planReq.CWD, "/")
-			execReq := session.ExecuteRequest{
-				Command:        cmdStr,
-				CWD:            cwd,
-				Mode:           engine.ModePTY,
-				PermissionMode: "acceptEdits",
-				InitialInput:   planReq.Task + "\n",
-				RuntimeMeta: protocol.RuntimeMeta{
-					Source:         "planning",
-					Command:        cmdStr,
-					Engine:         "claude",
-					CWD:            cwd,
-					PermissionMode: "acceptEdits",
-				},
-			}
-			if err := service.Execute(ctx, sessionID, execReq, wrappedEmitAndPersist); err != nil {
-				logx.Error("ws", "planning_start execute failed: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, sessionID, remoteAddr, err)
+			logx.Info("planning", "session starting: sessionID=%s cwd=%s task=%q", sessionID, cwd, planReq.Task)
+			// Create boss orchestrator
+			h.Boss = boss.NewOrchestrator(emitAndPersist)
+			if err := h.Boss.StartPlanning(ctx, service, sessionID, planReq.Task, cwd); err != nil {
+				logx.Error("ws", "boss start planning failed: sessionID=%s err=%v", sessionID, err)
 				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
 				continue
 			}
+			// Start initial planning phase notification (for compat with existing UI)
+			emit(protocol.NewPlanningStateEvent(sessionID, "planning", "", "", "Starting planning session...", nil))
 		case "planning_confirm":
 			var confirmReq protocol.PlanningConfirmRequestEvent
 			if err := json.Unmarshal(payload, &confirmReq); err != nil {
@@ -1533,6 +1482,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sessionID := strings.TrimSpace(firstNonEmptyString(confirmReq.SessionID, selectedSessionID))
 			_, service := runtimeForSession(sessionID)
 			decision := strings.TrimSpace(strings.ToLower(confirmReq.Decision))
+				logx.Info("planning", "confirm received: sessionID=%s decision=%s notes=%q", sessionID, decision, confirmReq.Notes)
+
+
+			// Delegate to boss orchestrator if active
+			if h.Boss != nil && h.Boss.Phase == boss.PhaseConfirming {
+				switch decision {
+				case "confirm", "continue":
+					h.Boss.ConfirmPlan(ctx, confirmReq.Notes)
+				case "adjust":
+					h.Boss.AdjustPlan(ctx, confirmReq.Notes)
+				case "cancel":
+					h.Boss.CancelPlan(ctx)
+				}
+				continue
+			}
 			permMode := "acceptEdits" // pre-agreed permissions
 			switch decision {
 			case "confirm":

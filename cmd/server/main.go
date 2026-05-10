@@ -175,6 +175,7 @@ func main() {
 	logx.Info("bootstrap", "Preparing websocket handler")
 	wsHandler = gateway.NewHandler(cfg.AuthToken, sessionStore)
 	wsHandler.PushService = pushService
+	wsHandler.WorkspaceRoot = cfg.Runtime.WorkspaceRoot
 	logx.Info("bootstrap", "WebSocket handler ready")
 
 	var ttsHandler *tts.HTTPHandler

@@ -3,6 +3,7 @@ package officialclient
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	"mobilevc/internal/logx"
 
@@ -14,6 +15,7 @@ type PeerManager struct {
 	peers             map[string]*webrtc.PeerConnection
 	dcs               map[string]*webrtc.DataChannel
 	pendingCandidates map[string][]json.RawMessage
+	failedCleanups    map[string]*time.Timer
 	defaultConfig     webrtc.Configuration
 	signal            func(peerID string, data json.RawMessage)
 	onData            func(peerID string, msg []byte)
@@ -31,6 +33,8 @@ func NewPeerManager(cfg PeerManagerConfig, signalFn func(peerID string, data jso
 		peers:             make(map[string]*webrtc.PeerConnection),
 		dcs:               make(map[string]*webrtc.DataChannel),
 		pendingCandidates: make(map[string][]json.RawMessage),
+			failedCleanups:    make(map[string]*time.Timer),
+
 		signal:            signalFn,
 		onData:            onDataFn,
 	}
@@ -84,6 +88,7 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 			logx.Info("webrtc", "DataChannel open: peer=%s", peerID)
 		})
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+			logx.Info("webrtc", "DataChannel msg: peer=%s len=%d raw=%s", peerID, len(msg.Data), string(msg.Data))
 			if pm.onData != nil {
 				pm.onData(peerID, msg.Data)
 			}
@@ -119,11 +124,21 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		logx.Info("webrtc", "ICE state: %s peer=%s", state.String(), peerID)
 		if state == webrtc.ICEConnectionStateFailed {
+			logx.Warn("webrtc", "ICE failed, keeping peer for 60s to allow reconnect: peer=%s", peerID)
 			pc.Close()
 			pm.mu.Lock()
-			delete(pm.peers, peerID)
+			if t, ok := pm.failedCleanups[peerID]; ok {
+				t.Stop()
+			}
 			delete(pm.dcs, peerID)
-			delete(pm.pendingCandidates, peerID)
+			pm.failedCleanups[peerID] = time.AfterFunc(60*time.Second, func() {
+				pm.mu.Lock()
+				delete(pm.peers, peerID)
+				delete(pm.pendingCandidates, peerID)
+				delete(pm.failedCleanups, peerID)
+				pm.mu.Unlock()
+				logx.Info("webrtc", "peer cleanup after ICE failure: peer=%s", peerID)
+			})
 			pm.mu.Unlock()
 		}
 		// Disconnected is transient — ICE agent can recover on its own.
@@ -224,9 +239,11 @@ func (pm *PeerManager) Send(peerID string, data []byte) error {
 	dc, ok := pm.dcs[peerID]
 	pm.mu.Unlock()
 	if !ok || dc == nil {
+		logx.Error("webrtc", "Send FAILED: dc not found for peer=%s (ok=%v dcIsNil=%v)", peerID, ok, dc == nil)
 		return nil
 	}
-	return dc.Send(data)
+	logx.Info("webrtc", "Send text: peer=%s len=%d raw=%s", peerID, len(data), string(data))
+	return dc.SendText(string(data))
 }
 
 func (pm *PeerManager) ClosePeer(peerID string) {

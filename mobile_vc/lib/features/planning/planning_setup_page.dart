@@ -17,6 +17,7 @@ class PlanningSetupPage extends StatefulWidget {
 class _PlanningSetupPageState extends State<PlanningSetupPage> {
   final _keyCtrl = TextEditingController();
   final _baseUrlCtrl = TextEditingController();
+  Timer? _checkTimer;
   bool _checking = false;
   bool _claudeInstalled = false;
   String _claudeVersion = '';
@@ -35,11 +36,13 @@ class _PlanningSetupPageState extends State<PlanningSetupPage> {
     _keyCtrl.dispose();
     _baseUrlCtrl.dispose();
     _eventSub?.cancel();
+    _checkTimer?.cancel();
     super.dispose();
   }
 
   void _onEvent(AppEvent event) {
     if (event is PlanningCheckEvent) {
+      _checkTimer?.cancel();
       setState(() {
         _checking = false;
         _claudeInstalled = event.installed;
@@ -53,6 +56,15 @@ class _PlanningSetupPageState extends State<PlanningSetupPage> {
   void _checkClaude() {
     setState(() => _checking = true);
     widget.controller.sendRawAction('planning_check');
+    _checkTimer?.cancel();
+    _checkTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted && _checking) {
+        setState(() {
+          _checking = false;
+          _claudeError = '检查超时，请重试';
+        });
+      }
+    });
   }
 
   void _saveKeyAndStart() {
@@ -194,6 +206,38 @@ class _PlanningSetupPageState extends State<PlanningSetupPage> {
                     ?.copyWith(color: theme.colorScheme.outline),
               ),
             ],
+            // Debug log area
+            const SizedBox(height: 16),
+            Text('调试日志',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.outline)),
+            const SizedBox(height: 4),
+            SizedBox(
+              height: 120,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ListView.builder(
+                  itemCount: widget.controller.debugLogs.length,
+                  itemBuilder: (_, i) => Text(
+                    widget.controller.debugLogs[i],
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      color: widget.controller.debugLogs[i].contains('FAILED')
+                          ? Colors.red
+                          : widget.controller.debugLogs[i].contains('OK')
+                              ? Colors.green
+                              : theme.colorScheme.outline,
+                    ),
+                  ),
+                ),
+              ),
+            ),
             const SizedBox(height: 32),
 
             FilledButton.icon(

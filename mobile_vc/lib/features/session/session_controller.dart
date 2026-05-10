@@ -1706,6 +1706,7 @@ class SessionController extends ChangeNotifier {
         // Pipe debug logs to UI callback (capture local ref to prevent null)
         if (onDbg != null) {
           _officialTransport!.debugLog.listen((msg) {
+            _pushDebug('P2P', msg);
             onDbg(msg);
           });
         }
@@ -2456,7 +2457,12 @@ class SessionController extends ChangeNotifier {
     if (extra != null) {
       payload.addAll(extra);
     }
-    _service.send(payload);
+    final ok = _service.send(payload);
+    if (!ok) {
+      _pushDebug('P2P', 'sendRawAction FAILED: action=$action connected=$connected');
+    } else {
+      _pushDebug('P2P', 'sendRawAction OK: action=$action');
+    }
   }
 
   void saveSkill(SkillDefinition definition) {

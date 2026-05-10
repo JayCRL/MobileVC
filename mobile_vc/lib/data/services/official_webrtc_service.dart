@@ -139,12 +139,18 @@ class OfficialWebRtcService {
 
   void _setupDataChannel(RTCDataChannel channel) {
     channel.onMessage = (RTCDataChannelMessage msg) {
-      if (msg.isBinary) return;
+      if (msg.isBinary) {
+        _log('DataChannel recv BINARY (ignored)');
+        return;
+      }
       try {
         final data = msg.text;
         final json = jsonDecode(data) as Map<String, dynamic>;
+        _log('DataChannel recv OK: action=${json['action'] ?? json['type']} len=${data.length}');
         _eventCtrl.add(json);
-      } catch (_) {}
+      } catch (e) {
+        _log('DataChannel recv FAIL: $e');
+      }
     };
 
     channel.onDataChannelState = (state) {
@@ -155,6 +161,7 @@ class OfficialWebRtcService {
       } else if (state == RTCDataChannelState.RTCDataChannelClosed ||
                  state == RTCDataChannelState.RTCDataChannelClosing) {
         _connected = false;
+        _log('DataChannel closed');
       }
     };
   }
@@ -178,8 +185,17 @@ class OfficialWebRtcService {
   }
 
   bool send(Map<String, dynamic> payload) {
-    if (_dataChannel == null || !_connected) return false;
-    _dataChannel!.send(RTCDataChannelMessage(jsonEncode(payload)));
+    if (_dataChannel == null) {
+      _log('send FAIL: dataChannel is null');
+      return false;
+    }
+    if (!_connected) {
+      _log('send FAIL: not connected');
+      return false;
+    }
+    final data = jsonEncode(payload);
+    _dataChannel!.send(RTCDataChannelMessage(data));
+    _log('send OK: action=${payload['action']} len=${data.length}');
     return true;
   }
 

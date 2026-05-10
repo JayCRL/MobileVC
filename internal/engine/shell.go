@@ -330,7 +330,9 @@ func buildClaudeStreamJSONCommand(command string) string {
 	if !strings.Contains(lower, "--output-format") {
 		parts = append(parts, "--output-format", "stream-json")
 	}
-	if !strings.Contains(lower, "--input-format") {
+	// --input-format conflicts with -p (print mode): Claude does not
+	// read stdin in print mode, so input-format is meaningless.
+	if !strings.Contains(lower, " -p") && !strings.Contains(lower, "--input-format") {
 		parts = append(parts, "--input-format", "stream-json")
 	}
 	if !strings.Contains(lower, "--permission-prompt-tool") {
