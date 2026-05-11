@@ -10,15 +10,24 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+type peerTraffic struct {
+	BytesSent     int64
+	BytesReceived int64
+	StartedAt     time.Time
+}
+
 type PeerManager struct {
 	mu                sync.Mutex
 	peers             map[string]*webrtc.PeerConnection
 	dcs               map[string]*webrtc.DataChannel
 	pendingCandidates map[string][]json.RawMessage
 	failedCleanups    map[string]*time.Timer
+	traffic           map[string]*peerTraffic
+	trafficMu         sync.Mutex
 	defaultConfig     webrtc.Configuration
 	signal            func(peerID string, data json.RawMessage)
 	onData            func(peerID string, msg []byte)
+	onTraffic         func(peerID string, bytesSent, bytesReceived int64, startedAt time.Time)
 }
 
 type PeerManagerConfig struct {
@@ -28,15 +37,17 @@ type PeerManagerConfig struct {
 	TURNPass string
 }
 
-func NewPeerManager(cfg PeerManagerConfig, signalFn func(peerID string, data json.RawMessage), onDataFn func(peerID string, msg []byte)) *PeerManager {
+func NewPeerManager(cfg PeerManagerConfig, signalFn func(peerID string, data json.RawMessage), onDataFn func(peerID string, msg []byte), onTrafficFn func(peerID string, bytesSent, bytesReceived int64, startedAt time.Time)) *PeerManager {
 	pm := &PeerManager{
 		peers:             make(map[string]*webrtc.PeerConnection),
 		dcs:               make(map[string]*webrtc.DataChannel),
 		pendingCandidates: make(map[string][]json.RawMessage),
-			failedCleanups:    make(map[string]*time.Timer),
+		failedCleanups:    make(map[string]*time.Timer),
+		traffic:           make(map[string]*peerTraffic),
 
-		signal:            signalFn,
-		onData:            onDataFn,
+		signal:    signalFn,
+		onData:    onDataFn,
+		onTraffic: onTrafficFn,
 	}
 	pm.defaultConfig = pm.buildConfig(cfg)
 	return pm
@@ -86,15 +97,24 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 
 		dc.OnOpen(func() {
 			logx.Info("webrtc", "DataChannel open: peer=%s", peerID)
+			pm.trafficMu.Lock()
+			pm.traffic[peerID] = &peerTraffic{StartedAt: time.Now()}
+			pm.trafficMu.Unlock()
 		})
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 			logx.Info("webrtc", "DataChannel msg: peer=%s len=%d raw=%s", peerID, len(msg.Data), string(msg.Data))
+			pm.trafficMu.Lock()
+			if t, ok := pm.traffic[peerID]; ok {
+				t.BytesReceived += int64(len(msg.Data))
+			}
+			pm.trafficMu.Unlock()
 			if pm.onData != nil {
 				pm.onData(peerID, msg.Data)
 			}
 		})
 		dc.OnClose(func() {
 			logx.Info("webrtc", "DataChannel closed: peer=%s", peerID)
+			pm.flushTraffic(peerID)
 		})
 	})
 
@@ -125,6 +145,7 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 		logx.Info("webrtc", "ICE state: %s peer=%s", state.String(), peerID)
 		if state == webrtc.ICEConnectionStateFailed {
 			logx.Warn("webrtc", "ICE failed, keeping peer for 60s to allow reconnect: peer=%s", peerID)
+			pm.flushTraffic(peerID)
 			pc.Close()
 			pm.mu.Lock()
 			if t, ok := pm.failedCleanups[peerID]; ok {
@@ -141,7 +162,6 @@ func (pm *PeerManager) HandleOffer(peerID string, sdpType string, sdp string) er
 			})
 			pm.mu.Unlock()
 		}
-		// Disconnected is transient — ICE agent can recover on its own.
 		if state == webrtc.ICEConnectionStateDisconnected {
 			logx.Info("webrtc", "ICE disconnected (transient), waiting for recovery: peer=%s", peerID)
 		}
@@ -213,7 +233,6 @@ func (pm *PeerManager) HandleRemoteCandidate(peerID string, candidateData json.R
 	pc, ok := pm.peers[peerID]
 	pm.mu.Unlock()
 	if !ok {
-		// PC not created yet — cache candidate for later replay
 		pm.mu.Lock()
 		pm.pendingCandidates[peerID] = append(pm.pendingCandidates[peerID], candidateData)
 		pm.mu.Unlock()
@@ -243,10 +262,20 @@ func (pm *PeerManager) Send(peerID string, data []byte) error {
 		return nil
 	}
 	logx.Info("webrtc", "Send text: peer=%s len=%d raw=%s", peerID, len(data), string(data))
-	return dc.SendText(string(data))
+	pm.trafficMu.Lock()
+	if t, ok := pm.traffic[peerID]; ok {
+		t.BytesSent += int64(len(data))
+	}
+	pm.trafficMu.Unlock()
+	err := dc.SendText(string(data))
+	if err != nil {
+		logx.Error("webrtc", "SendText error: peer=%s len=%d err=%v", peerID, len(data), err)
+	}
+	return err
 }
 
 func (pm *PeerManager) ClosePeer(peerID string) {
+	pm.flushTraffic(peerID)
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	if pc, ok := pm.peers[peerID]; ok {
@@ -258,4 +287,40 @@ func (pm *PeerManager) ClosePeer(peerID string) {
 		delete(pm.dcs, peerID)
 	}
 	delete(pm.pendingCandidates, peerID)
+}
+
+func (pm *PeerManager) flushTraffic(peerID string) {
+	pm.trafficMu.Lock()
+	t, ok := pm.traffic[peerID]
+	if !ok || (t.BytesSent == 0 && t.BytesReceived == 0) {
+		pm.trafficMu.Unlock()
+		return
+	}
+	delete(pm.traffic, peerID)
+	pm.trafficMu.Unlock()
+	if pm.onTraffic != nil {
+		pm.onTraffic(peerID, t.BytesSent, t.BytesReceived, t.StartedAt)
+	}
+}
+
+// CollectTraffic returns a snapshot of current traffic for all active peers and resets counters.
+func (pm *PeerManager) CollectTraffic() map[string]peerTraffic {
+	pm.trafficMu.Lock()
+	defer pm.trafficMu.Unlock()
+	if len(pm.traffic) == 0 {
+		return nil
+	}
+	result := make(map[string]peerTraffic, len(pm.traffic))
+	for peerID, t := range pm.traffic {
+		if t.BytesSent > 0 || t.BytesReceived > 0 {
+			result[peerID] = peerTraffic{
+				BytesSent:     t.BytesSent,
+				BytesReceived: t.BytesReceived,
+				StartedAt:     t.StartedAt,
+			}
+			t.BytesSent = 0
+			t.BytesReceived = 0
+		}
+	}
+	return result
 }

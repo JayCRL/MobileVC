@@ -1703,6 +1703,10 @@ class SessionController extends ChangeNotifier {
         );
         _officialTransport = OfficialSessionTransport(apiService: apiService);
         _service = _officialTransport!;
+        // _subscription was bound to the default WebSocket service in initialize();
+        // rebind it to the official transport so P2P events reach _handleEvent.
+        await _subscription?.cancel();
+        _subscription = _service.events.listen(_handleEvent);
         // Pipe debug logs to UI callback (capture local ref to prevent null)
         if (onDbg != null) {
           _officialTransport!.debugLog.listen((msg) {
