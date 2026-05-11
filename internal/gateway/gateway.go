@@ -427,7 +427,7 @@ func (h *Handler) handleP2PSessionCreate(ctx context.Context, rawMsg []byte, rep
 	if len(items) > 0 {
 		merged, err := mergeSessionSummaries(ctx, h.SessionStore, items, normalizeSessionCWD(req.CWD))
 		if err == nil {
-			replyFn(protocol.NewSessionListResultEvent(req.SessionID, toProtocolSummaries(merged)))
+			replyFn(protocol.NewSessionListResultEvent(req.SessionID, trimSummariesForP2P(toProtocolSummaries(merged))))
 		}
 	}
 }
@@ -456,6 +456,23 @@ func (h *Handler) handleP2PSessionLoad(ctx context.Context, rawMsg []byte, reply
 
 // === Tier 2: interaction handlers ===
 
+// ackP2PClientAction emits client_action_ack for the request and returns whether
+// this is the first time we see this clientActionId. Callers should treat a
+// false return as a duplicate (caused by the Flutter retry timer) and skip the
+// actual side-effect — the ack alone clears the pending queue on the client.
+func (h *Handler) ackP2PClientAction(sessionID, action, clientActionID string, replyFn func(any)) bool {
+	clientActionID = strings.TrimSpace(clientActionID)
+	if clientActionID == "" {
+		return true
+	}
+	accepted := true
+	if entry := h.runtimeSessions.Ensure(sessionID); entry != nil {
+		accepted = entry.markClientAction(clientActionID)
+	}
+	replyFn(protocol.NewClientActionAckEvent(sessionID, action, clientActionID, "accepted", !accepted))
+	return accepted
+}
+
 func (h *Handler) handleP2PInput(ctx context.Context, rawMsg []byte, replyFn func(any)) {
 	var req protocol.InputRequestEvent
 	if err := json.Unmarshal(rawMsg, &req); err != nil {
@@ -469,6 +486,9 @@ func (h *Handler) handleP2PInput(ctx context.Context, rawMsg []byte, replyFn fun
 	}
 	if req.Data == "" {
 		replyFn(protocol.NewErrorEvent(sessionID, "input data is required", ""))
+		return
+	}
+	if !h.ackP2PClientAction(sessionID, "input", req.ClientActionID, replyFn) {
 		return
 	}
 	entry := h.runtimeSessions.Ensure(sessionID)
@@ -498,6 +518,9 @@ func (h *Handler) handleP2PAITurn(ctx context.Context, rawMsg []byte, replyFn fu
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
 		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	if !h.ackP2PClientAction(sessionID, "ai_turn", req.ClientActionID, replyFn) {
 		return
 	}
 	entry := h.runtimeSessions.Ensure(sessionID)
@@ -552,6 +575,9 @@ func (h *Handler) handleP2PExec(ctx context.Context, rawMsg []byte, replyFn func
 		replyFn(protocol.NewErrorEvent(sessionID, "command is required", ""))
 		return
 	}
+	if !h.ackP2PClientAction(sessionID, "exec", req.ClientActionID, replyFn) {
+		return
+	}
 	entry := h.runtimeSessions.Ensure(sessionID)
 	if entry == nil {
 		replyFn(protocol.NewErrorEvent(sessionID, "failed to create runtime session", ""))
@@ -598,6 +624,9 @@ func (h *Handler) handleP2PInterrupt(ctx context.Context, rawMsg []byte, replyFn
 		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
 		return
 	}
+	if !h.ackP2PClientAction(sessionID, "interrupt", req.ClientActionID, replyFn) {
+		return
+	}
 	entry := h.runtimeSessions.Get(sessionID)
 	if entry == nil {
 		replyFn(protocol.NewErrorEvent(sessionID, "no active runtime session", ""))
@@ -622,6 +651,9 @@ func (h *Handler) handleP2PReviewDecision(ctx context.Context, rawMsg []byte, re
 	decision := strings.TrimSpace(strings.ToLower(req.Decision))
 	if decision != "accept" && decision != "revert" && decision != "revise" {
 		replyFn(protocol.NewErrorEvent(sessionID, "review decision must be one of: accept, revert, revise", ""))
+		return
+	}
+	if !h.ackP2PClientAction(sessionID, "review_decision", req.ClientActionID, replyFn) {
 		return
 	}
 	entry := h.runtimeSessions.Ensure(sessionID)
@@ -663,6 +695,9 @@ func (h *Handler) handleP2PPermissionDecision(ctx context.Context, rawMsg []byte
 	decision := strings.TrimSpace(strings.ToLower(req.Decision))
 	if decision != "approve" && decision != "deny" {
 		replyFn(protocol.NewErrorEvent(sessionID, "permission decision must be one of: approve, deny", ""))
+		return
+	}
+	if !h.ackP2PClientAction(sessionID, "permission_decision", req.ClientActionID, replyFn) {
 		return
 	}
 	entry := h.runtimeSessions.Ensure(sessionID)
