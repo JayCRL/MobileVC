@@ -151,6 +151,8 @@ func (h *Handler) HandleP2PMessage(ctx context.Context, msg []byte, replyFn func
 	// Manager mode — Tier 1: basic UI
 	case "fs_list":
 		h.handleP2PFSList(ctx, msg, replyFn)
+	case "fs_read":
+		h.handleP2PFSRead(ctx, msg, replyFn)
 	case "session_list":
 		h.handleP2PSessionList(ctx, msg, replyFn)
 	case "session_create":
@@ -159,6 +161,10 @@ func (h *Handler) HandleP2PMessage(ctx context.Context, msg []byte, replyFn func
 		h.handleP2PSessionLoad(ctx, msg, replyFn)
 	case "session_delta_get":
 		h.handleP2PSessionDeltaGet(ctx, msg, replyFn)
+	case "session_resume":
+		h.handleP2PSessionResume(ctx, msg, replyFn)
+	case "task_snapshot_get":
+		h.handleP2PTaskSnapshotGet(ctx, msg, replyFn)
 
 	// Manager mode — Tier 2: interaction
 	case "input":
@@ -343,6 +349,20 @@ func (h *Handler) handleP2PFSList(ctx context.Context, rawMsg []byte, replyFn fu
 	replyFn(result)
 }
 
+func (h *Handler) handleP2PFSRead(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.FSReadRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid fs_read request: %v", err), ""))
+		return
+	}
+	result, err := readFile(req.SessionID, req.Path)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("read file: %v", err), ""))
+		return
+	}
+	replyFn(result)
+}
+
 func (h *Handler) handleP2PSessionList(ctx context.Context, rawMsg []byte, replyFn func(any)) {
 	var req protocol.SessionListRequestEvent
 	if err := json.Unmarshal(rawMsg, &req); err != nil {
@@ -486,6 +506,97 @@ func (h *Handler) handleP2PSessionDeltaGet(ctx context.Context, rawMsg []byte, r
 	emitReviewStateFromProjection(replyFn, record.Summary.ID, record.Projection)
 }
 
+func (h *Handler) handleP2PSessionResume(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.SessionResumeRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid session_resume request: %v", err), ""))
+		return
+	}
+	if h.SessionStore == nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, "session store unavailable", ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	record, err := loadSessionRecord(ctx, h.SessionStore, sessionID)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+		return
+	}
+	sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
+	var runtimeSvc *session.Service
+	if sessionRuntime != nil {
+		runtimeSvc = sessionRuntime.service
+		runtimeSvc.SetSink(sessionRuntime.EnsureBufferedSinkWithProcessor(replyFn))
+	}
+	record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record, runtimeSvc)
+	record.Projection = session.NormalizeProjectionSnapshot(record.Projection)
+	record.Summary.Runtime = record.Projection.Runtime
+	runtimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
+	if runtimeAlive && session.ShouldEmitResumeRecoveryStateEvent(runtimeSvc, record.Projection, req.LastKnownRuntimeState) {
+		recovery := session.BuildResumeRecoveryStateEvent(record.Summary.ID, runtimeSvc, record.Projection, req.LastKnownRuntimeState)
+		replyFn(recovery)
+	}
+	replyFn(session.SessionHistoryEventFromRecord(record, runtimeAlive))
+	emitReviewStateFromProjection(replyFn, record.Summary.ID, record.Projection)
+	restoredState := ""
+	if restored := restoredAgentStateEventFromRecord(record, runtimeAlive); restored != nil {
+		restoredState = restored.State
+		replyFn(*restored)
+	}
+	if snapshot := runtimeSvc.BuildTaskSnapshotEvent(record.Summary.ID, taskCursorSnapshot(sessionRuntime), "resume", true); snapshot != nil {
+		replyFn(*snapshot)
+		if status, ok := session.AIStatusEventForBackendEvent(record.Summary.ID, runtimeSvc, record.Projection, *snapshot); ok {
+			replyFn(status)
+		}
+	}
+	latestCursor := int64(0)
+	if sessionRuntime != nil {
+		latestCursor = sessionRuntime.latestCursor()
+	}
+	replyFn(protocol.NewSessionResumeResultEvent(
+		record.Summary.ID,
+		latestCursor,
+		runtimeAlive,
+		session.ResolvedResumeRuntimeState(restoredState, record, runtimeSvc),
+		runtimeAlive,
+		0,
+		"session resumed",
+	))
+}
+
+func (h *Handler) handleP2PTaskSnapshotGet(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.ClientEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid task_snapshot_get request: %v", err), ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		return
+	}
+	sessionRuntime := h.runtimeSessions.Get(sessionID)
+	var svc *session.Service
+	if sessionRuntime != nil {
+		svc = sessionRuntime.service
+	}
+	snapshot := svc.BuildTaskSnapshotEvent(sessionID, taskCursorSnapshot(sessionRuntime), "sync", true)
+	if snapshot == nil {
+		return
+	}
+	replyFn(*snapshot)
+	projection := data.ProjectionSnapshot{}
+	if record, err := h.SessionStore.GetSession(ctx, sessionID); err == nil {
+		projection = session.NormalizeProjectionSnapshot(record.Projection)
+	}
+	if status, ok := session.AIStatusEventForBackendEvent(sessionID, svc, projection, *snapshot); ok {
+		replyFn(status)
+	}
+}
+
 // === Tier 2: interaction handlers ===
 
 // ackP2PClientAction emits client_action_ack for the request and returns whether
@@ -549,8 +660,32 @@ func (h *Handler) handleP2PAITurn(ctx context.Context, rawMsg []byte, replyFn fu
 	}
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
-		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
-		return
+		// Chat-mode entry: Flutter dispatches ai_turn directly without a prior
+		// session_create. Auto-create one so the flow doesn't dead-end on
+		// "sessionId is required". Emit session_created so Flutter binds its
+		// _selectedSessionId before subsequent input / delta requests arrive.
+		if h.SessionStore == nil {
+			replyFn(protocol.NewErrorEvent("", "session store unavailable", ""))
+			return
+		}
+		created, err := h.SessionStore.CreateSession(ctx, "")
+		if err != nil {
+			replyFn(protocol.NewErrorEvent("", err.Error(), ""))
+			return
+		}
+		if cwd := normalizeSessionCWD(req.CWD); cwd != "" {
+			if record, err := h.SessionStore.GetSession(ctx, created.ID); err == nil {
+				record.Projection.Runtime.CWD = cwd
+				record.Projection.Runtime.Source = "mobilevc"
+				record.Summary.Runtime = record.Projection.Runtime
+				if _, err := h.SessionStore.UpsertSession(ctx, record); err == nil {
+					created = record.Summary
+				}
+			}
+		}
+		sessionID = created.ID
+		replyFn(protocol.NewSessionCreatedEvent("", toProtocolSummary(created)))
+		replyFn(protocol.NewSessionStateEvent(sessionID, string(session.StateActive), "session selected"))
 	}
 	if !h.ackP2PClientAction(sessionID, "ai_turn", req.ClientActionID, replyFn) {
 		return
@@ -4302,10 +4437,14 @@ func readFile(sessionID, rawPath string) (protocol.FSReadResultEvent, error) {
 
 	isText := !hasBinaryContent(content)
 	textContent := string(content)
+	b64Content := ""
 	if !isText {
 		textContent = ""
+		b64Content = base64.StdEncoding.EncodeToString(content)
 	}
-	return protocol.NewFSReadResultEvent(sessionID, absPath, textContent, info.Size(), detectLangFromPath(absPath), "utf-8", isText), nil
+	event := protocol.NewFSReadResultEvent(sessionID, absPath, textContent, info.Size(), detectLangFromPath(absPath), "utf-8", isText)
+	event.ContentB64 = b64Content
+	return event, nil
 }
 
 func detectLangFromPath(path string) string {

@@ -847,12 +847,13 @@ type FSListResultEvent struct {
 
 type FSReadResultEvent struct {
 	Event
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	Size     int64  `json:"size"`
-	Lang     string `json:"lang,omitempty"`
-	Encoding string `json:"encoding,omitempty"`
-	IsText   bool   `json:"isText"`
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	ContentB64  string `json:"contentB64,omitempty"`
+	Size        int64  `json:"size"`
+	Lang        string `json:"lang,omitempty"`
+	Encoding    string `json:"encoding,omitempty"`
+	IsText      bool   `json:"isText"`
 }
 
 type RuntimeInfoResultEvent struct {

@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -7,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/config/app_config.dart';
+import '../../data/models/events.dart';
 import '../../data/models/session_models.dart';
 import '../../features/adb/adb_debug_page.dart';
 import '../../features/chat/chat_timeline.dart';
@@ -920,6 +923,9 @@ class _SessionHomePageState extends State<SessionHomePage> {
   }
 
   Future<Uint8List> _fetchFileBytes(String path) async {
+    if (controller.config.connectionMode == 'official') {
+      return _fetchFileBytesViaP2P(path);
+    }
     final client = HttpClient();
     try {
       final request = await client.getUrl(controller.config.downloadUri(path));
@@ -931,6 +937,38 @@ class _SessionHomePageState extends State<SessionHomePage> {
     } finally {
       client.close(force: true);
     }
+  }
+
+  Future<Uint8List> _fetchFileBytesViaP2P(String path) async {
+    final completer = Completer<Uint8List>();
+    late StreamSubscription sub;
+    sub = controller.events.listen((event) {
+      if (event is FSReadResultEvent) {
+        sub.cancel();
+        final result = event.result;
+        if (result.contentB64.isNotEmpty) {
+          try {
+            completer.complete(base64Decode(result.contentB64));
+          } catch (e) {
+            completer.completeError('解析二进制内容失败: $e');
+          }
+        } else if (result.isText) {
+          completer.complete(Uint8List.fromList(utf8.encode(result.content)));
+        } else {
+          completer.completeError('文件内容为空');
+        }
+      } else if (event is ErrorEvent &&
+          event.message.toLowerCase().contains('read file')) {
+        sub.cancel();
+        completer.completeError(event.message);
+      }
+    });
+    controller.requestFileRead(path);
+    return completer.future.timeout(const Duration(seconds: 30),
+        onTimeout: () {
+      sub.cancel();
+      throw TimeoutException('文件读取超时');
+    });
   }
 
   Future<String?> _pickSavePath(String fileName, List<int> bytes) async {

@@ -903,6 +903,7 @@ class FileReadResult {
   const FileReadResult({
     this.path = '',
     this.content = '',
+    this.contentB64 = '',
     this.lang = '',
     this.isText = true,
     this.size = 0,
@@ -922,6 +923,7 @@ class FileReadResult {
 
   final String path;
   final String content;
+  final String contentB64;
   final String lang;
   final bool isText;
   final int size;
@@ -951,6 +953,7 @@ class FileReadResult {
     return FileReadResult(
       path: (json['path'] ?? '').toString(),
       content: (json['content'] ?? '').toString(),
+      contentB64: (json['contentB64'] ?? '').toString(),
       lang: (json['lang'] ?? '').toString(),
       isText: json['isText'] != false,
       size: (json['size'] as num?)?.toInt() ?? 0,
