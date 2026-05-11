@@ -69,8 +69,7 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  # iSH Linux emulator (provides full Alpine Linux: python3, nodejs, go, gcc, etc.)
-  pod 'ish', :path => File.dirname(__FILE__)
+  pod 'ish', :path => '.'
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
@@ -86,19 +85,39 @@ post_install do |installer|
     end
   end
 
-  # Copy Python stdlib and Alpine rootfs into app bundle
+  # iSH static libraries + Alpine rootfs
   project = installer.aggregate_targets.first.user_project
   runner = project.targets.find { |t| t.name == 'Runner' }
   if runner
-    # Alpine Linux rootfs for iSH
-    phase2 = runner.shell_script_build_phases.find { |p| p.name == 'Copy Alpine rootfs' }
-    unless phase2
-      phase2 = runner.new_shell_script_build_phase('Copy Alpine rootfs')
-      phase2.shell_script = <<-SCRIPT
-SRC="${SRCROOT}/../alpine"
+    ios_dir = File.dirname(__FILE__)
+    runner.build_configurations.each do |config|
+      existing_h = config.build_settings['HEADER_SEARCH_PATHS'] || ['$(inherited)']
+      existing_h = [existing_h] unless existing_h.is_a?(Array)
+      [File.join(ios_dir, 'ish-headers'), File.join(ios_dir, 'ish-bridge')].each do |path|
+        existing_h << path unless existing_h.include?(path)
+      end
+      config.build_settings['HEADER_SEARCH_PATHS'] = existing_h
+
+      ldflags = config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)']
+      ldflags = [ldflags] unless ldflags.is_a?(Array)
+      [File.join(ios_dir, 'libish.a'), File.join(ios_dir, 'libish_emu.a'), File.join(ios_dir, 'libfakefs.a')].each do |lib|
+        ldflags << lib unless ldflags.include?(lib)
+      end
+      ['-lsqlite3', '-larchive', '-lz'].each do |flag|
+        ldflags << flag unless ldflags.include?(flag)
+      end
+      config.build_settings['OTHER_LDFLAGS'] = ldflags
+    end
+
+    phase = runner.shell_script_build_phases.find { |p| p.name == 'Copy Alpine rootfs' }
+    unless phase
+      phase = runner.new_shell_script_build_phase('Copy Alpine rootfs')
+      phase.shell_script = <<-SCRIPT
+SRC="${SRCROOT}/alpine"
 DST="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/alpine"
 if [ -d "$SRC" ]; then rm -rf "$DST"; cp -Rn "$SRC" "$DST"; fi
 SCRIPT
     end
+    project.save
   end
 end

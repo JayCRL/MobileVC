@@ -1,5 +1,7 @@
 # 编译产物
-server
+/server
+/official-server
+official-server-linux
 packages/
 
 # 依赖

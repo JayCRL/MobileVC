@@ -87,6 +87,8 @@ const MESSAGES = {
     startupTimedOut: (seconds, filePath) => `后端在 ${seconds} 秒内未就绪，请检查日志：${filePath}`,
     startupExited: (filePath, detail) => `后端启动后很快退出（${detail}），请检查日志：${filePath}`,
     statusUnavailable: '未知',
+    officialServer: '官方服务器地址 [留空跳过，例: http://localhost:8003]: ',
+    officialToken: '官方服务器 Access Token: ',
   },
   en: {
     helpTitle: '🐱 MobileVC launcher',
@@ -148,6 +150,8 @@ const MESSAGES = {
     startupTimedOut: (seconds, filePath) => `Backend did not become ready within ${seconds} seconds. Check the log: ${filePath}`,
     startupExited: (filePath, detail) => `Backend exited shortly after launch (${detail}). Check the log: ${filePath}`,
     statusUnavailable: 'unknown',
+    officialServer: 'Official server URL [leave blank to skip, e.g. http://localhost:8003]: ',
+    officialToken: 'Official server Access Token: ',
   },
 };
 
@@ -229,8 +233,10 @@ async function runSetup(promptAll = true) {
   const language = promptAll || !current ? await askLanguage(currentLanguage) : currentLanguage;
   const port = promptAll || !current ? await askPort(language, current?.port || DEFAULT_PORT) : String(current?.port || DEFAULT_PORT);
   const authToken = promptAll || !current ? await askToken(language, current?.authToken || '') : String(current?.authToken || '').trim();
+  const officialServerUrl = promptAll || !current ? await askOfficialServer(language, current?.officialServerUrl || '') : String(current?.officialServerUrl || '').trim();
+  const officialAccessToken = promptAll || !current ? (officialServerUrl ? await askOfficialToken(language, current?.officialAccessToken || '') : '') : String(current?.officialAccessToken || '').trim();
 
-  writeJson(CONFIG_PATH, { language, port, authToken });
+  writeJson(CONFIG_PATH, { language, port, authToken, officialServerUrl, officialAccessToken });
   console.log(message(language, 'savedConfig', CONFIG_PATH));
 }
 
@@ -280,6 +286,12 @@ async function runStart(options = {}) {
     AUTH_TOKEN: String(config.authToken),
     RUNTIME_WORKSPACE_ROOT: process.cwd(),
   };
+  if (config.officialServerUrl) {
+    env.OFFICIAL_SERVER_URL = config.officialServerUrl;
+    env.OFFICIAL_ACCESS_TOKEN = config.officialAccessToken || '';
+    env.OFFICIAL_NODE_ID = config.officialNodeId || '';
+    env.OFFICIAL_NODE_NAME = config.officialNodeName || os.hostname();
+  }
 
   fs.appendFileSync(logPath, `launcher starting binary=${binaryInfo.binaryPath} target=${platformTarget}\n`);
   const logFd = fs.openSync(logPath, 'a');
@@ -830,6 +842,18 @@ async function askToken(language, currentToken) {
     throw new Error(message(language, 'authRequired'));
   }
   return token;
+}
+
+async function askOfficialServer(language, currentUrl) {
+  const prompt = message(language, 'officialServer');
+  const value = await promptInput(prompt, false);
+  return String((value || currentUrl || '').trim());
+}
+
+async function askOfficialToken(language, currentToken) {
+  const prompt = message(language, 'officialToken');
+  const value = await promptInput(prompt, true);
+  return String((value || currentToken || '').trim());
 }
 
 function message(language, key, ...args) {

@@ -87,6 +87,10 @@ class MobileVcMapper {
         return AdbWebRtcAnswerEvent.fromJson(json);
       case 'adb_webrtc_state':
         return AdbWebRtcStateEvent.fromJson(json);
+      case 'planning_check':
+        return PlanningCheckEvent.fromJson(json);
+      case 'planning_state':
+        return PlanningStateEvent.fromJson(json);
       default:
         return UnknownEvent(
           type: type,

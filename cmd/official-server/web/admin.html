@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MobileVC Admin</title>
+<style>
+  :root { --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a; --text: #e1e4eb; --muted: #8b8fa3; --green: #22c55e; --amber: #f59e0b; --red: #ef4444; --blue: #3b82f6; --purple: #8b5cf6; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { background: var(--card); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  header .refresh { font-size: 12px; color: var(--muted); }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .card .label { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .card .value { font-size: 32px; font-weight: 700; }
+  .card .value.green { color: var(--green); }
+  .card .value.blue { color: var(--blue); }
+  .card .value.purple { color: var(--purple); }
+  .card .value.amber { color: var(--amber); }
+  section { margin-bottom: 24px; }
+  section h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  th, td { padding: 12px 16px; text-align: left; font-size: 13px; }
+  th { background: rgba(255,255,255,0.03); color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); }
+  td { border-bottom: 1px solid rgba(255,255,255,0.04); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+  .badge.online { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge.offline { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge.node { background: rgba(59,130,246,0.15); color: var(--blue); }
+  .badge.mobile { background: rgba(139,92,246,0.15); color: var(--purple); }
+  .empty { color: var(--muted); font-style: italic; padding: 24px; text-align: center; }
+  .login { max-width: 400px; margin: 100px auto; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 32px; }
+  .login h2 { margin-bottom: 16px; }
+  .login input { width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; margin-bottom: 12px; }
+  .login button { width: 100%; padding: 10px; background: var(--blue); border: none; border-radius: 8px; color: white; font-size: 14px; cursor: pointer; font-weight: 500; }
+  .login .err { color: var(--red); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div id="login" class="login" style="display:block">
+  <h2>MobileVC Admin</h2>
+  <input type="password" id="tokenInput" placeholder="Admin Token" autofocus>
+  <button onclick="login()">Login</button>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<div id="app" style="display:none">
+<header>
+  <h1><span class="dot"></span>MobileVC Admin</h1>
+  <span class="refresh" id="refreshTime"></span>
+</header>
+<div class="container">
+  <div class="cards">
+    <div class="card"><div class="label">注册用户</div><div class="value blue" id="valUsers">-</div></div>
+    <div class="card"><div class="label">在线节点</div><div class="value green" id="valNodes">-</div></div>
+    <div class="card"><div class="label">离线节点</div><div class="value amber" id="valOffNodes">-</div></div>
+    <div class="card"><div class="label">活跃连接</div><div class="value purple" id="valConns">-</div></div>
+    <div class="card"><div class="label">已发送</div><div class="value blue" id="valTrafficSent">-</div></div>
+    <div class="card"><div class="label">已接收</div><div class="value green" id="valTrafficRecv">-</div></div>
+  </div>
+
+  <section>
+    <h2>活跃连接 (信令 WebSocket)</h2>
+    <div id="connectionsTable"></div>
+  </section>
+
+  <section>
+    <h2>用户列表</h2>
+    <div id="usersTable"></div>
+  </section>
+
+  <section>
+    <h2>节点列表</h2>
+    <div id="nodesTable"></div>
+  </section>
+</div>
+</div>
+
+<script>
+let adminToken = sessionStorage.getItem('admin_token') || '';
+let refreshTimer = null;
+
+function login() {
+  const t = document.getElementById('tokenInput').value.trim();
+  if (!t) return;
+  adminToken = t;
+  sessionStorage.setItem('admin_token', t);
+  document.getElementById('loginErr').textContent = '';
+  fetchData().then(ok => {
+    if (ok) { document.getElementById('login').style.display = 'none'; document.getElementById('app').style.display = 'block'; startRefresh(); }
+    else { document.getElementById('loginErr').textContent = 'Invalid token or connection error'; adminToken = ''; sessionStorage.removeItem('admin_token'); }
+  });
+}
+
+function logout() { adminToken = ''; sessionStorage.removeItem('admin_token'); clearInterval(refreshTimer); document.getElementById('login').style.display = 'block'; document.getElementById('app').style.display = 'none'; }
+
+async function fetchData() {
+  try {
+    const res = await fetch('/api/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + adminToken } });
+    if (!res.ok) return false;
+    const data = await res.json();
+    render(data);
+    document.getElementById('refreshTime').textContent = 'Updated ' + new Date().toLocaleTimeString('zh-CN');
+    return true;
+  } catch (e) { console.error(e); return false; }
+}
+
+function render(data) {
+  document.getElementById('valUsers').textContent = data.db?.totalUsers ?? 0;
+  document.getElementById('valNodes').textContent = data.db?.onlineNodes ?? 0;
+  document.getElementById('valOffNodes').textContent = data.db?.offlineNodes ?? 0;
+  document.getElementById('valConns').textContent = data.hub?.totalClients ?? 0;
+  document.getElementById('valTrafficSent').textContent = formatBytes(data.traffic?.bytesSent ?? 0);
+  document.getElementById('valTrafficRecv').textContent = formatBytes(data.traffic?.bytesReceived ?? 0);
+
+  // Connections
+  const clients = data.hub?.clients || [];
+  if (clients.length) {
+    let html = '<table><thead><tr><th>用户</th><th>类型</th><th>节点 ID</th><th>连接时间</th></tr></thead><tbody>';
+    clients.forEach(c => {
+      html += `<tr>
+        <td>${esc(c.userName || c.userId)}</td>
+        <td><span class="badge ${c.isNode ? 'node' : 'mobile'}">${c.isNode ? '桌面节点' : '手机端'}</span></td>
+        <td>${esc(c.nodeId || '-')}</td>
+        <td>${c.connectedAt ? new Date(c.connectedAt).toLocaleString('zh-CN') : '-'}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('connectionsTable').innerHTML = html;
+  } else {
+    document.getElementById('connectionsTable').innerHTML = '<div class="empty">暂无活跃连接</div>';
+  }
+
+  // Users
+  const users = data.users || [];
+  if (users.length) {
+    let html = '<table><thead><tr><th>名称</th><th>邮箱</th><th>登录方式</th><th>注册时间</th></tr></thead><tbody>';
+    users.forEach(u => {
+      html += `<tr>
+        <td>${esc(u.name || '-')}</td>
+        <td>${esc(u.email || '-')}</td>
+        <td>${esc(u.provider)}</td>
+        <td>${u.createdAt ? new Date(u.createdAt).toLocaleString('zh-CN') : '-'}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('usersTable').innerHTML = html;
+  } else {
+    document.getElementById('usersTable').innerHTML = '<div class="empty">暂无注册用户</div>';
+  }
+
+  // Nodes
+  const nodes = data.nodes || [];
+  if (nodes.length) {
+    let html = '<table><thead><tr><th>名称</th><th>版本</th><th>状态</th><th>流量 (发送/接收)</th><th>最后在线</th></tr></thead><tbody>';
+    nodes.forEach(n => {
+      html += `<tr>
+        <td>${esc(n.name || n.id)}</td>
+        <td>${esc(n.version || '-')}</td>
+        <td><span class="badge ${n.status === 'online' ? 'online' : 'offline'}">${n.status === 'online' ? '在线' : '离线'}</span></td>
+        <td>${fmtNodeTraffic(n.id, data.nodeTraffic)}</td>
+        <td>${n.lastSeen ? new Date(n.lastSeen).toLocaleString('zh-CN') : '-'}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('nodesTable').innerHTML = html;
+  } else {
+    document.getElementById('nodesTable').innerHTML = '<div class="empty">暂无节点</div>';
+  }
+}
+
+function formatBytes(b) { if (b === 0) return '0 B'; const u = ['B','KB','MB','GB']; const i = Math.min(Math.floor(Math.log(b)/Math.log(1024)), u.length-1); return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i]; }
+function fmtNodeTraffic(id, nt) { if (!nt || !nt[id]) return '-'; const t = nt[id]; return formatBytes(t[0]) + ' / ' + formatBytes(t[1]); }
+function esc(s) { if (!s) return '-'; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function startRefresh() { fetchData(); refreshTimer = setInterval(fetchData, 5000); }
+
+document.getElementById('tokenInput').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+if (adminToken) { fetchData().then(ok => { if (ok) { document.getElementById('login').style.display = 'none'; document.getElementById('app').style.display = 'block'; startRefresh(); } }); }
+</script>
+</body>
+</html>

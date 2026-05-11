@@ -17,6 +17,12 @@ class AppConfig {
     this.permissionMode = 'auto',
     this.fastMode = false,
     this.adbIceServersJson = '',
+    this.connectionMode = 'local',
+    this.officialServerUrl = '',
+    this.officialAccessToken = '',
+    this.officialRefreshToken = '',
+    this.officialUserId = '',
+    this.officialNodeId = '',
   });
 
   final String host;
@@ -32,6 +38,12 @@ class AppConfig {
   final String permissionMode;
   final bool fastMode;
   final String adbIceServersJson;
+  final String connectionMode;
+  final String officialServerUrl;
+  final String officialAccessToken;
+  final String officialRefreshToken;
+  final String officialUserId;
+  final String officialNodeId;
 
   String get baseHttpUrl => 'http://$host:$port';
   String get wsUrl => 'ws://$host:$port/ws?token=$token';
@@ -125,6 +137,12 @@ class AppConfig {
     String? permissionMode,
     bool? fastMode,
     String? adbIceServersJson,
+    String? connectionMode,
+    String? officialServerUrl,
+    String? officialAccessToken,
+    String? officialRefreshToken,
+    String? officialUserId,
+    String? officialNodeId,
   }) {
     final nextEngine = engine ?? this.engine;
     var nextClaudeModel = claudeModel ?? this.claudeModel;
@@ -157,6 +175,12 @@ class AppConfig {
       ),
       fastMode: fastMode ?? this.fastMode,
       adbIceServersJson: adbIceServersJson ?? this.adbIceServersJson,
+      connectionMode: connectionMode ?? this.connectionMode,
+      officialServerUrl: officialServerUrl ?? this.officialServerUrl,
+      officialAccessToken: officialAccessToken ?? this.officialAccessToken,
+      officialRefreshToken: officialRefreshToken ?? this.officialRefreshToken,
+      officialUserId: officialUserId ?? this.officialUserId,
+      officialNodeId: officialNodeId ?? this.officialNodeId,
     );
   }
 
@@ -210,6 +234,12 @@ class AppConfig {
         'permissionMode': permissionMode,
         'fastMode': fastMode,
         'adbIceServersJson': adbIceServersJson,
+        'connectionMode': connectionMode,
+        'officialServerUrl': officialServerUrl,
+        'officialAccessToken': officialAccessToken,
+        'officialRefreshToken': officialRefreshToken,
+        'officialUserId': officialUserId,
+        'officialNodeId': officialNodeId,
       };
 
   factory AppConfig.fromJson(Map<String, Object?> json) {
@@ -239,6 +269,12 @@ class AppConfig {
           (json['permissionMode'] ?? 'auto').toString()),
       fastMode: json['fastMode'] == true,
       adbIceServersJson: (json['adbIceServersJson'] ?? '').toString(),
+      connectionMode: (json['connectionMode'] ?? 'local').toString(),
+      officialServerUrl: (json['officialServerUrl'] ?? '').toString(),
+      officialAccessToken: (json['officialAccessToken'] ?? '').toString(),
+      officialRefreshToken: (json['officialRefreshToken'] ?? '').toString(),
+      officialUserId: (json['officialUserId'] ?? '').toString(),
+      officialNodeId: (json['officialNodeId'] ?? '').toString(),
     );
   }
 

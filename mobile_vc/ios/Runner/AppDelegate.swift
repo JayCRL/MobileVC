@@ -22,6 +22,36 @@ import UserNotifications
     return launched
   }
 
+  // Deep link — OAuth callback
+  var pendingDeepLinkUri: String?
+  var deeplinkEventSink: FlutterEventSink?
+
+  override func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    let uri = url.absoluteString
+    NSLog("[deeplink] received: \(uri)")
+    if let sink = deeplinkEventSink {
+      sink(uri)
+    } else if let controller = window?.rootViewController as? FlutterViewController {
+      let channel = FlutterMethodChannel(name: "mobilevc/deeplink", binaryMessenger: controller.binaryMessenger)
+      channel.invokeMethod("onUri", arguments: uri)
+    }
+    pendingDeepLinkUri = uri
+    return true
+  }
+
+  private func flushPendingDeepLinkIfNeeded() {
+    guard let uri = pendingDeepLinkUri else { return }
+    pendingDeepLinkUri = nil
+    if let controller = window?.rootViewController as? FlutterViewController {
+      let channel = FlutterMethodChannel(name: "mobilevc/deeplink", binaryMessenger: controller.binaryMessenger)
+      channel.invokeMethod("onUri", arguments: uri)
+    }
+  }
+
   override func applicationWillTerminate(_ application: UIApplication) {
     endBackgroundKeepAlive()
     super.applicationWillTerminate(application)
@@ -111,6 +141,32 @@ import UserNotifications
     }
     self.pushChannel = pushChannel
 
+    // Deep link channel
+    let deeplinkChannel = FlutterMethodChannel(
+      name: "mobilevc/deeplink",
+      binaryMessenger: controller.binaryMessenger
+    )
+    deeplinkChannel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "getInitialUri":
+        result(self?.pendingDeepLinkUri)
+        self?.pendingDeepLinkUri = nil
+      case "onUri":
+        // Handled via invokeMethod from application(_:open:)
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    // EventChannel for streaming URIs
+    let deeplinkEventChannel = FlutterEventChannel(
+      name: "mobilevc/deeplink_uri",
+      binaryMessenger: controller.binaryMessenger
+    )
+    deeplinkEventChannel.setStreamHandler(DeeplinkStreamHandler(appDelegate: self))
+
+    flushPendingDeepLinkIfNeeded()
+
     // iSH Linux bridge
     let ishChannel = FlutterMethodChannel(
       name: "mobilevc/ish",
@@ -119,23 +175,53 @@ import UserNotifications
     ishChannel.setMethodCallHandler { call, result in
       switch call.method {
       case "init":
-        guard let alpinePath = Bundle.main.path(forResource: "alpine", ofType: nil) else {
-          result(FlutterError(code: "no_rootfs", message: "Alpine rootfs not found", details: nil))
+        NSLog("[iSH] init requested")
+        let bundleAlpine = Bundle.main.bundlePath + "/alpine"
+        let writableAlpine = NSTemporaryDirectory() + "alpine"
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: bundleAlpine, isDirectory: &isDir), isDir.boolValue else {
+          NSLog("[iSH] ERROR: Alpine not found at \(bundleAlpine)")
+          result(FlutterError(code: "no_rootfs", message: "Alpine rootfs not found at \(bundleAlpine)", details: nil))
           return
         }
-        let status = ish_init(alpinePath)
-        result(status == 0)
+        NSLog("[iSH] Alpine found, copying to \(writableAlpine)")
+        if !fm.fileExists(atPath: writableAlpine + "/data") {
+          try? fm.removeItem(atPath: writableAlpine)
+          do {
+            try fm.copyItem(atPath: bundleAlpine, toPath: writableAlpine)
+            NSLog("[iSH] Alpine copied OK")
+          } catch {
+            NSLog("[iSH] ERROR copy: \(error)")
+            result(FlutterError(code: "copy_failed", message: "\(error)", details: nil))
+            return
+          }
+        }
+        NSLog("[iSH] Calling ish_init on bg thread...")
+        DispatchQueue.global(qos: .userInitiated).async {
+          let status = ish_init(writableAlpine)
+          NSLog("[iSH] ish_init returned \(status)")
+          DispatchQueue.main.async {
+            result(status == 0)
+          }
+        }
       case "exec":
         guard let command = call.arguments as? String else {
           result(FlutterError(code: "bad_args", message: "command required", details: nil))
           return
         }
-        var output: UnsafeMutablePointer<CChar>?
-        var outputLen: Int = 0
-        let exitCode = ish_exec(command, &output, &outputLen)
-        let outputStr = output.map { String(cString: $0) } ?? ""
-        if let ptr = output { free(ptr) }
-        result(["exitCode": exitCode, "output": outputStr])
+        NSLog("[iSH] exec cmd: \(command.prefix(200))")
+        DispatchQueue.global(qos: .userInitiated).async {
+          var output: UnsafeMutablePointer<CChar>?
+          var outputLen: Int = 0
+          let exitCode = ish_exec(command, &output, &outputLen)
+          NSLog("[iSH] exec done code=\(exitCode) len=\(outputLen)")
+          let outputStr = output.map { String(cString: $0) } ?? ""
+          if let ptr = output { free(ptr) }
+          DispatchQueue.main.async {
+            result(["exitCode": exitCode, "output": outputStr])
+          }
+        }
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -201,5 +287,23 @@ import UserNotifications
     }
     UIApplication.shared.endBackgroundTask(backgroundTask)
     backgroundTask = .invalid
+  }
+}
+
+private class DeeplinkStreamHandler: NSObject, FlutterStreamHandler {
+  private weak var appDelegate: AppDelegate?
+
+  init(appDelegate: AppDelegate) {
+    self.appDelegate = appDelegate
+  }
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    appDelegate?.deeplinkEventSink = events
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    appDelegate?.deeplinkEventSink = nil
+    return nil
   }
 }

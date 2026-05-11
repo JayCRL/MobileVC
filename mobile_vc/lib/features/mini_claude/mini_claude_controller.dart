@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'git_auth.dart';
-import 'ish_bridge.dart';
 import 'mini_runner.dart';
 
 enum MiniClaudeStatus { idle, running, error }
@@ -122,6 +121,10 @@ class MiniClaudeController extends ChangeNotifier {
   String _gitName = '';
   String _gitEmail = '';
   final List<_GitCredential> _gitCredentials = [];
+  int _currentInputTokens = 0;
+  int _currentOutputTokens = 0;
+  int _totalTokens = 0;
+  int _elapsedMs = 0;
 
   MiniClaudeStatus get status => _status;
   List<MiniClaudeMessage> get messages => List.unmodifiable(_messages);
@@ -129,6 +132,11 @@ class MiniClaudeController extends ChangeNotifier {
   String get baseUrl => _baseUrl;
   String get model => _model;
   String get errorMessage => _errorMessage;
+  int get currentInputTokens => _currentInputTokens;
+  int get currentOutputTokens => _currentOutputTokens;
+  int get totalTokens => _totalTokens;
+  int get elapsedMs => _elapsedMs;
+  String get elapsedDisplay => '${(_elapsedMs / 1000).toStringAsFixed(1)}s';
   bool get isConfigured => _apiKey.isNotEmpty;
   List<Workspace> get workspaces => List.unmodifiable(_workspaces);
   Workspace? get activeWorkspace => _activeWorkspace;
@@ -191,12 +199,7 @@ class MiniClaudeController extends ChangeNotifier {
     );
   }
 
-  void _warmUpIsh() {
-    IshBridge.ensureInitialized();
-  }
-
   Future<void> addWorkspace({required String name, required String path}) async {
-    _warmUpIsh();
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     final ws = Workspace(id: id, name: name.trim(), path: path.trim());
     _workspaces.add(ws);
@@ -227,7 +230,6 @@ class MiniClaudeController extends ChangeNotifier {
     _messages.clear();
     _runner?.reset();
     await _saveActiveWorkspace();
-    _warmUpIsh();
     notifyListeners();
   }
 
@@ -405,15 +407,31 @@ class MiniClaudeController extends ChangeNotifier {
 
     _status = MiniClaudeStatus.running;
     _errorMessage = '';
+    _currentInputTokens = 0;
+    _currentOutputTokens = 0;
+    _elapsedMs = 0;
     notifyListeners();
 
     final assistantText = StringBuffer();
     List<MiniClaudeToolTrace>? pendingTraces;
+    final stopwatch = Stopwatch()..start();
 
     await _runner!.run(text, (event) {
       switch (event) {
         case MiniRunnerTextEvent(:final text):
           assistantText.write(text);
+          _elapsedMs = stopwatch.elapsedMilliseconds;
+          notifyListeners();
+        case MiniRunnerUsageEvent(
+              :final inputTokens,
+              :final outputTokens,
+              :final totalTokens
+            ):
+          _currentInputTokens = inputTokens;
+          _currentOutputTokens = outputTokens;
+          _totalTokens = totalTokens;
+          _elapsedMs = stopwatch.elapsedMilliseconds;
+          notifyListeners();
         case MiniRunnerToolCallEvent(:final toolName, :final input):
           pendingTraces ??= [];
           pendingTraces!.add(MiniClaudeToolTrace(
@@ -422,6 +440,7 @@ class MiniClaudeController extends ChangeNotifier {
             output: '',
             isError: false,
           ));
+          _elapsedMs = stopwatch.elapsedMilliseconds;
           notifyListeners();
         case MiniRunnerToolResultEvent(
               :final toolName,
@@ -444,8 +463,12 @@ class MiniClaudeController extends ChangeNotifier {
               }
             }
           }
+          _elapsedMs = stopwatch.elapsedMilliseconds;
           notifyListeners();
-        case MiniRunnerDoneEvent():
+        case MiniRunnerDoneEvent(:final totalTokens, :final elapsedMs):
+          _totalTokens = totalTokens;
+          _elapsedMs = stopwatch.elapsedMilliseconds;
+          stopwatch.stop();
           break;
         case MiniRunnerErrorEvent(:final message):
           _errorMessage = message;
@@ -460,6 +483,12 @@ class MiniClaudeController extends ChangeNotifier {
       toolTraces: pendingTraces,
     ));
 
+    _status = MiniClaudeStatus.idle;
+    notifyListeners();
+  }
+
+  void cancel() {
+    _runner?.cancel();
     _status = MiniClaudeStatus.idle;
     notifyListeners();
   }

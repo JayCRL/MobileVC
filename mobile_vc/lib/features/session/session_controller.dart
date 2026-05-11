@@ -11,6 +11,9 @@ import '../../data/models/runtime_meta.dart';
 import '../../data/models/session_models.dart';
 import '../../data/services/adb_webrtc_service.dart';
 import '../../data/services/mobilevc_ws_service.dart';
+import '../../data/services/official_session_transport.dart';
+import '../../data/services/official_api_service.dart';
+import '../../data/services/session_transport.dart';
 import 'claude_model_utils.dart';
 import 'session_display_text.dart';
 
@@ -175,7 +178,10 @@ class SessionController extends ChangeNotifier {
   static const Duration _connectionSilenceTimeout = Duration(seconds: 45);
   static const Duration _observedSessionSyncInterval = Duration(seconds: 3);
   static const Duration _outboundAckRetryDelay = Duration(seconds: 6);
-  final MobileVcWsService _service;
+  SessionTransport _service;
+  OfficialSessionTransport? _officialTransport;
+  void Function(String)? onOfficialDebug;
+  String lastConnectDiag = '';
   final AdbWebRtcService _adbWebRtc = AdbWebRtcService();
 
   StreamSubscription<AppEvent>? _subscription;
@@ -326,6 +332,7 @@ class SessionController extends ChangeNotifier {
   bool _adbWebRtcStarting = false;
 
   AppConfig get config => _config;
+  Stream<AppEvent> get events => _service.events;
   SessionConnectionStage get connectionStage => _connectionStage;
   String get currentAiEngine => _resolvedAiEngine(
         command: currentMeta.command,
@@ -1646,11 +1653,18 @@ class SessionController extends ChangeNotifier {
     bool restoreSession = false,
     bool silently = false,
   }) async {
+    lastConnectDiag = 'enter';
+    // Allow user-initiated connection even if a silent reconnect is pending
+    if (!silently) {
+      _connecting = false;
+    }
     if (_connecting) {
+      lastConnectDiag = 'EARLY-RETURN: _connecting was true';
       return;
     }
     _cancelReconnectTimer();
-    if (_isInvalidLoopbackHostForMobile()) {
+    if (_config.officialNodeId.isEmpty && _isInvalidLoopbackHostForMobile()) {
+      lastConnectDiag = 'EARLY-RETURN: loopback';
       _connectionStage = SessionConnectionStage.failed;
       _connecting = false;
       _connected = false;
@@ -1672,7 +1686,49 @@ class SessionController extends ChangeNotifier {
     _syncDerivedState();
     notifyListeners();
     try {
-      await _service.connect(_config.wsUrl);
+      // BUG: connectionMode was not 'official' despite diag showing it
+      final onDbg = onOfficialDebug;
+      lastConnectDiag = 'nodeId="${_config.officialNodeId}" isEmpty=${_config.officialNodeId.isEmpty}';
+      onDbg?.call('[connect] $lastConnectDiag');
+      if (_config.officialNodeId.isNotEmpty) {
+        lastConnectDiag += ' -> OFFICIAL branch';
+        onDbg?.call('[connect] taking OFFICIAL branch');
+        // ignore: avoid_print
+        print('[Controller] official mode: nodeId=${_config.officialNodeId} server=${_config.officialServerUrl}');
+        // Always create fresh transport to avoid stale signaling
+        await _officialTransport?.dispose();
+        final apiService = OfficialApiService(
+          baseUrl: _config.officialServerUrl,
+          accessToken: _config.officialAccessToken,
+        );
+        _officialTransport = OfficialSessionTransport(apiService: apiService);
+        _service = _officialTransport!;
+        // _subscription was bound to the default WebSocket service in initialize();
+        // rebind it to the official transport so P2P events reach _handleEvent.
+        await _subscription?.cancel();
+        _subscription = _service.events.listen(_handleEvent);
+        // Pipe debug logs to UI callback (capture local ref to prevent null)
+        if (onDbg != null) {
+          _officialTransport!.debugLog.listen((msg) {
+            _pushDebug('P2P', msg);
+            onDbg(msg);
+          });
+        }
+        // ignore: avoid_print
+        print('[Controller] calling connectToNode...');
+        await _officialTransport!.connectToNode(_config.officialNodeId);
+        // ignore: avoid_print
+        print('[Controller] connectToNode returned _connected=${_officialTransport!.isConnected}');
+        if (!_officialTransport!.isConnected) {
+          throw Exception('P2P 数据通道未建立');
+        }
+      } else {
+        lastConnectDiag += ' -> ELSE branch wsUrl=${_config.wsUrl}';
+        onDbg?.call('[connect] taking ELSE branch: wsUrl=${_config.wsUrl}');
+        // ignore: avoid_print
+        print('[Controller] ELSE branch: connecting to ${_config.wsUrl}');
+        await _service.connect(_config.wsUrl);
+      }
       _connected = true;
       _reconnectAttempt = 0;
       _connectionStage = SessionConnectionStage.connected;
@@ -1709,6 +1765,16 @@ class SessionController extends ChangeNotifier {
       _flushPendingOutboundActions();
     } catch (error) {
       _connected = false;
+      // For official server mode, propagate error so UI can show failure
+      if (!silently && _config.officialNodeId.isNotEmpty) {
+        _connectionStage = SessionConnectionStage.failed;
+        _connectionMessage = '连接失败：$error';
+        _pushSystem('error', _connectionMessage);
+        _connecting = false;
+        _syncDerivedState();
+        notifyListeners();
+        rethrow;
+      }
       if (silently && _autoReconnectEnabled) {
         if (_appInForeground &&
             _reconnectAttempt >= _maxForegroundReconnectAttempts) {
@@ -2390,6 +2456,19 @@ class SessionController extends ChangeNotifier {
     _service.send({'action': 'skill_catalog_get'});
   }
 
+  void sendRawAction(String action, [Map<String, dynamic>? extra]) {
+    final payload = <String, dynamic>{'action': action};
+    if (extra != null) {
+      payload.addAll(extra);
+    }
+    final ok = _service.send(payload);
+    if (!ok) {
+      _pushDebug('P2P', 'sendRawAction FAILED: action=$action connected=$connected');
+    } else {
+      _pushDebug('P2P', 'sendRawAction OK: action=$action');
+    }
+  }
+
   void saveSkill(SkillDefinition definition) {
     final name = definition.name.trim();
     if (name.isEmpty || _isSavingSkill) {
@@ -2588,7 +2667,7 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> _startAdbStream({String serial = ''}) async {
-    if (_isInvalidLoopbackHostForMobile()) {
+    if (_config.officialNodeId.isEmpty && _isInvalidLoopbackHostForMobile()) {
       _adbStatus = 'iPhone 不能连接 localhost/127.0.0.1，请改成 Mac 的局域网 IP';
       _adbStreaming = false;
       _adbWebRtcConnected = false;

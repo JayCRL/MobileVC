@@ -21,8 +21,10 @@ import (
 	"mobilevc/internal/data/claudesync"
 	"mobilevc/internal/data/codexsync"
 	"mobilevc/internal/data/skills"
+	"mobilevc/internal/boss"
 	"mobilevc/internal/engine"
 	"mobilevc/internal/logx"
+	"mobilevc/internal/planning"
 	"mobilevc/internal/protocol"
 	"mobilevc/internal/push"
 	"mobilevc/internal/session"
@@ -42,7 +44,9 @@ type Handler struct {
 	SkillLauncher   *skills.Launcher
 	SessionStore    data.Store
 	PushService     push.Service
+	WorkspaceRoot   string
 	runtimeSessions *runtimeSessionRegistry
+	Boss            *boss.Orchestrator
 
 	muProgressPush   sync.Mutex
 	lastProgressPush map[string]time.Time
@@ -88,6 +92,799 @@ func NewHandler(authToken string, sessionStore data.Store) *Handler {
 		sessionStore.UpsertSession(ctx, record)
 	})
 	return handler
+}
+
+// P2PMessageEnvelope is a planning message received via P2P data channel.
+type P2PMessageEnvelope struct {
+	Action    string `json:"action"`
+	SessionID string `json:"sessionId"`
+	APIKey    string `json:"apiKey"`
+	Task      string `json:"task"`
+	BaseURL   string `json:"baseUrl"`
+	Decision  string `json:"decision"`
+	Notes     string `json:"notes"`
+}
+
+func (h *Handler) workspaceRootOrSlash() string {
+	if h.WorkspaceRoot != "" {
+		return h.WorkspaceRoot
+	}
+	return "/"
+}
+
+// HandleP2PMessage processes a planning message from a P2P (WebRTC) data channel.
+func (h *Handler) HandleP2PMessage(ctx context.Context, msg []byte, replyFn func(any)) {
+	var envelope P2PMessageEnvelope
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid message: %v", err), ""))
+		return
+	}
+	switch envelope.Action {
+	case "planning_check":
+		mgr := &planning.Manager{}
+		result := mgr.CheckClaude(ctx)
+		replyFn(protocol.NewPlanningCheckEvent(envelope.SessionID, result.Installed, result.Version, result.Error, result.InstallHint))
+	case "planning_install":
+		apiKey := strings.TrimSpace(envelope.APIKey)
+		if apiKey == "" {
+			ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+			apiKey, _ = ks.Get()
+		}
+		go func() {
+			result := boss.InstallClaude(ctx, apiKey, envelope.BaseURL, envelope.SessionID, replyFn)
+			if result.Error != "" {
+				replyFn(protocol.NewErrorEvent(envelope.SessionID, result.Error, ""))
+			}
+		}()
+	case "planning_set_key":
+		ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+		if err := ks.Set(strings.TrimSpace(envelope.APIKey)); err != nil {
+			replyFn(protocol.NewErrorEvent(envelope.SessionID, fmt.Sprintf("failed to save API key: %v", err), ""))
+			return
+		}
+		replyFn(protocol.NewPlanningStateEvent(envelope.SessionID, "idle", "", "", "API key saved", nil))
+	case "planning_start":
+		h.handleP2PPlanningStart(ctx, envelope, replyFn)
+	case "planning_confirm":
+		h.handleP2PPlanningConfirm(ctx, envelope, replyFn)
+
+	// Manager mode — Tier 1: basic UI
+	case "fs_list":
+		h.handleP2PFSList(ctx, msg, replyFn)
+	case "fs_read":
+		h.handleP2PFSRead(ctx, msg, replyFn)
+	case "session_list":
+		h.handleP2PSessionList(ctx, msg, replyFn)
+	case "session_create":
+		h.handleP2PSessionCreate(ctx, msg, replyFn)
+	case "session_load":
+		h.handleP2PSessionLoad(ctx, msg, replyFn)
+	case "session_delta_get":
+		h.handleP2PSessionDeltaGet(ctx, msg, replyFn)
+	case "session_resume":
+		h.handleP2PSessionResume(ctx, msg, replyFn)
+	case "task_snapshot_get":
+		h.handleP2PTaskSnapshotGet(ctx, msg, replyFn)
+
+	// Manager mode — Tier 2: interaction
+	case "input":
+		h.handleP2PInput(ctx, msg, replyFn)
+	case "ai_turn":
+		h.handleP2PAITurn(ctx, msg, replyFn)
+	case "exec", "run_command":
+		h.handleP2PExec(ctx, msg, replyFn)
+	case "interrupt", "abort":
+		h.handleP2PInterrupt(ctx, msg, replyFn)
+	case "review_decision":
+		h.handleP2PReviewDecision(ctx, msg, replyFn)
+	case "permission_decision":
+		h.handleP2PPermissionDecision(ctx, msg, replyFn)
+
+	// Manager mode — Tier 3: read-only catalog / runtime / projection queries
+	case "ping":
+		replyFn(map[string]any{"type": "pong", "timestamp": time.Now().UTC().Format(time.RFC3339)})
+	case "runtime_info":
+		h.handleP2PRuntimeInfo(ctx, msg, envelope, replyFn)
+	case "runtime_process_list":
+		h.handleP2PRuntimeProcessList(ctx, envelope, replyFn)
+	case "skill_catalog_get":
+		emitSkillCatalogResult(replyFn, h.SessionStore, ctx, envelope.SessionID)
+	case "memory_list":
+		emitMemoryListResult(replyFn, h.SessionStore, ctx, envelope.SessionID)
+	case "permission_rule_list":
+		emitPermissionRuleList(replyFn, h.SessionStore, ctx, envelope.SessionID)
+	case "review_state_get":
+		projection := readProjectionFromSessionStore(h.SessionStore, ctx, envelope.SessionID, "p2p", "")
+		emitReviewStateFromProjection(replyFn, envelope.SessionID, projection)
+	case "session_context_get":
+		h.handleP2PSessionContextGet(ctx, envelope, replyFn)
+	case "adb_devices":
+		h.handleP2PADBDevices(ctx, envelope, replyFn)
+
+	default:
+		logx.Info("p2p", "unhandled action: %s", envelope.Action)
+	}
+}
+
+func (h *Handler) handleP2PRuntimeInfo(ctx context.Context, rawMsg []byte, envelope P2PMessageEnvelope, replyFn func(any)) {
+	var req protocol.RuntimeInfoRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent(envelope.SessionID, fmt.Sprintf("invalid runtime_info request: %v", err), ""))
+		return
+	}
+	var svc *session.Service
+	if id := strings.TrimSpace(req.SessionID); id != "" {
+		if entry := h.runtimeSessions.Get(id); entry != nil {
+			svc = entry.service
+		}
+	}
+	cwd := strings.TrimSpace(req.CWD)
+	if cwd == "" {
+		cwd = "."
+	}
+	result, err := session.BuildRuntimeInfoResult(req.SessionID, req.Query, cwd, svc)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, err.Error(), ""))
+		return
+	}
+	replyFn(result)
+}
+
+func (h *Handler) handleP2PRuntimeProcessList(ctx context.Context, envelope P2PMessageEnvelope, replyFn func(any)) {
+	var svc *session.Service
+	if id := strings.TrimSpace(envelope.SessionID); id != "" {
+		if entry := h.runtimeSessions.Get(id); entry != nil {
+			svc = entry.service
+		}
+	}
+	rootPID, items, err := svc.ActiveProcessTree(ctx)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(envelope.SessionID, err.Error(), ""))
+		return
+	}
+	message := ""
+	if len(items) == 0 {
+		message = "当前没有活跃的后台进程"
+	}
+	replyFn(protocol.NewRuntimeProcessListResultEvent(envelope.SessionID, rootPID, items, message))
+}
+
+func (h *Handler) handleP2PSessionContextGet(ctx context.Context, envelope P2PMessageEnvelope, replyFn func(any)) {
+	sessionID := strings.TrimSpace(envelope.SessionID)
+	if sessionID == "" || h.SessionStore == nil {
+		replyFn(protocol.NewSessionContextResultEvent(envelope.SessionID, toProtocolSessionContext(data.SessionContext{})))
+		return
+	}
+	record, err := h.SessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		replyFn(protocol.NewSessionContextResultEvent(envelope.SessionID, toProtocolSessionContext(data.SessionContext{})))
+		return
+	}
+	replyFn(protocol.NewSessionContextResultEvent(envelope.SessionID, toProtocolSessionContext(record.Projection.SessionContext)))
+}
+
+func (h *Handler) handleP2PADBDevices(ctx context.Context, envelope P2PMessageEnvelope, replyFn func(any)) {
+	status := adb.DetectStatus(ctx)
+	items := make([]protocol.ADBDevice, 0, len(status.Devices))
+	for _, item := range status.Devices {
+		items = append(items, protocol.ADBDevice{
+			Serial:      item.Serial,
+			State:       item.State,
+			Model:       item.Model,
+			Product:     item.Product,
+			DeviceName:  item.DeviceName,
+			TransportID: item.TransportID,
+		})
+	}
+	replyFn(protocol.NewADBDevicesResultEvent(
+		envelope.SessionID,
+		items,
+		status.PreferredSerial,
+		status.AvailableAVDs,
+		status.PreferredAVD,
+		status.ADBAvailable,
+		status.EmulatorAvailable,
+		status.SuggestedAction,
+		strings.TrimSpace(status.Message),
+	))
+}
+
+func (h *Handler) handleP2PPlanningStart(ctx context.Context, envelope P2PMessageEnvelope, replyFn func(any)) {
+	params, ok := h.tryResolvePlanningParams(ctx, envelope, replyFn)
+	if !ok {
+		return
+	}
+	entry := h.runtimeSessions.Ensure(params.SessionID)
+	svc := entry.service
+
+	// Create boss orchestrator for this planning session
+	h.Boss = boss.NewOrchestrator(replyFn)
+	if err := h.Boss.StartPlanning(ctx, svc, params.SessionID, params.Task, params.CWD); err != nil {
+		logx.Error("gateway", "boss start planning failed: sessionID=%s err=%v", params.SessionID, err)
+		replyFn(protocol.NewErrorEvent(params.SessionID, err.Error(), ""))
+	}
+}
+
+func (h *Handler) handleP2PPlanningConfirm(ctx context.Context, envelope P2PMessageEnvelope, replyFn func(any)) {
+	if h.Boss == nil {
+		replyFn(protocol.NewErrorEvent(envelope.SessionID, "no active planning session", ""))
+		return
+	}
+
+	decision := strings.TrimSpace(strings.ToLower(envelope.Decision))
+	logx.Info("boss", "p2p confirm: sessionID=%s decision=%s", envelope.SessionID, decision)
+
+	switch decision {
+	case "confirm":
+		if err := h.Boss.ConfirmPlan(ctx, envelope.Notes); err != nil {
+			logx.Error("boss", "confirm failed: sessionID=%s err=%v", envelope.SessionID, err)
+			replyFn(protocol.NewErrorEvent(envelope.SessionID, err.Error(), ""))
+		}
+	case "adjust":
+		if err := h.Boss.AdjustPlan(ctx, envelope.Notes); err != nil {
+			replyFn(protocol.NewErrorEvent(envelope.SessionID, err.Error(), ""))
+		}
+	case "cancel":
+		h.Boss.CancelPlan(ctx)
+	default:
+		replyFn(protocol.NewErrorEvent(envelope.SessionID, fmt.Sprintf("unknown decision: %s", envelope.Decision), ""))
+	}
+}
+
+// === P2P Manager mode handlers ===
+// Each receives the raw JSON message (re-parsed into the protocol request type)
+// to preserve fields that P2PMessageEnvelope does not carry (path, cwd, data, etc.).
+
+func (h *Handler) handleP2PFSList(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.FSListRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid fs_list request: %v", err), ""))
+		return
+	}
+	result, err := listDirectory(req.SessionID, req.Path)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("list directory: %v", err), ""))
+		return
+	}
+	replyFn(result)
+}
+
+func (h *Handler) handleP2PFSRead(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.FSReadRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid fs_read request: %v", err), ""))
+		return
+	}
+	result, err := readFile(req.SessionID, req.Path)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, fmt.Sprintf("read file: %v", err), ""))
+		return
+	}
+	replyFn(result)
+}
+
+func (h *Handler) handleP2PSessionList(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.SessionListRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid session_list request: %v", err), ""))
+		return
+	}
+	if h.SessionStore == nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, "session store unavailable", ""))
+		return
+	}
+	items, err := h.SessionStore.ListSessions(ctx)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, err.Error(), ""))
+		return
+	}
+	merged, err := mergeSessionSummaries(ctx, h.SessionStore, items, normalizeSessionCWD(req.CWD))
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, err.Error(), ""))
+		return
+	}
+	replyFn(protocol.NewSessionListResultEvent(req.SessionID, trimSummariesForP2P(toProtocolSummaries(merged))))
+}
+
+// trimSummariesForP2P shrinks summary text fields and caps the list size so the
+// JSON payload fits within WebRTC DataChannel size limits. Long titles / previews
+// (e.g. multi-paragraph task descriptions) and large historical session counts
+// can balloon the payload past hundreds of KB and either get fragmented or
+// dropped by the client. Items are assumed to be sorted by UpdatedAt DESC.
+func trimSummariesForP2P(items []protocol.SessionSummary) []protocol.SessionSummary {
+	const titleLimit = 120
+	const previewLimit = 200
+	const maxItems = 80
+	if len(items) > maxItems {
+		items = items[:maxItems]
+	}
+	for i := range items {
+		items[i].Title = truncateRunes(items[i].Title, titleLimit)
+		items[i].LastPreview = truncateRunes(items[i].LastPreview, previewLimit)
+	}
+	return items
+}
+
+func truncateRunes(s string, limit int) string {
+	if limit <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "…"
+}
+
+func (h *Handler) handleP2PSessionCreate(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.SessionCreateRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid session_create request: %v", err), ""))
+		return
+	}
+	if h.SessionStore == nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, "session store unavailable", ""))
+		return
+	}
+	created, err := h.SessionStore.CreateSession(ctx, req.Title)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, err.Error(), ""))
+		return
+	}
+	if cwd := normalizeSessionCWD(req.CWD); cwd != "" {
+		record, err := h.SessionStore.GetSession(ctx, created.ID)
+		if err == nil {
+			record.Projection.Runtime.CWD = cwd
+			record.Projection.Runtime.Source = "mobilevc"
+			record.Summary.Runtime = record.Projection.Runtime
+			if _, err := h.SessionStore.UpsertSession(ctx, record); err == nil {
+				created = record.Summary
+			}
+		}
+	}
+	replyFn(protocol.NewSessionCreatedEvent(req.SessionID, toProtocolSummary(created)))
+	replyFn(protocol.NewSessionStateEvent(req.SessionID, string(session.StateActive), "session selected"))
+	// Also emit updated session list
+	items, _ := h.SessionStore.ListSessions(ctx)
+	if len(items) > 0 {
+		merged, err := mergeSessionSummaries(ctx, h.SessionStore, items, normalizeSessionCWD(req.CWD))
+		if err == nil {
+			replyFn(protocol.NewSessionListResultEvent(req.SessionID, trimSummariesForP2P(toProtocolSummaries(merged))))
+		}
+	}
+}
+
+func (h *Handler) handleP2PSessionLoad(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.SessionLoadRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid session_load request: %v", err), ""))
+		return
+	}
+	if h.SessionStore == nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, "session store unavailable", ""))
+		return
+	}
+	record, err := loadSessionRecord(ctx, h.SessionStore, req.SessionID)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, err.Error(), ""))
+		return
+	}
+	// Ensure runtime session exists for subsequent input/ai_turn messages
+	if entry := h.runtimeSessions.Ensure(record.Summary.ID); entry != nil {
+		entry.service.SetSink(entry.EnsureBufferedSinkWithProcessor(replyFn))
+	}
+	replyFn(session.SessionHistoryEventFromRecord(record, false))
+	replyFn(protocol.NewSessionStateEvent(record.Summary.ID, string(session.StateActive), "history loaded"))
+}
+
+func (h *Handler) handleP2PSessionDeltaGet(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.SessionDeltaRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid session_delta_get request: %v", err), ""))
+		return
+	}
+	if h.SessionStore == nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, "session store unavailable", ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	record, err := loadSessionRecord(ctx, h.SessionStore, sessionID)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+		return
+	}
+	sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
+	runtimeAlive := false
+	if sessionRuntime != nil {
+		runtimeAlive = sessionRecordRuntimeAlive(record, sessionRuntime.service)
+	}
+	replyFn(session.SessionDeltaEventFromRecord(record, req.Known, deltaCursorSnapshot(sessionRuntime), runtimeAlive))
+	emitReviewStateFromProjection(replyFn, record.Summary.ID, record.Projection)
+}
+
+func (h *Handler) handleP2PSessionResume(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.SessionResumeRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid session_resume request: %v", err), ""))
+		return
+	}
+	if h.SessionStore == nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, "session store unavailable", ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	record, err := loadSessionRecord(ctx, h.SessionStore, sessionID)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+		return
+	}
+	sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
+	var runtimeSvc *session.Service
+	if sessionRuntime != nil {
+		runtimeSvc = sessionRuntime.service
+		runtimeSvc.SetSink(sessionRuntime.EnsureBufferedSinkWithProcessor(replyFn))
+	}
+	record = mergeClaudeJSONLToRecord(ctx, h.SessionStore, record, runtimeSvc)
+	record.Projection = session.NormalizeProjectionSnapshot(record.Projection)
+	record.Summary.Runtime = record.Projection.Runtime
+	runtimeAlive := sessionRecordRuntimeAlive(record, runtimeSvc)
+	if runtimeAlive && session.ShouldEmitResumeRecoveryStateEvent(runtimeSvc, record.Projection, req.LastKnownRuntimeState) {
+		recovery := session.BuildResumeRecoveryStateEvent(record.Summary.ID, runtimeSvc, record.Projection, req.LastKnownRuntimeState)
+		replyFn(recovery)
+	}
+	replyFn(session.SessionHistoryEventFromRecord(record, runtimeAlive))
+	emitReviewStateFromProjection(replyFn, record.Summary.ID, record.Projection)
+	restoredState := ""
+	if restored := restoredAgentStateEventFromRecord(record, runtimeAlive); restored != nil {
+		restoredState = restored.State
+		replyFn(*restored)
+	}
+	if snapshot := runtimeSvc.BuildTaskSnapshotEvent(record.Summary.ID, taskCursorSnapshot(sessionRuntime), "resume", true); snapshot != nil {
+		replyFn(*snapshot)
+		if status, ok := session.AIStatusEventForBackendEvent(record.Summary.ID, runtimeSvc, record.Projection, *snapshot); ok {
+			replyFn(status)
+		}
+	}
+	latestCursor := int64(0)
+	if sessionRuntime != nil {
+		latestCursor = sessionRuntime.latestCursor()
+	}
+	replyFn(protocol.NewSessionResumeResultEvent(
+		record.Summary.ID,
+		latestCursor,
+		runtimeAlive,
+		session.ResolvedResumeRuntimeState(restoredState, record, runtimeSvc),
+		runtimeAlive,
+		0,
+		"session resumed",
+	))
+}
+
+func (h *Handler) handleP2PTaskSnapshotGet(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.ClientEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid task_snapshot_get request: %v", err), ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		return
+	}
+	sessionRuntime := h.runtimeSessions.Get(sessionID)
+	var svc *session.Service
+	if sessionRuntime != nil {
+		svc = sessionRuntime.service
+	}
+	snapshot := svc.BuildTaskSnapshotEvent(sessionID, taskCursorSnapshot(sessionRuntime), "sync", true)
+	if snapshot == nil {
+		return
+	}
+	replyFn(*snapshot)
+	projection := data.ProjectionSnapshot{}
+	if record, err := h.SessionStore.GetSession(ctx, sessionID); err == nil {
+		projection = session.NormalizeProjectionSnapshot(record.Projection)
+	}
+	if status, ok := session.AIStatusEventForBackendEvent(sessionID, svc, projection, *snapshot); ok {
+		replyFn(status)
+	}
+}
+
+// === Tier 2: interaction handlers ===
+
+// ackP2PClientAction emits client_action_ack for the request and returns whether
+// this is the first time we see this clientActionId. Callers should treat a
+// false return as a duplicate (caused by the Flutter retry timer) and skip the
+// actual side-effect — the ack alone clears the pending queue on the client.
+func (h *Handler) ackP2PClientAction(sessionID, action, clientActionID string, replyFn func(any)) bool {
+	clientActionID = strings.TrimSpace(clientActionID)
+	if clientActionID == "" {
+		return true
+	}
+	accepted := true
+	if entry := h.runtimeSessions.Ensure(sessionID); entry != nil {
+		accepted = entry.markClientAction(clientActionID)
+	}
+	replyFn(protocol.NewClientActionAckEvent(sessionID, action, clientActionID, "accepted", !accepted))
+	return accepted
+}
+
+func (h *Handler) handleP2PInput(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.InputRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid input request: %v", err), ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	if req.Data == "" {
+		replyFn(protocol.NewErrorEvent(sessionID, "input data is required", ""))
+		return
+	}
+	if !h.ackP2PClientAction(sessionID, "input", req.ClientActionID, replyFn) {
+		return
+	}
+	entry := h.runtimeSessions.Ensure(sessionID)
+	if entry == nil {
+		replyFn(protocol.NewErrorEvent(sessionID, "failed to create runtime session", ""))
+		return
+	}
+	sink := entry.EnsureBufferedSinkWithProcessor(replyFn)
+	entry.service.SetSink(sink)
+	if err := entry.service.SendInput(ctx, sessionID, session.InputRequest{
+		Data: req.Data,
+		RuntimeMeta: protocol.RuntimeMeta{
+			Source:         "p2p-input",
+			PermissionMode: req.PermissionMode,
+		},
+	}, sink); err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+	}
+}
+
+func (h *Handler) handleP2PAITurn(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.AITurnRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid ai_turn request: %v", err), ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		// Chat-mode entry: Flutter dispatches ai_turn directly without a prior
+		// session_create. Auto-create one so the flow doesn't dead-end on
+		// "sessionId is required". Emit session_created so Flutter binds its
+		// _selectedSessionId before subsequent input / delta requests arrive.
+		if h.SessionStore == nil {
+			replyFn(protocol.NewErrorEvent("", "session store unavailable", ""))
+			return
+		}
+		created, err := h.SessionStore.CreateSession(ctx, "")
+		if err != nil {
+			replyFn(protocol.NewErrorEvent("", err.Error(), ""))
+			return
+		}
+		if cwd := normalizeSessionCWD(req.CWD); cwd != "" {
+			if record, err := h.SessionStore.GetSession(ctx, created.ID); err == nil {
+				record.Projection.Runtime.CWD = cwd
+				record.Projection.Runtime.Source = "mobilevc"
+				record.Summary.Runtime = record.Projection.Runtime
+				if _, err := h.SessionStore.UpsertSession(ctx, record); err == nil {
+					created = record.Summary
+				}
+			}
+		}
+		sessionID = created.ID
+		replyFn(protocol.NewSessionCreatedEvent("", toProtocolSummary(created)))
+		replyFn(protocol.NewSessionStateEvent(sessionID, string(session.StateActive), "session selected"))
+	}
+	if !h.ackP2PClientAction(sessionID, "ai_turn", req.ClientActionID, replyFn) {
+		return
+	}
+	entry := h.runtimeSessions.Ensure(sessionID)
+	if entry == nil {
+		replyFn(protocol.NewErrorEvent(sessionID, "failed to create runtime session", ""))
+		return
+	}
+	sink := entry.EnsureBufferedSinkWithProcessor(replyFn)
+	entry.service.SetSink(sink)
+
+	engineName := strings.TrimSpace(strings.ToLower(req.Engine))
+	if engineName == "" {
+		engineName = "claude"
+	}
+	permissionMode := normalizePermissionModeForClaude(req.PermissionMode)
+	cwd := req.CWD
+	if cwd == "" {
+		cwd = h.workspaceRootOrSlash()
+	}
+
+	if err := entry.service.Execute(ctx, sessionID, session.ExecuteRequest{
+		Command:        engineName,
+		CWD:            cwd,
+		Mode:           engine.ModePTY,
+		PermissionMode: permissionMode,
+		InitialInput:   req.Data,
+		RuntimeMeta: protocol.RuntimeMeta{
+			Source:         "p2p-ai-turn",
+			Engine:         engineName,
+			Model:          req.Model,
+			ReasoningEffort: req.ReasoningEffort,
+			CWD:            cwd,
+			PermissionMode: permissionMode,
+		},
+	}, sink); err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+	}
+}
+
+func (h *Handler) handleP2PExec(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.ExecRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid exec request: %v", err), ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	if strings.TrimSpace(req.Command) == "" {
+		replyFn(protocol.NewErrorEvent(sessionID, "command is required", ""))
+		return
+	}
+	if !h.ackP2PClientAction(sessionID, "exec", req.ClientActionID, replyFn) {
+		return
+	}
+	entry := h.runtimeSessions.Ensure(sessionID)
+	if entry == nil {
+		replyFn(protocol.NewErrorEvent(sessionID, "failed to create runtime session", ""))
+		return
+	}
+	sink := entry.EnsureBufferedSinkWithProcessor(replyFn)
+	entry.service.SetSink(sink)
+
+	mode := engine.ModeExec
+	if strings.EqualFold(req.Mode, "pty") {
+		mode = engine.ModePTY
+	}
+	permissionMode := normalizePermissionModeForClaude(req.PermissionMode)
+	cwd := req.CWD
+	if cwd == "" {
+		cwd = h.workspaceRootOrSlash()
+	}
+
+	if err := entry.service.Execute(ctx, sessionID, session.ExecuteRequest{
+		Command:        req.Command,
+		CWD:            cwd,
+		Mode:           mode,
+		PermissionMode: permissionMode,
+		InitialInput:   req.InputData,
+		RuntimeMeta: protocol.RuntimeMeta{
+			Source:         "p2p-exec",
+			Command:        req.Command,
+			CWD:            cwd,
+			PermissionMode: permissionMode,
+		},
+	}, sink); err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+	}
+}
+
+func (h *Handler) handleP2PInterrupt(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.ClientEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid interrupt request: %v", err), ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	if !h.ackP2PClientAction(sessionID, "interrupt", req.ClientActionID, replyFn) {
+		return
+	}
+	entry := h.runtimeSessions.Get(sessionID)
+	if entry == nil {
+		replyFn(protocol.NewErrorEvent(sessionID, "no active runtime session", ""))
+		return
+	}
+	if err := entry.service.StopActive(sessionID, replyFn); err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+	}
+}
+
+func (h *Handler) handleP2PReviewDecision(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.ReviewDecisionRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid review_decision request: %v", err), ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	decision := strings.TrimSpace(strings.ToLower(req.Decision))
+	if decision != "accept" && decision != "revert" && decision != "revise" {
+		replyFn(protocol.NewErrorEvent(sessionID, "review decision must be one of: accept, revert, revise", ""))
+		return
+	}
+	if !h.ackP2PClientAction(sessionID, "review_decision", req.ClientActionID, replyFn) {
+		return
+	}
+	entry := h.runtimeSessions.Ensure(sessionID)
+	if entry == nil {
+		replyFn(protocol.NewErrorEvent(sessionID, "failed to create runtime session", ""))
+		return
+	}
+	sink := entry.EnsureBufferedSinkWithProcessor(replyFn)
+	entry.service.SetSink(sink)
+	if err := entry.service.ReviewDecision(ctx, sessionID, session.ReviewDecisionRequest{
+		Decision:     decision,
+		IsReviewOnly: req.IsReviewOnly,
+		RuntimeMeta: protocol.RuntimeMeta{
+			Source:       "p2p-review-decision",
+			ExecutionID:  req.ExecutionID,
+			GroupID:      firstNonEmptyString(req.GroupID, req.ExecutionID),
+			GroupTitle:   req.GroupTitle,
+			ContextID:    req.ContextID,
+			ContextTitle: req.ContextTitle,
+			TargetPath:   req.TargetPath,
+			TargetText:   decision,
+		},
+	}, sink); err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+	}
+}
+
+func (h *Handler) handleP2PPermissionDecision(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.PermissionDecisionRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid permission_decision request: %v", err), ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	decision := strings.TrimSpace(strings.ToLower(req.Decision))
+	if decision != "approve" && decision != "deny" {
+		replyFn(protocol.NewErrorEvent(sessionID, "permission decision must be one of: approve, deny", ""))
+		return
+	}
+	if !h.ackP2PClientAction(sessionID, "permission_decision", req.ClientActionID, replyFn) {
+		return
+	}
+	entry := h.runtimeSessions.Ensure(sessionID)
+	if entry == nil {
+		replyFn(protocol.NewErrorEvent(sessionID, "failed to create runtime session", ""))
+		return
+	}
+	sink := entry.EnsureBufferedSinkWithProcessor(replyFn)
+	entry.service.SetSink(sink)
+	if err := entry.service.SendPermissionDecision(ctx, sessionID, decision, protocol.RuntimeMeta{
+		Source:              "p2p-permission-decision",
+		PermissionMode:      req.PermissionMode,
+		PermissionRequestID: req.PermissionRequestID,
+		ResumeSessionID:     req.ResumeSessionID,
+		TargetPath:          req.TargetPath,
+		ContextID:           req.ContextID,
+		ContextTitle:        req.ContextTitle,
+	}, sink); err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -1296,6 +2093,180 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			emitMemoryListResult(emit, h.SessionStore, ctx, selectedSessionID)
+		case "planning_check":
+			planningMgr := &planning.Manager{}
+			result := planningMgr.CheckClaude(ctx)
+			emit(protocol.NewPlanningCheckEvent(selectedSessionID,
+				result.Installed, result.Version, result.Error, result.InstallHint))
+			case "planning_install":
+				var installReq protocol.PlanningSetKeyRequestEvent
+				_ = json.Unmarshal(payload, &installReq)
+				go func() {
+					apiKey := strings.TrimSpace(installReq.APIKey)
+					if apiKey == "" {
+						ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+						apiKey, _ = ks.Get()
+					}
+					result := boss.InstallClaude(ctx, apiKey, "", selectedSessionID, emit)
+					if result.Error != "" {
+						emit(protocol.NewErrorEvent(selectedSessionID, result.Error, ""))
+					}
+				}()
+		case "planning_set_key":
+			var setKeyReq protocol.PlanningSetKeyRequestEvent
+			if err := json.Unmarshal(payload, &setKeyReq); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid planning_set_key request: %v", err), ""))
+				continue
+			}
+			ks := planning.NewKeyStore(os.ExpandEnv("$HOME/.mobilevc"), h.AuthToken)
+			if err := ks.Set(strings.TrimSpace(setKeyReq.APIKey)); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("failed to save API key: %v", err), ""))
+				continue
+			}
+			emit(protocol.NewPlanningStateEvent(selectedSessionID, "idle", "", "", "API key saved", nil))
+		case "planning_start":
+			var planReq protocol.PlanningStartRequestEvent
+			if err := json.Unmarshal(payload, &planReq); err != nil {
+				logx.Warn("ws", "invalid planning_start request: connectionID=%s sessionID=%s remoteAddr=%s err=%v", connectionID, selectedSessionID, remoteAddr, err)
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid planning_start request: %v", err), ""))
+				continue
+			}
+			logx.Info("ws", "incoming action: connectionID=%s sessionID=%s remoteAddr=%s action=planning_start task=%q", connectionID, selectedSessionID, remoteAddr, wsDebugPreview(planReq.Task))
+			sessionID := strings.TrimSpace(firstNonEmptyString(planReq.SessionID, selectedSessionID))
+			if sessionID == "" || sessionID == connectionID {
+				emit(protocol.NewErrorEvent(selectedSessionID, "请先创建或加载会话后再发送命令", ""))
+				continue
+			}
+			if sessionID != strings.TrimSpace(selectedSessionID) {
+				switchRuntimeSession(sessionID)
+			}
+			if !ackClientAction(sessionID, "planning_start", planReq.ClientEvent) {
+				logx.Info("ws", "duplicate client action ignored: connectionID=%s sessionID=%s remoteAddr=%s action=planning_start clientActionID=%s", connectionID, sessionID, remoteAddr, planReq.ClientActionID)
+				continue
+			}
+			// Check claude
+			mgr := &planning.Manager{}
+			checkResult := mgr.CheckClaude(ctx)
+			if !checkResult.Installed {
+				emit(protocol.NewPlanningCheckEvent(sessionID, false, "", checkResult.Error, checkResult.InstallHint))
+				emit(protocol.NewErrorEvent(sessionID, "Claude Code CLI 未安装，请先运行 planning_check 查看安装指引", ""))
+				continue
+			}
+			// Get session runtime
+			_, service := runtimeForSession(sessionID)
+			emitAndPersist := emitAndPersistFor(sessionID)
+			cwd := firstNonEmptyString(planReq.CWD, "/")
+			logx.Info("planning", "session starting: sessionID=%s cwd=%s task=%q", sessionID, cwd, planReq.Task)
+			// Create boss orchestrator
+			h.Boss = boss.NewOrchestrator(emitAndPersist)
+			if err := h.Boss.StartPlanning(ctx, service, sessionID, planReq.Task, cwd); err != nil {
+				logx.Error("ws", "boss start planning failed: sessionID=%s err=%v", sessionID, err)
+				emit(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+				continue
+			}
+			// Start initial planning phase notification (for compat with existing UI)
+			emit(protocol.NewPlanningStateEvent(sessionID, "planning", "", "", "Starting planning session...", nil))
+		case "planning_confirm":
+			var confirmReq protocol.PlanningConfirmRequestEvent
+			if err := json.Unmarshal(payload, &confirmReq); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid planning_confirm request: %v", err), ""))
+				continue
+			}
+			sessionID := strings.TrimSpace(firstNonEmptyString(confirmReq.SessionID, selectedSessionID))
+			_, service := runtimeForSession(sessionID)
+			decision := strings.TrimSpace(strings.ToLower(confirmReq.Decision))
+				logx.Info("planning", "confirm received: sessionID=%s decision=%s notes=%q", sessionID, decision, confirmReq.Notes)
+
+
+			// Delegate to boss orchestrator if active
+			if h.Boss != nil && h.Boss.Phase == boss.PhaseConfirming {
+				switch decision {
+				case "confirm", "continue":
+					h.Boss.ConfirmPlan(ctx, confirmReq.Notes)
+				case "adjust":
+					h.Boss.AdjustPlan(ctx, confirmReq.Notes)
+				case "cancel":
+					h.Boss.CancelPlan(ctx)
+				}
+				continue
+			}
+			permMode := "acceptEdits" // pre-agreed permissions
+			switch decision {
+			case "confirm":
+				// After plan confirmation: execute
+				input := "CONFIRMED. Execute the plan step by step. Report progress using mobilevcRuntimePhase markers."
+				if strings.TrimSpace(confirmReq.Notes) != "" {
+					input += "\n\nDeveloper notes: " + confirmReq.Notes
+				}
+				inputReq := session.InputRequest{
+					Data: input,
+					RuntimeMeta: protocol.RuntimeMeta{
+						Source: "planning", PermissionMode: permMode,
+					},
+				}
+				emitAndPersist := emitAndPersistFor(sessionID)
+				execReq := session.ExecuteRequest{
+					Command: "claude", Mode: engine.ModePTY, PermissionMode: permMode,
+					RuntimeMeta: protocol.RuntimeMeta{Source: "planning", Engine: "claude", PermissionMode: permMode},
+				}
+				if err := service.SendInputOrResume(ctx, sessionID, execReq, inputReq, emitAndPersist); err != nil {
+					logx.Warn("ws", "planning_confirm failed: sessionID=%s err=%v", sessionID, err)
+					emit(protocol.NewErrorEvent(sessionID, "failed to send confirmation: "+err.Error(), ""))
+				}
+			case "continue":
+				// After checkpoint: continue
+				input := "CONTINUE."
+				if strings.TrimSpace(confirmReq.Notes) != "" {
+					input = "CONTINUE. Notes: " + confirmReq.Notes
+				}
+				inputReq := session.InputRequest{
+					Data: input,
+					RuntimeMeta: protocol.RuntimeMeta{
+						Source: "planning", PermissionMode: permMode,
+					},
+				}
+				emitAndPersist := emitAndPersistFor(sessionID)
+				execReq := session.ExecuteRequest{
+					Command: "claude", Mode: engine.ModePTY, PermissionMode: permMode,
+					RuntimeMeta: protocol.RuntimeMeta{Source: "planning", Engine: "claude", PermissionMode: permMode},
+				}
+				if err := service.SendInputOrResume(ctx, sessionID, execReq, inputReq, emitAndPersist); err != nil {
+					logx.Warn("ws", "planning_confirm continue failed: sessionID=%s err=%v", sessionID, err)
+					emit(protocol.NewErrorEvent(sessionID, "failed to continue: "+err.Error(), ""))
+				}
+			case "adjust":
+				notes := strings.TrimSpace(confirmReq.Notes)
+				if notes == "" {
+					notes = "Please adjust."
+				}
+				input := "ADJUST: " + notes + "\n\nRevise based on this feedback, then wait for confirmation again."
+				inputReq := session.InputRequest{
+					Data: input,
+					RuntimeMeta: protocol.RuntimeMeta{
+						Source: "planning", PermissionMode: permMode,
+					},
+				}
+				emitAndPersist := emitAndPersistFor(sessionID)
+				execReq := session.ExecuteRequest{
+					Command: "claude", Mode: engine.ModePTY, PermissionMode: permMode,
+					RuntimeMeta: protocol.RuntimeMeta{Source: "planning", Engine: "claude", PermissionMode: permMode},
+				}
+				if err := service.SendInputOrResume(ctx, sessionID, execReq, inputReq, emitAndPersist); err != nil {
+					logx.Warn("ws", "planning_confirm adjust failed: sessionID=%s err=%v", sessionID, err)
+					emit(protocol.NewErrorEvent(sessionID, "failed to send adjustment: "+err.Error(), ""))
+				}
+			case "cancel":
+				service.StopActive(sessionID, emitAndPersistFor(sessionID))
+				emit(protocol.NewPlanningStateEvent(sessionID, "completed", "", "", "Planning cancelled by developer", nil))
+			}
+		case "planning_adjust":
+			var adjustReq protocol.PlanningAdjustRequestEvent
+			if err := json.Unmarshal(payload, &adjustReq); err != nil {
+				emit(protocol.NewErrorEvent(selectedSessionID, fmt.Sprintf("invalid planning_adjust request: %v", err), ""))
+				continue
+			}
+			// planning_adjust is a convenience alias for planning_confirm with decision=adjust
+			// handled the same way
 		case "ai_turn":
 			var aiReq protocol.AITurnRequestEvent
 			if err := json.Unmarshal(payload, &aiReq); err != nil {
@@ -3466,10 +4437,14 @@ func readFile(sessionID, rawPath string) (protocol.FSReadResultEvent, error) {
 
 	isText := !hasBinaryContent(content)
 	textContent := string(content)
+	b64Content := ""
 	if !isText {
 		textContent = ""
+		b64Content = base64.StdEncoding.EncodeToString(content)
 	}
-	return protocol.NewFSReadResultEvent(sessionID, absPath, textContent, info.Size(), detectLangFromPath(absPath), "utf-8", isText), nil
+	event := protocol.NewFSReadResultEvent(sessionID, absPath, textContent, info.Size(), detectLangFromPath(absPath), "utf-8", isText)
+	event.ContentB64 = b64Content
+	return event, nil
 }
 
 func detectLangFromPath(path string) string {

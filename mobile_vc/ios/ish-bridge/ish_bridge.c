@@ -1,4 +1,5 @@
 #define ISH_INTERNAL
+#define _GNU_SOURCE
 #include "ish_bridge.h"
 #include "kernel/init.h"
 #include "kernel/task.h"
@@ -6,6 +7,8 @@
 #include "kernel/fs.h"
 #include "fs/fake.h"
 #include "fs/devices.h"
+#include "fs/tty.h"
+#include "debug.h"
 #include "misc.h"
 
 #include <pthread.h>
@@ -15,160 +18,335 @@
 #include <unistd.h>
 #include <errno.h>
 
-static bool g_ready = false;
+// Worker thread + capture-tty bridge.
+//
+// All iSH kernel calls run on a single dedicated pthread (g_worker_thread)
+// so that the __thread `current` pointer stays consistent. After init we
+// long-run /bin/sh on iSH's CPU thread (spawned by task_start) and inject
+// commands by writing into the console tty input buffer. Output that the
+// shell writes to the same tty is captured by capture_tty_write, which
+// scans for an end-of-command sentinel emitted by `echo __ISH_DONE__:$?`.
+
+#define SENTINEL "__ISH_DONE__:"
+
+static char g_rootfs[1024];
+static pthread_t g_worker_thread;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t g_cond = PTHREAD_COND_INITIALIZER;
-static int g_exit_code = 0;
-static bool g_command_done = false;
+static pthread_cond_t  g_cmd_cond  = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t  g_done_cond = PTHREAD_COND_INITIALIZER;
 
-// Pipe state for output capture
-static int g_pipe_fds[2] = {-1, -1};
-static int g_saved_stdout = -1;
-static int g_saved_stderr = -1;
+static volatile bool g_init_started = false;
+static volatile bool g_init_ok      = false;
+static volatile bool g_init_failed  = false;
+static volatile bool g_shell_dead   = false;
 
-#define MAX_OUTPUT_SIZE (16 * 1024 * 1024) // 16MB max output
+static char  *g_pending_cmd = NULL;
 
-// ─── exit hook override ──────────────────────────────────
+static char  *g_capture_buf = NULL;
+static size_t g_capture_len = 0;
+static size_t g_capture_cap = 0;
+static int    g_last_exit   = 0;
+static volatile bool g_cmd_done = false;
+static volatile bool g_busy     = false;
+
+static struct tty_driver g_capture_driver;
+static struct tty *g_capture_ttys[8];
+
+// ── capture tty ops ─────────────────────────────────────────
+static int  capture_tty_init(struct tty *tty)    { (void)tty; return 0; }
+static int  capture_tty_open(struct tty *tty)    { (void)tty; return 0; }
+static int  capture_tty_close(struct tty *tty)   { (void)tty; return 0; }
+static void capture_tty_cleanup(struct tty *tty) { (void)tty; }
+static int  capture_tty_ioctl(struct tty *tty, int cmd, void *arg) {
+    (void)tty; (void)cmd; (void)arg; return 0;
+}
+
+static int capture_tty_write(struct tty *tty, const void *buf, size_t len, bool blocking) {
+    (void)tty; (void)blocking;
+    pthread_mutex_lock(&g_lock);
+
+    // mirror to host stderr for debugging
+    fwrite(buf, 1, len, stderr);
+
+    if (g_busy) {
+        size_t need = g_capture_len + len + 1;
+        if (need > g_capture_cap) {
+            size_t nc = g_capture_cap ? g_capture_cap : 4096;
+            while (nc < need) nc *= 2;
+            char *nb = realloc(g_capture_buf, nc);
+            if (nb) {
+                g_capture_buf = nb;
+                g_capture_cap = nc;
+            }
+        }
+        if (g_capture_buf && g_capture_len + len + 1 <= g_capture_cap) {
+            memcpy(g_capture_buf + g_capture_len, buf, len);
+            g_capture_len += len;
+            g_capture_buf[g_capture_len] = '\0';
+
+            char *m = strstr(g_capture_buf, SENTINEL);
+            if (m) {
+                int code = atoi(m + strlen(SENTINEL));
+                size_t prefix = (size_t)(m - g_capture_buf);
+                while (prefix > 0 && (g_capture_buf[prefix - 1] == '\n' ||
+                                      g_capture_buf[prefix - 1] == '\r')) {
+                    prefix--;
+                }
+                g_capture_buf[prefix] = '\0';
+                g_capture_len = prefix;
+                g_last_exit = code;
+                g_cmd_done = true;
+                pthread_cond_broadcast(&g_done_cond);
+            }
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+    return (int)len;
+}
+
+static const struct tty_driver_ops capture_tty_ops = {
+    .init    = capture_tty_init,
+    .open    = capture_tty_open,
+    .close   = capture_tty_close,
+    .write   = capture_tty_write,
+    .ioctl   = capture_tty_ioctl,
+    .cleanup = capture_tty_cleanup,
+};
+
+// ── die / exit hooks ────────────────────────────────────────
+static void bridge_die(const char *msg) {
+    fprintf(stderr, "[ish_bridge] PANIC: %s\n", msg ? msg : "(null)");
+    pthread_mutex_lock(&g_lock);
+    g_init_failed = true;
+    g_shell_dead = true;
+    g_cmd_done = true;
+    g_last_exit = -1;
+    pthread_cond_broadcast(&g_done_cond);
+    pthread_mutex_unlock(&g_lock);
+}
 
 static void bridge_exit_hook(struct task *task, int code) {
-    // Instead of exiting, signal completion
-    if (task->parent == NULL) {
-        g_exit_code = code;
-        g_command_done = true;
-        pthread_cond_signal(&g_cond);
+    if (task && task->parent == NULL) {
+        fprintf(stderr, "[ish_bridge] init/sh exited code=%d\n", code);
+        pthread_mutex_lock(&g_lock);
+        g_shell_dead = true;
+        g_cmd_done = true;
+        g_last_exit = code;
+        pthread_cond_broadcast(&g_done_cond);
+        pthread_cond_broadcast(&g_cmd_cond);
+        pthread_mutex_unlock(&g_lock);
     }
 }
 
-// ─── init ────────────────────────────────────────────────
+// ── worker ──────────────────────────────────────────────────
+static void *worker_main(void *arg) {
+    (void)arg;
+#ifdef __APPLE__
+    pthread_setname_np("ish-worker");
+#endif
 
-int ish_init(const char *rootfs_path) {
-    if (g_ready) return 0;
+    char data_path[1280];
+    snprintf(data_path, sizeof(data_path), "%s/data", g_rootfs);
 
-    // iOS sandbox doesn't support IOPOL; case sensitivity handled by fakefs
+    fprintf(stderr, "[ish_bridge] worker: mount_root(%s)\n", data_path);
+    int err = mount_root(&fakefs, data_path);
+    if (err < 0) { fprintf(stderr, "[ish_bridge] mount_root err=%d\n", err); goto fail; }
 
-    // Install our exit hook
-    exit_hook = bridge_exit_hook;
-
-    // Mount the fake filesystem
-    char root_realpath[MAX_PATH + 1] = "/";
-    strcpy(root_realpath, rootfs_path);
-    strcat(root_realpath, "/data");
-
-    int err = mount_root(&fakefs, root_realpath);
-    if (err < 0) {
-        fprintf(stderr, "ish_bridge: mount_root failed: %d\n", err);
-        return err;
-    }
-
-    // Become the first process
+    fprintf(stderr, "[ish_bridge] become_first_process\n");
     err = become_first_process();
-    if (err < 0) {
-        fprintf(stderr, "ish_bridge: become_first_process failed: %d\n", err);
-        return err;
+    if (err < 0) { fprintf(stderr, "[ish_bridge] become_first_process err=%d\n", err); goto fail; }
+
+    fprintf(stderr, "[ish_bridge] create_some_device_nodes\n");
+    create_some_device_nodes();
+
+    fprintf(stderr, "[ish_bridge] mount procfs\n");
+    err = do_mount(&procfs, "proc", "/proc", "", 0);
+    if (err < 0) fprintf(stderr, "[ish_bridge] mount procfs warn=%d\n", err);
+
+    fprintf(stderr, "[ish_bridge] mount devptsfs\n");
+    err = do_mount(&devptsfs, "devpts", "/dev/pts", "", 0);
+    if (err < 0) fprintf(stderr, "[ish_bridge] mount devptsfs warn=%d\n", err);
+
+    // Register capture tty driver as the console
+    g_capture_driver.ops   = &capture_tty_ops;
+    g_capture_driver.major = TTY_CONSOLE_MAJOR;
+    g_capture_driver.ttys  = g_capture_ttys;
+    g_capture_driver.limit = sizeof(g_capture_ttys) / sizeof(g_capture_ttys[0]);
+    tty_drivers[TTY_CONSOLE_MAJOR] = &g_capture_driver;
+    set_console_device(TTY_CONSOLE_MAJOR, 1);
+
+    fprintf(stderr, "[ish_bridge] create_stdio /dev/console\n");
+    err = create_stdio("/dev/console", TTY_CONSOLE_MAJOR, 1);
+    if (err < 0) { fprintf(stderr, "[ish_bridge] create_stdio err=%d\n", err); goto fail; }
+
+    // Tune the console termios: disable echo so injected commands don't
+    // appear in our captured output. Keep ICANON so sh reads line-by-line.
+    struct tty *console = tty_get(&g_capture_driver, TTY_CONSOLE_MAJOR, 1);
+    if (IS_ERR(console)) {
+        fprintf(stderr, "[ish_bridge] tty_get console err=%p\n", console);
+        goto fail;
     }
-    current->thread = pthread_self();
+    console->termios.lflags &= ~(ECHO_ | ECHOE_ | ECHOK_ | ECHOCTL_ | ECHOKE_);
+    console->termios.oflags &= ~(OPOST_ | ONLCR_);
 
-    // Set up working directory
-    struct fd *pwd = generic_open("/", O_RDONLY_, 0);
-    if (IS_ERR(pwd)) {
-        fprintf(stderr, "ish_bridge: open / failed: %ld\n", PTR_ERR(pwd));
-    } else {
-        fs_chdir(current->fs, pwd);
+    // argv: "/bin/sh\0" — non-interactive, reads commands from /dev/console
+    static const char argv_packed[] =
+        "/bin/sh\0";
+    static const char envp_packed[] =
+        "TERM=dumb\0"
+        "PATH=/usr/bin:/bin:/usr/sbin:/sbin\0"
+        "HOME=/root\0"
+        "PS1=\0"
+        "PS2=\0"
+        "ENV=\0";
+
+    fprintf(stderr, "[ish_bridge] do_execve /bin/sh\n");
+    err = do_execve("/bin/sh", 1, argv_packed, envp_packed);
+    if (err < 0) { fprintf(stderr, "[ish_bridge] do_execve err=%d\n", err); goto fail; }
+
+    fprintf(stderr, "[ish_bridge] task_start (sh CPU thread)\n");
+    task_start(current);
+
+    pthread_mutex_lock(&g_lock);
+    g_init_ok = true;
+    pthread_cond_broadcast(&g_done_cond);
+    pthread_mutex_unlock(&g_lock);
+    fprintf(stderr, "[ish_bridge] init COMPLETE\n");
+
+    // Command loop
+    for (;;) {
+        pthread_mutex_lock(&g_lock);
+        while (!g_pending_cmd && !g_shell_dead) {
+            pthread_cond_wait(&g_cmd_cond, &g_lock);
+        }
+        if (g_shell_dead) { pthread_mutex_unlock(&g_lock); break; }
+        char *cmd = g_pending_cmd;
+        g_pending_cmd = NULL;
+        g_capture_len = 0;
+        if (g_capture_buf) g_capture_buf[0] = '\0';
+        g_cmd_done = false;
+        g_busy = true;
+        pthread_mutex_unlock(&g_lock);
+
+        ssize_t wrote = tty_input(console, cmd, strlen(cmd), false);
+        if (wrote < 0) {
+            fprintf(stderr, "[ish_bridge] tty_input err=%zd\n", wrote);
+            pthread_mutex_lock(&g_lock);
+            g_last_exit = -1;
+            g_cmd_done = true;
+            g_busy = false;
+            pthread_cond_broadcast(&g_done_cond);
+            pthread_mutex_unlock(&g_lock);
+        }
+        free(cmd);
+
+        pthread_mutex_lock(&g_lock);
+        while (!g_cmd_done) pthread_cond_wait(&g_done_cond, &g_lock);
+        g_busy = false;
+        pthread_cond_broadcast(&g_done_cond);
+        pthread_mutex_unlock(&g_lock);
     }
 
-    // Create a basic set of device nodes
-    // create_some_device_nodes();
+    return NULL;
 
-    g_ready = true;
-    return 0;
+fail:
+    pthread_mutex_lock(&g_lock);
+    g_init_failed = true;
+    g_cmd_done = true;
+    pthread_cond_broadcast(&g_done_cond);
+    pthread_mutex_unlock(&g_lock);
+    return NULL;
+}
+
+// ── public api ──────────────────────────────────────────────
+int ish_init(const char *rootfs_path) {
+    pthread_mutex_lock(&g_lock);
+    if (g_init_ok) { pthread_mutex_unlock(&g_lock); return 0; }
+    if (g_init_failed) { pthread_mutex_unlock(&g_lock); return -1; }
+    if (g_init_started) {
+        while (!g_init_ok && !g_init_failed) {
+            pthread_cond_wait(&g_done_cond, &g_lock);
+        }
+        int r = g_init_ok ? 0 : -1;
+        pthread_mutex_unlock(&g_lock);
+        return r;
+    }
+    g_init_started = true;
+    if (rootfs_path) {
+        strncpy(g_rootfs, rootfs_path, sizeof(g_rootfs) - 1);
+        g_rootfs[sizeof(g_rootfs) - 1] = '\0';
+    }
+    die_handler = bridge_die;
+    exit_hook   = bridge_exit_hook;
+    pthread_mutex_unlock(&g_lock);
+
+    if (pthread_create(&g_worker_thread, NULL, worker_main, NULL) != 0) {
+        return -1;
+    }
+    pthread_detach(g_worker_thread);
+
+    pthread_mutex_lock(&g_lock);
+    while (!g_init_ok && !g_init_failed) {
+        pthread_cond_wait(&g_done_cond, &g_lock);
+    }
+    int r = g_init_ok ? 0 : -1;
+    pthread_mutex_unlock(&g_lock);
+    return r;
 }
 
 bool ish_is_ready(void) {
-    return g_ready;
+    return g_init_ok && !g_shell_dead;
 }
 
-// ─── exec ────────────────────────────────────────────────
-
 int ish_exec(const char *command, char **output, size_t *output_len) {
-    if (!g_ready) return -1;
-
-    // Create pipes for capturing output
-    if (pipe(g_pipe_fds) < 0) {
-        *output = strdup("failed to create pipe");
+    if (!command) command = "";
+    if (!g_init_ok || g_shell_dead) {
+        const char *msg = g_shell_dead ? "ish shell exited" : "ish not initialized";
+        *output = strdup(msg);
         *output_len = strlen(*output);
         return -1;
     }
 
-    // Save original stdout/stderr
-    g_saved_stdout = dup(STDOUT_FILENO);
-    g_saved_stderr = dup(STDERR_FILENO);
-
-    // Redirect to pipe
-    dup2(g_pipe_fds[1], STDOUT_FILENO);
-    dup2(g_pipe_fds[1], STDERR_FILENO);
-
-    g_command_done = false;
-    g_exit_code = 0;
-
-    // Build argv for /bin/sh -c "command"
-    char argv_buf[4096];
-    const char *prog = "/bin/sh";
-    strcpy(argv_buf, prog);
-    strcpy(argv_buf + strlen(prog) + 1, "-c");
-    strcpy(argv_buf + strlen(prog) + 1 + 3, command);
-    argv_buf[strlen(prog) + 1 + 3 + strlen(command)] = '\0';
-
-    // Execute the shell
-    int err = do_execve(prog, 3, argv_buf, "\0");
-    if (err < 0) {
-        // Restore stdout/stderr immediately on error
-        dup2(g_saved_stdout, STDOUT_FILENO);
-        dup2(g_saved_stderr, STDERR_FILENO);
-        close(g_saved_stdout);
-        close(g_saved_stderr);
-        close(g_pipe_fds[0]);
-        close(g_pipe_fds[1]);
-        *output = strdup("exec failed");
+    char *wrapped = NULL;
+    if (asprintf(&wrapped, "%s\necho %s$?\n", command, SENTINEL) < 0 || !wrapped) {
+        *output = strdup("oom");
         *output_len = strlen(*output);
-        return err;
+        return -1;
     }
 
-    // Wait for command to complete (runs in CPU emulation loop)
-    // The exit_hook will signal g_cond when the process exits
     pthread_mutex_lock(&g_lock);
-    while (!g_command_done) {
-        // Run the CPU emulation for one timeslice
-        task_run_current();
-        pthread_cond_wait(&g_cond, &g_lock);
+    while (g_pending_cmd != NULL && !g_shell_dead) {
+        pthread_cond_wait(&g_done_cond, &g_lock);
     }
+    if (g_shell_dead) {
+        pthread_mutex_unlock(&g_lock);
+        free(wrapped);
+        *output = strdup("ish shell exited");
+        *output_len = strlen(*output);
+        return -1;
+    }
+    g_pending_cmd = wrapped;
+    pthread_cond_broadcast(&g_cmd_cond);
+
+    while (!g_cmd_done) pthread_cond_wait(&g_done_cond, &g_lock);
+
+    *output_len = g_capture_len;
+    *output = malloc(g_capture_len + 1);
+    if (*output) {
+        if (g_capture_len > 0 && g_capture_buf) {
+            memcpy(*output, g_capture_buf, g_capture_len);
+        }
+        (*output)[g_capture_len] = '\0';
+    } else {
+        *output_len = 0;
+    }
+    int code = g_last_exit;
+    g_cmd_done = false;
+    pthread_cond_broadcast(&g_done_cond);
     pthread_mutex_unlock(&g_lock);
-
-    // Flush and read output from pipe
-    fflush(stdout);
-    fflush(stderr);
-
-    // Restore stdout/stderr
-    dup2(g_saved_stdout, STDOUT_FILENO);
-    dup2(g_saved_stderr, STDERR_FILENO);
-    close(g_saved_stdout);
-    close(g_saved_stderr);
-    close(g_pipe_fds[1]); // close write end
-
-    // Read from pipe
-    *output = malloc(MAX_OUTPUT_SIZE);
-    ssize_t n = read(g_pipe_fds[0], *output, MAX_OUTPUT_SIZE - 1);
-    close(g_pipe_fds[0]);
-
-    if (n < 0) n = 0;
-    (*output)[n] = '\0';
-    *output_len = n;
-
-    return g_exit_code;
+    return code;
 }
 
-// ─── shutdown ────────────────────────────────────────────
-
 void ish_shutdown(void) {
-    g_ready = false;
-    // iSH doesn't have a clean shutdown path; just reset state
+    // No-op: kernel runs for the lifetime of the process.
 }

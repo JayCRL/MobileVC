@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../features/session/mode_select_page.dart';
 import '../features/session/session_controller.dart';
 import '../features/session/session_home_page.dart';
 import 'app_notification_coordinator.dart';
@@ -230,7 +231,7 @@ class _MobileVcAppState extends State<MobileVcApp> with WidgetsBindingObserver {
           theme: AppTheme.light(),
           darkTheme: AppTheme.dark(),
           themeMode: _darkModeEnabled ? ThemeMode.dark : ThemeMode.light,
-          home: SessionHomePage(
+          home: ModeSelectPage(
             controller: _controller,
             darkModeEnabled: _darkModeEnabled,
             onToggleTheme: _toggleThemeMode,

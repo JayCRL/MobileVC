@@ -45,6 +45,8 @@ const (
 	EventTypeADBFrame                 = "adb_frame"
 	EventTypeADBWebRTCAnswer          = "adb_webrtc_answer"
 	EventTypeADBWebRTCState           = "adb_webrtc_state"
+	EventTypePlanningCheck            = "planning_check"
+	EventTypePlanningState            = "planning_state"
 )
 
 type RuntimeMeta struct {
@@ -845,12 +847,13 @@ type FSListResultEvent struct {
 
 type FSReadResultEvent struct {
 	Event
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	Size     int64  `json:"size"`
-	Lang     string `json:"lang,omitempty"`
-	Encoding string `json:"encoding,omitempty"`
-	IsText   bool   `json:"isText"`
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	ContentB64  string `json:"contentB64,omitempty"`
+	Size        int64  `json:"size"`
+	Lang        string `json:"lang,omitempty"`
+	Encoding    string `json:"encoding,omitempty"`
+	IsText      bool   `json:"isText"`
 }
 
 type RuntimeInfoResultEvent struct {
@@ -1557,8 +1560,87 @@ func ApplyRuntimeMeta(event any, meta RuntimeMeta) any {
 	case RuntimeProcessLogResultEvent:
 		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
 		return e
+	case PlanningCheckEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
+	case PlanningStateEvent:
+		e.RuntimeMeta = MergeRuntimeMeta(e.RuntimeMeta, meta)
+		return e
 	default:
 		return event
+	}
+}
+
+type PlanningCheckRequestEvent struct {
+	ClientEvent
+}
+
+type PlanningSetKeyRequestEvent struct {
+	ClientEvent
+	APIKey string `json:"apiKey"`
+}
+
+type PlanningStartRequestEvent struct {
+	ClientEvent
+	Task    string `json:"task"`
+	APIKey  string `json:"apiKey,omitempty"`
+	BaseURL string `json:"baseUrl,omitempty"`
+	CWD     string `json:"cwd,omitempty"`
+}
+
+type PlanningConfirmRequestEvent struct {
+	ClientEvent
+	Decision string `json:"decision"` // "confirm", "adjust", "cancel"
+	Notes    string `json:"notes,omitempty"`
+}
+
+type PlanningAdjustRequestEvent struct {
+	ClientEvent
+	Notes string `json:"notes"`
+}
+
+type PlanningCheckEvent struct {
+	Event
+	Installed   bool   `json:"installed"`
+	Version     string `json:"version,omitempty"`
+	Error       string `json:"error,omitempty"`
+	InstallHint string `json:"installHint,omitempty"`
+}
+
+type PlanningStateEvent struct {
+	Event
+	Phase        string       `json:"phase"`
+	CurrentTask  string       `json:"currentTask,omitempty"`
+	CurrentAgent string       `json:"currentAgent,omitempty"`
+	Message      string       `json:"msg"`
+	Tasks        []PlanTask   `json:"tasks"`
+}
+
+type PlanTask struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+	Agent  string `json:"agent,omitempty"`
+}
+
+func NewPlanningCheckEvent(sessionID string, installed bool, version, errMsg, installHint string) PlanningCheckEvent {
+	return PlanningCheckEvent{
+		Event:       NewBaseEvent(EventTypePlanningCheck, sessionID),
+		Installed:   installed,
+		Version:     version,
+		Error:       errMsg,
+		InstallHint: installHint,
+	}
+}
+
+func NewPlanningStateEvent(sessionID, phase, currentTask, currentAgent, message string, tasks []PlanTask) PlanningStateEvent {
+	return PlanningStateEvent{
+		Event:        NewBaseEvent(EventTypePlanningState, sessionID),
+		Phase:        phase,
+		CurrentTask:  currentTask,
+		CurrentAgent: currentAgent,
+		Message:      message,
+		Tasks:        tasks,
 	}
 }
 
@@ -1667,6 +1749,12 @@ func ApplyEventCursor(event any, cursor int64) any {
 		e.EventCursor = cursor
 		return e
 	case RuntimeProcessLogResultEvent:
+		e.EventCursor = cursor
+		return e
+	case PlanningCheckEvent:
+		e.EventCursor = cursor
+		return e
+	case PlanningStateEvent:
 		e.EventCursor = cursor
 		return e
 	default:

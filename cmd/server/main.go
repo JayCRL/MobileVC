@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"mime"
@@ -15,6 +17,7 @@ import (
 	"mobilevc/internal/data"
 	"mobilevc/internal/gateway"
 	"mobilevc/internal/logx"
+	"mobilevc/internal/officialclient"
 	"mobilevc/internal/push"
 	"mobilevc/internal/tts"
 )
@@ -71,6 +74,132 @@ func main() {
 		summary.TTSDefaultFormat,
 	)
 
+	// Declared early so P2P callbacks can reference it (assigned later)
+	var wsHandler *gateway.Handler
+
+	// Optional: register with official server
+	if cfg.OfficialServerURL != "" {
+		accessToken := cfg.OfficialAccessToken
+		refreshToken := cfg.OfficialRefreshToken
+
+		// If no access token, try email/password login
+		if accessToken == "" && cfg.OfficialEmail != "" && cfg.OfficialPassword != "" {
+			logx.Info("bootstrap", "Logging in to official server with email: %s", cfg.OfficialEmail)
+			result, err := officialclient.LoginWithEmail(context.Background(), cfg.OfficialServerURL, cfg.OfficialEmail, cfg.OfficialPassword)
+			if err != nil {
+				logx.Warn("bootstrap", "login with official server failed: %v", err)
+			} else {
+				accessToken = result.AccessToken
+				refreshToken = result.RefreshToken
+				logx.Info("bootstrap", "Login successful: user_id=%s", result.UserID)
+			}
+		}
+
+		if accessToken == "" {
+			logx.Info("bootstrap", "No valid credentials for official server, skipping registration")
+		} else {
+		logx.Info("bootstrap", "Official server configured: url=%s", cfg.OfficialServerURL)
+		nodeName := cfg.OfficialNodeName
+		if nodeName == "" {
+			nodeName = officialclient.ResolveNodeName()
+		}
+		nodeID := cfg.OfficialNodeID
+		oc := officialclient.NewClient(cfg.OfficialServerURL, accessToken, refreshToken, nodeID, nodeName, version,
+			cfg.OfficialStunHost, cfg.OfficialTurnPort, cfg.OfficialTurnUser, cfg.OfficialTurnPass)
+		if err := oc.Register(context.Background()); err != nil {
+			logx.Warn("bootstrap", "register with official server failed: %v", err)
+		} else {
+			oc.StartHeartbeatLoop(context.Background(), 60*time.Second)
+			logx.Info("bootstrap", "Heartbeat loop started (60s)")
+
+			// Build WebRTC + signaling
+			trafficCtx, trafficCancel := context.WithCancel(context.Background())
+			defer trafficCancel()
+			signaler := officialclient.NewSignaler(cfg.OfficialServerURL, accessToken, oc.NodeID)
+			var pm *officialclient.PeerManager
+			pmCfg := officialclient.PeerManagerConfig{
+				STUNURLs: []string{"stun:stun.l.google.com:19302"},
+			}
+			if cfg.OfficialStunHost != "" && cfg.OfficialTurnPort != "" {
+				pmCfg.TURNURLs = []string{
+					"turn:" + cfg.OfficialStunHost + ":" + cfg.OfficialTurnPort + "?transport=udp",
+				}
+				pmCfg.TURNUser = cfg.OfficialTurnUser
+				pmCfg.TURNPass = cfg.OfficialTurnPass
+			}
+			pm = officialclient.NewPeerManager(pmCfg,
+				func(peerID string, data json.RawMessage) { signaler.SendWebRTC(peerID, data) },
+				func(peerID string, msg []byte) {
+					sendReply := func(event any) {
+						data, err := json.Marshal(event)
+						if err == nil {
+							pm.Send(peerID, data)
+						}
+					}
+					// Delegate to gateway handler (initialized later, must be non-nil)
+					if wsHandler != nil {
+						wsHandler.HandleP2PMessage(context.Background(), msg, sendReply)
+					}
+				},
+				func(peerID string, bytesSent, bytesReceived int64, startedAt time.Time) {
+					records := []officialclient.TrafficRecord{{
+						NodeID:        oc.NodeID,
+						PeerID:        peerID,
+						BytesSent:     bytesSent,
+						BytesReceived: bytesReceived,
+						StartedAt:     startedAt.UTC().Format(time.RFC3339),
+					}}
+					if err := oc.ReportTraffic(context.Background(), records); err != nil {
+						logx.Error("traffic", "report failed for peer=%s: %v", peerID, err)
+					}
+				},
+			)
+			signaler.SetPeerManager(pm)
+
+			// Periodic traffic reporting for active peers
+			go func() {
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-trafficCtx.Done():
+						return
+					case <-ticker.C:
+						snapshot := pm.CollectTraffic()
+						if len(snapshot) == 0 {
+							continue
+						}
+						records := make([]officialclient.TrafficRecord, 0, len(snapshot))
+						for peerID, t := range snapshot {
+							records = append(records, officialclient.TrafficRecord{
+								NodeID:        oc.NodeID,
+								PeerID:        peerID,
+								BytesSent:     t.BytesSent,
+								BytesReceived: t.BytesReceived,
+								StartedAt:     t.StartedAt.UTC().Format(time.RFC3339),
+							})
+						}
+						if err := oc.ReportTraffic(context.Background(), records); err != nil {
+							logx.Error("traffic", "periodic report failed: %v", err)
+						}
+					}
+				}
+			}()
+			if err := signaler.Connect(context.Background()); err != nil {
+				logx.Warn("bootstrap", "signaling connect failed: %v", err)
+			} else {
+				logx.Info("bootstrap", "Signaling connected, waiting for P2P requests")
+			}
+
+			defer func() {
+				oc.Stop()
+				signaler.Close()
+				oc.Deregister(context.Background())
+			}()
+		}
+	}
+	}
+
 	logx.Info("bootstrap", "Initializing session store")
 	sessionStore, err := data.NewFileStore("")
 	if err != nil {
@@ -108,8 +237,9 @@ func main() {
 	}
 
 	logx.Info("bootstrap", "Preparing websocket handler")
-	wsHandler := gateway.NewHandler(cfg.AuthToken, sessionStore)
+	wsHandler = gateway.NewHandler(cfg.AuthToken, sessionStore)
 	wsHandler.PushService = pushService
+	wsHandler.WorkspaceRoot = cfg.Runtime.WorkspaceRoot
 	logx.Info("bootstrap", "WebSocket handler ready")
 
 	var ttsHandler *tts.HTTPHandler
