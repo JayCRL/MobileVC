@@ -120,3 +120,38 @@ func (h *NodesHandler) Heartbeat() http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
+
+type trafficRecord struct {
+	NodeID        string `json:"nodeId"`
+	PeerID        string `json:"peerId"`
+	BytesSent     int64  `json:"bytesSent"`
+	BytesReceived int64  `json:"bytesReceived"`
+	StartedAt     string `json:"startedAt"`
+}
+
+func (h *NodesHandler) ReportTraffic() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := GetClaims(r)
+		if claims == nil {
+			writeError(w, http.StatusUnauthorized, "not authenticated")
+			return
+		}
+
+		var req struct {
+			Traffic []trafficRecord `json:"traffic"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		for _, t := range req.Traffic {
+			if err := h.DB.UpsertTraffic(t.NodeID, t.PeerID, t.BytesSent, t.BytesReceived); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to save traffic")
+				return
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}

@@ -35,11 +35,19 @@ func (h *AdminHandler) Dashboard() http.HandlerFunc {
 			nodes = []db.Node{}
 		}
 
+		trafficSent, trafficRecv, _ := h.DB.TotalTraffic()
+		nodeTraffic, _ := h.DB.AllNodeTraffic()
+
 		writeJSON(w, http.StatusOK, map[string]any{
-			"db":    dbStats,
-			"hub":   hubStats,
-			"users": users,
-			"nodes": nodes,
+			"db":          dbStats,
+			"hub":         hubStats,
+			"users":       users,
+			"nodes":       nodes,
+			"traffic": map[string]any{
+				"bytesSent":     trafficSent,
+				"bytesReceived": trafficRecv,
+			},
+			"nodeTraffic": nodeTraffic,
 		})
 	}
 }

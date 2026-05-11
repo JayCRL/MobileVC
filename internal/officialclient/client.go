@@ -206,6 +206,46 @@ func (c *Client) refreshAccessToken(ctx context.Context) error {
 	return nil
 }
 
+type TrafficRecord struct {
+	NodeID        string `json:"nodeId"`
+	PeerID        string `json:"peerId"`
+	BytesSent     int64  `json:"bytesSent"`
+	BytesReceived int64  `json:"bytesReceived"`
+	StartedAt     string `json:"startedAt"`
+}
+
+func (c *Client) ReportTraffic(ctx context.Context, records []TrafficRecord) error {
+	if c.NodeID == "" || len(records) == 0 {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{"traffic": records})
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		c.ServerURL+"/api/nodes/traffic", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.AccessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("report traffic: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized && c.RefreshToken != "" {
+		if err := c.refreshAccessToken(ctx); err != nil {
+			return err
+		}
+		return c.ReportTraffic(ctx, records)
+	}
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("report traffic failed %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 func (c *Client) StartHeartbeatLoop(ctx context.Context, interval time.Duration) {
 	ctx, c.cancel = context.WithCancel(ctx)
 	go func() {

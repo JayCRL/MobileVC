@@ -61,6 +61,8 @@
     <div class="card"><div class="label">在线节点</div><div class="value green" id="valNodes">-</div></div>
     <div class="card"><div class="label">离线节点</div><div class="value amber" id="valOffNodes">-</div></div>
     <div class="card"><div class="label">活跃连接</div><div class="value purple" id="valConns">-</div></div>
+    <div class="card"><div class="label">已发送</div><div class="value blue" id="valTrafficSent">-</div></div>
+    <div class="card"><div class="label">已接收</div><div class="value green" id="valTrafficRecv">-</div></div>
   </div>
 
   <section>
@@ -114,6 +116,8 @@ function render(data) {
   document.getElementById('valNodes').textContent = data.db?.onlineNodes ?? 0;
   document.getElementById('valOffNodes').textContent = data.db?.offlineNodes ?? 0;
   document.getElementById('valConns').textContent = data.hub?.totalClients ?? 0;
+  document.getElementById('valTrafficSent').textContent = formatBytes(data.traffic?.bytesSent ?? 0);
+  document.getElementById('valTrafficRecv').textContent = formatBytes(data.traffic?.bytesReceived ?? 0);
 
   // Connections
   const clients = data.hub?.clients || [];
@@ -154,12 +158,13 @@ function render(data) {
   // Nodes
   const nodes = data.nodes || [];
   if (nodes.length) {
-    let html = '<table><thead><tr><th>名称</th><th>版本</th><th>状态</th><th>最后在线</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>名称</th><th>版本</th><th>状态</th><th>流量 (发送/接收)</th><th>最后在线</th></tr></thead><tbody>';
     nodes.forEach(n => {
       html += `<tr>
         <td>${esc(n.name || n.id)}</td>
         <td>${esc(n.version || '-')}</td>
         <td><span class="badge ${n.status === 'online' ? 'online' : 'offline'}">${n.status === 'online' ? '在线' : '离线'}</span></td>
+        <td>${fmtNodeTraffic(n.id, data.nodeTraffic)}</td>
         <td>${n.lastSeen ? new Date(n.lastSeen).toLocaleString('zh-CN') : '-'}</td>
       </tr>`;
     });
@@ -170,6 +175,8 @@ function render(data) {
   }
 }
 
+function formatBytes(b) { if (b === 0) return '0 B'; const u = ['B','KB','MB','GB']; const i = Math.min(Math.floor(Math.log(b)/Math.log(1024)), u.length-1); return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i]; }
+function fmtNodeTraffic(id, nt) { if (!nt || !nt[id]) return '-'; const t = nt[id]; return formatBytes(t[0]) + ' / ' + formatBytes(t[1]); }
 function esc(s) { if (!s) return '-'; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function startRefresh() { fetchData(); refreshTimer = setInterval(fetchData, 5000); }
 

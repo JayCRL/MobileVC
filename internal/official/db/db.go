@@ -144,6 +144,16 @@ func runMigrations(conn *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash)`,
+		`CREATE TABLE IF NOT EXISTS traffic_stats (
+			id TEXT PRIMARY KEY,
+			node_id TEXT NOT NULL,
+			peer_id TEXT NOT NULL,
+			bytes_sent INTEGER NOT NULL DEFAULT 0,
+			bytes_received INTEGER NOT NULL DEFAULT 0,
+			started_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_traffic_node_id ON traffic_stats(node_id)`,
 	}
 
 	for _, m := range migrations {

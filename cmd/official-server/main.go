@@ -127,6 +127,7 @@ func main() {
 	mux.Handle("POST /api/nodes", authMw(http.HandlerFunc(nodesHandler.RegisterNode())))
 	mux.Handle("DELETE /api/nodes/{id}", authMw(http.HandlerFunc(nodesHandler.DeregisterNode())))
 	mux.Handle("POST /api/nodes/heartbeat", authMw(http.HandlerFunc(nodesHandler.Heartbeat())))
+		mux.Handle("POST /api/nodes/traffic", authMw(http.HandlerFunc(nodesHandler.ReportTraffic())))
 
 	// Signaling WebSocket
 	mux.HandleFunc("GET /ws/signaling", sigHandler.ServeHTTP)
