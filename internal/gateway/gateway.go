@@ -157,6 +157,8 @@ func (h *Handler) HandleP2PMessage(ctx context.Context, msg []byte, replyFn func
 		h.handleP2PSessionCreate(ctx, msg, replyFn)
 	case "session_load":
 		h.handleP2PSessionLoad(ctx, msg, replyFn)
+	case "session_delta_get":
+		h.handleP2PSessionDeltaGet(ctx, msg, replyFn)
 
 	// Manager mode — Tier 2: interaction
 	case "input":
@@ -442,7 +444,7 @@ func (h *Handler) handleP2PSessionLoad(ctx context.Context, rawMsg []byte, reply
 		replyFn(protocol.NewErrorEvent(req.SessionID, "session store unavailable", ""))
 		return
 	}
-	record, err := h.SessionStore.GetSession(ctx, req.SessionID)
+	record, err := loadSessionRecord(ctx, h.SessionStore, req.SessionID)
 	if err != nil {
 		replyFn(protocol.NewErrorEvent(req.SessionID, err.Error(), ""))
 		return
@@ -452,6 +454,36 @@ func (h *Handler) handleP2PSessionLoad(ctx context.Context, rawMsg []byte, reply
 		entry.service.SetSink(entry.EnsureBufferedSinkWithProcessor(replyFn))
 	}
 	replyFn(session.SessionHistoryEventFromRecord(record, false))
+	replyFn(protocol.NewSessionStateEvent(record.Summary.ID, string(session.StateActive), "history loaded"))
+}
+
+func (h *Handler) handleP2PSessionDeltaGet(ctx context.Context, rawMsg []byte, replyFn func(any)) {
+	var req protocol.SessionDeltaRequestEvent
+	if err := json.Unmarshal(rawMsg, &req); err != nil {
+		replyFn(protocol.NewErrorEvent("", fmt.Sprintf("invalid session_delta_get request: %v", err), ""))
+		return
+	}
+	if h.SessionStore == nil {
+		replyFn(protocol.NewErrorEvent(req.SessionID, "session store unavailable", ""))
+		return
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		replyFn(protocol.NewErrorEvent("", "sessionId is required", ""))
+		return
+	}
+	record, err := loadSessionRecord(ctx, h.SessionStore, sessionID)
+	if err != nil {
+		replyFn(protocol.NewErrorEvent(sessionID, err.Error(), ""))
+		return
+	}
+	sessionRuntime := h.runtimeSessions.Ensure(record.Summary.ID)
+	runtimeAlive := false
+	if sessionRuntime != nil {
+		runtimeAlive = sessionRecordRuntimeAlive(record, sessionRuntime.service)
+	}
+	replyFn(session.SessionDeltaEventFromRecord(record, req.Known, deltaCursorSnapshot(sessionRuntime), runtimeAlive))
+	emitReviewStateFromProjection(replyFn, record.Summary.ID, record.Projection)
 }
 
 // === Tier 2: interaction handlers ===
