@@ -2,10 +2,7 @@ package session
 
 import (
 	"context"
-	"fmt"
-	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 
 	"mobilevc/internal/engine"
@@ -48,44 +45,12 @@ func (s *Service) ActiveProcessTree(ctx context.Context) (int, []protocol.Runtim
 }
 
 func snapshotProcessTree(ctx context.Context, ref engine.ProcessRef) ([]protocol.RuntimeProcessItem, error) {
-	cmd := exec.CommandContext(ctx, "ps", "-axo", "pid=,ppid=,stat=,etime=,command=")
-	output, err := cmd.Output()
+	all, children, err := listAllProcesses(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list processes: %w", err)
+		return nil, err
 	}
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 0 {
+	if len(all) == 0 {
 		return []protocol.RuntimeProcessItem{}, nil
-	}
-
-	all := make(map[int]protocol.RuntimeProcessItem, len(lines))
-	children := make(map[int][]int, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 5 {
-			continue
-		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-		ppid, err := strconv.Atoi(fields[1])
-		if err != nil {
-			continue
-		}
-		item := protocol.RuntimeProcessItem{
-			PID:     pid,
-			PPID:    ppid,
-			State:   fields[2],
-			Elapsed: fields[3],
-			Command: strings.Join(fields[4:], " "),
-		}
-		all[pid] = item
-		children[ppid] = append(children[ppid], pid)
 	}
 
 	root, ok := all[ref.RootPID]
