@@ -3489,7 +3489,7 @@ func (s *FileStore) reconcileIndexLocked(index fileIndex) (fileIndex, error) {
 	for i := range index.Sessions {
 		record, err := s.readSessionIndexRecordLocked(index.Sessions[i].ID)
 		if err != nil {
-			reconciled = append(reconciled, index.Sessions[i])
+			updated = true
 			continue
 		}
 		if index.Sessions[i] != record.Summary {

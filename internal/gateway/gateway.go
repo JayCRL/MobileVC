@@ -7574,7 +7574,7 @@ func loadSessionRecord(ctx context.Context, sessionStore data.Store, sessionID s
 			summary, upsertErr := sessionStore.UpsertSession(ctx, record)
 			if upsertErr != nil {
 				logx.Warn("ws", "upsert claude mirror session failed: sessionID=%s err=%v", sessionID, upsertErr)
-				return sessionStore.GetSession(ctx, sessionID)
+				return record, nil
 			}
 			record.Summary = summary
 			return record, nil
@@ -7602,7 +7602,7 @@ func loadSessionRecord(ctx context.Context, sessionStore data.Store, sessionID s
 		summary, upsertErr := sessionStore.UpsertSession(ctx, record)
 		if upsertErr != nil {
 			logx.Warn("ws", "upsert codex mirror session failed: sessionID=%s err=%v", sessionID, upsertErr)
-			return sessionStore.GetSession(ctx, sessionID)
+			return record, nil
 		}
 		record.Summary = summary
 		return record, nil
