@@ -18,7 +18,7 @@ MobileVC 给 DSH 加一个手机端界面：连上你正在跑的 DSH，直接�
 - 版本：`0.1.0`
 - 验证环境：DSH `0.2.0-rc.2`、Node 22+
 - 形态：DSH Host plugin + 静态 PWA UI
-- 官网（新）：https://11408.online/mobilevc-site/
+- 官网：https://mobilevc.top/
 - 截图：`docs/images/`
 - 演示：`docs/media/mobilevc-demo.mp4`
 - 宣传片：`docs/media/mobilevc-promo.mp4`
