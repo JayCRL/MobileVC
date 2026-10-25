@@ -15,6 +15,7 @@
   <link rel="apple-touch-icon" href="assets/icon-180.png">
   <title>MobileVC</title>
   <link rel="stylesheet" href="styles.css?v=20261025k">
+  <style id="dsh-startup-critical">html.dsu-lock,html.dsu-lock body{overflow:hidden!important}#dsh-startup-root.dsu-boot{position:fixed;inset:0;z-index:2147483000;background:#000}</style>
 </head>
 <body>
   <div class="stage">
@@ -48,6 +49,66 @@
       }
     } catch (_) {}
   </script>
-  <script src="app-live.js?v=20261025x"></script>
+  <script>
+    // Optional bridge to dsh-startup-screen. It is loaded from the DSH host
+    // route only when that plugin is installed; MobileVC itself does not
+    // vendor the splash runtime.
+    (() => {
+      if (new URLSearchParams(location.search).has('nostartup')) return;
+      if (location.pathname.startsWith('/mobilevc-preview')) return;
+
+      const boot = async () => {
+        try {
+          const res = await fetch('/dsh-startup/config', { cache: 'no-store', credentials: 'same-origin' });
+          if (!res.ok) return;
+          const data = await res.json();
+          const c = data.config || {};
+          if (!c.enabled) return;
+          let skip = false;
+          try {
+            if (c.mode === 'session' && sessionStorage.getItem('dsh-startup-screen:shown') === '1') skip = true;
+            if (c.mode === 'daily' && localStorage.getItem('dsh-startup-screen:day') === new Date().toISOString().slice(0, 10)) skip = true;
+          } catch (_) {}
+          if (skip || window.__DSH_STARTUP_LOADED__) return;
+
+          window.__DSH_STARTUP_BOOT__ = 'mobilevc';
+          window.__DSH_STARTUP_VERSION__ = data.version || '';
+          window.__DSH_STARTUP__ = c;
+          document.documentElement.classList.add('dsu-lock');
+          const root = document.createElement('div');
+          root.id = 'dsh-startup-root';
+          root.className = 'dsu-root dsu-boot';
+          document.body.appendChild(root);
+
+          const v = encodeURIComponent(data.version || '');
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = `/dsh-startup/splash.css${v ? `?v=${v}` : ''}`;
+          document.head.appendChild(link);
+
+          const script = document.createElement('script');
+          script.src = `/dsh-startup/splash.js${v ? `?v=${v}` : ''}`;
+          script.onerror = () => {
+            root.remove();
+            document.documentElement.classList.remove('dsu-lock');
+          };
+          document.body.appendChild(script);
+          // If the runtime never even boots, never leave the app locked.
+          setTimeout(() => {
+            if (!window.__DSH_STARTUP_LOADED__ && root.classList.contains('dsu-boot')) {
+              root.remove();
+              document.documentElement.classList.remove('dsu-lock');
+            }
+          }, 10000);
+        } catch (_) {
+          /* plugin absent: keep the normal MobileVC landing */
+        }
+      };
+
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
+      else boot();
+    })();
+  </script>
+  <script src="app-live.js?v=20261025y"></script>
 </body>
 </html>

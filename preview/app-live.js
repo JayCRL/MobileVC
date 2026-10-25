@@ -67,6 +67,8 @@
     pollIdle: 0,
     contentSig: '',
     follow: null,
+    followRetry: null,
+    resumeInFlight: false,
     live: null,
     liveRaf: null,
     liveOpen: true,
@@ -259,6 +261,10 @@
 
 
   function stopFollow() {
+    if (state.followRetry) {
+      clearTimeout(state.followRetry);
+      state.followRetry = null;
+    }
     if (state.follow) {
       try { state.follow.close(); } catch (_) {}
       state.follow = null;
@@ -267,12 +273,13 @@
     state.liveRaf = null;
   }
 
-  function startFollow() {
+  function startFollow(opts = {}) {
     if (!INTERACTIVE || !state.session?.id) return;
     if (typeof EventSource === 'undefined') return;
     const sid = state.session.id;
-    if (state.follow && state.follow.__sid === sid) return;
+    if (!opts.force && state.follow && state.follow.__sid === sid) return;
     stopFollow();
+    stopPolling();
     const es = new EventSource(`${API}/follow?session=${encodeURIComponent(sid)}`);
     es.__sid = sid;
     state.follow = es;
@@ -283,13 +290,23 @@
       try { handleFollowMessage(JSON.parse(event.data)); } catch (_) {}
     };
     es.onerror = () => {
+      if (state.follow !== es) return;
+      try { es.close(); } catch (_) {}
+      state.follow = null;
       if (!opened && !warned) {
         warned = true;
-        try { es.close(); } catch (_) {}
-        if (state.follow === es) state.follow = null;
-        toast('实时流未建立，已降级轮询');
-        startPolling();
+        toast('实时流未建立，正在重连…');
       }
+      // 页面在后台时不要重连；回到前台会统一 refresh + 重开
+      if (document.hidden) return;
+      // 断开期间先用轮询兜底，避免完全空白
+      startPolling();
+      if (state.followRetry) clearTimeout(state.followRetry);
+      const delay = 1200 + Math.floor(Math.random() * 800);
+      state.followRetry = setTimeout(() => {
+        state.followRetry = null;
+        if (state.session?.id === sid && !document.hidden) startFollow({ force: true });
+      }, delay);
     };
   }
 
@@ -484,18 +501,52 @@
     }
   }
 
-  async function refreshSession() {
+  async function refreshSession(opts = {}) {
     if (!state.session?.id) return;
+    const { silent = false, forceFollow = false, preserve = false } = opts;
     try {
       const data = await api(`sessions/${encodeURIComponent(state.session.id)}`);
       applyDetail(data);
       state.contentSig = contentSignature(data);
-      render();
-      if (INTERACTIVE) startFollow();
+      if (preserve) {
+        renderAppbar();
+        renderContentPreservingOpen();
+        updateDockStatus();
+        updateDockAction();
+      } else {
+        render();
+      }
+      if (INTERACTIVE) startFollow({ force: forceFollow });
       else if (data.state === 'running') startPolling();
-      toast('已刷新 DSH 数据');
+      if (!silent) toast('已刷新 DSH 数据');
     } catch (e) {
-      toast(`刷新失败：${e.message}`);
+      if (!silent) toast(`刷新失败：${e.message}`);
+    }
+  }
+
+  async function refreshSessionsOnly() {
+    try {
+      const data = await api('sessions?limit=12');
+      state.sessions = data.sessions || [];
+      const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
+      if (title === '会话') setSheetBody(sessionsBody());
+    } catch (_) {
+      /* keep the current list on a transient failure */
+    }
+  }
+
+  async function refreshOnResume() {
+    if (document.visibilityState === 'hidden' || state.resumeInFlight) return;
+    if (state.loading || state.detailLoading) return;
+    state.resumeInFlight = true;
+    try {
+      if (!state.session?.id) await loadSessions();
+      else {
+        await refreshSession({ silent: true, forceFollow: true, preserve: true });
+        await refreshSessionsOnly();
+      }
+    } finally {
+      state.resumeInFlight = false;
     }
   }
 
@@ -878,7 +929,7 @@
     setTimeout(() => el.remove(), 2150);
   }
 
-  function sessionsSheet() {
+  function sessionsBody() {
     const rows = state.sessions.map((s) => `<div class="lrow tap sess-row ${s.id === state.session?.id ? 'selected' : ''}" data-act="select-session" data-id="${esc(s.id)}">
       <span class="ico-badge ${s.state === 'running' ? 'green' : s.state === 'waiting' ? 'red' : 'gray'}">${icon(s.state === 'running' ? 'play' : 'chat')}</span>
       <div class="l-main"><div class="l-title">${esc(s.title)} ${s.id === state.session?.id ? '<span class="chip blue">当前</span>' : ''}</div>
@@ -886,13 +937,25 @@
       <div class="l-meta">${esc(s.engine)} · ${esc(s.model)} · ${esc(s.time)}</div></div>
       <span class="chip ${s.state === 'running' ? 'green' : s.state === 'waiting' ? 'amber' : ''}">${esc(s.stateLabel)}</span>
     </div>`).join('');
+    return `<div class="list">${rows || '<div class="note">没有找到 DSH 会话。</div>'}</div>
+      <button class="btn primary wide" data-act="open-dsh">${icon('plus')} 在 DSH 新建会话</button>
+      <div class="note">会话来自真实 DSH；可以直接在 MobileVC 发送、停止和审批。</div>`;
+  }
+
+  async function sessionsSheet() {
     openSheet({
       title: '会话',
       sub: '真实 DSH 会话 · 最近 12 条',
-      body: `<div class="list">${rows || '<div class="note">没有找到 DSH 会话。</div>'}</div>
-        <button class="btn primary wide" data-act="open-dsh">${icon('plus')} 在 DSH 新建会话</button>
-        <div class="note">会话来自真实 DSH；可以直接在 MobileVC 发送、停止和审批。</div>`,
+      body: sessionsBody(),
     });
+    try {
+      const data = await api('sessions?limit=12');
+      state.sessions = data.sessions || [];
+      const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
+      if (title === '会话') setSheetBody(sessionsBody());
+    } catch (_) {
+      /* keep the cached list if refresh fails */
+    }
   }
 
   async function skillsSheet() {
@@ -1239,7 +1302,7 @@
     if (act === 'models') { modelsSheet(); return; }
     if (act === 'status') { statusSheet(); return; }
     if (act === 'settings') { settingsSheet(); return; }
-    if (act === 'refresh') { refreshSession(); return; }
+    if (act === 'refresh') { refreshSession({ forceFollow: true }); return; }
     if (act === 'send') { sendMessage(); return; }
     if (act === 'cancel') { cancelRun(); return; }
     if (act === 'reload') { loadSessions(); return; }
@@ -1351,6 +1414,17 @@
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshOnResume();
+  });
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) refreshOnResume();
+  });
+  window.addEventListener('online', refreshOnResume);
+  setInterval(() => {
+    if (!document.hidden && !state.loading && !state.detailLoading) refreshSessionsOnly();
+  }, 30000);
 
   loadSessions();
 })();

@@ -13,6 +13,14 @@
 		max_size {$MAX_UPLOAD:25MB}
 	}
 
+	handle /dsh-startup {
+		redir /dsh-startup/ 308
+	}
+
+	handle /dsh-startup/* {
+		reverse_proxy {$DSH_UPSTREAM:127.0.0.1:8898}
+	}
+
 	handle /mobilevc {
 		redir /mobilevc/ 308
 	}

@@ -105,6 +105,20 @@ docker compose --profile tunnel up -d
 - **Memory**：读写真实 `AGENTS.md`
 - 审批卡：拒绝 / 允许一次
 
+### 启动画面（可选）
+
+如果 web profile 已安装 [`dsh-startup-screen`](https://github.com/QIFANAI/dsh-startup-screen)，MobileVC 会自动读取同源的 `/dsh-startup/config`，并加载它的启动动画；不需要把动画代码复制进 MobileVC。
+
+```bash
+# 从 release 下载 tgz 后
+dsh plugin --profile web add /path/to/dsh-startup-screen-1.6.0.tgz
+systemctl restart dsh-web
+```
+
+- 打开 `?nostartup=1` 可跳过
+- 未安装该插件时，自动回到普通启动页
+- 插件仍由它自己的设置页管理；动画代码/素材不随 MobileVC 分发
+
 ## 架构
 
 ```mermaid

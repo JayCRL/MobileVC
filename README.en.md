@@ -105,6 +105,20 @@ Deployment, nginx, PWA, upgrade/uninstall and troubleshooting: [INSTALL.en.md](.
 - **Memory** — read/write real `AGENTS.md`
 - Approval card — Reject / Allow once
 
+### Startup screen (optional)
+
+If [`dsh-startup-screen`](https://github.com/QIFANAI/dsh-startup-screen) is installed in the web profile, MobileVC reads the same-origin `/dsh-startup/config` and loads its splash animation. The animation code is not vendored into MobileVC.
+
+```bash
+# after downloading the release tgz
+dsh plugin --profile web add /path/to/dsh-startup-screen-1.6.0.tgz
+systemctl restart dsh-web
+```
+
+- Add `?nostartup=1` to skip it
+- Without the plugin, MobileVC uses its normal landing screen
+- The animation and its assets remain managed by that plugin
+
 ## Architecture
 
 ```mermaid

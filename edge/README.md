@@ -138,6 +138,7 @@ Caddy 会自动申请证书，数据存在 `caddy_data` volume。
 | `SITE_ADDRESS=http://:8088` | Tunnel 模式，Cloudflare 终止 TLS |
 | `SITE_ADDRESS=https://...` | 直连模式，Caddy 终止 TLS |
 | `CF_TUNNEL_TOKEN` | 只在 `--profile tunnel` 使用 |
+| `/dsh-startup/*` | 可选启动动画插件 `dsh-startup-screen` 的运行时 |
 
 ## DSH 的 trusted host
 
