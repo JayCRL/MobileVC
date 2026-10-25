@@ -822,7 +822,7 @@
 
   function accountBody() {
     const a = state.account;
-    const status = a?.status === 'credential-stored' ? '已登录 DeepSeek 账号' : a?.status === 'signed-out' ? '未登录 DeepSeek 账号' : '账号状态未知';
+    const status = a?.status === 'credential-stored' ? '已登录 DeepSeek 账号' : a?.status === 'api-key' ? '使用 DEEPSEEK_API_KEY · 官方余额' : a?.status === 'signed-out' ? '未登录 DeepSeek 账号' : '账号状态未知';
     const wallets = a?.balance?.ready ? (a.balance.wallets || []) : [];
     const bonus = a?.balance?.ready ? (a.balance.bonusWallets || []) : [];
     const rows = wallets.length

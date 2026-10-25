@@ -909,29 +909,37 @@ export function apply(ctx) {
       }
       if (req.method === 'GET' && path === `${BASE}/api/account`) {
         const account = ctx.get?.('accountController') || ctx.accountController
+        const credentials = ctx.get?.('credentials') || ctx.credentials
         const fallback = {
-          available: Boolean(account),
+          available: Boolean(account || credentials),
           status: 'unknown',
           links: { topUpUrl: 'https://platform.deepseek.com/top_up', usageUrl: 'https://platform.deepseek.com/usage' },
           balance: null,
         }
-        if (!account) { json(res, 200, fallback); return }
-        try {
-          const state = await account.getState()
-          const links = state?.links || fallback.links
-          let balance = null
+        if (!account && !credentials) { json(res, 200, { ...fallback, available: false }); return }
+        let state = null
+        try { if (account) state = await account.getState() } catch (_) {}
+        const links = state?.links || fallback.links
+        let balance = null
+        let status = String(state?.status || 'unknown')
+        const client = {
+          version: 'mobilevc/0.1.0',
+          locale: 'zh-CN',
+          timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+        }
+
+        // Prefer the signed-in Platform account. When DSH is using a raw
+        // DEEPSEEK_API_KEY instead, fall back to the official user/balance API.
+        if (account && status === 'credential-stored') {
           try {
             const raw = await Promise.race([
-              account.getBalance({
-                version: 'mobilevc/0.1.0',
-                locale: 'zh-CN',
-                timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
-              }),
+              account.getBalance(client),
               new Promise((_, reject) => setTimeout(() => reject(new Error('balance timeout')), 8000)),
             ])
             if (raw?.status === 'ready') {
               balance = {
                 ready: true,
+                source: 'account',
                 wallets: Array.isArray(raw.value) ? raw.value : [],
                 bonusWallets: Array.isArray(raw.bonusWallets) ? raw.bonusWallets : [],
               }
@@ -941,15 +949,45 @@ export function apply(ctx) {
           } catch (error) {
             balance = { ready: false, error: String(error?.message || error).slice(0, 160) }
           }
-          json(res, 200, {
-            available: true,
-            status: String(state?.status || 'unknown'),
-            links: { topUpUrl: String(links.topUpUrl || fallback.links.topUpUrl), usageUrl: String(links.usageUrl || fallback.links.usageUrl) },
-            balance,
-          })
-        } catch (error) {
-          json(res, 200, { ...fallback, available: true, status: 'error', error: String(error?.message || error).slice(0, 160) })
         }
+
+        if (!balance?.ready && credentials) {
+          try {
+            const resolved = await credentials.resolve('DEEPSEEK_API_KEY')
+            if (resolved?.value) {
+              const ac = new AbortController()
+              const timer = setTimeout(() => ac.abort(), 8000)
+              let raw = null
+              try {
+                const response = await fetch('https://api.deepseek.com/user/balance', {
+                  headers: { Authorization: `Bearer ${resolved.value}`, Accept: 'application/json' },
+                  signal: ac.signal,
+                })
+                if (!response.ok) throw new Error(`balance HTTP ${response.status}`)
+                raw = await response.json()
+              } finally { clearTimeout(timer) }
+              const infos = Array.isArray(raw?.balance_infos) ? raw.balance_infos : []
+              balance = {
+                ready: true,
+                source: 'api-key',
+                wallets: infos.map((item) => ({ currency: String(item.currency || 'CNY'), balance: String(item.total_balance ?? '0') })),
+                bonusWallets: infos
+                  .filter((item) => Number(item.granted_balance) > 0)
+                  .map((item) => ({ currency: String(item.currency || 'CNY'), balance: String(item.granted_balance) })),
+              }
+              status = 'api-key'
+            }
+          } catch (error) {
+            if (!balance) balance = { ready: false, error: String(error?.message || error).slice(0, 160) }
+          }
+        }
+
+        json(res, 200, {
+          available: true,
+          status,
+          links: { topUpUrl: String(links.topUpUrl || fallback.links.topUpUrl), usageUrl: String(links.usageUrl || fallback.links.usageUrl) },
+          balance,
+        })
         return
       }
       if (req.method === 'GET' && path === `${BASE}/api/push/key`) {
