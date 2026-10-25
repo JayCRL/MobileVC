@@ -684,6 +684,7 @@ export function apply(ctx) {
   let listCache = { at: 0, value: null }
   const activeFollows = new Map()
   const pendingApprovals = new Map()
+  const approvalLog = (...args) => { try { ctx.logger?.info?.('[mobilevc approval]', ...args) } catch {} }
   const mobilePresence = new Map()
   const PRESENCE_TTL = 45_000
   let vapidPublic = ''
@@ -1201,9 +1202,11 @@ export function apply(ctx) {
         }
         const entry = pendingApprovals.get(id)
         if (!entry) {
+          approvalLog('click stale', id, 'pending', [...pendingApprovals.keys()].join(','))
           json(res, 200, { ok: false, stale: true })
           return
         }
+        approvalLog('click resolved', id, outcome)
         pendingApprovals.delete(id)
         entry.resolve(outcome)
         json(res, 200, { ok: true })
@@ -1444,22 +1447,38 @@ export function apply(ctx) {
   // recent presence heartbeat; otherwise the desktop/Remote answerer gets it.
   ctx.effect(() => ctx.on('approval/request', async (req, next) => {
     const sid = String(req?.agent?.session?.id ?? '')
-    if (!sid || !presenceAlive(sid)) return next()
+    const presence = Boolean(sid && presenceAlive(sid))
+    approvalLog('incoming', { sid: sid.slice(0, 24), presence, tool: req?.toolName, callId: req?.callId })
+    if (!sid || !presence) return next()
     let asked
+    let unresolved = null
     try {
       const events = req.agent.session.snapshotEvents()
+      const decided = new Set()
+      for (const event of events) {
+        if (event?.type === 'approval/decided' && event.data?.id) decided.add(String(event.data.id))
+      }
       for (let i = events.length - 1; i >= 0; i -= 1) {
         const event = events[i]
         if (event?.type !== 'approval/asked') continue
-        if (event.data?.toolName !== req.toolName) continue
-        if (req.callId && event.data?.callId && String(event.data.callId) !== String(req.callId)) continue
-        asked = event.data
+        const data = event.data
+        if (!data?.id || decided.has(String(data.id))) continue
+        if (!unresolved) unresolved = data
+        if (data.toolName !== req.toolName) continue
+        if (req.callId && data.callId && String(data.callId) !== String(req.callId)) continue
+        asked = data
         break
       }
-    } catch {
+      if (!asked) asked = unresolved
+    } catch (error) {
+      approvalLog('snapshot failed', String(error?.message || error))
       return next()
     }
-    if (!asked?.id || pendingApprovals.has(String(asked.id))) return next()
+    if (!asked?.id || pendingApprovals.has(String(asked.id))) {
+      approvalLog('no claim', { hasAsked: Boolean(asked?.id), pending: [...pendingApprovals.keys()].join(',') })
+      return next()
+    }
+    approvalLog('claiming', String(asked.id), 'events', req.agent.session.snapshotEvents().length)
     return await new Promise((resolve) => {
       const id = String(asked.id)
       const entry = { resolve, next, sessionId: sid }
@@ -1468,6 +1487,7 @@ export function apply(ctx) {
         if (pendingApprovals.get(id) === entry) pendingApprovals.delete(id)
       }
       req.signal?.addEventListener('abort', () => {
+        approvalLog('aborted', id)
         done()
         resolve('cancelled')
       }, { once: true })
