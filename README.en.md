@@ -43,6 +43,7 @@ It is not a second Agent and not another relay or session store. Every read and 
 - **Trace** — user → thinking → tool → reply → compaction timeline; simple mode groups thinking/tool chains and folds raw English/tool args, with a full-mode toggle
 - **Files** — real workspace, breadcrumbs and subdirectory browsing
 - **Plugin manager** — real `pluginManager` list and toggles
+- **Account balance** — live balance chip and automatic official DeepSeek top-up when credit runs out
 - **Background jobs** — browse DSH jobs, read output, stop; long commands no longer block a foreground wait
 - **Web Push** — completion / failure / approval notifications; iOS 16.4+ and Home Screen required
 - **Interjections** — show queued steering, edit/remove, or steer immediately
