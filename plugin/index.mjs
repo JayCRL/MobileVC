@@ -6,7 +6,7 @@
  * session-log writer, no copy of the state machine.
  */
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { appendFile, chmod, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -684,9 +684,16 @@ export function apply(ctx) {
   let listCache = { at: 0, value: null }
   const activeFollows = new Map()
   const pendingApprovals = new Map()
-  const approvalLog = (...args) => { try { ctx.logger?.info?.('[mobilevc approval]', ...args) } catch {} }
   const mobilePresence = new Map()
+  const mobileKnown = new Map()
   const PRESENCE_TTL = 45_000
+  const MOBILE_KNOWN_TTL = 10 * 60_000
+  const APPROVAL_LOG = join(DSH_STATE, 'mobilevc-approval.log')
+  const approvalLog = (...args) => {
+    const line = `${new Date().toISOString()} ${args.map((value) => typeof value === 'string' ? value : JSON.stringify(value)).join(' ')}\n`
+    void appendFile(APPROVAL_LOG, line, { mode: 0o600 }).catch(() => {})
+  }
+  const touchMobile = (sid) => { if (sid) mobileKnown.set(sid, Date.now() + MOBILE_KNOWN_TTL) }
   let vapidPublic = ''
   let pushReady = false
 
@@ -1071,6 +1078,7 @@ export function apply(ctx) {
         const sid = String(body.sessionId ?? '')
         if (!sid) { json(res, 400, { error: 'sessionId is required' }); return }
         mobilePresence.set(sid, Date.now() + PRESENCE_TTL)
+        touchMobile(sid)
         json(res, 200, { ok: true })
         return
       }
@@ -1208,6 +1216,7 @@ export function apply(ctx) {
         }
         approvalLog('click resolved', id, outcome)
         pendingApprovals.delete(id)
+        if (entry.timer) clearTimeout(entry.timer)
         entry.resolve(outcome)
         json(res, 200, { ok: true })
         return
@@ -1270,6 +1279,7 @@ export function apply(ctx) {
           try { res.write(': ping\n\n') } catch { /* closed */ }
         }, 15000)
         activeFollows.set(sid, (activeFollows.get(sid) || 0) + 1)
+        touchMobile(sid)
         let closed = false
         const close = () => {
           if (closed) return
@@ -1426,6 +1436,7 @@ export function apply(ctx) {
     for (const [approvalId, entry] of pendingApprovals) {
       if (entry.sessionId !== sid) continue
       pendingApprovals.delete(approvalId)
+      if (entry.timer) clearTimeout(entry.timer)
       Promise.resolve().then(() => entry.next()).then(
         (outcome) => entry.resolve(outcome),
         () => entry.resolve('unavailable'),
@@ -1445,54 +1456,69 @@ export function apply(ctx) {
 
   // Mobile answers first when this session has an open follow stream OR a
   // recent presence heartbeat; otherwise the desktop/Remote answerer gets it.
-  ctx.effect(() => ctx.on('approval/request', async (req, next) => {
-    const sid = String(req?.agent?.session?.id ?? '')
-    const presence = Boolean(sid && presenceAlive(sid))
-    approvalLog('incoming', { sid: sid.slice(0, 24), presence, tool: req?.toolName, callId: req?.callId })
-    if (!sid || !presence) return next()
-    let asked
-    let unresolved = null
-    try {
-      const events = req.agent.session.snapshotEvents()
-      const decided = new Set()
-      for (const event of events) {
-        if (event?.type === 'approval/decided' && event.data?.id) decided.add(String(event.data.id))
+  approvalLog('plugin apply · approval listener registering')
+  ctx.effect(() => {
+    approvalLog('approval listener registered')
+    return ctx.on('approval/request', async (req, next) => {
+      const sid = String(req?.agent?.session?.id ?? '')
+      const presence = Boolean(sid && presenceAlive(sid))
+      const known = Boolean(sid && (mobilePresence.get(sid) || 0) > Date.now() - 60_000)
+      const recentMobile = Boolean(sid && (mobileKnown.get(sid) || 0) > Date.now())
+      approvalLog('incoming', { sid: sid.slice(0, 24), presence, known, recentMobile, tool: req?.toolName, callId: req?.callId })
+      if (!sid || (!presence && !recentMobile)) return next()
+      let asked
+      let unresolved = null
+      try {
+        const events = req.agent.session.snapshotEvents()
+        const decided = new Set()
+        for (const event of events) {
+          if (event?.type === 'approval/decided' && event.data?.id) decided.add(String(event.data.id))
+        }
+        for (let i = events.length - 1; i >= 0; i -= 1) {
+          const event = events[i]
+          if (event?.type !== 'approval/asked') continue
+          const data = event.data
+          if (!data?.id || decided.has(String(data.id))) continue
+          if (!unresolved) unresolved = data
+          if (data.toolName !== req.toolName) continue
+          if (req.callId && data.callId && String(data.callId) !== String(req.callId)) continue
+          asked = data
+          break
+        }
+        if (!asked) asked = unresolved
+      } catch (error) {
+        approvalLog('snapshot failed', String(error?.message || error))
+        return next()
       }
-      for (let i = events.length - 1; i >= 0; i -= 1) {
-        const event = events[i]
-        if (event?.type !== 'approval/asked') continue
-        const data = event.data
-        if (!data?.id || decided.has(String(data.id))) continue
-        if (!unresolved) unresolved = data
-        if (data.toolName !== req.toolName) continue
-        if (req.callId && data.callId && String(data.callId) !== String(req.callId)) continue
-        asked = data
-        break
+      if (!asked?.id || pendingApprovals.has(String(asked.id))) {
+        approvalLog('no claim', { hasAsked: Boolean(asked?.id), pending: [...pendingApprovals.keys()].join(',') })
+        return next()
       }
-      if (!asked) asked = unresolved
-    } catch (error) {
-      approvalLog('snapshot failed', String(error?.message || error))
-      return next()
-    }
-    if (!asked?.id || pendingApprovals.has(String(asked.id))) {
-      approvalLog('no claim', { hasAsked: Boolean(asked?.id), pending: [...pendingApprovals.keys()].join(',') })
-      return next()
-    }
-    approvalLog('claiming', String(asked.id), 'events', req.agent.session.snapshotEvents().length)
-    return await new Promise((resolve) => {
-      const id = String(asked.id)
-      const entry = { resolve, next, sessionId: sid }
-      pendingApprovals.set(id, entry)
-      const done = () => {
-        if (pendingApprovals.get(id) === entry) pendingApprovals.delete(id)
-      }
-      req.signal?.addEventListener('abort', () => {
-        approvalLog('aborted', id)
-        done()
-        resolve('cancelled')
-      }, { once: true })
-    })
-  }, { prepend: true }))
+      approvalLog('claiming', String(asked.id), 'events', req.agent.session.snapshotEvents().length)
+      return await new Promise((resolve) => {
+        const id = String(asked.id)
+        const entry = { resolve, next, sessionId: sid, timer: null }
+        pendingApprovals.set(id, entry)
+        // If nobody answers on the phone, hand the question back to the
+        // desktop chain instead of leaving the turn hanging forever.
+        entry.timer = setTimeout(() => {
+          if (pendingApprovals.get(id) !== entry) return
+          approvalLog('save timeout, delegating', id)
+          pendingApprovals.delete(id)
+          Promise.resolve().then(() => entry.next()).then(resolve, () => resolve('unavailable'))
+        }, 45_000)
+        const done = () => {
+          if (entry.timer) clearTimeout(entry.timer)
+          if (pendingApprovals.get(id) === entry) pendingApprovals.delete(id)
+        }
+        req.signal?.addEventListener('abort', () => {
+          approvalLog('aborted', id)
+          done()
+          resolve('cancelled')
+        }, { once: true })
+      })
+    }, { prepend: true })
+  })
   const pushNotify = (sid, title, body, tag) => {
     if (!sid || presenceAlive(sid)) return
     void sendPush({ title, body, url: '/mobilevc/', tag })
