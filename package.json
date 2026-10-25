@@ -16,7 +16,9 @@
     "tools/server.py",
     "cordis.patch.yml",
     "README.md",
+    "README.en.md",
     "INSTALL.md",
+    "INSTALL.en.md",
     "LICENSE"
   ],
   "engines": {
