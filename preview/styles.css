@@ -73,7 +73,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+html, body { margin: 0; padding: 0; overflow-x: hidden; overscroll-behavior-x: none; }
 body {
   background: #e9eef6;
   color: #111827;
@@ -1590,17 +1590,6 @@ body.bare {
 }
 .run-btn[hidden] { display: none; }
 .run-btn svg { width: 14px; height: 14px; }
-.run-pulse {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--danger);
-  animation: pulse 1s infinite;
-}
-
 .attach-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .attach-option {
   display: flex;
@@ -1645,3 +1634,70 @@ body.bare {
 .user-file-main { min-width: 0; display: flex; flex-direction: column; }
 .user-file-main b { font-size: 10.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
 .user-file-main span { font-size: 8.5px; opacity: .7; }
+
+
+/* ---------- portrait-only gate ---------- */
+.orientation-gate {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: var(--bg);
+  color: var(--text);
+}
+.og-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.og-card b { font-size: 18px; }
+.og-card span { color: var(--muted); font-size: 13px; }
+.og-phone {
+  width: 42px;
+  height: 70px;
+  border: 2px solid var(--primary);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  position: relative;
+}
+.og-phone::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--primary);
+  transform: translateX(-50%);
+}
+@media (orientation: landscape) and (max-height: 600px) {
+  html, body { overflow: hidden !important; }
+  .orientation-gate { display: flex; }
+  .stage { display: none !important; }
+}
+
+
+/* ---------- interjection queue ---------- */
+.queue-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.queue-item {
+  border: 0.5px solid var(--outline-soft);
+  background: var(--surface-low);
+  border-radius: 14px;
+  padding: 12px;
+}
+.queue-text {
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.queue-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.queue-actions .btn { width: auto; flex: 1 1 auto; min-width: 72px; padding: 7px 10px; font-size: 12px; }

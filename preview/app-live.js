@@ -54,6 +54,9 @@
     fileLoading: false,
     fileSeq: 0,
     attachments: [],
+    optimisticUser: null,
+    queue: [],
+    queueSeq: 0,
     memoryDefaultPath: '',
     engine: 'DSH',
     model: '',
@@ -159,8 +162,11 @@
       history.replaceState(null, '', `#/chat/${id}`);
       render();
       requestAnimationFrame(scrollContentBottom);
-      if (INTERACTIVE) startFollow();
-      else if (data.state === 'running') startPolling();
+      if (INTERACTIVE) {
+        pingPresence();
+        refreshQueue();
+        startFollow();
+      } else if (data.state === 'running') startPolling();
     } catch (e) {
       stopPolling();
       stopFollow();
@@ -173,6 +179,7 @@
 
   function applyDetail(data) {
     state.session = data;
+    state.optimisticUser = null;
     state.blocks = data.blocks || [];
     state.approvals = data.approvals || [];
     state.engine = data.engine || state.engine;
@@ -380,10 +387,23 @@
     }
   }
 
+  function removeOptimisticUser() {
+    const opt = state.optimisticUser;
+    if (!opt) return;
+    state.optimisticUser = null;
+    state.blocks = state.blocks.filter((block) => block !== opt.block);
+    try {
+      const selector = `[data-optimistic="${CSS.escape(opt.rpcId)}"]`;
+      document.querySelector(selector)?.remove();
+    } catch (_) {}
+  }
+
   function applyPatch(patch) {
     if (!patch || !state.session) return;
     const el = $('#content');
     const stick = isNearBottom(el);
+    if (patch.userRpcId && state.optimisticUser?.rpcId === patch.userRpcId) removeOptimisticUser();
+    else if (state.optimisticUser && patch.blocks?.some((b) => b.type === 'user' && b.text === state.optimisticUser.text)) removeOptimisticUser();
     if (patch.title) state.session.title = patch.title;
     if (patch.model) state.model = patch.model;
     if (patch.engine) state.engine = patch.engine;
@@ -518,8 +538,10 @@
       } else {
         render();
       }
-      if (INTERACTIVE) startFollow({ force: forceFollow });
-      else if (data.state === 'running') startPolling();
+      if (INTERACTIVE) {
+        pingPresence();
+        startFollow({ force: forceFollow });
+      } else if (data.state === 'running') startPolling();
       if (!silent) toast('已刷新 DSH 数据');
     } catch (e) {
       if (!silent) toast(`刷新失败：${e.message}`);
@@ -531,7 +553,7 @@
       const data = await api('sessions?limit=12');
       state.sessions = data.sessions || [];
       const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
-      if (title === '会话') setSheetBody(sessionsBody());
+      if (title.startsWith('会话')) setSheetBody(sessionsBody());
     } catch (_) {
       /* keep the current list on a transient failure */
     }
@@ -563,6 +585,99 @@
       /* transient; the next tick retries */
     } finally {
       state.syncBusy = false;
+    }
+  }
+
+  async function refreshQueue() {
+    if (!INTERACTIVE || !state.session?.id) return;
+    const sid = state.session.id;
+    const seq = ++state.queueSeq;
+    try {
+      const data = await api(`queue?session=${encodeURIComponent(sid)}`);
+      if (seq !== state.queueSeq || state.session?.id !== sid) return;
+      state.queue = data.items || [];
+      updateQueueChip();
+      const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
+      if (title.startsWith('插话')) setSheetBody(queueBody());
+    } catch (_) {
+      /* queue is optional; keep the current list */
+    }
+  }
+
+  function updateQueueChip() {
+    const chips = document.querySelector('.dock .rail .chips');
+    if (!chips) return;
+    let button = chips.querySelector('[data-act="queue"]');
+    if (!state.queue.length) {
+      button?.remove();
+      return;
+    }
+    if (!button) {
+      button = document.createElement('button');
+      button.className = 'tchip';
+      button.dataset.act = 'queue';
+      chips.appendChild(button);
+    }
+    button.innerHTML = `${icon('chat')}<span>插话 · ${state.queue.length}</span>`;
+  }
+
+  function queueBody() {
+    const rows = state.queue.map((item) => `<div class="queue-item">
+      <div class="queue-text">${esc(item.text || '（无文本）')}</div>
+      <div class="queue-actions">
+        <button class="btn ghost" data-act="queue-edit" data-id="${esc(item.id)}">修改</button>
+        <button class="btn ghost" data-act="queue-remove" data-id="${esc(item.id)}">删除</button>
+        <button class="btn primary" data-act="queue-steer" data-id="${esc(item.id)}">立即插话</button>
+      </div>
+    </div>`).join('');
+    return `<div class="queue-list">${rows || '<div class="note">当前没有待处理的插话。</div>'}</div>
+      <div class="note">插话会在当前回合的步骤边界进入；点「立即插话」可让 DSH 在当前步骤后优先处理。</div>`;
+  }
+
+  async function queueSheet() {
+    openSheet({ title: '插话队列', sub: '执行中的待处理消息', body: queueBody() });
+    await refreshQueue();
+  }
+
+  function editQueue(id) {
+    const item = state.queue.find((x) => x.id === id);
+    if (!item) return;
+    openSheet({
+      title: '修改插话',
+      sub: '只修改仍在队列里的消息',
+      body: `<div class="field"><label>内容</label><textarea id="queue-edit" style="min-height:160px">${esc(item.text || '')}</textarea></div>
+        <div class="action-actions"><button class="btn ghost wide" data-act="queue">返回</button><button class="btn primary wide" data-act="queue-save" data-id="${esc(id)}">保存</button></div>`,
+    });
+  }
+
+  async function queueAction(id, action, text = '') {
+    if (!state.session?.id || !id) return;
+    try {
+      const r = await fetch(`${API}/queue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' },
+        body: JSON.stringify({ sessionId: state.session.id, itemId: id, action, text }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || `${r.status} ${r.statusText}`);
+      closeSheet();
+      await refreshQueue();
+      toast(action === 'edit' ? '插话已修改' : action === 'remove' ? '插话已删除' : '已立即插话');
+    } catch (e) {
+      toast(`插话操作失败：${e.message}`);
+    }
+  }
+
+  async function pingPresence() {
+    if (!INTERACTIVE || !state.session?.id || document.hidden) return;
+    try {
+      await fetch(`${API}/presence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' },
+        body: JSON.stringify({ sessionId: state.session.id }),
+      });
+    } catch (_) {
+      /* presence is best-effort; SSE remains the primary path */
     }
   }
 
@@ -677,6 +792,7 @@
     const text = (state.draft || '').trim();
     if (!text && state.attachments.length === 0) return;
     const pendingAttachments = state.attachments.map((a) => ({ kind: a.kind, name: a.name, mediaType: a.mediaType, data: a.data }));
+    const queued = Boolean(state.session.state === 'running');
     state.sending = true;
     updateDockStatus();
     try {
@@ -691,6 +807,7 @@
           text,
           attachments: pendingAttachments,
           requestId,
+          mode: 'queue',
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
@@ -720,9 +837,14 @@
         startFollow();
       }
       $('#composer')?.focus();
-      toast('已发送到 DSH');
+      if (queued) {
+        await refreshQueue();
+        if (state.queue.length) queueSheet();
+      }
+      toast(queued ? '已加入插话队列，可在这里修改或立即插话' : '已发送到 DSH');
     } catch (e) {
       state.sending = false;
+      removeOptimisticUser();
       updateDockStatus();
       toast(`发送失败：${e.message}`);
     }
@@ -793,7 +915,7 @@
   function chatBlock(b) {
     switch (b.type) {
       case 'user':
-        return `<div class="row user"><div class="bubble-user">${userImagesHtml(b.images)}${userFilesHtml(b.files)}${b.text ? `<div class="user-text">${esc(b.text)}</div>` : ''}</div></div>`;
+        return `<div class="row user"${b._optimistic ? ` data-optimistic="${esc(b._rpcId || '')}"` : ''}><div class="bubble-user">${userImagesHtml(b.images)}${userFilesHtml(b.files)}${b.text ? `<div class="user-text">${esc(b.text)}</div>` : ''}</div></div>`;
       case 'assistant':
         return `<div class="row"><div class="card-md">${b.html || esc(b.text || '')}</div></div>`;
       case 'thinking': {
@@ -904,13 +1026,14 @@
         <textarea id="composer" rows="1"${s && INTERACTIVE ? '' : ' readonly'} placeholder="${s ? (INTERACTIVE ? '输入消息，发送给 DSH…' : '在 DSH 中继续对话') : '打开一个会话'}">${s && INTERACTIVE ? esc(state.draft) : ''}</textarea>
         ${s ? `<button class="img-btn plus-btn" data-act="attach" aria-label="添加图片或文件">${icon('plus')}</button>` : ''}
         <button class="send-btn${state.sending ? ' busy' : ''}" data-act="${s && INTERACTIVE ? 'send' : 'open-dsh'}" aria-label="${s && INTERACTIVE ? '发送' : '在 DSH 打开'}">${icon('up')}</button>
-        ${s ? `<button class="run-btn" data-act="cancel" aria-label="运行中，点击停止" title="运行中 · 点击停止" hidden><span class="run-pulse"></span>${icon('stop')}</button>` : ''}
+        ${s ? `<button class="run-btn" data-act="cancel" aria-label="运行中，点击停止" title="运行中 · 点击停止" hidden>${icon('stop')}</button>` : ''}
       </div>
     </div>`;
     requestAnimationFrame(() => {
       measureDock();
       updateAttachStrip();
       updateDockAction();
+      updateQueueChip();
     });
   }
   function measureDock() {
@@ -983,7 +1106,7 @@
       const data = await api('sessions?limit=12');
       state.sessions = data.sessions || [];
       const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
-      if (title === '会话') setSheetBody(sessionsBody());
+      if (title.startsWith('会话')) setSheetBody(sessionsBody());
     } catch (_) {
       /* keep the cached list if refresh fails */
     }
@@ -1197,7 +1320,7 @@
       body: `<div class="list">
         <div class="lrow"><span class="ico-badge">${icon('chat')}</span><div class="l-main"><div class="l-title">DSH 连接</div><div class="l-sub">${esc(location.host)} · 复用登录门</div></div><span class="chip green">已连接</span></div>
         <div class="lrow"><span class="ico-badge">${icon('plus')}</span><div class="l-main"><div class="l-title">iOS 全屏</div><div class="l-sub">Safari 分享 → 添加到主屏幕；从主屏幕启动才没有地址栏</div></div></div>
-        <div class="lrow"><span class="ico-badge">${icon(state.theme === 'light' ? 'moon' : 'sun')}</span><div class="l-main"><div class="l-title">深色模式</div><div class="l-sub">只影响这个预览页</div></div><button class="switch ${state.theme === 'dark' ? 'on' : ''}" data-act="theme"></button></div>
+        <div class="lrow"><span class="ico-badge">${icon(state.theme === 'light' ? 'moon' : 'sun')}</span><div class="l-main"><div class="l-title">深色模式</div><div class="l-sub">只影响 MobileVC 界面</div></div><button class="switch ${state.theme === 'dark' ? 'on' : ''}" data-act="theme"></button></div>
         <div class="lrow"><span class="ico-badge gray">${icon('lock')}</span><div class="l-main"><div class="l-title">${INTERACTIVE ? '已接入 DSH 运行时' : '只读预览'}</div><div class="l-sub">${INTERACTIVE ? '发送走 sessionController；审批仍在 DSH' : '发送、审批、模型切换在 DSH 内完成'}</div></div></div>
       </div>
       <button class="btn primary wide" data-act="open-dsh">打开 DSH</button>
@@ -1333,6 +1456,11 @@
     if (act === 'models') { modelsSheet(); return; }
     if (act === 'status') { statusSheet(); return; }
     if (act === 'settings') { settingsSheet(); return; }
+    if (act === 'queue') { queueSheet(); return; }
+    if (act === 'queue-edit') { editQueue(t.dataset.id || ''); return; }
+    if (act === 'queue-remove') { queueAction(t.dataset.id || '', 'remove'); return; }
+    if (act === 'queue-steer') { queueAction(t.dataset.id || '', 'steer'); return; }
+    if (act === 'queue-save') { queueAction(t.dataset.id || '', 'edit', $('#queue-edit')?.value || ''); return; }
     if (act === 'refresh') { refreshSession({ forceFollow: true }); return; }
     if (act === 'send') { sendMessage(); return; }
     if (act === 'cancel') { cancelRun(); return; }
@@ -1353,7 +1481,10 @@
     if (act === 'theme') {
       state.theme = state.theme === 'light' ? 'dark' : 'light';
       try { localStorage.setItem('mobilevc.theme', state.theme); } catch (_) {}
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', state.theme === 'dark' ? '#000000' : '#F6F8FC');
       render();
+      if (document.querySelector('#sheet-root .sheet-head h2')?.textContent?.startsWith('设置')) settingsSheet();
       return;
     }
     if (act === 'open-dsh') {
@@ -1442,6 +1573,13 @@
   }
   installZoomLock();
 
+  // Best-effort portrait lock. Android/PWA honors this after a gesture;
+  // iOS ignores it, so the CSS orientation gate is the visual fallback.
+  function lockPortrait() {
+    try { screen.orientation?.lock?.('portrait').catch(() => {}); } catch (_) {}
+  }
+  document.addEventListener('pointerdown', lockPortrait, { once: true });
+
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
@@ -1459,6 +1597,8 @@
   // Poll only when the live stream has gone quiet. During an active stream
   // this is a no-op; when the stream is silently dead it recovers in ~2.5s.
   setInterval(syncCurrentSession, 2500);
+  setInterval(pingPresence, 15000);
+  setInterval(refreshQueue, 2500);
 
   loadSessions();
 })();

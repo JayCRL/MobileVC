@@ -531,7 +531,12 @@ function eventPatch(event) {
     const text = textOfContent(content)
     const images = contentImages(content, data.meta)
     const files = contentFiles(content)
-    return text || images.length || files.length ? { blocks: [{ type: 'user', text: text.slice(0, 12000), images, files }] } : null
+    return text || images.length || files.length
+      ? {
+          blocks: [{ type: 'user', text: text.slice(0, 12000), images, files }],
+          userRpcId: String(data.source?.rpcId ?? ''),
+        }
+      : null
   }
   if (type === 'assistant/message') {
     const content = Array.isArray(data.message?.content) ? data.message.content : []
@@ -632,6 +637,8 @@ export function apply(ctx) {
   let listCache = { at: 0, value: null }
   const activeFollows = new Map()
   const pendingApprovals = new Map()
+  const mobilePresence = new Map()
+  const PRESENCE_TTL = 45_000
 
   const json = (res, status, body) => {
     const text = JSON.stringify(body)
@@ -748,6 +755,58 @@ export function apply(ctx) {
         json(res, 200, inspectToBlocks(await inspect(id)))
         return
       }
+      if (req.method === 'GET' && path === `${BASE}/api/queue`) {
+        const sid = String(url.searchParams.get('session') ?? '')
+        if (!sid) { json(res, 400, { error: 'session is required' }); return }
+        try {
+          const agent = await ctx.sessionController.resolveAgent(sid)
+          const items = [...(agent.inbox?.nextTurn ?? []), ...(agent.inbox?.nextStep ?? [])].map((message) => ({
+            id: String(message.id ?? ''),
+            text: textOfContent(message.content).slice(0, 4000),
+            rpcId: String(message.source?.rpcId ?? ''),
+          })).filter((item) => item.id)
+          json(res, 200, { items })
+        } catch (error) {
+          json(res, 200, { items: [], error: error instanceof Error ? error.message : String(error) })
+        }
+        return
+      }
+      if (req.method === 'POST' && path === `${BASE}/api/queue`) {
+        if (req.headers['x-mobilevc'] !== '1') { json(res, 403, { error: 'missing mobilevc marker' }); return }
+        const body = await readJson(req)
+        const sid = String(body.sessionId ?? '')
+        const itemId = String(body.itemId ?? '')
+        const actionName = String(body.action ?? '')
+        if (!sid || !itemId || !['edit', 'remove', 'steer'].includes(actionName)) {
+          json(res, 400, { error: 'sessionId, itemId and action are required' })
+          return
+        }
+        let action
+        if (actionName === 'edit') {
+          const text = String(body.text ?? '').trim()
+          if (!text) { json(res, 400, { error: 'text is required' }); return }
+          action = { kind: 'edit', content: [{ type: 'text', text: text.slice(0, 20_000) }] }
+        } else {
+          action = { kind: actionName }
+        }
+        await ctx.sessionController.updateQueue({ sessionId: sid, itemId, action })
+        listCache = { at: 0, value: null }
+        cache.delete(sid)
+        json(res, 200, { ok: true })
+        return
+      }
+      if (req.method === 'POST' && path === `${BASE}/api/presence`) {
+        if (req.headers['x-mobilevc'] !== '1') {
+          json(res, 403, { error: 'missing mobilevc marker' })
+          return
+        }
+        const body = await readJson(req)
+        const sid = String(body.sessionId ?? '')
+        if (!sid) { json(res, 400, { error: 'sessionId is required' }); return }
+        mobilePresence.set(sid, Date.now() + PRESENCE_TTL)
+        json(res, 200, { ok: true })
+        return
+      }
       if (req.method === 'POST' && path === `${BASE}/api/prompt`) {
         if (req.headers['x-mobilevc'] !== '1') {
           json(res, 403, { error: 'missing mobilevc marker' })
@@ -762,6 +821,7 @@ export function apply(ctx) {
         }
         const content = []
         if (text) content.push({ type: 'text', text: text.slice(0, 20_000) })
+        const mode = body.mode === 'steer' ? 'steer' : 'queue'
         const attachments = Array.isArray(body.attachments) ? body.attachments.slice(0, 8) : []
         for (const att of attachments) {
           const kind = String(att?.kind ?? '')
@@ -789,7 +849,7 @@ export function apply(ctx) {
           {
             requestId: String(body.requestId ?? `mvc-${randomUUID()}`),
             sessionId,
-            mode: 'queue',
+            mode,
             content,
             clientTimeZone: String(body.clientTimeZone ?? 'UTC'),
           },
@@ -950,11 +1010,9 @@ export function apply(ctx) {
           const remaining = Math.max(0, (activeFollows.get(sid) || 1) - 1)
           if (remaining === 0) {
             activeFollows.delete(sid)
-            for (const [approvalId, entry] of pendingApprovals) {
-              if (entry.sessionId !== sid) continue
-              pendingApprovals.delete(approvalId)
-              Promise.resolve().then(() => entry.next()).then((outcome) => entry.resolve(outcome), () => entry.resolve('unavailable'))
-            }
+            // The page may be reconnecting. Keep approvals while presence is
+            // fresh; reap only after the heartbeat expires.
+            if ([...pendingApprovals.values()].some((entry) => entry.sessionId === sid)) reapPending(sid)
           } else {
             activeFollows.set(sid, remaining)
           }
@@ -1093,11 +1151,34 @@ export function apply(ctx) {
     }
   }
 
-  // Mobile answers first when this session has an open follow stream; otherwise
-  // the desktop/Remote answerer gets the request via next().
+  const presenceAlive = (sid) => (activeFollows.get(sid) || 0) > 0 || (mobilePresence.get(sid) || 0) > Date.now()
+
+  const delegatePending = (sid) => {
+    for (const [approvalId, entry] of pendingApprovals) {
+      if (entry.sessionId !== sid) continue
+      pendingApprovals.delete(approvalId)
+      Promise.resolve().then(() => entry.next()).then(
+        (outcome) => entry.resolve(outcome),
+        () => entry.resolve('unavailable'),
+      )
+    }
+  }
+
+  const reapPending = (sid) => {
+    const has = [...pendingApprovals.values()].some((entry) => entry.sessionId === sid)
+    if (!has) return
+    if (presenceAlive(sid)) {
+      setTimeout(() => reapPending(sid), 5000)
+      return
+    }
+    delegatePending(sid)
+  }
+
+  // Mobile answers first when this session has an open follow stream OR a
+  // recent presence heartbeat; otherwise the desktop/Remote answerer gets it.
   ctx.effect(() => ctx.on('approval/request', async (req, next) => {
     const sid = String(req?.agent?.session?.id ?? '')
-    if (!sid || !(activeFollows.get(sid) > 0)) return next()
+    if (!sid || !presenceAlive(sid)) return next()
     let asked
     try {
       const events = req.agent.session.snapshotEvents()

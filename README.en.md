@@ -33,6 +33,7 @@ It is not a second Agent and not another relay or session store. Every read and 
 - **Trace** — user → thinking → tool → reply → compaction timeline
 - **Files** — real workspace, breadcrumbs and subdirectory browsing
 - **Plugin manager** — real `pluginManager` list and toggles
+- **Interjections** — show queued steering, edit/remove, or steer immediately
 - **PWA** — home-screen install, standalone, safe-area, no pinch/double-tap zoom
 - **Visible failures** — quota/model failures become error cards instead of silence
 
