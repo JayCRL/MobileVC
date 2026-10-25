@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MobileVC — 把 DeepSeek Harness 装进手机</title>
+  <meta name="description" content="MobileVC 是 DeepSeek Harness 的手机端界面：真实会话、插话、审批、后台任务、执行迹与 Web Push。不是另一个 Agent，也没有模拟数据。">
+  <meta name="theme-color" content="#070b14">
+  <meta name="color-scheme" content="dark">
+  <link rel="canonical" href="https://mobilevc.top/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="MobileVC — DSH 的手机端">
+  <meta property="og:description" content="连接你正在运行的 DeepSeek Harness。真实运行时，手机上的会话与审批。">
+  <meta property="og:image" content="https://mobilevc.top/site/media/demo-cover.png">
+  <link rel="icon" type="image/png" href="site/assets/favicon.png">
+  <link rel="stylesheet" href="site/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <header class="site-header" id="header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#top" aria-label="MobileVC 首页">
+        <img src="site/assets/logo.png" alt="" width="34" height="34">
+        <span>MobileVC</span>
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="打开菜单" aria-expanded="false">
+        <span></span><span></span>
+      </button>
+      <nav class="nav" id="nav">
+        <a href="#why">为什么</a>
+        <a href="#features">功能</a>
+        <a href="#screens">界面</a>
+        <a href="#demo">演示</a>
+        <a href="#start">开始</a>
+      </nav>
+      <div class="header-actions">
+        <a class="ghost-btn" href="https://github.com/JayCRL/MobileVC" target="_blank" rel="noopener">GitHub</a>
+        <a class="primary-btn" href="https://11408.online/mobilevc/" target="_blank" rel="noopener">在线体验</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero wrap">
+      <div class="hero-copy" data-reveal>
+        <div class="eyebrow"><span class="pulse"></span> DeepSeek Harness · 手机端界面</div>
+        <h1>把 <em>DeepSeek Harness</em><br>装进手机。</h1>
+        <p class="lede">连接你正在运行的 DSH。不是另一个 Agent，也不是模拟数据——手机直接成为同一条会话的另一个入口。</p>
+        <div class="hero-actions">
+          <a class="primary-btn large" href="https://11408.online/mobilevc/" target="_blank" rel="noopener">打开 MobileVC <span>↗</span></a>
+          <a class="text-btn" href="#start">看怎么装 <span>→</span></a>
+        </div>
+        <div class="hero-note">
+          <span>真实运行时</span><span>SSE 实时流</span><span>PWA</span><span>无需中转</span>
+        </div>
+      </div>
+      <div class="hero-visual" data-reveal>
+        <div class="halo"></div>
+        <figure class="phone">
+          <div class="phone-speaker"></div>
+          <img src="site/media/chat.png" alt="MobileVC 会话界面" width="780" height="1688">
+          <div class="phone-glow"></div>
+        </figure>
+        <div class="float-card fc-live">
+          <span class="fc-dot"></span>
+          <div><b>DSH · 运行中</b><small>实时流已连接</small></div>
+        </div>
+        <div class="float-card fc-approval">
+          <span class="fc-icon">✓</span>
+          <div><b>审批在手机</b><small>不用回电脑</small></div>
+        </div>
+        <div class="float-card fc-trace">
+          <span class="fc-icon">迹</span>
+          <div><b>执行迹</b><small>默认简洁中文</small></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track">
+        <span>REAL DSH RUNTIME</span><i>·</i><span>SESSIONS</span><i>·</i><span>STEER / QUEUE</span><i>·</i><span>APPROVALS</span><i>·</i><span>BACKGROUND JOBS</span><i>·</i><span>WEB PUSH</span><i>·</i><span>TRACE</span><i>·</i><span>PWA</span><i>·</i>
+        <span>REAL DSH RUNTIME</span><i>·</i><span>SESSIONS</span><i>·</i><span>STEER / QUEUE</span><i>·</i><span>APPROVALS</span><i>·</i><span>BACKGROUND JOBS</span><i>·</i><span>WEB PUSH</span><i>·</i><span>TRACE</span><i>·</i><span>PWA</span><i>·</i>
+      </div>
+    </div>
+
+    <section class="section wrap" id="why">
+      <div class="section-head" data-reveal>
+        <div class="eyebrow">为什么不是另一个 App</div>
+        <h2>不是另一个 Agent，<br>只是 DSH 的手机界面。</h2>
+        <p>MobileVC 作为 DSH Host 插件运行。所有读写走同一个 <code>sessionController</code>，没有第二条 relay，没有复制一份状态机，也没有 mock。</p>
+      </div>
+      <div class="arch" data-reveal>
+        <div class="arch-node">
+          <span class="arch-kicker">01 · SURFACE</span>
+          <b>Phone / PWA</b>
+          <small>会话、输入、审批、后台任务</small>
+        </div>
+        <div class="arch-link"><span>HTTPS + SSE</span><i>→</i></div>
+        <div class="arch-node accent">
+          <span class="arch-kicker">02 · PLUGIN</span>
+          <b>MobileVC Host</b>
+          <small>同进程，直面 DSH 服务</small>
+        </div>
+        <div class="arch-link"><span>prompt / follow</span><i>→</i></div>
+        <div class="arch-node">
+          <span class="arch-kicker">03 · RUNTIME</span>
+          <b>DeepSeek Harness</b>
+          <small>模型、工具、审批、持久化</small>
+        </div>
+      </div>
+      <div class="code-card" data-reveal>
+        <div class="code-head"><span class="code-dots"><i></i><i></i><i></i></span><span>真实调用，不是演示数据</span><button class="copy-mini" data-copy="#arch-code">复制</button></div>
+        <pre id="arch-code"><code>// 浏览器 → MobileVC → DSH
+POST /mobilevc/api/prompt
+{ sessionId, text, mode: "queue" | "steer" }
+
+GET /mobilevc/api/follow?session=…
+event: durable / snapshot / assistant-stream
+
+// 审批
+approval/asked → 手机 → approval/decided</code></pre>
+      </div>
+    </section>
+
+    <section class="section wrap" id="features">
+      <div class="section-head" data-reveal>
+        <div class="eyebrow">为手机而做</div>
+        <h2>电脑上能做的，<br>在手机上也能做完。</h2>
+        <p>不是把桌面页面缩窄，而是把 DSH 的高频操作重新排进一块 6 英寸的屏幕。</p>
+      </div>
+      <div class="feature-grid">
+        <article class="feature feature-wide" data-reveal>
+          <div class="feature-icon">↯</div>
+          <h3>插话，先暂存再决定</h3>
+          <p>执行中发送的消息不会偷偷进入上下文。先停在「待处理插话」，再选择<strong>立即插话</strong>打断当前轮，或<strong>排队</strong>等当前轮结束。</p>
+          <div class="mini-pill-row"><span class="pill">steer</span><span class="pill">queue</span><span class="pill">不自动插入</span></div>
+        </article>
+        <article class="feature" data-reveal>
+          <div class="feature-icon">◉</div>
+          <h3>真实会话</h3>
+          <p>会话列表、历史、实时流与 durable 兜底。断线后自动恢复，不靠刷新。</p>
+        </article>
+        <article class="feature" data-reveal>
+          <div class="feature-icon">▣</div>
+          <h3>审批在手机上</h3>
+          <p>允许一次、拒绝、查看工具参数。手机 presence 先接住审批，不来回切电脑。</p>
+        </article>
+        <article class="feature" data-reveal>
+          <div class="feature-icon">▤</div>
+          <h3>后台任务</h3>
+          <p>长命令进后台，任务面板看状态、输出、耗时，必要时直接停止。</p>
+        </article>
+        <article class="feature" data-reveal>
+          <div class="feature-icon">⌁</div>
+          <h3>执行迹</h3>
+          <p>默认简洁模式：思考分组、工具链中文化、英文原文折叠；需要时再切完整。</p>
+        </article>
+        <article class="feature feature-wide" data-reveal>
+          <div class="feature-icon">◔</div>
+          <h3>离开页面，也能收到结果</h3>
+          <p>Web Push 在任务完成、失败、等待审批时通知你。iPhone 需 iOS 16.4+，并把 MobileVC 添加到主屏幕。</p>
+          <div class="mini-pill-row"><span class="pill">Web Push</span><span class="pill">iPhone 主屏幕</span><span class="pill">无需公网 IP</span></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section wrap" id="screens">
+      <div class="section-head" data-reveal>
+        <div class="eyebrow">界面</div>
+        <h2>一块屏幕，<br>一条完整的执行链。</h2>
+      </div>
+      <div class="gallery" data-reveal>
+        <div class="gallery-tabs" role="tablist">
+          <button class="active" data-shot="chat">会话</button>
+          <button data-shot="trace">执行迹</button>
+          <button data-shot="sessions">会话列表</button>
+          <button data-shot="plugins">插件</button>
+        </div>
+        <div class="gallery-stage">
+          <div class="gallery-phone"><img id="shot" src="site/media/chat.png" alt="MobileVC 会话界面" width="780" height="1688"></div>
+          <div class="gallery-copy">
+            <span class="gallery-index" id="shot-index">01 / 04</span>
+            <h3 id="shot-title">会话，是主角</h3>
+            <p id="shot-desc">用户消息、思考、工具调用与回复按时间线排列。发送走 DSH，不另起炉灶。</p>
+            <ul class="bullet-list" id="shot-bullets">
+              <li>SSE 实时流 + durable 快照</li>
+              <li>图片与文件直接进 prompt</li>
+              <li>浅色 / 深色，随系统或手动切换</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap" id="demo">
+      <div class="demo-panel" data-reveal>
+        <div class="demo-copy">
+          <div class="eyebrow">32 秒 · 无旁白 · 纯文字</div>
+          <h2>看它跑一遍。</h2>
+          <p>从打开会话，到发送、执行、审批和通知。没有模拟数据，也没有录屏里的假状态。</p>
+          <a class="text-btn" href="https://11408.online/mobilevc/" target="_blank" rel="noopener">直接打开在线实例 <span>↗</span></a>
+        </div>
+        <div class="video-wrap">
+          <video controls playsinline preload="metadata" poster="site/media/promo-poster.png">
+            <source src="site/media/promo.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap" id="start">
+      <div class="start-grid">
+        <div class="section-head" data-reveal>
+          <div class="eyebrow">开始</div>
+          <h2>装在<br>你正在跑的 DSH 上。</h2>
+          <p>不需要新服务器，不需要第二个 Agent。DSH 在哪，MobileVC 就挂在哪。</p>
+          <a class="text-btn" href="https://github.com/JayCRL/MobileVC#readme" target="_blank" rel="noopener">完整安装文档 <span>↗</span></a>
+        </div>
+        <div class="steps" data-reveal>
+          <div class="step">
+            <span class="step-no">01</span>
+            <div><b>安装插件</b><p>在你的 DSH profile 里添加 MobileVC。</p></div>
+          </div>
+          <div class="step">
+            <span class="step-no">02</span>
+            <div><b>重启 DSH Web</b><p>插件随 Host 进程加载，页面在同一个端口。</p></div>
+          </div>
+          <div class="step">
+            <span class="step-no">03</span>
+            <div><b>手机打开</b><p>局域网或 HTTPS 反代均可；添加到主屏幕就是 PWA。</p></div>
+          </div>
+          <div class="install-box">
+            <div class="install-head"><span>Terminal</span><button class="copy-mini" data-copy="#install-code">复制</button></div>
+            <pre id="install-code"><code>dsh plugin --profile web add \
+  "github:JayCRL/MobileVC"
+
+# 然后重启 dsh web
+# open http://127.0.0.1:8898/mobilevc/</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap faq-section" id="faq">
+      <div class="section-head" data-reveal>
+        <div class="eyebrow">FAQ</div>
+        <h2>几个常问的。</h2>
+      </div>
+      <div class="faq" data-reveal>
+        <details>
+          <summary>这是另一个 AI Agent 吗？</summary>
+          <p>不是。MobileVC 是 DSH Host 插件，所有消息、审批、会话读写都走正在运行的 DSH 的 <code>sessionController</code>。没有第二套 Agent，也没有中转服务器。</p>
+        </details>
+        <details>
+          <summary>需要公网 IP 吗？</summary>
+          <p>局域网可以直接访问。想让手机在外面用，可以用你已有的 HTTPS 反代、隧道或内网穿透；Web Push 只需要 DSH 主机能出站访问 Apple/Google 推送服务。</p>
+        </details>
+        <details>
+          <summary>iPhone 能收通知吗？</summary>
+          <p>iOS 16.4+，把 MobileVC 添加到主屏幕，并从主屏幕图标启动，再在「设置 → 通知」里开启。Safari 标签页里不支持 Web Push。</p>
+        </details>
+        <details>
+          <summary>执行迹里的英文思考链能隐藏吗？</summary>
+          <p>默认就是简洁模式：思考按段分组、工具链中文化、英文原文和工具参数折叠。需要排查时再切「完整」。</p>
+        </details>
+        <details>
+          <summary>和旧版 MobileVC 是什么关系？</summary>
+          <p>旧版 Flutter + Go relay + E2EE 保留在仓库的 <code>legacy/</code> 目录与 git 历史里；现在默认推荐的是 DSH 原生方案。</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand"><img src="site/assets/logo.png" alt="" width="28" height="28"><b>MobileVC</b><span>把 DSH 带到手机上。</span></div>
+      <div class="footer-links">
+        <a href="https://github.com/JayCRL/MobileVC" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/JayCRL/MobileVC#readme" target="_blank" rel="noopener">文档</a>
+        <a href="https://11408.online/mobilevc/" target="_blank" rel="noopener">在线体验</a>
+      </div>
+      <small>© <span id="year">2026</span> MobileVC · MIT License</small>
+    </div>
+  </footer>
+  <script src="site/app.js"></script>
+</body>
+</html>

@@ -18,6 +18,7 @@ It is not a second Agent and not another relay or session store. Every read and 
 - Version: `0.1.0`
 - Tested with: DSH `0.2.0-rc.2`, Node 22+
 - Shape: DSH Host plugin + static PWA UI
+- New website: https://11408.online/mobilevc-site/
 - Screenshots: `docs/images/`
 - Demo: `docs/media/mobilevc-demo.mp4`
 - Promo: `docs/media/mobilevc-promo.mp4`
