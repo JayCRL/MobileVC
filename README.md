@@ -76,6 +76,19 @@ curl http://127.0.0.1:8898/mobilevc/api/health
 # {"ok":true,"plugin":"mobilevc","interactive":true}
 ```
 
+### 自部署边缘（可选）
+
+如果你想把“反代 + 登录 + Cloudflare Tunnel”一起交给用户，`edge/` 目录提供 Caddy + 可选 cloudflared 的 compose：
+
+```bash
+cd edge
+cp .env.example .env
+./hash-password.sh
+docker compose --profile tunnel up -d
+```
+
+详见 [edge/README.md](./edge/README.md)。它只封装入口，不包含 DSH 或 Agent runtime。
+
 完整部署、nginx、PWA、升级/卸载、排错：[INSTALL.md](./INSTALL.md)。
 
 > `/mobilevc/` 没有独立登录页，必须放在认证 HTTPS 反向代理后面。

@@ -13,6 +13,7 @@
     "plugin/index.mjs",
     "preview/**/*",
     "docs/**/*",
+    "edge/**/*",
     "tools/server.py",
     "cordis.patch.yml",
     "README.md",

@@ -76,6 +76,19 @@ curl http://127.0.0.1:8898/mobilevc/api/health
 # {"ok":true,"plugin":"mobilevc","interactive":true}
 ```
 
+### Self-host edge (optional)
+
+`edge/` packages Caddy + an optional cloudflared tunnel, so users do not have to write nginx or an auth proxy:
+
+```bash
+cd edge
+cp .env.example .env
+./hash-password.sh
+docker compose --profile tunnel up -d
+```
+
+See [edge/README.md](./edge/README.md). It packages the edge only; DSH and its runtime stay on the user's machine.
+
 Deployment, nginx, PWA, upgrade/uninstall and troubleshooting: [INSTALL.en.md](./INSTALL.en.md) · [中文部署说明](./INSTALL.md).
 
 > `/mobilevc/` has no login screen of its own. Put it behind an authenticating HTTPS reverse proxy.

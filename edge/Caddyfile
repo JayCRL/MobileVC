@@ -1,0 +1,35 @@
+{
+	admin off
+}
+
+# Tunnel mode:   SITE_ADDRESS=http://:8088   (Cloudflare terminates TLS)
+# Direct mode:   SITE_ADDRESS=https://dsh.example.com   (Caddy obtains TLS)
+{$SITE_ADDRESS:http://:8088} {
+	basic_auth {
+		{$BASIC_AUTH_USER:mobilevc} {$BASIC_AUTH_HASH}
+	}
+
+	request_body {
+		max_size {$MAX_UPLOAD:25MB}
+	}
+
+	handle /mobilevc {
+		redir /mobilevc/ 308
+	}
+
+	handle /mobilevc/* {
+		reverse_proxy {$DSH_UPSTREAM:127.0.0.1:8898} {
+			# SSE: do not buffer the follow stream
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond "MobileVC edge. Open /mobilevc/." 404
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

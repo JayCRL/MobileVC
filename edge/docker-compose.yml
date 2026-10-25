@@ -1,0 +1,29 @@
+name: mobilevc-edge
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: mobilevc-edge
+    # host networking is required because DSH listens on 127.0.0.1:8898.
+    network_mode: host
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+  # Optional: no public IP. Enable with:
+  #   docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: mobilevc-tunnel
+    network_mode: host
+    env_file: .env
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    profiles: ["tunnel"]
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
