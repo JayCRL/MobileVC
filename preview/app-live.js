@@ -68,6 +68,8 @@
     contentSig: '',
     follow: null,
     followRetry: null,
+    lastFollowAt: 0,
+    syncBusy: false,
     resumeInFlight: false,
     live: null,
     liveRaf: null,
@@ -180,9 +182,8 @@
 
   function contentSignature(data) {
     const blocks = data.blocks || [];
-    const last = blocks[blocks.length - 1] || {};
-    const tail = last.body || last.html || last.text || '';
-    return `${data.state || ''}|${blocks.length}|${last.type || ''}|${tail.length}|${data.pending || 0}`;
+    const shape = blocks.map((b) => `${b.type || ''}:${b.status || ''}:${(b.body || b.html || b.text || '').length}`).join(',');
+    return `${data.state || ''}|${blocks.length}|${shape}|${data.pending || 0}`;
   }
 
   function isNearBottom(el, threshold = 90) {
@@ -285,8 +286,9 @@
     state.follow = es;
     let opened = false;
     let warned = false;
-    es.onopen = () => { opened = true; };
+    es.onopen = () => { opened = true; state.lastFollowAt = Date.now(); };
     es.onmessage = (event) => {
+      state.lastFollowAt = Date.now();
       try { handleFollowMessage(JSON.parse(event.data)); } catch (_) {}
     };
     es.onerror = () => {
@@ -532,6 +534,35 @@
       if (title === '会话') setSheetBody(sessionsBody());
     } catch (_) {
       /* keep the current list on a transient failure */
+    }
+  }
+
+  async function syncCurrentSession() {
+    // Hard fallback: even if an SSE connection looks OPEN but no frames are
+    // arriving, pull the durable snapshot. This is what guarantees a new
+    // reply appears without a manual refresh.
+    if (document.hidden || state.syncBusy || state.loading || state.detailLoading) return;
+    if (!state.session?.id || state.sending) return;
+    if (state.follow && Date.now() - state.lastFollowAt < 4000) return;
+    if (state.live && Date.now() - state.lastFollowAt < 10000) return;
+    const sid = state.session.id;
+    state.syncBusy = true;
+    try {
+      const data = await api(`sessions/${encodeURIComponent(sid)}`);
+      if (state.session?.id !== sid) return;
+      const sig = contentSignature(data);
+      if (sig === state.contentSig) return;
+      applyDetail(data);
+      state.live = null;
+      state.contentSig = sig;
+      renderAppbar();
+      renderContentPreservingOpen();
+      updateDockStatus();
+      updateDockAction();
+    } catch (_) {
+      /* transient; the next tick retries */
+    } finally {
+      state.syncBusy = false;
     }
   }
 
@@ -1425,6 +1456,9 @@
   setInterval(() => {
     if (!document.hidden && !state.loading && !state.detailLoading) refreshSessionsOnly();
   }, 30000);
+  // Poll only when the live stream has gone quiet. During an active stream
+  // this is a no-op; when the stream is silently dead it recovers in ~2.5s.
+  setInterval(syncCurrentSession, 2500);
 
   loadSessions();
 })();

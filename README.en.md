@@ -105,16 +105,6 @@ Deployment, nginx, PWA, upgrade/uninstall and troubleshooting: [INSTALL.en.md](.
 - **Memory** — read/write real `AGENTS.md`
 - Approval card — Reject / Allow once
 
-### Startup screen
-
-MobileVC bundles the browser runtime of [`dsh-startup-screen`](https://github.com/QIFANAI/dsh-startup-screen) v1.6.0 (MIT, see [`preview/startup/NOTICE.md`](./preview/startup/NOTICE.md)), adapted to `/mobilevc/startup/`.
-
-- No DSH plugin install and no dependency on `/dsh-startup` or DSH web auth
-- Plays on a PWA cold start / new page; a quick reload does not replay it
-- Add `?nostartup=1` to skip it
-- The current runtime uses the official DeepSeek whale mark, not a whale-girl character
-- No audio assets are bundled; the runtime falls back to TTS/WebAudio
-
 ## Architecture
 
 ```mermaid
