@@ -756,14 +756,27 @@
   }
 
   function updateBalanceChip() {
-    const el = $('#balance-chip');
-    if (!el) return;
+    let el = $('#balance-chip');
+    if (!el) {
+      // Older/partial dock markup must not swallow the balance. Create the
+      // chip next to the DSH status whenever the account service is present.
+      const status = $('.dock-status');
+      if (!status) return;
+      el = document.createElement('button');
+      el.type = 'button';
+      el.id = 'balance-chip';
+      el.className = 'balance-chip';
+      el.dataset.act = 'account';
+      el.hidden = true;
+      status.appendChild(el);
+    }
     const a = state.account;
     if (!a?.available) { el.hidden = true; return; }
     el.hidden = false;
     el.textContent = accountBalanceText();
     el.classList.toggle('low', accountLow());
-    el.classList.toggle('zero', Boolean(a.balance?.ready && !(a.balance.wallets || []).length));
+    const wallets = a.balance?.wallets || [];
+    el.classList.toggle('zero', Boolean(a.balance?.ready && wallets.every((w) => Number(w.balance) <= 0)));
   }
 
   async function refreshAccount() {
