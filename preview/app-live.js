@@ -66,6 +66,8 @@
     jobsSeq: 0,
     account: { available: false, status: 'unknown', links: { topUpUrl: 'https://platform.deepseek.com/top_up', usageUrl: 'https://platform.deepseek.com/usage' }, balance: null },
     accountBusy: false,
+    accountLoading: true,
+    accountRetry: null,
     quotaRedirected: false,
     reconcileTimer: null,
     memoryDefaultPath: '',
@@ -740,7 +742,8 @@
 
   function accountBalanceText() {
     const a = state.account;
-    if (!a?.available) return '余额不可用';
+    if (state.accountLoading && !a?.available) return '余额 …';
+    if (!a?.available) return '余额 —';
     if (!a.balance?.ready) return '余额读取失败';
     const wallets = a.balance.wallets || [];
     if (!wallets.length) return '余额 —';
@@ -771,19 +774,29 @@
       status.appendChild(el);
     }
     const a = state.account;
-    if (!a?.available) { el.hidden = true; return; }
     el.hidden = false;
     el.textContent = accountBalanceText();
-    el.classList.toggle('low', accountLow());
-    const wallets = a.balance?.wallets || [];
-    el.classList.toggle('zero', Boolean(a.balance?.ready && wallets.every((w) => Number(w.balance) <= 0)));
+    el.classList.toggle('low', Boolean(a?.available) && accountLow());
+    const wallets = a?.balance?.wallets || [];
+    el.classList.toggle('zero', Boolean(a?.available && a.balance?.ready && wallets.every((w) => Number(w.balance) <= 0)));
   }
 
   async function refreshAccount() {
     if (state.accountBusy) return;
     state.accountBusy = true;
+    state.accountLoading = true;
+    updateBalanceChip();
+    let timer = null;
     try {
-      const data = await api('account');
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      if (controller) timer = setTimeout(() => controller.abort(), 12000);
+      const r = await fetch(`${API}/account`, {
+        cache: 'no-store',
+        ...(controller ? { signal: controller.signal } : {}),
+        headers: { Accept: 'application/json' },
+      });
+      if (!r.ok) throw new Error(`account HTTP ${r.status}`);
+      const data = await r.json();
       state.account = {
         available: Boolean(data?.available),
         status: String(data?.status || 'unknown'),
@@ -796,14 +809,18 @@
       if (data?.balance?.ready && (data.balance.wallets || []).some((w) => Number(w.balance) > 0)) {
         state.quotaRedirected = false;
       }
-      updateBalanceChip();
+      if (state.accountRetry) { clearTimeout(state.accountRetry); state.accountRetry = null; }
       const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
       if (title.startsWith('账号与余额')) setSheetBody(accountBody());
     } catch (_) {
       state.account.available = false;
-      updateBalanceChip();
+      if (state.accountRetry) clearTimeout(state.accountRetry);
+      state.accountRetry = setTimeout(() => { state.accountRetry = null; void refreshAccount(); }, 8000);
     } finally {
+      if (timer) clearTimeout(timer);
+      state.accountLoading = false;
       state.accountBusy = false;
+      updateBalanceChip();
     }
   }
 
@@ -2042,7 +2059,7 @@
   setInterval(refreshQueue, 2500);
   setInterval(refreshJobs, 2500);
 
-  loadSessions();
+  loadSessions().finally(() => { void refreshAccount(); });
   void refreshAccount();
-  setInterval(() => { if (!document.hidden) void refreshAccount(); }, 60000);
+  setInterval(() => { if (!document.hidden) void refreshAccount(); }, 30000);
 })();
