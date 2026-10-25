@@ -19,7 +19,17 @@ It is not a second Agent and not another relay or session store. Every read and 
 - Tested with: DSH `0.2.0-rc.2`, Node 22+
 - Shape: DSH Host plugin + static PWA UI
 - Screenshots: `docs/images/`
-- Video: `docs/media/mobilevc-demo.mp4`
+- Demo: `docs/media/mobilevc-demo.mp4`
+- Promo: `docs/media/mobilevc-promo.mp4`
+
+## Promo
+
+<p align="center">
+  <a href="docs/media/mobilevc-promo.mp4">
+    <img src="docs/media/mobilevc-promo.gif" width="760" alt="MobileVC promo">
+  </a>
+</p>
+<p align="center"><sub>32s Chinese text-only promo · no voiceover / subtitles · instrumental only</sub></p>
 
 ## Features
 

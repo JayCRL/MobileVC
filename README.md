@@ -19,7 +19,17 @@ MobileVC 给 DSH 加一个手机端界面：连上你正在跑的 DSH，直接�
 - 验证环境：DSH `0.2.0-rc.2`、Node 22+
 - 形态：DSH Host plugin + 静态 PWA UI
 - 截图：`docs/images/`
-- 视频：`docs/media/mobilevc-demo.mp4`
+- 演示：`docs/media/mobilevc-demo.mp4`
+- 宣传片：`docs/media/mobilevc-promo.mp4`
+
+## 新版宣传片
+
+<p align="center">
+  <a href="docs/media/mobilevc-promo.mp4">
+    <img src="docs/media/mobilevc-promo.gif" width="760" alt="MobileVC 新版宣传片">
+  </a>
+</p>
+<p align="center"><sub>32 秒 · 中文纯文字 · 无配音 / 无字幕 · 仅轻音乐</sub></p>
 
 ## 功能
 
