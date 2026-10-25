@@ -1491,15 +1491,9 @@ export function apply(ctx) {
     }
   }))
 
-  const jobsService = () => ctx.get?.('jobs') || ctx.jobs
-  if (jobsService()?.events) {
-    ctx.effect(() => jobsService().events.subscribe({ owners: 'all' }, (event) => {
-      if (event.type !== 'settled' || event.awaited) return
-      const sid = String(event.job?.owner ?? '')
-      if (!sid) return
-      pushNotify(sid, 'MobileVC · 后台任务结束', `${String(event.job?.label || '任务')} · ${String(event.job?.status || '')}`, `job-${event.job?.id || sid}`)
-    }))
-  }
+  // Background jobs are visible in the in-app job panel. Do not push every
+  // job settlement: long agent runs would otherwise spam "后台任务结束" and
+  // bury the meaningful turn/approval notifications.
 
   ctx.effect(() => {
     const off = ctx.webServer.register({ kind: 'prefix', path: BASE, handler: handle })
