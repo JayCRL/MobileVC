@@ -71,6 +71,7 @@
     toastTimer: null,
     draft: '',
     sending: false,
+    sendStartedAt: 0,
     pollTimer: null,
     pollIdle: 0,
     contentSig: '',
@@ -839,6 +840,11 @@
 
   async function refreshOnResume() {
     if (document.visibilityState === 'hidden' || state.resumeInFlight) return;
+    if (state.sending && state.sendStartedAt && Date.now() - state.sendStartedAt > 40000) {
+      state.sending = false;
+      state.sendStartedAt = 0;
+      toast('发送状态已恢复');
+    }
     if (state.loading || state.detailLoading) return;
     state.resumeInFlight = true;
     try {
@@ -952,6 +958,7 @@
     const pendingAttachments = state.attachments.map((a) => ({ kind: a.kind, name: a.name, mediaType: a.mediaType, data: a.data }));
     const busy = Boolean(state.session.state === 'running' || state.session.state === 'waiting');
     state.sending = true;
+    state.sendStartedAt = Date.now();
     updateDockStatus();
     try {
       const requestId = typeof crypto !== 'undefined' && crypto.randomUUID
@@ -991,6 +998,7 @@
       state.session.state = 'running';
       state.session.stateLabel = '运行中';
       state.sending = false;
+      state.sendStartedAt = 0;
       if (state.follow) {
         updateDockStatus();
         updateDockAction();
@@ -1010,6 +1018,7 @@
       toast(busy ? '已加入插话队列，可在这里修改或立即插话' : '已发送到 DSH');
     } catch (e) {
       state.sending = false;
+      state.sendStartedAt = 0;
       removeOptimisticUser();
       updateDockStatus();
       toast(`发送失败：${e.message}`);
