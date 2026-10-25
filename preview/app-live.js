@@ -944,7 +944,9 @@
   }
 
   async function sendMessage() {
-    if (!INTERACTIVE || !state.session || state.sending) return;
+    if (!INTERACTIVE) return;
+    if (!state.session) { toast('会话还没加载好，请刷新后再发'); return; }
+    if (state.sending) { toast('上一条消息还在发送，请稍候或刷新页面'); return; }
     const text = (state.draft || '').trim();
     if (!text && state.attachments.length === 0) return;
     const pendingAttachments = state.attachments.map((a) => ({ kind: a.kind, name: a.name, mediaType: a.mediaType, data: a.data }));
