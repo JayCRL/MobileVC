@@ -62,6 +62,7 @@
     queueSeq: 0,
     jobs: [],
     jobsSeq: 0,
+    reconcileTimer: null,
     memoryDefaultPath: '',
     engine: 'DSH',
     model: '',
