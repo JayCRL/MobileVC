@@ -256,6 +256,9 @@
     const st = status();
     const parts = st.label.split(' · ');
     el.innerHTML = `<span class="dot ${st.dot}"></span><b>${parts[0]}</b> · ${parts[1] || ''}`;
+    // updateDockStatus runs on every live patch and rewrites this row, so the
+    // balance chip must be re-mounted here too.
+    updateBalanceChip();
   }
 
   function updateDockAction() {
