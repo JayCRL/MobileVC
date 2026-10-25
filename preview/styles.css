@@ -1808,3 +1808,71 @@ body.bare {
   opacity: .8;
 }
 .trace-dot.system { background: var(--faint); }
+
+/* ---------- hard horizontal lock: messages never pan sideways ---------- */
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-x: clip;
+  touch-action: pan-y;
+  overscroll-behavior-x: none;
+}
+.content,
+.timeline,
+.timeline > *,
+.card-md,
+.bubble-user,
+.tool-content,
+.trace-list,
+.job-list {
+  min-width: 0;
+  max-width: 100%;
+}
+.content {
+  overflow-x: hidden;
+  overflow-x: clip;
+  touch-action: pan-y;
+  overscroll-behavior-x: none;
+}
+.timeline {
+  width: 100%;
+  overflow-x: hidden;
+  overflow-x: clip;
+}
+.card-md,
+.bubble-user {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.card-md pre,
+.card-md pre code,
+.file-pre {
+  max-width: 100%;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.card-md table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.card-md img,
+.tool-image img {
+  max-width: 100%;
+  height: auto;
+}
+.screen, .content, .drawer, .sheet-body, .log-list, .think-body, .tool-body, .file-pre {
+  touch-action: pan-y;
+}
+/* Only these two rails are allowed to scroll horizontally. */
+.chips,
+.attach-strip,
+.filter-row {
+  touch-action: pan-x;
+}
