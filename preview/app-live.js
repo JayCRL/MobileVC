@@ -40,6 +40,7 @@
   const INTERACTIVE = /^\/mobilevc(?:\/|$)/.test(location.pathname) && !location.pathname.startsWith('/mobilevc-preview');
   const state = {
     theme: document.documentElement.dataset.theme || 'light',
+    traceMode: (() => { try { return localStorage.getItem('mobilevc.traceMode') || 'simple' } catch (_) { return 'simple' } })(),
     sessions: [],
     session: null,
     blocks: [],
@@ -1208,44 +1209,101 @@
   }
 
 
+  const TOOL_LABELS = {
+    bash: '执行命令', shell: '执行命令', exec: '执行命令', terminal: '执行命令',
+    read: '读取文件', read_image: '查看图片', write: '写入文件', edit: '编辑文件',
+    apply_patch: '修改文件', grep: '搜索内容', glob: '查找文件',
+    web_search: '搜索网页', web_fetch: '读取网页', task: '子任务',
+    todo_write: '更新任务', question: '询问确认', skill: '调用技能',
+  }
+  function toolLabel(name) {
+    const key = String(name || '').toLowerCase()
+    if (TOOL_LABELS[key]) return TOOL_LABELS[key]
+    if (key.includes('image')) return '图片工具'
+    if (key.includes('file')) return '文件工具'
+    if (key.includes('search')) return '搜索工具'
+    return '其他工具'
+  }
+
   function plainHtml(html) {
     const div = document.createElement('div');
     div.innerHTML = html || '';
     return (div.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
-  function traceSheet() {
-    const rows = state.blocks.map((block) => {
-      if (block.type === 'user') {
-        return `<div class="trace-row"><span class="trace-dot user"></span><div class="trace-main"><div class="trace-title">用户</div><div class="trace-sub">${esc((block.text || '').slice(0, 180))}</div></div></div>`;
-      }
+  function traceUserRow(block) {
+    return `<div class="trace-row"><span class="trace-dot user"></span><div class="trace-main"><div class="trace-title">用户</div><div class="trace-sub">${esc((block.text || '').slice(0, 200))}</div></div></div>`
+  }
+
+  function traceAssistantRow(block) {
+    return `<div class="trace-row"><span class="trace-dot assistant"></span><div class="trace-main"><div class="trace-title">回复</div><div class="trace-sub">${esc(plainHtml(block.html).slice(0, 240))}</div></div></div>`
+  }
+
+  function traceThinkingGroup(group) {
+    const chars = group.reduce((sum, b) => sum + (b.chars || (b.text || '').length), 0)
+    return `<details class="trace-row trace-group"><summary><span class="trace-dot think"></span><div class="trace-main"><div class="trace-title">模型思考 <span class="chip">${group.length} 段 · ${chars} 字</span></div><div class="trace-sub">内容默认折叠 · 点开查看原文</div></div></summary><div class="trace-body trace-raw">${group.map((b) => b.html || esc(b.text || '')).join('<hr>')}</div></details>`
+  }
+
+  function traceToolGroup(group) {
+    const labels = [...new Set(group.map((b) => toolLabel(b.name)))]
+    return `<details class="trace-row trace-group"><summary><span class="trace-dot tool"></span><div class="trace-main"><div class="trace-title">工具链 <span class="chip">${group.length} 个</span></div><div class="trace-sub">${esc(labels.join(' · '))}</div></div></summary><div class="trace-body"><div class="trace-tool-list">${group.map((b) => `<div class="trace-tool-line"><b>${esc(toolLabel(b.name))}</b><span class="chip ${b.status === '运行中' ? 'amber' : b.status === '失败' ? 'red' : 'green'}">${esc(b.status || '')}</span></div>`).join('')}</div><div class="trace-note">工具参数和执行输出在「完整」模式里查看。</div></div></details>`
+  }
+
+  function traceFullRow(block) {
+    if (block.type === 'user') return traceUserRow(block)
+    if (block.type === 'thinking') {
+      return `<details class="trace-row"><summary><span class="trace-dot think"></span><div class="trace-main"><div class="trace-title">模型思考 <span class="chip">${block.chars || 0} 字</span></div><div class="trace-sub">点开查看原文（可能是英文）</div></div></summary><div class="trace-body trace-raw">${block.html || esc(block.text || '')}</div></details>`
+    }
+    if (block.type === 'tool') {
+      return `<div class="trace-row"><span class="trace-dot tool"></span><div class="trace-main"><div class="trace-title">${esc(toolLabel(block.name))} <span class="chip ${block.status === '运行中' ? 'amber' : 'green'}">${esc(block.status || '')}</span></div><div class="trace-sub"><code>${esc(block.name)}</code> ${esc(block.arg || '')}</div></div></div>`
+    }
+    if (block.type === 'assistant') return traceAssistantRow(block)
+    if (block.type === 'error') return `<div class="trace-row"><span class="trace-dot error"></span><div class="trace-main"><div class="trace-title">${esc(block.title || '模型调用失败')} <span class="chip red">${esc(block.code || 'ERROR')}</span></div><div class="trace-sub">${esc((block.message || '').slice(0, 180))}</div></div></div>`
+    if (block.type === 'compaction') return `<div class="trace-row"><span class="trace-dot compaction"></span><div class="trace-main"><div class="trace-title">上下文压缩</div><div class="trace-sub">${esc(block.text || '')}</div></div></div>`
+    return ''
+  }
+
+  function traceRows() {
+    if (state.traceMode === 'full') return state.blocks.map(traceFullRow).join('')
+    const rows = []
+    let i = 0
+    while (i < state.blocks.length) {
+      const block = state.blocks[i]
       if (block.type === 'thinking') {
-        return `<details class="trace-row"><summary><span class="trace-dot think"></span><div class="trace-main"><div class="trace-title">思考 <span class="chip">${block.chars || 0} 字</span></div><div class="trace-sub">点开查看 reasoning</div></div></summary><div class="trace-body">${block.html || esc(block.text || '')}</div></details>`;
+        const group = []
+        while (i < state.blocks.length && state.blocks[i].type === 'thinking') group.push(state.blocks[i++])
+        rows.push(traceThinkingGroup(group))
+        continue
       }
       if (block.type === 'tool') {
-        return `<div class="trace-row"><span class="trace-dot tool"></span><div class="trace-main"><div class="trace-title">${esc(block.name)} <span class="chip ${block.status === '运行中' ? 'amber' : 'green'}">${esc(block.status || '')}</span></div><div class="trace-sub">${esc(block.arg || '')}</div></div></div>`;
+        const group = []
+        while (i < state.blocks.length && state.blocks[i].type === 'tool') group.push(state.blocks[i++])
+        rows.push(traceToolGroup(group))
+        continue
       }
-      if (block.type === 'assistant') {
-        return `<div class="trace-row"><span class="trace-dot assistant"></span><div class="trace-main"><div class="trace-title">回复</div><div class="trace-sub">${esc(plainHtml(block.html).slice(0, 180))}</div></div></div>`;
-      }
-      if (block.type === 'error') {
-        return `<div class="trace-row"><span class="trace-dot error"></span><div class="trace-main"><div class="trace-title">${esc(block.title || '模型调用失败')} <span class="chip red">${esc(block.code || 'ERROR')}</span></div><div class="trace-sub">${esc((block.message || '').slice(0, 180))}</div></div></div>`;
-      }
-      if (block.type === 'compaction') {
-        return `<div class="trace-row"><span class="trace-dot compaction"></span><div class="trace-main"><div class="trace-title">上下文压缩</div><div class="trace-sub">${esc(block.text || '')}</div></div></div>`;
-      }
-      return '';
-    }).join('');
+      rows.push(traceFullRow(block))
+      i += 1
+    }
+    return rows.join('')
+  }
+
+  function traceSheet() {
+    const rows = traceRows()
     const live = state.live && (state.live.reasoning || state.live.text)
       ? `<div class="trace-row"><span class="trace-dot live"></span><div class="trace-main"><div class="trace-title">正在执行</div><div class="trace-sub">${state.live.reasoning ? '思考中…' : ''}${state.live.text ? ' 输出中…' : ''}</div></div></div>`
-      : '';
+      : ''
+    const simple = state.traceMode !== 'full'
     openSheet({
       title: '执行迹',
-      sub: 'DSH session trace · 实时',
+      sub: simple ? '简洁模式 · 隐藏英文原文与工具参数' : '完整模式 · 显示原文与参数',
       tall: true,
-      body: `<div class="trace-list">${rows || '<div class="note">还没有 trace。发一条消息试试。</div>'}${live}</div>
-        <div class="action-actions"><button class="btn ghost wide" data-act="logs">原始日志</button><button class="btn primary wide" data-act="refresh">刷新</button></div>`,
-    });
+      body: `<div class="trace-mode" role="group" aria-label="迹显示模式">
+        <button class="${simple ? 'active' : ''}" data-act="trace-mode" data-mode="simple">简洁</button>
+        <button class="${!simple ? 'active' : ''}" data-act="trace-mode" data-mode="full">完整</button>
+      </div>
+      <div class="trace-list">${rows || '<div class="note">还没有 trace。发一条消息试试。</div>'}${live}</div>
+      <div class="action-actions"><button class="btn ghost wide" data-act="logs">原始日志</button><button class="btn primary wide" data-act="refresh">刷新</button></div>`,
+    })
   }
 
   async function pluginsSheet() {
@@ -1481,6 +1539,12 @@
     if (act === 'save-memory') { saveMemory(t.dataset.path); return; }
     if (act === 'logs') { logsSheet(); return; }
     if (act === 'trace') { traceSheet(); return; }
+    if (act === 'trace-mode') {
+      state.traceMode = t.dataset.mode === 'full' ? 'full' : 'simple';
+      try { localStorage.setItem('mobilevc.traceMode', state.traceMode); } catch (_) {}
+      traceSheet();
+      return;
+    }
     if (act === 'toggle-plugin') { togglePlugin(t.dataset.kind, t.dataset.id, t.dataset.enabled === '1'); return; }
     if (act === 'approvals') { approvalsSheet(); return; }
     if (act === 'models') { modelsSheet(); return; }

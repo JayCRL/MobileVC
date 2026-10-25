@@ -40,7 +40,7 @@ It is not a second Agent and not another relay or session store. Every read and 
 - **Image previews** — `read_image` reads the original from the DSH attachment store; thumbnail + full screen
 - **Attachments** — images as image parts; files via `fileUploads` receipts
 - **Direct approvals** — mobile presence takes priority; survives SSE drops/backgrounding; a stale click becomes a no-op
-- **Trace** — user → thinking → tool → reply → compaction timeline
+- **Trace** — user → thinking → tool → reply → compaction timeline; simple mode groups thinking/tool chains and folds raw English/tool args, with a full-mode toggle
 - **Files** — real workspace, breadcrumbs and subdirectory browsing
 - **Plugin manager** — real `pluginManager` list and toggles
 - **Interjections** — show queued steering, edit/remove, or steer immediately
