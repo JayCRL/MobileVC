@@ -29,12 +29,13 @@ MobileVC 给 DSH 加一个手机端界面：连上你正在跑的 DSH，直接�
 - **工具卡**：默认折叠，显示工具名/参数/状态，点开看完整输出
 - **图片预览**：`read_image` 从 DSH attachment store 读原图，缩略图 + 全屏
 - **附件**：图片作为 image part；文件通过 `fileUploads` receipt 发送
-- **直接审批**：允许一次 / 拒绝；另一端已处理时点击自动失效
+- **直接审批**：手机 presence 优先；断流/切后台也能接住；另一端已处理时点击自动失效
 - **执行迹**：用户 → 思考 → 工具 → 回复 → 压缩的 timeline
 - **文件**：真实工作区，面包屑 + 逐级浏览
 - **插件管理**：真实 `pluginManager` 列表与开关
 - **执行中插话**：队列展示、修改、删除、立即插话
-- **PWA**：主屏幕安装、standalone、safe-area、禁双指/双击缩放
+- **PWA**：主屏幕安装、standalone、safe-area、竖屏锁定、禁双指/双击缩放
+- **不掉记录**：SSE 断开自动重连 + durable 轮询兜底，新回复不需要手动刷新
 - **错误可见**：额度/模型失败变成错误卡，不再静默
 
 ## 截图
@@ -98,7 +99,9 @@ docker compose --profile tunnel up -d
 
 - **+**：发送图片或文件
 - **Enter** 发送，**Shift+Enter** 换行
-- 运行中，发送键右侧红色脉冲按钮：打断当前 turn
+- 运行中，发送键右侧红色停止按钮：打断当前 turn
+- 运行中发消息：进入插话队列，自动打开面板，可修改 / 删除 / 立即插话
+- 横屏：显示竖屏提示，不切桌面横向布局
 - 点工具卡：展开输出
 - 点 `read_image` 缩略图：全屏
 - **迹**：执行 timeline
@@ -121,7 +124,8 @@ flowchart LR
 
 - `/mobilevc/api/follow` → `sessionController.follow({ assistantStream: true })`
 - `/mobilevc/api/prompt` → `sessionController.prompt()`；图片直接作为 image part，文件先 `fileUploads.uploadStream()` 换 receipt
-- `/mobilevc/api/approval` → 手机端 answerer；没有活跃 follow 时 `next()` 交回桌面
+- `/mobilevc/api/approval` → 手机 presence answerer；没有活跃 follow/presence 时 `next()` 交回桌面
+- `/mobilevc/api/queue` → `resolveAgent().inbox` 列出插话，`updateQueue()` 修改/删除/steer
 - `/mobilevc/api/plugins` → `pluginManager`
 - 页面和 API 同源，不需要 CORS
 
@@ -151,7 +155,7 @@ flowchart LR
 - 发布正式版本 / release
 - 执行迹细化：step 分组、工具耗时
 - 附件体验：粘贴、相机、拖拽
-- 审批 presence：手机 follow 活跃时手机优先，否则桌面
+- 插话队列的键盘、滚动和多条消息体验
 - 可选原生壳复用同一套 PWA/HTTP surface；不引入第二套 runtime
 
 不做：重写 Agent loop、在插件里再塞 relay/E2EE、单 DSH 进程内做多租户隔离。

@@ -141,7 +141,7 @@ Uninstall: remove the `mobilevc` insert (or disable the bundle), restart DSH Web
 
 **413 on attachments** — raise `client_max_body_size` in the `/mobilevc/` location.
 
-**No approval card** — the phone must have an active follow stream for that session; otherwise the approval goes to the desktop/Remote answerer.
+**No approval card** — the phone must have an active follow stream, or an open MobileVC page with a recent presence heartbeat, for that session; otherwise the approval goes to the desktop/Remote answerer.
 
 **Stale approval click** — returns `{ok:false, stale:true}`; the UI removes the card and no duplicate decision is written.
 

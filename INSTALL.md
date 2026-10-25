@@ -185,8 +185,8 @@ The profile patch does not need to change.
 
 **Approval card does not appear**
 
-- the phone must have an active follow stream for that session (open it and wait for the SSE connection)
-- without a mobile follow, the approval is delegated to the desktop/Remote answerer
+- the phone must have an active follow stream, or an open MobileVC page with a recent presence heartbeat, for that session
+- without either, the approval is delegated to the desktop/Remote answerer
 
 **A stale approval click**
 

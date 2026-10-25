@@ -29,12 +29,13 @@ It is not a second Agent and not another relay or session store. Every read and 
 - **Tool cards** — collapsed by default; name, args and status; tap for full output
 - **Image previews** — `read_image` reads the original from the DSH attachment store; thumbnail + full screen
 - **Attachments** — images as image parts; files via `fileUploads` receipts
-- **Direct approvals** — allow once / reject; a stale click becomes a no-op
+- **Direct approvals** — mobile presence takes priority; survives SSE drops/backgrounding; a stale click becomes a no-op
 - **Trace** — user → thinking → tool → reply → compaction timeline
 - **Files** — real workspace, breadcrumbs and subdirectory browsing
 - **Plugin manager** — real `pluginManager` list and toggles
 - **Interjections** — show queued steering, edit/remove, or steer immediately
-- **PWA** — home-screen install, standalone, safe-area, no pinch/double-tap zoom
+- **PWA** — home-screen install, standalone, safe-area, portrait lock, no pinch/double-tap zoom
+- **No manual refresh** — SSE auto-reconnect plus a durable polling fallback for new replies
 - **Visible failures** — quota/model failures become error cards instead of silence
 
 ## Screenshots
@@ -98,7 +99,9 @@ Deployment, nginx, PWA, upgrade/uninstall and troubleshooting: [INSTALL.en.md](.
 
 - **+** — attach an image or file
 - **Enter** send, **Shift+Enter** newline
-- While running, the red pulse button right of Send interrupts the current turn
+- While running, the red stop button right of Send interrupts the current turn
+- Send while running: the message enters the interjection queue; the sheet opens for edit/remove/steer-now
+- Landscape: a portrait-only gate is shown instead of the desktop horizontal layout
 - Tap a tool card to expand its output
 - Tap a `read_image` thumbnail for full screen
 - **Trace** — execution timeline
@@ -121,7 +124,8 @@ flowchart LR
 
 - `/mobilevc/api/follow` → `sessionController.follow({ assistantStream: true })`
 - `/mobilevc/api/prompt` → `sessionController.prompt()`; images as image parts, files first uploaded through `fileUploads.uploadStream()` for a receipt
-- `/mobilevc/api/approval` → mobile answerer; with no active follow it delegates with `next()` to the desktop
+- `/mobilevc/api/approval` → mobile presence answerer; without an active follow/presence it delegates with `next()` to the desktop
+- `/mobilevc/api/queue` → `resolveAgent().inbox` lists interjections; `updateQueue()` edits/removes/steers them
 - `/mobilevc/api/plugins` → `pluginManager`
 - UI and API are same-origin; no CORS
 
@@ -151,7 +155,7 @@ All authenticated users share one DSH identity; there is no multi-tenant isolati
 - Cut a proper release
 - Finer trace: step grouping and tool durations
 - Attachment UX: paste, camera, drag/drop
-- Approval presence: mobile-first when a mobile follow is active, desktop otherwise
+- Interjection queue UX: keyboard, scrolling and multi-message handling
 - Optional native shell over the same PWA/HTTP surface; no second runtime
 
 Not planned: rewriting the Agent loop, adding another relay/E2EE layer inside the plugin, or multi-tenant isolation inside one DSH process.
