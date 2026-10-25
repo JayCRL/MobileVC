@@ -29,6 +29,8 @@
     plus: '<path d="M12 5v14M5 12h14"/>',
     chat: '<path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.4 9.4 0 0 1-3.2-.6L3 21l1.6-4.5A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5Z"/>',
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 10.5v6M12 7.5h.01"/>',
+    wallet: '<rect x="3.5" y="6" width="17" height="13" rx="2.5"/><path d="M3.5 9.5h17M16 14.5h1.5"/>',
+    gift: '<rect x="3.5" y="8" width="17" height="4" rx="1"/><path d="M5.5 12v8h13v-8M12 8v12M12 8c-1.8 0-3.5-1.1-3.5-2.8S10.2 3 12 8ZM12 8c1.8 0 3.5-1.1 3.5-2.8S13.8 3 12 8Z"/>',
     bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
     lock: '<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
     play: '<path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor" stroke="none"/>',
@@ -62,6 +64,9 @@
     queueSeq: 0,
     jobs: [],
     jobsSeq: 0,
+    account: { available: false, status: 'unknown', links: { topUpUrl: 'https://platform.deepseek.com/top_up', usageUrl: 'https://platform.deepseek.com/usage' }, balance: null },
+    accountBusy: false,
+    quotaRedirected: false,
     reconcileTimer: null,
     memoryDefaultPath: '',
     engine: 'DSH',
@@ -440,6 +445,10 @@
     }
     if (patch.userRpcId && state.optimisticUser?.rpcId === patch.userRpcId) removeOptimisticUser();
     else if (state.optimisticUser && patch.blocks?.some((b) => b.type === 'user' && b.text === state.optimisticUser.text)) removeOptimisticUser();
+    if (patch.blocks?.some(isQuotaBlock)) {
+      void refreshAccount();
+      setTimeout(redirectToTopUp, 350);
+    }
     if (patch.toolResult) {
       const block = state.blocks.find((b) => b.type === 'tool' && b._callId === patch.toolResult.callId);
       if (block) {
@@ -463,6 +472,7 @@
       if (!waiting && (patch.state === 'idle' || patch.state === 'error')) {
         if (state.reconcileTimer) clearTimeout(state.reconcileTimer);
         state.reconcileTimer = setTimeout(() => { void syncCurrentSession(true); }, 350);
+        setTimeout(() => { void refreshAccount(); }, 900);
       }
     }
     if (patch.clearLive) {
@@ -719,6 +729,126 @@
     }
   }
 
+  const TOPUP_FALLBACK = 'https://platform.deepseek.com/top_up';
+  const USAGE_FALLBACK = 'https://platform.deepseek.com/usage';
+
+  function walletText(wallet) {
+    if (!wallet) return '';
+    const symbol = wallet.currency === 'USD' ? '$' : '¥';
+    return `${symbol}${wallet.balance}`;
+  }
+
+  function accountBalanceText() {
+    const a = state.account;
+    if (!a?.available) return '余额不可用';
+    if (!a.balance?.ready) return '余额读取失败';
+    const wallets = a.balance.wallets || [];
+    if (!wallets.length) return '余额 —';
+    const main = wallets.map(walletText).join(' / ');
+    const bonus = (a.balance.bonusWallets || []).map(walletText).filter(Boolean).join(' / ');
+    return bonus ? `${main} + ${bonus} 赠金` : main;
+  }
+
+  function accountLow() {
+    const wallets = state.account?.balance?.wallets || [];
+    const n = wallets.reduce((sum, w) => sum + (Number(w.balance) || 0), 0);
+    return wallets.length > 0 && n <= 5;
+  }
+
+  function updateBalanceChip() {
+    const el = $('#balance-chip');
+    if (!el) return;
+    const a = state.account;
+    if (!a?.available) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = accountBalanceText();
+    el.classList.toggle('low', accountLow());
+    el.classList.toggle('zero', Boolean(a.balance?.ready && !(a.balance.wallets || []).length));
+  }
+
+  async function refreshAccount() {
+    if (state.accountBusy) return;
+    state.accountBusy = true;
+    try {
+      const data = await api('account');
+      state.account = {
+        available: Boolean(data?.available),
+        status: String(data?.status || 'unknown'),
+        links: {
+          topUpUrl: String(data?.links?.topUpUrl || TOPUP_FALLBACK),
+          usageUrl: String(data?.links?.usageUrl || USAGE_FALLBACK),
+        },
+        balance: data?.balance || null,
+      };
+      if (data?.balance?.ready && (data.balance.wallets || []).some((w) => Number(w.balance) > 0)) {
+        state.quotaRedirected = false;
+      }
+      updateBalanceChip();
+      const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
+      if (title.startsWith('账号与余额')) setSheetBody(accountBody());
+    } catch (_) {
+      state.account.available = false;
+      updateBalanceChip();
+    } finally {
+      state.accountBusy = false;
+    }
+  }
+
+  function openTopUp() {
+    const url = state.account?.links?.topUpUrl || TOPUP_FALLBACK;
+    try {
+      const win = window.open(url, '_blank', 'noopener');
+      if (!win) location.href = url;
+    } catch (_) {
+      location.href = url;
+    }
+  }
+
+  function redirectToTopUp() {
+    if (state.quotaRedirected) return;
+    state.quotaRedirected = true;
+    toast('余额不足，正在打开官方充值页…');
+    setTimeout(openTopUp, 250);
+  }
+
+  function isQuotaBlock(block) {
+    return block?.type === 'error' && (
+      block.code === 'QUOTA' ||
+      block.code === 'ACCOUNT_QUOTA' ||
+      Number(block.status) === 402 ||
+      /额度|余额|insufficient|balance|quota/i.test(`${block.title || ''} ${block.message || ''}`)
+    );
+  }
+
+  function accountBody() {
+    const a = state.account;
+    const status = a?.status === 'credential-stored' ? '已登录 DeepSeek 账号' : a?.status === 'signed-out' ? '未登录 DeepSeek 账号' : '账号状态未知';
+    const wallets = a?.balance?.ready ? (a.balance.wallets || []) : [];
+    const bonus = a?.balance?.ready ? (a.balance.bonusWallets || []) : [];
+    const rows = wallets.length
+      ? wallets.map((w) => `<div class="lrow"><span class="ico-badge">${icon('wallet')}</span><div class="l-main"><div class="l-title">${w.currency === 'USD' ? '美元余额' : '充值余额'}</div><div class="l-sub">${esc(walletText(w))}</div></div></div>`).join('')
+      : `<div class="note">${a?.available ? '暂时读不到余额，点下面刷新重试。' : '当前 DSH 没有可用的账号余额服务。'}</div>`;
+    const bonusRows = bonus.length
+      ? bonus.map((w) => `<div class="lrow"><span class="ico-badge gray">${icon('gift')}</span><div class="l-main"><div class="l-title">赠金余额</div><div class="l-sub">${esc(walletText(w))}</div></div></div>`).join('')
+      : '';
+    return `<div class="account-summary">
+        <div class="account-amount">${esc(accountBalanceText())}</div>
+        <div class="account-state">${esc(status)}</div>
+      </div>
+      <div class="account-links">
+        <button class="btn primary" data-act="top-up">去官方充值</button>
+        <button class="btn ghost" data-act="account-refresh">刷新余额</button>
+        <button class="btn ghost" data-act="account-usage">查看用量</button>
+      </div>
+      ${rows}${bonusRows}
+      <div class="note">余额由 DeepSeek 官方账号提供；充值会打开官方页面。</div>`;
+  }
+
+  async function accountSheet() {
+    openSheet({ title: '账号与余额', sub: 'DSH · 官方账号', body: accountBody() });
+    await refreshAccount();
+  }
+
   async function refreshJobs() {
     if (!INTERACTIVE || !state.session?.id) return;
     const sid = state.session.id;
@@ -853,6 +983,7 @@
 
   async function refreshOnResume() {
     if (document.visibilityState === 'hidden' || state.resumeInFlight) return;
+    void refreshAccount();
     if (state.sending && state.sendStartedAt && Date.now() - state.sendStartedAt > 40000) {
       state.sending = false;
       state.sendStartedAt = 0;
@@ -1059,6 +1190,10 @@
       updateDockStatus();
       const detail = e?.name === 'AbortError' ? '请求超时' : (e?.message || String(e));
       toast(`发送失败[${sendStep}]：${detail}`);
+      if (/余额|额度|insufficient|balance|quota/i.test(detail)) {
+        void refreshAccount();
+        setTimeout(redirectToTopUp, 800);
+      }
     }
   }
 
@@ -1143,11 +1278,13 @@
         </details></div>`;
       }
       case 'error': {
-        const quota = b.code === 'QUOTA' || b.status === 402 || /额度|余额|insufficient|balance|quota/i.test(`${b.title || ''} ${b.message || ''}`);
+        const quota = b.code === 'QUOTA' || b.code === 'ACCOUNT_QUOTA' || b.status === 402 || /额度|余额|insufficient|balance|quota/i.test(`${b.title || ''} ${b.message || ''}`);
         return `<div class="row"><div class="error-card${quota ? ' quota' : ''}">
           <div class="error-head"><span class="error-ico">!</span><div class="error-main"><div class="error-title">${esc(b.title || '模型调用失败')}</div><div class="error-meta">${esc(b.code || 'ERROR')}${b.status ? ` · HTTP ${esc(b.status)}` : ''}</div></div></div>
           ${b.message ? `<div class="error-body">${esc(b.message)}</div>` : ''}
-          <div class="error-actions"><button class="btn primary wide" data-act="open-dsh">${quota ? '去 DSH 充值 / 切换模型' : '在 DSH 中处理'}</button></div>
+          <div class="error-actions">${quota
+            ? `<button class="btn primary wide" data-act="top-up">去官方充值</button><button class="btn ghost wide" data-act="open-dsh">在 DSH 中处理</button>`
+            : `<button class="btn primary wide" data-act="open-dsh">在 DSH 中处理</button>`}</div>
         </div></div>`;
       }
       case 'compaction':
@@ -1228,7 +1365,7 @@
       if (state.model) chips.push({ ico: 'cpu', label: `模型 · ${state.model.split('/').pop()}`, act: 'models' });
     }
     $('#dock').innerHTML = `<div class="dock">
-      <div class="dock-status"><span class="dot ${st.dot}"></span><b>${st.label.split(' · ')[0]}</b> · ${st.label.split(' · ')[1] || ''}</div>
+      <div class="dock-status"><span class="dot ${st.dot}"></span><b>${st.label.split(' · ')[0]}</b> · ${st.label.split(' · ')[1] || ''}<button class="balance-chip" id="balance-chip" data-act="account" hidden></button></div>
       <div class="rail">
         <div class="chips">${chips.map((c) => `<button class="tchip" data-act="${c.act}">${icon(c.ico)}<span>${c.label}</span></button>`).join('')}</div>
         ${s && state.approvals.length ? `<button class="round-btn" data-act="approvals" aria-label="审批">${icon('shield')}<span class="round-count">${state.approvals.length}</span></button>` : ''}
@@ -1248,6 +1385,7 @@
       updateDockAction();
       updateQueueChip();
       updateJobsChip();
+      updateBalanceChip();
     });
   }
   function measureDock() {
@@ -1593,6 +1731,7 @@
         <div class="lrow"><span class="ico-badge">${icon('chat')}</span><div class="l-main"><div class="l-title">DSH 连接</div><div class="l-sub">${esc(location.host)} · 复用登录门</div></div><span class="chip green">已连接</span></div>
         <div class="lrow"><span class="ico-badge">${icon('plus')}</span><div class="l-main"><div class="l-title">iOS 全屏</div><div class="l-sub">Safari 分享 → 添加到主屏幕；从主屏幕启动才没有地址栏</div></div></div>
         <div class="lrow"><span class="ico-badge">${icon(state.theme === 'light' ? 'moon' : 'sun')}</span><div class="l-main"><div class="l-title">深色模式</div><div class="l-sub">只影响 MobileVC 界面</div></div><button class="switch ${state.theme === 'dark' ? 'on' : ''}" data-act="theme"></button></div>
+        <div class="lrow"><span class="ico-badge">${icon('wallet')}</span><div class="l-main"><div class="l-title">账号与余额</div><div class="l-sub">${esc(accountBalanceText())}</div></div><button class="btn ghost" data-act="account">查看</button></div>
         <div class="lrow"><span class="ico-badge">${icon('bell')}</span><div class="l-main"><div class="l-title">通知</div><div class="l-sub">任务完成 / 失败 / 审批 · iPhone 需从主屏幕打开</div></div><button class="btn ghost" data-act="enable-push">开启</button></div>
         <div class="lrow"><span class="ico-badge gray">${icon('bell')}</span><div class="l-main"><div class="l-title">测试通知</div><div class="l-sub">验证 Web Push 是否接通</div></div><button class="btn ghost" data-act="test-push">测试</button></div>
         <div class="lrow"><span class="ico-badge gray">${icon('lock')}</span><div class="l-main"><div class="l-title">${INTERACTIVE ? '已接入 DSH 运行时' : '只读预览'}</div><div class="l-sub">${INTERACTIVE ? '发送走 sessionController；审批仍在 DSH' : '发送、审批、模型切换在 DSH 内完成'}</div></div></div>
@@ -1744,6 +1883,10 @@
     if (act === 'jobs') { jobsSheet(); return; }
     if (act === 'job-kill') { killJob(t.dataset.id || ''); return; }
     if (act === 'job-output') { jobOutput(t.dataset.id || ''); return; }
+    if (act === 'account') { accountSheet(); return; }
+    if (act === 'top-up') { openTopUp(); return; }
+    if (act === 'account-refresh') { refreshAccount(); return; }
+    if (act === 'account-usage') { window.open(state.account?.links?.usageUrl || USAGE_FALLBACK, '_blank', 'noopener'); return; }
     if (act === 'enable-push') { enablePush(); return; }
     if (act === 'test-push') { testPush(); return; }
     if (act === 'refresh') { refreshSession({ forceFollow: true }); return; }
@@ -1887,4 +2030,6 @@
   setInterval(refreshJobs, 2500);
 
   loadSessions();
+  void refreshAccount();
+  setInterval(() => { if (!document.hidden) void refreshAccount(); }, 60000);
 })();

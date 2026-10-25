@@ -549,7 +549,7 @@ function failureBlock(reason) {
   const status = err.status ? Number(err.status) : undefined
   const message = String(err.message ?? '')
   let title = '模型调用失败'
-  if (code === 'QUOTA' || status === 402 || /insufficient|balance|quota|额度|余额/i.test(message)) title = '额度不足 / 配额耗尽'
+  if (code === 'QUOTA' || code === 'ACCOUNT_QUOTA' || status === 402 || /insufficient|balance|quota|额度|余额/i.test(message)) title = '额度不足 / 配额耗尽'
   else if (code === 'MISSING_CREDENTIAL') title = '缺少 API Key'
   else if (code === 'MAX_TOKENS' || reason?.kind === 'max-tokens') title = '输出达到 token 上限'
   else if (code === 'REQUEST_EXTENSION') title = '请求准备失败'
@@ -905,6 +905,51 @@ export function apply(ctx) {
         listCache = { at: 0, value: null }
         cache.delete(sid)
         json(res, 200, { ok: true })
+        return
+      }
+      if (req.method === 'GET' && path === `${BASE}/api/account`) {
+        const account = ctx.get?.('accountController') || ctx.accountController
+        const fallback = {
+          available: Boolean(account),
+          status: 'unknown',
+          links: { topUpUrl: 'https://platform.deepseek.com/top_up', usageUrl: 'https://platform.deepseek.com/usage' },
+          balance: null,
+        }
+        if (!account) { json(res, 200, fallback); return }
+        try {
+          const state = await account.getState()
+          const links = state?.links || fallback.links
+          let balance = null
+          try {
+            const raw = await Promise.race([
+              account.getBalance({
+                version: 'mobilevc/0.1.0',
+                locale: 'zh-CN',
+                timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+              }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('balance timeout')), 8000)),
+            ])
+            if (raw?.status === 'ready') {
+              balance = {
+                ready: true,
+                wallets: Array.isArray(raw.value) ? raw.value : [],
+                bonusWallets: Array.isArray(raw.bonusWallets) ? raw.bonusWallets : [],
+              }
+            } else if (raw?.status === 'failed') {
+              balance = { ready: false }
+            }
+          } catch (error) {
+            balance = { ready: false, error: String(error?.message || error).slice(0, 160) }
+          }
+          json(res, 200, {
+            available: true,
+            status: String(state?.status || 'unknown'),
+            links: { topUpUrl: String(links.topUpUrl || fallback.links.topUpUrl), usageUrl: String(links.usageUrl || fallback.links.usageUrl) },
+            balance,
+          })
+        } catch (error) {
+          json(res, 200, { ...fallback, available: true, status: 'error', error: String(error?.message || error).slice(0, 160) })
+        }
         return
       }
       if (req.method === 'GET' && path === `${BASE}/api/push/key`) {
