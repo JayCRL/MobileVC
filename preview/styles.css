@@ -1676,7 +1676,9 @@ body.bare {
   background: var(--primary);
   transform: translateX(-50%);
 }
-@media (orientation: landscape) and (max-height: 600px) {
+@media (orientation: landscape) and (pointer: coarse) {
+  /* iPhone Safari/PWA cannot force orientation; cover the whole rotated
+     viewport instead of letting the landscape layout show. */
   html, body { overflow: hidden !important; }
   .orientation-gate { display: flex; }
   .stage { display: none !important; }

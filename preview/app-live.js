@@ -2039,7 +2039,12 @@
   function lockPortrait() {
     try { screen.orientation?.lock?.('portrait').catch(() => {}); } catch (_) {}
   }
-  document.addEventListener('pointerdown', lockPortrait, { once: true });
+  // Android/PWA can actually lock. iOS ignores this, so the CSS gate is the
+  // durable fallback. Retry after rotation and after the first user gesture.
+  document.addEventListener('pointerdown', lockPortrait);
+  window.addEventListener('orientationchange', () => setTimeout(lockPortrait, 120));
+  window.addEventListener('resize', () => { if (window.innerWidth > window.innerHeight) lockPortrait(); });
+  setTimeout(lockPortrait, 350);
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
