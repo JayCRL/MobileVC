@@ -3,3 +3,6 @@ node_modules/
 *.log
 .dsh/
 coverage/
+
+__pycache__/
+*.pyc
