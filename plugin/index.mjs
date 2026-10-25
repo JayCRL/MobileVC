@@ -1490,8 +1490,13 @@ export function apply(ctx) {
       const presence = Boolean(sid && presenceAlive(sid))
       const known = Boolean(sid && (mobilePresence.get(sid) || 0) > Date.now() - 60_000)
       const recentMobile = Boolean(sid && (mobileKnown.get(sid) || 0) > Date.now())
-      approvalLog('incoming', { sid: sid.slice(0, 24), presence, known, recentMobile, tool: req?.toolName, callId: req?.callId })
-      if (!sid || (!presence && !recentMobile)) return next()
+      let subscribed = false
+      try { subscribed = (await readPushSubs()).length > 0 } catch (_) {}
+      approvalLog('incoming', { sid: sid.slice(0, 24), presence, known, recentMobile, subscribed, tool: req?.toolName, callId: req?.callId })
+      // A subscribed phone is the primary approval surface even if the PWA
+      // was backgrounded when the tool asked. The push below tells the user;
+      // the host holds the question long enough for them to open and answer.
+      if (!sid || (!presence && !recentMobile && !subscribed)) return next()
       let asked
       try {
         asked = findApprovalCandidate(req.agent.session.snapshotEvents(), req)
@@ -1512,10 +1517,10 @@ export function apply(ctx) {
         // desktop chain instead of leaving the turn hanging forever.
         entry.timer = setTimeout(() => {
           if (pendingApprovals.get(id) !== entry) return
-          approvalLog('save timeout, delegating', id)
+          approvalLog('mobile timeout, delegating', id)
           pendingApprovals.delete(id)
           Promise.resolve().then(() => entry.next()).then(resolve, () => resolve('unavailable'))
-        }, 45_000)
+        }, 120_000)
         const done = () => {
           if (entry.timer) clearTimeout(entry.timer)
           if (pendingApprovals.get(id) === entry) pendingApprovals.delete(id)
