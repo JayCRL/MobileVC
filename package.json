@@ -1,0 +1,41 @@
+{
+  "name": "mobilevc-dsh",
+  "version": "0.1.0",
+  "description": "MobileVC-style mobile/PWA surface for DeepSeek Harness, backed by the live DSH session controller.",
+  "type": "module",
+  "main": "./plugin/index.mjs",
+  "exports": {
+    ".": "./plugin/index.mjs",
+    "./package.json": "./package.json",
+    "./preview/*": "./preview/*"
+  },
+  "files": [
+    "plugin/index.mjs",
+    "preview/**/*",
+    "tools/server.py",
+    "cordis.patch.yml",
+    "README.md",
+    "INSTALL.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "inventory": {
+      "summary": {
+        "zh": "MobileVC 风格的 DSH 手机/PWA 界面：实时会话、思考流、文件、附件、审批和插件管理。",
+        "en": "MobileVC-style mobile/PWA surface for DSH: live sessions, reasoning stream, files, attachments, approvals, plugin management."
+      },
+      "tags": ["mobile", "pwa", "ui", "session", "approval"]
+    }
+  },
+  "keywords": ["deepseek-harness", "dsh", "mobile", "pwa", "mobilevc"],
+  "license": "MIT"
+}

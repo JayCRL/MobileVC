@@ -1,0 +1,7 @@
+# MobileVC — MobileVC-style mobile/PWA surface for DSH Web.
+#
+# The package serves the UI and bridges every read/write to this Host's
+# ctx.sessionController; it does not start a second Agent or relay.
+- insert:
+    - id: mobilevc
+      name: mobilevc-dsh
