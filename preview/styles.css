@@ -1876,3 +1876,12 @@ html, body {
 .filter-row {
   touch-action: pan-x;
 }
+
+/* A queued interjection is not part of the transcript yet. */
+.row.user.pending .bubble-user {
+  background: transparent;
+  border: 1px dashed var(--outline);
+  color: var(--text);
+  box-shadow: none;
+}
+.row.user.pending .user-state { color: var(--warning); }

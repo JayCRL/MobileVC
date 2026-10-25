@@ -188,8 +188,11 @@
   function applyDetail(data) {
     state.session = data;
     state.blocks = data.blocks || [];
-    if (state.optimisticUser && !state.blocks.some((b) => b.type === 'user' && b.text === state.optimisticUser.text)) {
-      state.blocks.push(state.optimisticUser.block);
+    if (state.optimisticUser) {
+      const opt = state.optimisticUser;
+      const visible = state.blocks.some((b) => b.type === 'user' && b.text === opt.text);
+      if (visible) state.optimisticUser = null;
+      else if (!opt.busy && opt.block) state.blocks.push(opt.block);
     }
     state.approvals = data.approvals || [];
     state.engine = data.engine || state.engine;
@@ -425,16 +428,17 @@
     if (!patch || !state.session) return;
     const el = $('#content');
     const stick = isNearBottom(el);
-    if (patch.userRpcId && state.optimisticUser?.rpcId === patch.userRpcId) removeOptimisticUser();
-    else if (state.optimisticUser && patch.blocks?.some((b) => b.type === 'user' && b.text === state.optimisticUser.text)) removeOptimisticUser();
     if (patch.title) state.session.title = patch.title;
     if (patch.model) state.model = patch.model;
     if (patch.engine) state.engine = patch.engine;
     if (patch.blocks?.length) {
       for (const block of patch.blocks) state.blocks.push(block);
       if (state.blocks.length > 200) state.blocks = state.blocks.slice(-200);
-      appendBlocksToTimeline(patch.blocks);
+      try { appendBlocksToTimeline(patch.blocks); }
+      catch (_) { renderContentPreservingOpen(); }
     }
+    if (patch.userRpcId && state.optimisticUser?.rpcId === patch.userRpcId) removeOptimisticUser();
+    else if (state.optimisticUser && patch.blocks?.some((b) => b.type === 'user' && b.text === state.optimisticUser.text)) removeOptimisticUser();
     if (patch.toolResult) {
       const block = state.blocks.find((b) => b.type === 'tool' && b._callId === patch.toolResult.callId);
       if (block) {
@@ -455,6 +459,10 @@
       const waiting = patch.state === 'waiting' || state.approvals.length > 0;
       state.session.state = waiting ? 'waiting' : patch.state;
       state.session.stateLabel = waiting ? '待授权' : patch.stateLabel || (patch.state === 'running' ? '运行中' : '空闲');
+      if (!waiting && (patch.state === 'idle' || patch.state === 'error')) {
+        if (state.reconcileTimer) clearTimeout(state.reconcileTimer);
+        state.reconcileTimer = setTimeout(() => { void syncCurrentSession(true); }, 350);
+      }
     }
     if (patch.clearLive) {
       state.live = null;
@@ -582,21 +590,21 @@
     }
   }
 
-  async function syncCurrentSession() {
+  async function syncCurrentSession(force = false) {
     // Hard fallback: even if an SSE connection looks OPEN but no frames are
     // arriving, pull the durable snapshot. This is what guarantees a new
     // reply appears without a manual refresh.
     if (document.hidden || state.syncBusy || state.loading || state.detailLoading) return;
     if (!state.session?.id || state.sending) return;
-    if (state.follow && Date.now() - state.lastFollowAt < 4000) return;
-    if (state.live && Date.now() - state.lastFollowAt < 10000) return;
+    if (!force && state.follow && Date.now() - state.lastFollowAt < 4000) return;
+    if (!force && state.live && Date.now() - state.lastFollowAt < 10000) return;
     const sid = state.session.id;
     state.syncBusy = true;
     try {
       const data = await api(`sessions/${encodeURIComponent(sid)}`);
       if (state.session?.id !== sid) return;
       const sig = contentSignature(data);
-      if (sig === state.contentSig) return;
+      if (!force && sig === state.contentSig) return;
       applyDetail(data);
       state.live = null;
       state.contentSig = sig;
@@ -649,9 +657,9 @@
     }
     if (state.optimisticUser && state.optimisticUser.busy) {
       el.hidden = false;
-      el.innerHTML = `<span class="qb-kicker">插话已发送</span>
+      el.innerHTML = `<span class="qb-kicker">插话排队中</span>
         <span class="qb-text">${esc(state.optimisticUser.text)}</span>
-        <span class="qb-action">同步中…</span>`;
+        <span class="qb-action">查看 / 立即插话</span>`;
       return;
     }
     el.hidden = true;
@@ -981,9 +989,13 @@
         sendStep = 'optimistic';
         try {
           const block = { type: 'user', text, images: [], files: [], _optimistic: true, _rpcId: requestId, _busy: busy };
-          state.blocks.push(block);
           state.optimisticUser = { rpcId: requestId, text, block, busy };
-          appendBlocksToTimeline([block]);
+          // A queued interjection is not in the transcript yet. Keep it in the
+          // queue strip until DSH actually emits the durable user message.
+          if (!busy) {
+            state.blocks.push(block);
+            appendBlocksToTimeline([block]);
+          }
           updateQueueChip();
           requestAnimationFrame(scrollContentBottom);
         } catch (uiError) {
@@ -1037,8 +1049,7 @@
       }
       $('#composer')?.focus();
       await refreshQueue();
-      if (busy) queueSheet();
-      toast(busy ? '已加入插话队列，可在这里修改或立即插话' : '已发送到 DSH');
+      toast(busy ? '已加入插话队列 · 当前轮结束后生效，点「立即插话」可提前介入' : '已发送到 DSH');
     } catch (e) {
       if (promptTimer) clearTimeout(promptTimer);
       state.sending = false;
@@ -1115,7 +1126,7 @@
   function chatBlock(b) {
     switch (b.type) {
       case 'user':
-        return `<div class="row user"${b._optimistic ? ` data-optimistic="${esc(b._rpcId || '')}"` : ''}><div class="bubble-user">${userImagesHtml(b.images)}${userFilesHtml(b.files)}${b.text ? `<div class="user-text">${esc(b.text)}</div>` : ''}${b.source === 'steering' ? '<div class="user-tag">插话</div>' : ''}${b._optimistic ? `<div class="user-state">${b._busy ? '插话 · 待处理' : '发送中'}</div>` : ''}</div></div>`;
+        return `<div class="row user"${b._optimistic ? ` data-optimistic="${esc(b._rpcId || '')}"` : ''}><div class="bubble-user">${userImagesHtml(b.images)}${userFilesHtml(b.files)}${b.text ? `<div class="user-text">${esc(b.text)}</div>` : ''}${b.source === 'steering' ? '<div class="user-tag">插话</div>' : ''}${b._optimistic ? `<div class="user-state">${b._busy ? '插话 · 排队中（未进入上下文）' : '发送中'}</div>` : ''}</div></div>`;
       case 'assistant':
         return `<div class="row"><div class="card-md">${b.html || esc(b.text || '')}</div></div>`;
       case 'thinking': {
