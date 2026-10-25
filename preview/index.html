@@ -50,50 +50,64 @@
     } catch (_) {}
   </script>
   <script>
-    // Optional bridge to dsh-startup-screen. It is loaded from the DSH host
-    // route only when that plugin is installed; MobileVC itself does not
-    // vendor the splash runtime.
+    // Bundled adaptation of dsh-startup-screen v1.6.0 (MIT, see
+    // startup/NOTICE.md). It no longer depends on the plugin's host route,
+    // so it works even when /dsh-startup is behind DSH's auth.
     (() => {
       if (new URLSearchParams(location.search).has('nostartup')) return;
       if (location.pathname.startsWith('/mobilevc-preview')) return;
 
-      const boot = async () => {
-        try {
-          const res = await fetch('/dsh-startup/config', { cache: 'no-store', credentials: 'same-origin' });
-          if (!res.ok) return;
-          const data = await res.json();
-          const c = data.config || {};
-          if (!c.enabled) return;
-          let skip = false;
-          try {
-            if (c.mode === 'session' && sessionStorage.getItem('dsh-startup-screen:shown') === '1') skip = true;
-            if (c.mode === 'daily' && localStorage.getItem('dsh-startup-screen:day') === new Date().toISOString().slice(0, 10)) skip = true;
-          } catch (_) {}
-          if (skip || window.__DSH_STARTUP_LOADED__) return;
+      const KEY = 'mobilevc-startup-at';
+      let last = 0;
+      try { last = Number(localStorage.getItem(KEY) || 0); } catch (_) {}
+      // A PWA/tab launch is a navigation: show the splash. A quick manual
+      // reload is a reload: do not replay immediately.
+      const navType = performance.getEntriesByType?.('navigation')?.[0]?.type || '';
+      if (navType === 'reload' && Date.now() - last < 15000) return;
 
+      const boot = () => {
+        try {
+          const cfg = {
+            enabled: true,
+            mode: 'always',
+            theme: 'light',
+            speed: 1,
+            requireInteraction: true,
+            allowSkip: true,
+            sound: false,
+            voice: false,
+            bgm: false,
+            identity: 'MOBILEVC',
+            identityId: 'MOBILEVC',
+            accessLevel: '3',
+          };
           window.__DSH_STARTUP_BOOT__ = 'mobilevc';
-          window.__DSH_STARTUP_VERSION__ = data.version || '';
-          window.__DSH_STARTUP__ = c;
+          window.__DSH_STARTUP_VERSION__ = 'mobilevc-1.6.0';
+          window.__DSH_STARTUP_SCRIPT_URL__ = '/mobilevc/startup/splash.js';
+          window.__DSH_STARTUP__ = cfg;
           document.documentElement.classList.add('dsu-lock');
           const root = document.createElement('div');
           root.id = 'dsh-startup-root';
           root.className = 'dsu-root dsu-boot';
           document.body.appendChild(root);
 
-          const v = encodeURIComponent(data.version || '');
           const link = document.createElement('link');
           link.rel = 'stylesheet';
-          link.href = `/dsh-startup/splash.css${v ? `?v=${v}` : ''}`;
+          link.href = '/mobilevc/startup/splash.css';
           document.head.appendChild(link);
 
           const script = document.createElement('script');
-          script.src = `/dsh-startup/splash.js${v ? `?v=${v}` : ''}`;
+          script.src = '/mobilevc/startup/splash.js';
           script.onerror = () => {
             root.remove();
             document.documentElement.classList.remove('dsu-lock');
           };
           document.body.appendChild(script);
-          // If the runtime never even boots, never leave the app locked.
+
+          const remember = () => {
+            try { localStorage.setItem(KEY, String(Date.now())); } catch (_) {}
+          };
+          window.addEventListener('dsh-startup:done', remember, { once: true });
           setTimeout(() => {
             if (!window.__DSH_STARTUP_LOADED__ && root.classList.contains('dsu-boot')) {
               root.remove();
@@ -101,7 +115,7 @@
             }
           }, 10000);
         } catch (_) {
-          /* plugin absent: keep the normal MobileVC landing */
+          try { document.documentElement.classList.remove('dsu-lock'); } catch (_) {}
         }
       };
 

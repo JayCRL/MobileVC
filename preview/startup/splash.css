@@ -1,0 +1,2182 @@
+/* ============================================================================
+ * dsh-startup-screen — 启动界面 / 启动动画样式
+ * ----------------------------------------------------------------------------
+ * 风格取自参考片（Hypergryph 式开机序列）：黑色序幕 → 灰白过曝洗白 → 暖白
+ * "技术档案" 底板 → 等宽字距状态行 → 环形准星扫描 → WELCOME 版式 → 色散故障。
+ *
+ * 全部字体都取系统自带字体，零网络依赖：
+ *   --dsu-din   Bahnschrift（Windows 10+ 自带 DIN 1451 风格，对应参考片里
+ *               "RHINE LAB / SYNTHESIZE INFORMATION" 那种窄体技术字）
+ *   --dsu-mono  Cascadia Mono / Consolas（对应参考片里的等宽字距小字）
+ *   --dsu-zh    微软雅黑（对应参考片底部中文小字幕）
+ * ========================================================================== */
+
+#dsh-startup-root,
+#dsh-startup-root *,
+#dsh-startup-root *::before,
+#dsh-startup-root *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+#dsh-startup-root {
+  /* —— 配色（浅色 / 参考片色板）—— */
+  --dsu-bg: #e5e3df;
+  --dsu-bg-2: #eceae6;
+  --dsu-ink: #0a0a0a;
+  --dsu-ink-soft: #3a3936;
+  --dsu-muted: #7a7873;
+  --dsu-hair: rgba(10, 10, 10, 0.16);
+  --dsu-hair-soft: rgba(10, 10, 10, 0.07);
+  --dsu-accent: #ff7500;
+  --dsu-glitch-a: #ff3b30;
+  --dsu-glitch-b: #2971b8;
+  --dsu-box-bg: #0a0a0a;
+  --dsu-box-ink: #ffffff;
+  --dsu-sub-glow: 0 0 6px rgba(255, 255, 255, 0.9);
+
+  /* 字体全部取系统自带，不下发 webfont（启动零抖动）。
+     三档回退链覆盖 Win / macOS / Linux：
+       DIN 风格窄体重黑：Bahnschrift(Win) → DIN Alternate(macOS) → Ubuntu/Roboto Condensed(Linux)
+       等宽：Cascadia Mono(Win) → SFMono/Consolas → DejaVu Sans Mono(Linux)
+       中文：微软雅黑(Win) → 苹方(macOS) → 思源/Noto/WQY(Linux)
+     完全没有时退到通用 sans-serif —— 版式不变，只是字面观感略有差异。 */
+  --dsu-din: "Bahnschrift", "DIN Alternate", "DIN Condensed", "Archivo", "Oswald",
+    "Arial Narrow", "Liberation Sans Narrow", "Ubuntu Condensed", "Roboto Condensed",
+    "Noto Sans Display", "HarmonyOS Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --dsu-mono: "Cascadia Mono", "SFMono-Regular", "Consolas", "Menlo", "DejaVu Sans Mono",
+    "Liberation Mono", "Noto Sans Mono", ui-monospace, monospace;
+  /* 中文：优先 Noto Sans SC / 思源黑体系 —— 笔画更几何、更"技术"，
+     暗底上的发虚也比雅黑轻；没装才退微软雅黑，版式不变。
+     注意别给中文排 500/600 这类中间字重：雅黑只有 400/700，
+     中间值会被合成伪粗体，反而更糊。 */
+  --dsu-zh: "Noto Sans SC", "Source Han Sans SC", "Noto Sans CJK SC", "HarmonyOS Sans SC",
+    "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB",
+    "WenQuanYi Micro Hei", sans-serif;
+
+  --dsu-speed: 1;
+
+  /* 金属拉丝纹理：feTurbulence 生成**随机**竖向纹理。
+     横向 baseFrequency 高（细密）、纵向低（顺滑）= 竖向拉丝方向。
+     feComponentTransfer 做两件事：
+       ① RGB 压到 0.45–0.55（斜率 0.10、截距 0.45），均值仍是 0.5。
+          振幅一共调了三档：全幅 ±0.5 是满屏刮痕，±0.08 在近黑底板上仍读成条状，
+          最终 ±0.05 —— 近黑底板对纹理极其敏感，"感觉得到、看不出来"才是对的；
+       ② alpha 钉成 1，让它是不透明灰噪而不是随机透明斑点。
+     feColorMatrix saturate 0 去掉彩色分量。
+     配合 .dsu-plate 的 background-blend-mode: overlay 使用 —— 见那边的注释。 */
+  --dsu-brush: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='420'><filter id='b'><feTurbulence type='fractalNoise' baseFrequency='0.82 0.014' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/><feComponentTransfer><feFuncR type='linear' slope='0.10' intercept='0.45'/><feFuncG type='linear' slope='0.10' intercept='0.45'/><feFuncB type='linear' slope='0.10' intercept='0.45'/><feFuncA type='linear' slope='0' intercept='1'/></feComponentTransfer></filter><rect width='420' height='420' filter='url(%23b)'/></svg>");
+
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  overflow: hidden;
+  background: #000;
+  color: var(--dsu-ink);
+  font-family: var(--dsu-din);
+  -webkit-font-smoothing: auto;
+  text-rendering: auto;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+  contain: layout paint style;
+}
+
+/* 逐字渐显（typeIn）：只动不透明度和极小的垂直位移。
+   1.6.0 去掉了逐字 blur 滤镜 —— Chromium 会为带 filter 的文字建立独立合成层，
+   动画结束后即使 blur(0px) 仍在，子像素抗锯齿也会退回灰度抗锯齿，大字号中文
+   在暗底上会显脏、发虚。清晰度优先，对焦感改由整行字距和亮度收束完成。 */
+.dsu-status .dsu-ch,
+.dsu-sub-en .dsu-ch {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(0.12em);
+  transition: opacity 380ms ease, transform 440ms cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+.dsu-sub-en .dsu-ch {
+  transform: translateY(0.08em);
+  transition: opacity 360ms ease, transform 400ms cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+.dsu-status.dsu-in .dsu-ch,
+.dsu-sub-en.dsu-in .dsu-ch { opacity: 1; transform: none; }
+
+/* 中央标识与终幕标识统一取当前文字色 */
+.dsu-logo svg,
+.dsu-w3 svg { fill: currentColor; }
+
+/* 深色主题：同一套版式，换成暗底板 */
+#dsh-startup-root.dsu-dark {
+  --dsu-bg: #0b0b0c;
+  --dsu-bg-2: #131315;
+  --dsu-ink: #f2f1ee;
+  --dsu-ink-soft: #cfcecb;
+  --dsu-muted: #85847f;
+  --dsu-hair: rgba(255, 255, 255, 0.18);
+  --dsu-hair-soft: rgba(255, 255, 255, 0.07);
+  --dsu-box-bg: #f2f1ee;
+  --dsu-box-ink: #0b0b0c;
+  --dsu-sub-glow: 0 0 6px rgba(0, 0, 0, 0.9);
+  background: #000;
+}
+
+/* 首屏兜底：脚本还没跑起来时也要先糊住整个窗口，避免闪出应用本体 */
+#dsh-startup-root.dsu-boot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #000;
+  z-index: 90;
+}
+
+#dsh-startup-root.dsu-gone {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 620ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── 底板 ───────────────────────────────────────────────────────────────── */
+.dsu-plate {
+  position: absolute;
+  inset: 0;
+  background:
+    var(--dsu-brush),
+    radial-gradient(120% 90% at 78% 12%, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 55%),
+    linear-gradient(168deg, var(--dsu-bg-2) 0%, var(--dsu-bg) 42%, var(--dsu-bg) 100%);
+  background-size: 420px 420px, auto, auto;
+  /* overlay 的中性点是 50% 灰，而 feTurbulence 的均值正好 0.5 ——
+     所以噪声只增加局部对比（"加工面"的细节），不改变整体亮度，
+     深浅两套主题都不会被洗淡。这是选 overlay 而不是普通叠加的原因。 */
+  background-blend-mode: overlay, normal, normal;
+  opacity: 0;
+}
+
+.dsu-dark .dsu-plate {
+  background:
+    var(--dsu-brush),
+    radial-gradient(120% 90% at 78% 12%, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 55%),
+    linear-gradient(168deg, var(--dsu-bg-2) 0%, var(--dsu-bg) 42%, var(--dsu-bg) 100%);
+  background-size: 420px 420px, auto, auto;
+  background-blend-mode: overlay, normal, normal;
+}
+
+/* 底板上那道固定的斜向掠光。
+   纹理已经交给 .dsu-plate 的 --dsu-brush 层了，这里只留光。
+   注意不用 mix-blend-mode：参考片那套色散层依赖层叠上下文，
+   底板一旦新建隔离层，故障效果会在中途变样。 */
+.dsu-plate::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(103deg,
+      rgba(255, 255, 255, 0) 30%,
+      rgba(255, 255, 255, 0.055) 46%,
+      rgba(255, 255, 255, 0) 62%);
+}
+
+/* 掠光扫过：洗白完成那一刻，一道宽而软的高光横掠底板一次。
+   静态高光只能让人看到"有块亮斑"，动一下才知道那是反光 —— 这是"金属面
+   被灯扫过"的读法。用 transform 位移（走合成层），不碰 top/left。 */
+.dsu-sheen {
+  position: absolute;
+  top: -10%;
+  bottom: -10%;
+  left: 0;
+  width: 46%;
+  z-index: 14;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+  transform: translateX(-72%);
+  background: linear-gradient(100deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.10) 34%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.10) 66%,
+    rgba(255, 255, 255, 0) 100%);
+}
+.dsu-dark .dsu-sheen {
+  background: linear-gradient(100deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.045) 34%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(255, 255, 255, 0.045) 66%,
+    rgba(255, 255, 255, 0) 100%);
+}
+.dsu-sheen.dsu-go { animation: dsu-sheen 1250ms cubic-bezier(0.32, 0, 0.68, 1) 1 forwards; }
+@keyframes dsu-sheen {
+  0% { opacity: 0; transform: translateX(-72%); }
+  12% { opacity: 1; }
+  78% { opacity: 0.85; }
+  100% { opacity: 0; transform: translateX(232%); }
+}
+
+/* 背景里若隐若现的档案面板（参考片右侧极淡的方块群） */
+.dsu-watermark {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.dsu-wm {
+  position: absolute;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0));
+  border: 1px solid var(--dsu-hair-soft);
+  /* 分层景深：面板原来和底板完全同平面，读起来是"贴纸"。
+     给一层向下的投影 + 内顶高光，就像档案柜抽屉浮在底板上。 */
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.dsu-dark .dsu-wm {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0));
+  /* 暗底上投影要更重才看得出层次，否则纯黑投影等于没画 */
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* 细颗粒噪点，让大色块不"塑料"。0.05 在暗底上几乎看不见，
+   提到 0.075 才有一点胶片颗粒，同时不影响文字可读性。 */
+.dsu-grain {
+  position: absolute;
+  inset: -50%;
+  opacity: 0.075;
+  transition: opacity 300ms ease;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/></filter><rect width='120' height='120' filter='url(%23n)' opacity='0.6'/></svg>");
+}
+
+/* ── 第一幕：黑幕 + DeepSeek 标识 ─────────────────────────────────────── */
+.dsu-black {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  opacity: 1;
+}
+.dsu-black-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 560ms ease, transform 560ms ease;
+}
+.dsu-black-inner.dsu-in {
+  opacity: 1;
+  transform: none;
+}
+.dsu-black-inner.dsu-out {
+  opacity: 0;
+  transform: scale(1.045);
+  transition: opacity 620ms ease, transform 620ms ease;
+}
+.dsu-whale {
+  display: block;
+  fill: currentColor;
+}
+.dsu-black .dsu-whale {
+  width: 122px;
+  height: 122px;
+  color: #fff;
+  margin-bottom: 18px;
+}
+.dsu-black-zh {
+  font-family: var(--dsu-zh);
+  font-size: 33px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  text-indent: 0.34em;
+  color: #fff;
+}
+.dsu-black-en {
+  margin-top: 9px;
+  font-family: var(--dsu-din);
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: 0.62em;
+  text-indent: 0.62em;
+  color: #fff;
+  transition: letter-spacing 1300ms cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+.dsu-black-en.dsu-tighten {
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+}
+.dsu-black-sub {
+  margin-top: 12px;
+  font-family: var(--dsu-mono);
+  font-size: 10px;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  color: rgba(255, 255, 255, 0.5);
+}
+/* 扫光：一条极淡的白色横条掠过标识 */
+.dsu-sweep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 42%;
+  left: -50%;
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.055) 42%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.055) 58%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+}
+.dsu-sweep.dsu-go {
+  animation: dsu-sweep 1150ms cubic-bezier(0.32, 0, 0.2, 1) forwards;
+}
+@keyframes dsu-sweep {
+  from { left: -50%; }
+  to { left: 118%; }
+}
+
+/* 过曝洗白：黑 → 灰 → 白 → 底板 */
+.dsu-wash {
+  position: absolute;
+  inset: 0;
+  background: #8b8a88;
+  opacity: 0;
+  z-index: 35;
+  pointer-events: none;
+}
+.dsu-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+
+/* ── 品牌块（左上角）──────────────────────────────────────────────────── */
+/* 黑幕结束后统一"滑到位"：左侧文字从 -22px 滑入，右侧元素从 +18px 滑入，
+   按 60ms 一档错开；不再用裁剪式擦除 */
+.dsu-brand {
+  position: absolute;
+  left: 46px;
+  top: 44px;
+  z-index: 20;
+  color: var(--dsu-ink);
+}
+.dsu-brand-1,
+.dsu-brand-2,
+.dsu-brand-3 {
+  opacity: 0;
+  transform: translateX(-22px);
+  transition: opacity 560ms cubic-bezier(0.16, 0.84, 0.24, 1),
+    transform 560ms cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+.dsu-brand-1 {
+  font-size: 33px;
+  font-weight: 700;
+  letter-spacing: 0.012em;
+  line-height: 0.98;
+}
+.dsu-brand-2 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.012em;
+  margin-top: 3px;
+}
+.dsu-brand-3 {
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.06;
+  letter-spacing: 0.012em;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.dsu-brand-3 b { font-weight: 700; }
+.dsu-brand.dsu-in .dsu-brand-1 { opacity: 1; transform: none; transition-delay: 60ms; }
+.dsu-brand.dsu-in .dsu-brand-2 { opacity: 1; transform: none; transition-delay: 150ms; }
+.dsu-brand.dsu-in .dsu-brand-3 { opacity: 1; transform: none; transition-delay: 240ms; }
+
+/* 中央状态区 */
+.dsu-center {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 47%;
+  transform: translateY(-50%);
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  pointer-events: none;
+  transition: opacity 340ms ease;
+}
+/* 终幕时整块中央区（状态行 / 分隔线 / 鲸鱼 / 虚线）必须整体退场，
+   否则会和 WELCOME 版式叠在一起 */
+.dsu-center.dsu-off { opacity: 0; }
+
+.dsu-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--dsu-din);
+  font-size: 44px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  color: var(--dsu-ink);
+  opacity: 0;
+  transition: opacity 300ms ease;
+  white-space: nowrap;
+}
+.dsu-status.dsu-in { opacity: 1; }
+.dsu-status.dsu-zhline {
+  font-family: var(--dsu-zh);
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  font-size: 40px;
+}
+.dsu-caret {
+  display: inline-block;
+  width: 15px;
+  height: 4px;
+  background: var(--dsu-accent);
+  transform: translateY(3px);
+  opacity: 0;
+}
+.dsu-caret.dsu-on {
+  opacity: 1;
+  animation: dsu-blink 1s steps(1, end) infinite;
+}
+@keyframes dsu-blink { 50% { opacity: 0; } }
+
+.dsu-sub-en {
+  margin-top: 14px;
+  font-family: var(--dsu-mono);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.44em;
+  text-indent: 0.44em;
+  color: var(--dsu-ink-soft);
+  opacity: 0;
+  white-space: nowrap;
+}
+.dsu-sub-en.dsu-in { opacity: 1; }
+
+.dsu-rule {
+  margin-top: 22px;
+  height: 1px;
+  width: 0;
+  /* 两端渐隐 + 一条压深的底面：读起来是"刻"出来的一道刻度线，不是画的一根线 */
+  background: linear-gradient(90deg,
+    rgba(255, 255, 255, 0) 0%,
+    var(--dsu-hair) 14%,
+    var(--dsu-hair) 86%,
+    rgba(255, 255, 255, 0) 100%);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.28);
+  transition: width 620ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+.dsu-rule.dsu-in { width: min(560px, 42vw); }
+
+/* 中央标识（鲸鱼）装配区 */
+.dsu-logo {
+  margin-top: 26px;
+  height: 0;
+  opacity: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: opacity 420ms ease, height 420ms ease, margin-top 420ms ease;
+}
+.dsu-logo.dsu-in {
+  opacity: 1;
+  height: 118px;
+}
+.dsu-logo svg {
+  width: 84px;
+  height: 84px;
+  color: var(--dsu-ink);
+}
+.dsu-logolabel {
+  margin-top: 10px;
+  font-family: var(--dsu-mono);
+  font-size: 10px;
+  letter-spacing: 0.58em;
+  text-indent: 0.58em;
+  color: var(--dsu-ink-soft);
+}
+.dsu-dots {
+  margin-top: 9px;
+  height: 2px;
+  width: 96px;
+  background-image: radial-gradient(circle, var(--dsu-ink) 40%, transparent 42%);
+  background-size: 12px 2px;
+  background-repeat: repeat-x;
+  opacity: 0.5;
+}
+
+/* 左上信息栏第三行（对应参考片 "· ID CONFIRMED : 0087"）。
+   1.2.2 之前挂在屏幕中央偏右（left: calc(50% + 190px), top: 49%），
+   正好压在中英状态行上 —— 状态行是整段动画的主体，元信息不该抢它。
+   归到左侧，和 REV / 阶段格连成一组系统信息，读起来也更像"档案"。 */
+.dsu-idline {
+  position: absolute;
+  left: 46px;
+  top: 222px;
+  z-index: 20;
+  font-family: var(--dsu-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--dsu-muted);
+  opacity: 0;
+  transform: translateX(-18px);
+  transition: opacity 520ms ease, transform 520ms cubic-bezier(0.16, 0.84, 0.24, 1);
+  transition-delay: 520ms;
+  white-space: nowrap;
+}
+.dsu-idline.dsu-in { opacity: 1; transform: none; }
+/* 编号本身用强调色点出来，和 REV 行右侧那个橙色时间戳呼应 */
+.dsu-idline b { color: var(--dsu-accent); font-weight: 400; }
+
+/* 真实自检读数（批次 3）：这两行来自宿主 ctx 采到的真事实 ——
+   模型 / 沙箱模式 / 插件数。取不到的项由 JS 写成 "—"，不用假占位值。
+   版式与 .dsu-idline 完全一致，三行连成一组系统信息。 */
+.dsu-facts {
+  position: absolute;
+  left: 46px;
+  z-index: 20;
+  font-family: var(--dsu-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--dsu-muted);
+  opacity: 0;
+  transform: translateX(-18px);
+  transition: opacity 520ms ease, transform 520ms cubic-bezier(0.16, 0.84, 0.24, 1);
+  transition-delay: 620ms;
+  white-space: nowrap;
+}
+.dsu-facts.dsu-in { opacity: 1; transform: none; }
+.dsu-facts b { color: var(--dsu-accent); font-weight: 400; }
+.dsu-facts-1 { top: 240px; }
+.dsu-facts-2 { top: 258px; }
+
+/* 状态字可能和环形准星同色叠加：白字压白环 = 笔画被"吃掉"（终幕「读取完毕」的
+   「读」就是这个症状）。用底板色给一圈"护城河"，环从字旁过时笔画仍然完整。 */
+.dsu-status,
+.dsu-sub-en {
+  text-shadow: 0 0 14px var(--dsu-bg-2), 0 0 5px var(--dsu-bg-2);
+}
+
+/* ── 环形准星（验证通过）───────────────────────────────────────────────── */
+/* 照原片：环居中，状态字落在环心里，两者是一个整体。
+   两段弧的缺口都留在正下方 6 点钟方向，底部字幕永远不会被压到。
+   尺寸从 56vw 提到 66vw（1.2.2）：外环实际半径 = 150/400 × 盒宽，而最长的一句
+   「读取完毕 · 核验通过」横向半宽刚好和它相等 —— 环就从字形边缘切过去了。
+   半径放大 18% 后留出约 35px 净空，字不再被压。 */
+.dsu-reticle {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: min(66vw, 94vh, 1180px);
+  height: min(66vw, 94vh, 1180px);
+  transform: translate(-50%, -50%);
+  z-index: 16;
+  opacity: 0;
+  transition: opacity 500ms ease;
+  pointer-events: none;
+}
+.dsu-reticle.dsu-in { opacity: 1; }
+.dsu-reticle svg { width: 100%; height: 100%; overflow: visible; }
+.dsu-ret-rot-a { transform-origin: 50% 50%; animation: dsu-spin 9s linear infinite; }
+.dsu-ret-rot-b { transform-origin: 50% 50%; animation: dsu-spin 5.4s linear infinite reverse; }
+@keyframes dsu-spin { to { transform: rotate(360deg); } }
+.dsu-reticle .dsu-ring-a { fill: none; stroke: var(--dsu-ink); stroke-width: 6; }
+.dsu-reticle .dsu-ring-b { fill: none; stroke: var(--dsu-box-ink); stroke-width: 2.2; opacity: 0.95; }
+.dsu-reticle .dsu-dot-a { fill: var(--dsu-ink); }
+.dsu-reticle .dsu-dot-b { fill: var(--dsu-box-ink); }
+.dsu-reticle .dsu-dot-o { fill: var(--dsu-accent); }
+.dsu-reticle .dsu-bracket {
+  fill: none;
+  stroke: var(--dsu-ink);
+  stroke-width: 1.6;
+  opacity: 0.85;
+}
+
+/* ── 准星的三层附加运动（1.3.0）─────────────────────────────────────────
+   原来只有一个匀速自转，看着是"在转"，不是"在扫描"。 */
+
+/* 刻度环：48 格沿环逐格点亮一圈（仪表自检），读完停在暗态。
+   每格动画 520ms、间隔 32ms —— 和 3.2s 的扫描扇区错开，不会看成一条线。 */
+.dsu-reticle .dsu-tick {
+  stroke: var(--dsu-ink);
+  stroke-width: 1;
+  opacity: 0.16;
+  animation: dsu-tick-on 520ms ease-out both;
+}
+.dsu-reticle .dsu-tick-major { stroke-width: 1.7; opacity: 0.24; }
+@keyframes dsu-tick-on {
+  0% { stroke: var(--dsu-accent); opacity: 1; }
+  55% { stroke: var(--dsu-accent); opacity: 0.8; }
+  100% { stroke: var(--dsu-ink); opacity: 0.16; }
+}
+
+/* 雷达扫描扇区：conic 渐变 + 环形遮罩。
+   第一版把楔形做到 66°、不透明度 0.26，实机截出来是一大片橙色柔光，
+   读起来像污渍不像雷达 —— 收成 22° 的窄针，尾巴淡、头部利落，
+   遮罩也收紧到内外环之间（55%–74%），避免扫到中央文字。
+   第一行是硬编码橙兜底，第二行 color-mix 跟随自定义强调色。 */
+.dsu-ret-scan {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(from 0deg,
+    rgba(255, 117, 0, 0) 0deg,
+    rgba(255, 117, 0, 0.10) 15deg,
+    rgba(255, 117, 0, 0.72) 19deg,
+    rgba(255, 117, 0, 0) 20.5deg);
+  background: conic-gradient(from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--dsu-accent) 10%, transparent) 15deg,
+    color-mix(in srgb, var(--dsu-accent) 72%, transparent) 19deg,
+    transparent 20.5deg);
+  /* 用 mask-* 长写法：`mask` 简写在这个 Chromium 上没有把环形遮罩吃进去。
+     而且必须显式写 closest-side —— radial-gradient(circle) 默认按 farthest-corner
+     取尺寸（正方形元素是 0.707×边长），按 55%–78% 算出来的环带会整个落到外环外面，
+     实机上就是画面右上角一块橙色。锚到 closest-side 才是"以半径为单位"。
+     外环在 150/200 = 75%，内环在 104/200 = 52%，所以环带取 55%–72%。 */
+  -webkit-mask-image: radial-gradient(circle closest-side at 50% 50%,
+    transparent 0 56%, #000 57% 73%, transparent 74.5%);
+  mask-image: radial-gradient(circle closest-side at 50% 50%,
+    transparent 0 56%, #000 57% 73%, transparent 74.5%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  animation: dsu-ret-sweep 3.2s linear infinite;
+}
+@keyframes dsu-ret-sweep { to { transform: rotate(360deg); } }
+
+/* 咬合：环出现那一下先收 3.5% 再弹回，像机械环锁到位。
+   每一帧都带上 translate(-50%,-50%)，否则会顶掉居中定位。 */
+.dsu-reticle.dsu-lock { animation: dsu-ret-lock 860ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes dsu-ret-lock {
+  0% { transform: translate(-50%, -50%) scale(1.03); }
+  16% { transform: translate(-50%, -50%) scale(0.965); }
+  34% { transform: translate(-50%, -50%) scale(1.012); }
+  60% { transform: translate(-50%, -50%) scale(1); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
+
+/* 读取阶段的十六进制瀑布：放到原片里最空的上右区，不去和主体挤中间 */
+.dsu-hex {
+  position: absolute;
+  right: 46px;
+  top: 22%;
+  width: 236px;
+  height: 148px;
+  overflow: hidden;
+  z-index: 19;
+  font-family: var(--dsu-mono);
+  font-size: 10px;
+  line-height: 1.55;
+  letter-spacing: 0.06em;
+  color: var(--dsu-ink-soft);
+  opacity: 0;
+  transition: opacity 320ms ease;
+  text-align: right;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 22%, #000 74%, transparent);
+  mask-image: linear-gradient(180deg, transparent, #000 22%, #000 74%, transparent);
+}
+.dsu-hex.dsu-in { opacity: 0.6; }
+
+/* ── 交互区 ─────────────────────────────────────────────────────────────── */
+.dsu-action {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 60%;
+  z-index: 26;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+.dsu-action.dsu-in {
+  opacity: 1;
+  pointer-events: auto;
+}
+.dsu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 26px;
+  border: 1.5px solid var(--dsu-ink);
+  background: transparent;
+  color: var(--dsu-ink);
+  font-family: var(--dsu-din);
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: color 220ms ease, border-color 220ms ease;
+}
+.dsu-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--dsu-ink);
+  transform: translateX(-101%);
+  transition: transform 300ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+.dsu-btn:hover::before { transform: none; }
+.dsu-btn:hover { color: var(--dsu-box-ink); }
+.dsu-btn:hover .dsu-btn-en { color: var(--dsu-box-ink); opacity: 1; }
+.dsu-btn > * { position: relative; z-index: 1; }
+.dsu-btn:active { transform: translateY(1px); }
+.dsu-btn-zh { font-family: var(--dsu-zh); font-weight: 500; }
+.dsu-btn-en { font-family: var(--dsu-mono); font-size: 11px; letter-spacing: 0.24em; opacity: 0.62; }
+.dsu-btn.dsu-pulse { animation: dsu-pulse 1.9s ease-in-out infinite; }
+@keyframes dsu-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 117, 0, 0); }
+  50% { box-shadow: 0 0 0 7px rgba(255, 117, 0, 0.14); }
+}
+.dsu-hint {
+  font-family: var(--dsu-zh);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--dsu-muted);
+}
+.dsu-hint kbd {
+  font-family: var(--dsu-mono);
+  border: 1px solid var(--dsu-hair);
+  padding: 1px 5px;
+  margin: 0 3px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+/* 身份卡（第二步）：纯中文标签 + 数字，去掉了英文双写与竖排表头，尽量干净 */
+.dsu-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 300px;
+  padding: 2px 0;
+  border-top: 1px solid var(--dsu-hair);
+  border-bottom: 1px solid var(--dsu-hair);
+}
+/* 作者样式里的 display:flex 会盖掉 [hidden] 的 UA display:none，必须显式补一条，
+   否则第一步（只要按钮、不要卡片）会露出一条空的边框 */
+.dsu-card[hidden] { display: none; }
+.dsu-card-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 34px;
+  padding: 8px 2px;
+  font-family: var(--dsu-zh);
+  font-size: 12.5px;
+  letter-spacing: 0.14em;
+  color: var(--dsu-muted);
+}
+.dsu-card-row + .dsu-card-row {
+  border-top: 1px solid var(--dsu-hair-soft);
+}
+.dsu-card-row b {
+  font-family: var(--dsu-din);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: var(--dsu-ink);
+}
+.dsu-card-row b.dsu-zhname { font-family: var(--dsu-zh); letter-spacing: 0.1em; }
+
+/* ── 终幕：WELCOME ─────────────────────────────────────────────────────── */
+.dsu-welcome {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 45%;
+  transform: translateY(-50%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 420ms ease;
+}
+.dsu-welcome.dsu-in { opacity: 1; }
+.dsu-w1 {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+  color: var(--dsu-ink);
+}
+.dsu-w2 {
+  margin-top: 12px;
+  background: var(--dsu-box-bg);
+  color: var(--dsu-box-ink);
+  padding: 7px 16px 8px;
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-indent: 0.12em;
+}
+.dsu-w3 {
+  margin-top: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.dsu-w3 svg { width: 76px; height: 76px; color: var(--dsu-ink); }
+.dsu-w3 span {
+  font-family: var(--dsu-mono);
+  font-size: 10px;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+  color: var(--dsu-ink-soft);
+}
+.dsu-w4 {
+  margin-top: 20px;
+  font-family: var(--dsu-zh);
+  font-size: 15px;
+  letter-spacing: 0.28em;
+  text-indent: 0.28em;
+  color: var(--dsu-ink);
+}
+
+/* 色散故障（参考片结尾的青蓝色偏）
+   做法：复制层带 0.5px 模糊 + 分片 clip-path 位移 + 混合模式，
+   读起来像镜头色散而不是"三个字叠一起"。常态必须 opacity:0，
+   否则动画跑完红蓝副本会一直压在文字上。 */
+.dsu-glitch { position: relative; }
+.dsu-glitch[data-text]::before,
+.dsu-glitch[data-text]::after {
+  content: attr(data-text);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  opacity: 0;
+  pointer-events: none;
+  filter: blur(0.5px);
+  mix-blend-mode: multiply;      /* 浅底深字：做减色边缘 */
+  clip-path: inset(0 0 100% 0);
+}
+.dsu-glitch[data-text]::before { color: var(--dsu-glitch-a); }
+.dsu-glitch[data-text]::after { color: var(--dsu-glitch-b); }
+/* 黑底白字那块要换成加色，否则乘完是黑 */
+.dsu-glitch.dsu-glitch-box::before,
+.dsu-glitch.dsu-glitch-box::after { mix-blend-mode: screen; }
+
+/* 位移**从大到小收敛**再归零。原版是等幅抖两下（430ms×2），
+   读起来是"画面坏了"而不是"镜头色散"；收敛版才像一次摄影机色散。
+   全程 1100ms，steps(5) 保留数字式的顿挫，不用平滑插值。 */
+.dsu-glitch.dsu-on::before { animation: dsu-gx 1100ms steps(5, end) 1 both; }
+.dsu-glitch.dsu-on::after { animation: dsu-gy 1100ms steps(5, end) 1 both; }
+@keyframes dsu-gx {
+  0% { transform: translate(0, 0); opacity: 0; clip-path: inset(0 0 100% 0); }
+  8% { transform: translate(-6px, 0); opacity: 0.82; clip-path: inset(4% 0 72% 0); }
+  26% { transform: translate(5px, -1px); opacity: 0.68; clip-path: inset(48% 0 30% 0); }
+  44% { transform: translate(-3px, 1px); opacity: 0.58; clip-path: inset(18% 0 58% 0); }
+  62% { transform: translate(2px, 0); opacity: 0.46; clip-path: inset(66% 0 14% 0); }
+  80% { transform: translate(-1px, 0); opacity: 0.3; clip-path: inset(30% 0 52% 0); }
+  100% { transform: none; opacity: 0; clip-path: inset(0 0 100% 0); }
+}
+@keyframes dsu-gy {
+  0% { transform: translate(0, 0); opacity: 0; clip-path: inset(0 0 100% 0); }
+  8% { transform: translate(6px, 0); opacity: 0.82; clip-path: inset(58% 0 18% 0); }
+  26% { transform: translate(-5px, 1px); opacity: 0.68; clip-path: inset(12% 0 68% 0); }
+  44% { transform: translate(3px, -1px); opacity: 0.58; clip-path: inset(52% 0 30% 0); }
+  62% { transform: translate(-2px, 0); opacity: 0.46; clip-path: inset(24% 0 62% 0); }
+  80% { transform: translate(1px, 0); opacity: 0.3; clip-path: inset(70% 0 12% 0); }
+  100% { transform: none; opacity: 0; clip-path: inset(0 0 100% 0); }
+}
+
+/* 屏幕撕裂：一条 3px 带子自上而下扫过全屏，扫过时整条横向错位。
+   色散层做的是"字在抖"，这一层做"画面在撕" —— 两者叠起来才有 CRT 味。
+   用 transform 位移（合成层）而不是动 top，避免逐帧重排版。 */
+.dsu-tear {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  z-index: 62;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+  background: linear-gradient(90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.5) 16%,
+    var(--dsu-glitch-a) 46%,
+    var(--dsu-glitch-b) 58%,
+    rgba(255, 255, 255, 0) 100%);
+}
+.dsu-tear.dsu-go { animation: dsu-tear 880ms cubic-bezier(0.45, 0, 0.6, 1) 1 forwards; }
+@keyframes dsu-tear {
+  0% { opacity: 0; transform: translate(0, 6vh); }
+  10% { opacity: 0.95; }
+  40% { transform: translate(2.2vw, 42vh); }
+  68% { transform: translate(-1.6vw, 70vh); }
+  100% { opacity: 0; transform: translate(0, 98vh); }
+}
+
+/* ── 收尾：径向光晕 + 变形宽银幕光条 + 暗角 + 机位后撤 ─────────────────── */
+/* 暗角：给暖白底板一点纵深，别让大色块太平 */
+.dsu-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 13;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 900ms ease;
+  background:
+    /* 边缘色散：只在左右极边缘一圈压一点冷 / 暖，模拟镜头边缘的色差。
+       第一版用了 120% 半径 + 0.05，实机截出来右侧一大片暖红调，
+       读起来是"屏幕染色"不是"镜头色差" —— 收窄到贴边 38% 再降到 0.045。 */
+    radial-gradient(68% 118% at 0% 50%, rgba(41, 113, 184, 0.045) 0%, rgba(41, 113, 184, 0) 38%),
+    radial-gradient(68% 118% at 100% 50%, rgba(255, 59, 48, 0.045) 0%, rgba(255, 59, 48, 0) 38%),
+    radial-gradient(122% 104% at 50% 42%, rgba(0, 0, 0, 0) 48%, rgba(0, 0, 0, 0.12) 100%),
+    radial-gradient(60% 40% at 50% 45%, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0) 100%);
+}
+.dsu-dark .dsu-vignette {
+  background:
+    radial-gradient(68% 118% at 0% 50%, rgba(41, 113, 184, 0.06) 0%, rgba(41, 113, 184, 0) 38%),
+    radial-gradient(68% 118% at 100% 50%, rgba(255, 59, 48, 0.06) 0%, rgba(255, 59, 48, 0) 38%),
+    radial-gradient(122% 104% at 50% 42%, rgba(0, 0, 0, 0) 46%, rgba(0, 0, 0, 0.46) 100%),
+    radial-gradient(60% 40% at 50% 45%, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 100%);
+}
+.dsu-vignette.dsu-in { opacity: 1; }
+
+/* 径向光晕：不是整屏糊白，而是从中心炸开一朵光，边缘仍留暖色 */
+.dsu-bloom {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 128vmax;
+  height: 128vmax;
+  margin: -64vmax 0 0 -64vmax;
+  border-radius: 50%;
+  z-index: 62;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+  background: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.99) 0%,
+    rgba(255, 255, 255, 0.94) 22%,
+    rgba(255, 255, 255, 0.58) 44%,
+    rgba(255, 255, 255, 0.16) 62%,
+    rgba(255, 255, 255, 0) 78%
+  );
+}
+.dsu-bloom.dsu-go { animation: dsu-bloom 1250ms cubic-bezier(0.22, 0.68, 0.2, 1) forwards; }
+@keyframes dsu-bloom {
+  0% { opacity: 0; transform: scale(0.08); }
+  20% { opacity: 1; transform: scale(0.42); }
+  58% { opacity: 0.96; transform: scale(0.96); }
+  100% { opacity: 0; transform: scale(1.42); }
+}
+
+/* 变形宽银幕光条：横着抽出来的一条细光，光晕最亮那一刻扫过 */
+.dsu-streak {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  height: 3px;
+  width: 0;
+  z-index: 63;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  filter: blur(1px);
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.5) 34%,
+    rgba(255, 255, 255, 0.98) 50%,
+    rgba(255, 255, 255, 0.5) 66%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+.dsu-streak.dsu-go { animation: dsu-streak 1000ms cubic-bezier(0.2, 0.78, 0.2, 1) forwards; }
+@keyframes dsu-streak {
+  0% { opacity: 0; width: 0; height: 1px; }
+  26% { opacity: 1; width: 62vw; height: 3px; }
+  60% { opacity: 0.6; width: 96vw; height: 2px; }
+  100% { opacity: 0; width: 132vw; height: 1px; }
+}
+
+/* 光晕最亮那一刻：文字带一点青色光晕（halation），颗粒变粗。
+   注意别在 .dsu-welcome 上加 filter —— 那会新建层叠上下文，
+   把色散层的 mix-blend-mode 隔离掉，故障会在中途"啪"地变回去。 */
+#dsh-startup-root.dsu-peak .dsu-w1,
+#dsh-startup-root.dsu-peak .dsu-w4 {
+  color: var(--dsu-glitch-b);
+  text-shadow: 0 0 14px rgba(41, 113, 184, 0.55);
+  transition: color 260ms ease, text-shadow 260ms ease;
+}
+#dsh-startup-root.dsu-peak .dsu-w3 svg {
+  filter: drop-shadow(0 0 10px rgba(41, 113, 184, 0.45));
+}
+#dsh-startup-root.dsu-peak .dsu-grain { opacity: 0.11; }
+
+/* 揭幕：整个机位后撤 + 轻微失焦，比单纯淡出更有镜头感 */
+#dsh-startup-root.dsu-handoff {
+  transform: scale(1.035);
+  filter: blur(5px);
+  opacity: 0;
+  transition: opacity 780ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 780ms cubic-bezier(0.4, 0, 0.2, 1), filter 780ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── 页脚 / 字幕 / 进度条 ───────────────────────────────────────────────── */
+.dsu-foot {
+  position: absolute;
+  right: 46px;
+  bottom: 52px;
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--dsu-mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--dsu-ink);
+  opacity: 0;
+  transform: translateX(18px);
+  transition: opacity 560ms ease, transform 560ms cubic-bezier(0.16, 0.84, 0.24, 1);
+  transition-delay: 300ms;
+}
+.dsu-foot.dsu-in { opacity: 1; transform: none; }
+.dsu-foot i {
+  display: block;
+  width: 0;
+  height: 7px;
+  background: var(--dsu-ink);
+  transition: width 720ms cubic-bezier(0.2, 0.9, 0.2, 1) 460ms;
+}
+.dsu-foot.dsu-in i { width: 26px; }
+
+.dsu-subtitle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 50px;
+  z-index: 24;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.dsu-sub-zh {
+  font-family: var(--dsu-zh);
+  font-size: 15px;
+  letter-spacing: 0.1em;
+  color: var(--dsu-ink-soft);
+  text-shadow: var(--dsu-sub-glow);
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 420ms ease, transform 420ms cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+.dsu-sub-zh.dsu-in { opacity: 1; transform: none; }
+.dsu-sub-en2 {
+  font-family: var(--dsu-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: var(--dsu-muted);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 420ms ease, transform 420ms cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+.dsu-sub-en2.dsu-in { opacity: 0.85; transform: none; }
+
+/* 底部进度：照原片收成中间一小段，不再横贯整屏跟字幕抢注意力 */
+.dsu-progress {
+  position: absolute;
+  left: 50%;
+  bottom: 11px;
+  width: min(420px, 32vw);
+  height: 3px;
+  transform: translateX(-50%);
+  z-index: 26;
+  background: var(--dsu-hair-soft);
+}
+.dsu-progress::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 3px;
+  height: 5px;
+  background-image: repeating-linear-gradient(90deg, var(--dsu-hair) 0 1px, transparent 1px 30px);
+  background-size: auto 5px;
+  background-position: 0 100%;
+  background-repeat: repeat-x;
+  opacity: 0.8;
+}
+/* 进度条做成金属条：顶部一亮、底部压深，比纯色块更像加工件 */
+.dsu-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(180deg, #ffffff 0%, var(--dsu-ink) 45%, var(--dsu-ink) 100%);
+  box-shadow: inset -2px 0 0 var(--dsu-accent);
+  transition: width 460ms cubic-bezier(0.3, 0.9, 0.25, 1);
+}
+.dsu-progress.dsu-accent i {
+  background: linear-gradient(180deg, #ffbb75 0%, var(--dsu-accent) 48%, #b85400 100%);
+}
+
+/* 阶段计数（左下） */
+.dsu-stepcount {
+  position: absolute;
+  left: 46px;
+  bottom: 52px;
+  z-index: 24;
+  font-family: var(--dsu-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--dsu-muted);
+  opacity: 0;
+  transform: translateX(-18px);
+  transition: opacity 560ms ease, transform 560ms cubic-bezier(0.16, 0.84, 0.24, 1);
+  transition-delay: 400ms;
+}
+.dsu-stepcount.dsu-in { opacity: 1; transform: none; }
+
+/* 跳过 */
+.dsu-skip {
+  position: absolute;
+  right: 46px;
+  top: 48px;
+  z-index: 30;
+  font-family: var(--dsu-mono);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  color: var(--dsu-muted);
+  border: 1px solid transparent;
+  padding: 5px 10px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 400ms ease, color 200ms ease, border-color 200ms ease;
+}
+.dsu-skip.dsu-in { opacity: 1; }
+.dsu-skip:hover { color: var(--dsu-ink); border-color: var(--dsu-hair); }
+.dsu-skip[hidden] { display: none; }
+
+/* ── 机框装饰层（照原片的疏密：只贴边，不占中间）──────────────────────── */
+/* 四角定位标记 / 一次性扫描线 / 品牌块下单行小字（含时钟）/ 六个阶段格 */
+.dsu-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 17;
+  pointer-events: none;
+}
+
+/* 闭合机箱框：外亮内暗的双层边。
+   原来只有四个孤立角标，框不闭合，读起来是"四个记号"而不是"一块面板"。
+   四角由 .dsu-corner 压上更亮的定位角，正好落在框线的转角上 ——
+   于是整圈是细发丝线、四个角是实体件，就是机箱倒角的读法。 */
+.dsu-frame::before {
+  content: "";
+  position: absolute;
+  inset: 26px;
+  border: 1px solid var(--dsu-hair);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 1px 0 rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transition: opacity 780ms ease;
+}
+.dsu-frame.dsu-in::before { opacity: 1; }
+
+.dsu-corner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  opacity: 0;
+  transition: opacity 640ms ease, transform 640ms cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+/* 角标做成"倒角定位角"：亮一档的边压一道暗影，读起来像机加工出来的角，
+   而不是随便拉的细线。原来 16px + hair(0.18) 太弱，在暗底上基本看不见。 */
+.dsu-corner::before,
+.dsu-corner::after { content: ""; position: absolute; background: var(--dsu-ink); opacity: 0.5; }
+.dsu-corner::before { width: 100%; height: 1px; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45); }
+.dsu-corner::after { width: 1px; height: 100%; box-shadow: 1px 0 0 rgba(0, 0, 0, 0.45); }
+.dsu-c-tl { left: 26px; top: 26px; transform: translate(-10px, -10px); }
+.dsu-c-tl::before { top: 0; left: 0; }
+.dsu-c-tl::after { top: 0; left: 0; }
+.dsu-c-tr { right: 26px; top: 26px; transform: translate(10px, -10px); }
+.dsu-c-tr::before { top: 0; right: 0; }
+.dsu-c-tr::after { top: 0; right: 0; }
+.dsu-c-bl { left: 26px; bottom: 26px; transform: translate(-10px, 10px); }
+.dsu-c-bl::before { bottom: 0; left: 0; }
+.dsu-c-bl::after { bottom: 0; left: 0; }
+.dsu-c-br { right: 26px; bottom: 26px; transform: translate(10px, 10px); }
+.dsu-c-br::before { bottom: 0; right: 0; }
+.dsu-c-br::after { bottom: 0; right: 0; }
+.dsu-frame.dsu-in .dsu-corner { opacity: 1; transform: none; }
+.dsu-frame.dsu-in .dsu-c-tr { transition-delay: 90ms; }
+.dsu-frame.dsu-in .dsu-c-br { transition-delay: 180ms; }
+.dsu-frame.dsu-in .dsu-c-bl { transition-delay: 270ms; }
+
+/* 一次性扫描线：底板洗白之后自上而下扫一遍，验准时再扫一次 */
+.dsu-scanline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -14%;
+  height: 96px;
+  opacity: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0.045) 58%,
+    rgba(0, 0, 0, 0.1) 86%,
+    rgba(0, 0, 0, 0.16) 97%,
+    rgba(0, 0, 0, 0) 100%
+  );
+}
+.dsu-dark .dsu-scanline {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.05) 58%,
+    rgba(255, 255, 255, 0.11) 86%,
+    rgba(255, 255, 255, 0.18) 97%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+.dsu-scanline.dsu-go { animation: dsu-scan 2600ms cubic-bezier(0.42, 0, 0.58, 1) 1; }
+@keyframes dsu-scan {
+  0% { top: -14%; opacity: 0; }
+  10% { opacity: 1; }
+  86% { opacity: 1; }
+  100% { top: 102%; opacity: 0; }
+}
+
+/* 品牌块下方的一行小字：版本 + 实时时钟（时钟点亮主题橙） */
+.dsu-meta {
+  position: absolute;
+  left: 46px;
+  top: 170px;
+  z-index: 20;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--dsu-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--dsu-muted);
+  opacity: 0;
+  transform: translateX(-18px);
+  transition: opacity 560ms ease, transform 560ms cubic-bezier(0.16, 0.84, 0.24, 1);
+  transition-delay: 330ms;
+}
+.dsu-meta.dsu-in { opacity: 1; transform: none; }
+.dsu-meta-2 { color: var(--dsu-accent); }
+
+/* 六个阶段格：横排在左栏小字下面，走过的压暗、当前的点亮并拉长 */
+.dsu-slats {
+  position: absolute;
+  left: 46px;
+  top: 196px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0;
+  transform: translateX(-18px);
+  transition: opacity 560ms ease, transform 560ms cubic-bezier(0.16, 0.84, 0.24, 1);
+  transition-delay: 420ms;
+}
+.dsu-slats.dsu-in { opacity: 1; transform: none; }
+.dsu-slat {
+  width: 20px;
+  height: 2px;
+  background: var(--dsu-hair);
+  transition: width 460ms cubic-bezier(0.3, 0.9, 0.25, 1), background-color 320ms ease,
+    opacity 320ms ease;
+}
+.dsu-slat.dsu-past { background: var(--dsu-ink); opacity: 0.3; }
+.dsu-slat.dsu-on { width: 34px; background: var(--dsu-accent); opacity: 1; }
+
+/* 女声播报指示条：出声时点亮主题橙并跳动（对应参考片里女声念状态行的时刻） */
+.dsu-voice {
+  position: absolute;
+  left: 46px;
+  bottom: 96px;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 16px;
+  opacity: 0;
+  transition: opacity 560ms ease;
+  transition-delay: 480ms;
+}
+.dsu-voice.dsu-in { opacity: 1; }
+.dsu-voice i {
+  width: 2px;
+  height: 20%;
+  background: var(--dsu-hair);
+  transition: height 140ms ease, background-color 240ms ease;
+}
+.dsu-voice.dsu-on i {
+  background: var(--dsu-accent);
+  animation: dsu-voice 560ms ease-in-out infinite;
+}
+.dsu-voice i:nth-child(1) { animation-delay: 0ms; }
+.dsu-voice i:nth-child(2) { animation-delay: 90ms; }
+.dsu-voice i:nth-child(3) { animation-delay: 180ms; }
+.dsu-voice i:nth-child(4) { animation-delay: 60ms; }
+.dsu-voice i:nth-child(5) { animation-delay: 140ms; }
+@keyframes dsu-voice {
+  0%, 100% { height: 20%; }
+  50% { height: 100%; }
+}
+
+/* 窄窗口里右侧那行等宽小字会和环撞上，直接收掉 */
+@media (max-width: 1180px) {
+  .dsu-idline { display: none; }
+}
+
+/* 无障碍：尊重系统"减少动态效果" */
+@media (prefers-reduced-motion: reduce) {
+  #dsh-startup-root .dsu-ret-rot-a,
+  #dsh-startup-root .dsu-ret-rot-b { animation: none; }
+  #dsh-startup-root .dsu-scanline.dsu-go { animation: none; }
+}
+
+
+/* ============================================================================
+ * 1.5.0 候选：光学档案仪器
+ * ----------------------------------------------------------------------------
+ * 只做覆盖与新增，不改上面的既有断言锚点。分五层：
+ *   A 空间：大气层 / 体积光 / 地面反射 / 三层档案面板 / 镜头推进
+ *   B 材质：底板内倒角 / 面板闭合倒角 / 接触阴影 / 机框刻度
+ *   C 字阶：主标题放大、字距收紧、英文副标题降一档
+ *   D 准星：1.6px 精密环 / 数据环 / 彗星弧 / 锁定冲击波
+ *   E 逻辑：右侧 SELF-CHECK 清单（由 splash.js 填入真实 facts）
+ * ========================================================================== */
+
+#dsh-startup-root {
+  --dsu-accent-2: #6fd3e8;
+  --dsu-warm: #ffd9a8;
+  --dsu-edge: rgba(255, 255, 255, 0.10);
+  --dsu-edge-dark: rgba(0, 0, 0, 0.55);
+}
+
+#dsh-startup-root:not(.dsu-dark) {
+  --dsu-bg: #dedbd4;
+  --dsu-bg-2: #f2efe8;
+  --dsu-ink: #0b0c0d;
+  --dsu-ink-soft: #34383a;
+  --dsu-muted: #7b7e7b;
+  --dsu-hair: rgba(20, 25, 28, 0.18);
+  --dsu-hair-soft: rgba(20, 25, 28, 0.07);
+  --dsu-accent-2: #2c7a8a;
+  --dsu-warm: #b55b12;
+  --dsu-edge: rgba(255, 255, 255, 0.55);
+  --dsu-edge-dark: rgba(0, 0, 0, 0.18);
+}
+
+#dsh-startup-root.dsu-dark {
+  --dsu-bg: #070a0e;
+  --dsu-bg-2: #0d131a;
+  --dsu-ink: #eef2f4;
+  --dsu-ink-soft: #b8c3ca;
+  --dsu-muted: #6f7f89;
+  --dsu-hair: rgba(180, 210, 225, 0.16);
+  --dsu-hair-soft: rgba(180, 210, 225, 0.055);
+  --dsu-accent-2: #6fd3e8;
+  --dsu-warm: #ffe0b0;
+  --dsu-edge: rgba(255, 255, 255, 0.10);
+  --dsu-edge-dark: rgba(0, 0, 0, 0.55);
+}
+
+/* ── A1 大气层：右上暖光 / 左下冷光，缓慢漂移 ─────────────────────────── */
+.dsu-atmo,
+.dsu-beams,
+.dsu-floor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.dsu-atmo {
+  z-index: 8;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 1400ms ease;
+}
+.dsu-atmo.dsu-in { opacity: 1; }
+.dsu-atmo::before,
+.dsu-atmo::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  will-change: transform;
+}
+.dsu-atmo::before {
+  width: 68vw;
+  height: 68vw;
+  right: -18vw;
+  top: -30vw;
+  background: radial-gradient(circle, rgba(255, 166, 88, 0.22) 0%, rgba(255, 166, 88, 0.06) 42%, transparent 68%);
+  animation: dsu-atmo-a 26s ease-in-out infinite alternate;
+}
+.dsu-atmo::after {
+  width: 62vw;
+  height: 62vw;
+  left: -20vw;
+  bottom: -30vw;
+  background: radial-gradient(circle, rgba(72, 186, 214, 0.16) 0%, rgba(72, 186, 214, 0.04) 46%, transparent 70%);
+  animation: dsu-atmo-b 34s ease-in-out infinite alternate;
+}
+.dsu-dark .dsu-atmo::before {
+  background: radial-gradient(circle, rgba(255, 150, 60, 0.16) 0%, transparent 66%);
+}
+.dsu-dark .dsu-atmo::after {
+  background: radial-gradient(circle, rgba(60, 170, 210, 0.13) 0%, transparent 68%);
+}
+@keyframes dsu-atmo-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(-3vw, 2vh, 0) scale(1.08); }
+}
+@keyframes dsu-atmo-b {
+  from { transform: translate3d(0, 0, 0) scale(1.04); }
+  to { transform: translate3d(3vw, -2vh, 0) scale(1); }
+}
+
+/* ── A2 体积光：两道极淡的斜向光柱 ────────────────────────────────────── */
+.dsu-beams {
+  z-index: 9;
+  overflow: hidden;
+  opacity: 0;
+  mix-blend-mode: screen;
+  transition: opacity 1200ms ease;
+}
+.dsu-beams.dsu-in { opacity: 1; }
+#dsh-startup-root:not(.dsu-dark) .dsu-beams { mix-blend-mode: soft-light; }
+.dsu-beams::before,
+.dsu-beams::after {
+  content: "";
+  position: absolute;
+  top: -30%;
+  width: 16%;
+  height: 160%;
+  background: linear-gradient(90deg,
+    rgba(255, 238, 210, 0) 0%,
+    rgba(255, 238, 210, 0.10) 42%,
+    rgba(255, 250, 240, 0.16) 50%,
+    rgba(255, 238, 210, 0.10) 58%,
+    rgba(255, 238, 210, 0) 100%);
+  transform: rotate(15deg);
+  filter: blur(12px);
+  animation: dsu-beam 14s ease-in-out infinite alternate;
+}
+.dsu-beams::before { left: 8%; }
+.dsu-beams::after {
+  left: 62%;
+  width: 10%;
+  opacity: 0.55;
+  animation-duration: 19s;
+  animation-delay: -6s;
+}
+@keyframes dsu-beam {
+  from { transform: translateX(-6vw) rotate(15deg); opacity: 0.45; }
+  to { transform: translateX(6vw) rotate(15deg); opacity: 0.8; }
+}
+
+/* ── A3 地面反射：底部极弱的地平线与暖色反光 ───────────────────────────── */
+.dsu-floor {
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 1600ms ease 300ms;
+  background:
+    linear-gradient(180deg, transparent 56%, rgba(255, 255, 255, 0.02) 68%, rgba(255, 255, 255, 0.06) 72%, transparent 84%),
+    radial-gradient(70% 30% at 50% 100%, rgba(255, 190, 120, 0.08), transparent 70%);
+}
+.dsu-floor.dsu-in { opacity: 1; }
+.dsu-floor::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 22%;
+  height: 1px;
+  opacity: 0.5;
+  background: linear-gradient(90deg, transparent, var(--dsu-hair) 20%, var(--dsu-hair) 80%, transparent);
+}
+
+/* ── A4 镜头推进：底板 1.035× / 面板 1.06× 视差 ───────────────────────── */
+.dsu-plate {
+  transform-origin: 50% 45%;
+  transition: transform 3.4s cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+#dsh-startup-root.dsu-cam .dsu-plate { transform: scale(1.035); }
+.dsu-watermark {
+  transform-origin: 50% 45%;
+  transition: transform 4.6s cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+#dsh-startup-root.dsu-cam .dsu-watermark { transform: scale(1.06) translateY(-0.6%); }
+
+/* ── B1 底板：内倒角 + 顶部环境光 + 底部压暗 ──────────────────────────── */
+.dsu-plate::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px var(--dsu-edge),
+    inset 0 90px 140px rgba(255, 255, 255, 0.035),
+    inset 0 -180px 220px rgba(0, 0, 0, 0.42);
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-plate::before {
+  box-shadow:
+    inset 0 0 0 1px var(--dsu-edge),
+    inset 0 90px 140px rgba(255, 255, 255, 0.30),
+    inset 0 -180px 220px rgba(60, 45, 30, 0.10);
+}
+.dsu-plate::after {
+  background:
+    linear-gradient(103deg, transparent 28%, rgba(255, 255, 255, 0.055) 44%, rgba(255, 255, 255, 0.012) 58%, transparent 66%),
+    linear-gradient(14deg, rgba(255, 255, 255, 0.025), transparent 35%);
+}
+
+/* ── B2 档案面板：远 / 中 / 近三层景深 ───────────────────────────────── */
+.dsu-wm {
+  border-radius: 2px;
+  border-color: rgba(255, 255, 255, 0.10);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.012) 34%, rgba(0, 0, 0, 0.10));
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.55),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+.dsu-dark .dsu-wm {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.008) 38%, rgba(0, 0, 0, 0.18));
+  border-color: rgba(180, 210, 225, 0.09);
+  box-shadow:
+    0 34px 90px rgba(0, 0, 0, 0.65),
+    0 2px 10px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-wm {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.18) 40%, rgba(120, 110, 95, 0.05));
+  border-color: rgba(80, 70, 55, 0.10);
+  box-shadow:
+    0 26px 70px rgba(70, 60, 45, 0.20),
+    0 2px 8px rgba(70, 60, 45, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+.dsu-wm-far { filter: blur(2.6px) saturate(0.8); opacity: 0.32; }
+.dsu-wm-mid { filter: blur(1.1px) saturate(0.9); opacity: 0.55; }
+.dsu-wm-near { filter: blur(0.3px); opacity: 0.85; }
+
+/* ── B3 机框：收进 22px，补顶部刻度尺与实体角 ─────────────────────────── */
+.dsu-frame::before {
+  inset: 22px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 1px 0 rgba(0, 0, 0, 0.30),
+    0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+.dsu-frame::after {
+  content: "";
+  position: absolute;
+  inset: 22px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 900ms ease;
+  background-image:
+    repeating-linear-gradient(90deg, var(--dsu-hair) 0 1px, transparent 1px 24px),
+    repeating-linear-gradient(90deg, var(--dsu-hair) 0 1px, transparent 1px 24px);
+  background-size: 100% 5px, 100% 5px;
+  background-position: 0 0, 0 100%;
+  background-repeat: no-repeat, no-repeat;
+}
+.dsu-frame.dsu-in::after { opacity: 0.5; }
+.dsu-corner { width: 26px; height: 26px; }
+.dsu-corner::before,
+.dsu-corner::after { opacity: 0.62; }
+
+/* ── C 字阶：主标题成为画面主体 ───────────────────────────────────────── */
+.dsu-status {
+  font-size: clamp(46px, 4.4vw, 68px);
+  font-weight: 300;
+  letter-spacing: 0.15em;
+  text-indent: 0.15em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.10), 0 14px 48px rgba(0, 0, 0, 0.38);
+}
+.dsu-status.dsu-zhline {
+  font-size: clamp(44px, 4.2vw, 64px);
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+}
+.dsu-sub-en {
+  font-size: 12px;
+  letter-spacing: 0.52em;
+  text-indent: 0.52em;
+  color: var(--dsu-ink-soft);
+}
+.dsu-status .dsu-ch,
+.dsu-sub-en .dsu-ch {
+  transform: translateY(0.16em) scale(0.96);
+  transition: opacity 420ms cubic-bezier(0.16, 0.84, 0.24, 1),
+    transform 520ms cubic-bezier(0.16, 0.84, 0.24, 1),
+    filter 420ms ease;
+}
+.dsu-sub-en .dsu-ch { transform: translateY(0.10em) scale(0.98); }
+.dsu-status.dsu-in .dsu-ch,
+.dsu-sub-en.dsu-in .dsu-ch { transform: none; }
+.dsu-status.dsu-in { animation: dsu-text-settle 900ms cubic-bezier(0.16, 0.84, 0.24, 1) 1; }
+@keyframes dsu-text-settle {
+  0% { text-shadow: 0 0 0 rgba(255, 255, 255, 0); }
+  40% { text-shadow: 0 0 26px color-mix(in srgb, var(--dsu-warm) 26%, transparent), 0 14px 48px rgba(0, 0, 0, 0.38); }
+  100% { text-shadow: 0 1px 0 rgba(255, 255, 255, 0.10), 0 14px 48px rgba(0, 0, 0, 0.38); }
+}
+.dsu-rule.dsu-in { width: min(620px, 46vw); }
+
+/* ── D 准星：精密环 + 数据环 + 彗星弧 + 冲击波 ────────────────────────── */
+.dsu-reticle { filter: drop-shadow(0 0 36px rgba(0, 0, 0, 0.35)); }
+.dsu-reticle::before {
+  content: "";
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, transparent 54%, rgba(111, 211, 232, 0.07) 68%, transparent 76%);
+  filter: blur(8px);
+}
+.dsu-reticle .dsu-ring-a { stroke-width: 1.6; opacity: 0.72; }
+.dsu-reticle .dsu-ring-b { stroke-width: 1; opacity: 0.38; }
+.dsu-reticle .dsu-bracket { stroke-width: 1; opacity: 0.55; }
+.dsu-ret-rot-a { animation-duration: 18s; }
+.dsu-ret-rot-b { animation-duration: 11s; }
+.dsu-ret-comet {
+  fill: none;
+  stroke: var(--dsu-accent-2);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  opacity: 0.9;
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  animation: dsu-spin 6.8s linear infinite;
+  filter: drop-shadow(0 0 5px var(--dsu-accent-2));
+}
+.dsu-tick-data {
+  stroke: var(--dsu-accent-2);
+  stroke-width: 0.8;
+  opacity: 0.14;
+}
+.dsu-tick-data.dsu-lit {
+  opacity: 0.9;
+  filter: drop-shadow(0 0 2px var(--dsu-accent-2));
+}
+.dsu-ping {
+  fill: none;
+  stroke: var(--dsu-accent);
+  stroke-width: 1.2;
+  opacity: 0;
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+}
+.dsu-reticle.dsu-lock .dsu-ping { animation: dsu-ping 1200ms cubic-bezier(0.2, 0.8, 0.2, 1) 1; }
+@keyframes dsu-ping {
+  0% { opacity: 0.65; transform: scale(0.94); }
+  70% { opacity: 0.16; }
+  100% { opacity: 0; transform: scale(1.16); }
+}
+
+/* ── E 右侧自检清单：每一步点亮一项真实 facts ─────────────────────────── */
+.dsu-checks {
+  position: absolute;
+  right: 46px;
+  top: 300px;
+  z-index: 21;
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: var(--dsu-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  opacity: 0;
+  transform: translateX(18px);
+  transition: opacity 620ms ease, transform 620ms cubic-bezier(0.16, 0.84, 0.24, 1);
+  transition-delay: 520ms;
+}
+.dsu-checks.dsu-in { opacity: 1; transform: none; }
+.dsu-checks-h {
+  padding-bottom: 7px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--dsu-hair);
+  color: var(--dsu-muted);
+  font-size: 9px;
+  letter-spacing: 0.24em;
+}
+.dsu-check {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--dsu-hair-soft);
+  color: var(--dsu-muted);
+}
+.dsu-check-k { width: 76px; flex: none; }
+.dsu-check-v {
+  flex: 1;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsu-ink-soft);
+}
+.dsu-check i {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--dsu-hair);
+  transform: translateY(-1px);
+}
+.dsu-check.dsu-on { color: var(--dsu-ink); }
+.dsu-check.dsu-on .dsu-check-v { color: var(--dsu-ink); }
+.dsu-check.dsu-on i {
+  background: var(--dsu-accent);
+  box-shadow: 0 0 8px var(--dsu-accent);
+}
+.dsu-check.dsu-past i {
+  background: var(--dsu-accent-2);
+  box-shadow: 0 0 6px var(--dsu-accent-2);
+  opacity: 0.75;
+}
+.dsu-check::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 0;
+  height: 1px;
+  background: var(--dsu-accent);
+  transition: width 420ms cubic-bezier(0.3, 0.9, 0.25, 1);
+}
+.dsu-check.dsu-on::after { width: 100%; }
+@media (max-width: 1180px) { .dsu-checks { display: none; } }
+
+/* ── 终幕：浮雕字 / 黑框厚度 / 光晕不再洗白 ───────────────────────────── */
+.dsu-welcome { transition: opacity 620ms cubic-bezier(0.16, 0.84, 0.24, 1); }
+.dsu-w1 {
+  font-size: clamp(42px, 4.2vw, 64px);
+  letter-spacing: 0.24em;
+  text-indent: 0.24em;
+  text-shadow: 0 2px 0 rgba(255, 255, 255, 0.08), 0 18px 50px rgba(0, 0, 0, 0.35);
+}
+.dsu-w2 {
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.dsu-w3 svg { filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.35)); }
+.dsu-w4 { letter-spacing: 0.32em; text-indent: 0.32em; }
+#dsh-startup-root.dsu-peak .dsu-w1,
+#dsh-startup-root.dsu-peak .dsu-w4 {
+  color: var(--dsu-accent-2);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--dsu-accent-2) 45%, transparent);
+}
+#dsh-startup-root.dsu-dark.dsu-peak .dsu-w1,
+#dsh-startup-root.dsu-dark.dsu-peak .dsu-w4 {
+  color: var(--dsu-warm);
+  text-shadow: 0 0 20px color-mix(in srgb, var(--dsu-warm) 40%, transparent);
+}
+.dsu-bloom {
+  background: radial-gradient(circle,
+    rgba(255, 248, 236, 0.92) 0%,
+    rgba(255, 244, 226, 0.66) 26%,
+    rgba(255, 238, 214, 0.18) 52%,
+    transparent 74%);
+}
+.dsu-dark .dsu-bloom {
+  background: radial-gradient(circle,
+    rgba(255, 250, 240, 0.55) 0%,
+    rgba(255, 244, 226, 0.30) 26%,
+    rgba(255, 238, 214, 0.08) 52%,
+    transparent 74%);
+}
+.dsu-flash { background: radial-gradient(circle at 50% 45%, #fff8ec 0%, #f1e6d2 60%, #d8cbb8 100%); }
+.dsu-wash {
+  background: radial-gradient(circle at 50% 44%, #ffffff 0%, #f6f1e7 36%, #d3cec5 76%, #b9b4ab 100%);
+  transform: scale(1.02);
+}
+.dsu-dark .dsu-wash {
+  background: radial-gradient(circle at 50% 44%, #f7f3eb 0%, #d8d2c8 22%, #6a665f 52%, #1a1a1c 82%, #070a0e 100%);
+}
+
+/* ── 进度条：给金属条一点自发光 ───────────────────────────────────────── */
+.dsu-progress i {
+  box-shadow: inset -2px 0 0 var(--dsu-accent), 0 0 12px color-mix(in srgb, var(--dsu-accent) 35%, transparent);
+}
+
+/* ── 无障碍：新增动画同样尊重减少动态效果 ─────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  #dsh-startup-root .dsu-atmo::before,
+  #dsh-startup-root .dsu-atmo::after,
+  #dsh-startup-root .dsu-beams::before,
+  #dsh-startup-root .dsu-beams::after,
+  #dsh-startup-root .dsu-ret-comet,
+  #dsh-startup-root .dsu-reticle.dsu-lock .dsu-ping,
+  #dsh-startup-root .dsu-status.dsu-in { animation: none; }
+  #dsh-startup-root .dsu-plate,
+  #dsh-startup-root .dsu-watermark { transition: none; }
+}
+
+
+/* ── 1.5.0 候选：第一轮截图修正 ──────────────────────────────────────────
+   截图发现的三个问题：
+   1) 浅色主题主标题的 14px 黑影读成"重影"，改成暖灰短影 + 白描边；
+   2) 准星整体 drop-shadow 把白内环压成黑环，改成主题分别给影；
+   3) 右侧自检清单 10px 裸字太弱，做成玻璃仪表盘并加实时点。 */
+#dsh-startup-root:not(.dsu-dark) .dsu-status {
+  text-shadow: 0 2px 0 rgba(255, 255, 255, 0.55), 0 10px 30px rgba(80, 70, 55, 0.16);
+}
+#dsh-startup-root.dsu-dark .dsu-status {
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.08), 0 16px 54px rgba(0, 0, 0, 0.55);
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-status.dsu-zhline {
+  text-shadow: 0 2px 0 rgba(255, 255, 255, 0.5), 0 12px 34px rgba(80, 70, 55, 0.14);
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-sub-en { color: #4a4e4d; }
+#dsh-startup-root.dsu-dark .dsu-sub-en { color: #a9b7bf; }
+
+#dsh-startup-root:not(.dsu-dark) .dsu-reticle { filter: drop-shadow(0 2px 18px rgba(70, 60, 45, 0.12)); }
+#dsh-startup-root.dsu-dark .dsu-reticle { filter: drop-shadow(0 0 34px rgba(0, 0, 0, 0.45)); }
+#dsh-startup-root .dsu-reticle .dsu-ring-b { stroke: var(--dsu-ink-soft); opacity: 0.35; }
+#dsh-startup-root .dsu-reticle .dsu-dot-b { fill: var(--dsu-ink-soft); }
+
+#dsh-startup-root:not(.dsu-dark) .dsu-w1 {
+  text-shadow: 0 2px 0 rgba(255, 255, 255, 0.55), 0 14px 36px rgba(80, 70, 55, 0.16);
+}
+#dsh-startup-root.dsu-dark .dsu-w1 {
+  text-shadow: 0 2px 0 rgba(255, 255, 255, 0.06), 0 18px 50px rgba(0, 0, 0, 0.55);
+}
+
+.dsu-checks {
+  top: 402px;
+  width: 286px;
+  padding: 14px 16px 10px;
+  border: 1px solid var(--dsu-hair);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.008));
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
+  backdrop-filter: blur(10px) saturate(1.1);
+  font-size: 10.5px;
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-checks {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.20));
+  box-shadow: 0 18px 50px rgba(70, 60, 45, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.dsu-checks::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  width: 42px;
+  height: 1px;
+  background: var(--dsu-accent);
+}
+.dsu-checks-h {
+  font-size: 9.5px;
+  letter-spacing: 0.26em;
+  padding-bottom: 8px;
+}
+.dsu-checks-h::after {
+  content: "●";
+  float: right;
+  color: var(--dsu-accent);
+  font-size: 7px;
+  animation: dsu-blink 1.6s steps(1, end) infinite;
+}
+.dsu-check { padding: 6px 0; }
+.dsu-check-v { font-variant-numeric: tabular-nums; }
+
+
+/* ── 底部信号轨迹：补住下半屏的空，并给"正在读取"一个可看的波形 ─────── */
+.dsu-trace {
+  position: absolute;
+  left: 50%;
+  bottom: 17%;
+  width: min(520px, 44vw);
+  height: 46px;
+  transform: translateX(-50%);
+  z-index: 18;
+  opacity: 0;
+  transition: opacity 700ms ease;
+  pointer-events: none;
+}
+.dsu-trace.dsu-in { opacity: 0.62; }
+.dsu-trace svg { width: 100%; height: 100%; overflow: visible; }
+.dsu-trace-base { stroke: var(--dsu-hair); stroke-width: 1; opacity: 0.55; }
+.dsu-trace-tick { stroke: var(--dsu-hair); stroke-width: 1; opacity: 0.45; }
+.dsu-trace-line {
+  fill: none;
+  stroke: var(--dsu-accent-2);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.8;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--dsu-accent-2) 45%, transparent));
+}
+.dsu-trace-cursor {
+  stroke: var(--dsu-accent);
+  stroke-width: 1;
+  opacity: 0.8;
+  transform-box: view-box;
+  animation: dsu-trace-scan 4.6s linear infinite;
+}
+@keyframes dsu-trace-scan {
+  from { transform: translateX(0); }
+  to { transform: translateX(520px); }
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-trace-line { opacity: 0.62; }
+@media (prefers-reduced-motion: reduce) {
+  #dsh-startup-root .dsu-trace-cursor { animation: none; }
+}
+
+
+/* ============================================================================
+ * 1.6.0 — 清晰度与活体光场
+ * ----------------------------------------------------------------------------
+ * 这一轮只解决两件事：
+ *   1) 大字必须"实"：去掉逐字 filter 合成层、伪细体与几何精度排版，
+ *      中文改用本机真实可变字重 Noto Sans SC 500；
+ *   2) 背景必须"活"：新增低分辨率的 Canvas 光场（星尘 / 流光 / 底部水线），
+ *      只做低速、低对比度运动，不抢中央读数。
+ * ========================================================================== */
+
+#dsh-startup-root {
+  --dsu-title-size: clamp(48px, 4.7vw, 72px);
+  --dsu-glass: rgba(8, 15, 20, 0.56);
+  --dsu-glass-hi: rgba(255, 255, 255, 0.055);
+  --dsu-field-ink: 118, 210, 226;
+  --dsu-field-warm: 255, 170, 92;
+}
+
+#dsh-startup-root:not(.dsu-dark) {
+  --dsu-glass: rgba(255, 252, 246, 0.58);
+  --dsu-glass-hi: rgba(255, 255, 255, 0.72);
+  --dsu-field-ink: 38, 112, 126;
+  --dsu-field-warm: 168, 92, 34;
+}
+
+/* Canvas 位于底板之上、档案面板之下：光在空间里，不盖住信息。 */
+.dsu-field {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  transition: opacity 1500ms cubic-bezier(0.22, 0.68, 0.2, 1) 160ms;
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-field { mix-blend-mode: multiply; }
+.dsu-field.dsu-in { opacity: 0.72; }
+#dsh-startup-root:not(.dsu-dark) .dsu-field.dsu-in { opacity: 0.58; }
+.dsu-watermark { z-index: 12; }
+
+/* 主标题：真实字重，字面收得更紧；阴影只在字后，不参与文字栅格化。 */
+.dsu-status {
+  font-family: var(--dsu-zh);
+  font-size: var(--dsu-title-size);
+  font-weight: 500;
+  font-synthesis: none;
+  letter-spacing: 0.135em;
+  text-indent: 0.135em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.055), 0 20px 54px rgba(0, 0, 0, 0.46);
+  animation: none;
+}
+.dsu-status.dsu-zhline {
+  font-family: var(--dsu-zh);
+  font-size: clamp(46px, 4.5vw, 69px);
+  font-weight: 500;
+  letter-spacing: 0.11em;
+  text-indent: 0.11em;
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-status,
+#dsh-startup-root:not(.dsu-dark) .dsu-status.dsu-zhline {
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.82), 0 13px 32px rgba(66, 54, 40, 0.16);
+}
+
+/* filter 清零后，逐字入场只保留位移与透明度；不再缩放字形。 */
+.dsu-status .dsu-ch,
+.dsu-sub-en .dsu-ch {
+  filter: none !important;
+  transform: translateY(0.10em);
+  transition: opacity 380ms cubic-bezier(0.16, 0.84, 0.24, 1),
+    transform 440ms cubic-bezier(0.16, 0.84, 0.24, 1);
+}
+.dsu-status.dsu-in .dsu-ch,
+.dsu-sub-en.dsu-in .dsu-ch { transform: none; }
+
+/* 分隔圆点单独提亮：整句因此有一个视觉锚，不再是一排平均字。 */
+.dsu-status .dsu-sep {
+  color: var(--dsu-accent);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--dsu-accent) 42%, transparent);
+}
+
+.dsu-sub-en {
+  margin-top: 16px;
+  font-size: 12.5px;
+  font-weight: 400;
+  letter-spacing: 0.46em;
+  text-indent: 0.46em;
+  color: color-mix(in srgb, var(--dsu-ink-soft) 88%, transparent);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.38);
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-sub-en {
+  color: #464b4a;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+/* 肩部信息：字号 +0.5px、亮度 +一档，仍然只做辅助层。 */
+.dsu-meta,
+.dsu-idline,
+.dsu-facts {
+  font-size: 10.5px;
+  letter-spacing: 0.145em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.32);
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-meta,
+#dsh-startup-root:not(.dsu-dark) .dsu-idline,
+#dsh-startup-root:not(.dsu-dark) .dsu-facts { text-shadow: 0 1px 0 rgba(255, 255, 255, 0.62); }
+.dsu-meta-2 { font-variant-numeric: tabular-nums; }
+
+/* 自检面板：切角玻璃仪表，内部有一道极慢的读取光。 */
+.dsu-checks {
+  top: 392px;
+  width: 292px;
+  padding: 16px 18px 12px;
+  border: 1px solid color-mix(in srgb, var(--dsu-ink) 17%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--dsu-accent) 58%, transparent);
+  background:
+    linear-gradient(180deg, var(--dsu-glass-hi), transparent 48%),
+    var(--dsu-glass);
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.30);
+  -webkit-backdrop-filter: blur(15px) saturate(1.18);
+  backdrop-filter: blur(15px) saturate(1.18);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  overflow: hidden;
+}
+#dsh-startup-root:not(.dsu-dark) .dsu-checks {
+  border-color: rgba(52, 62, 62, 0.18);
+  box-shadow:
+    0 24px 60px rgba(56, 46, 34, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    inset 0 -1px 0 rgba(80, 65, 45, 0.08);
+}
+.dsu-checks::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -38%;
+  height: 34%;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    transparent 0%,
+    color-mix(in srgb, var(--dsu-accent-2) 10%, transparent) 50%,
+    transparent 100%);
+  animation: dsu-check-read 6.8s cubic-bezier(0.38, 0, 0.62, 1) infinite;
+}
+@keyframes dsu-check-read {
+  0%, 14% { transform: translateY(0); opacity: 0; }
+  22% { opacity: 0.85; }
+  68% { opacity: 0.55; }
+  84%, 100% { transform: translateY(390%); opacity: 0; }
+}
+.dsu-checks-h {
+  color: color-mix(in srgb, var(--dsu-ink-soft) 86%, transparent);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+}
+.dsu-checks-h::after {
+  content: none;
+  float: none;
+}
+.dsu-live {
+  color: var(--dsu-accent);
+  animation: dsu-live-pulse 2.4s ease-in-out infinite;
+}
+@keyframes dsu-live-pulse {
+  0%, 100% { opacity: 0.46; }
+  50% { opacity: 1; }
+}
+.dsu-check { padding: 7px 0; }
+.dsu-check-k { width: 82px; font-size: 10.5px; }
+.dsu-check-v { font-size: 11px; letter-spacing: 0.10em; color: var(--dsu-ink-soft); }
+#dsh-startup-root.dsu-dark .dsu-check-v { color: color-mix(in srgb, var(--dsu-ink) 82%, transparent); }
+.dsu-check i { width: 4px; height: 4px; }
+
+/* 颗粒也要活着：用 steps 做极轻的胶片抖动，成本远低于逐帧重绘噪点。 */
+.dsu-grain {
+  animation: dsu-grain-jitter 760ms steps(3, end) infinite;
+  will-change: transform;
+}
+@keyframes dsu-grain-jitter {
+  0% { transform: translate3d(-1.4%, -0.8%, 0); }
+  33% { transform: translate3d(0.8%, 0.6%, 0); }
+  66% { transform: translate3d(-0.4%, 1.1%, 0); }
+  100% { transform: translate3d(1.1%, -0.3%, 0); }
+}
+
+/* 操作按钮：切角 + 细内描边，保留原片的硬边气质。 */
+.dsu-btn {
+  padding: 14px 30px;
+  border: 1px solid color-mix(in srgb, var(--dsu-ink) 72%, transparent);
+  background: color-mix(in srgb, var(--dsu-bg) 18%, transparent);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+  letter-spacing: 0.16em;
+}
+.dsu-btn-zh { font-weight: 600; }
+.dsu-hint { font-size: 11.5px; letter-spacing: 0.14em; }
+
+/* 底部轨迹：线更细、亮一档，并由 JS 持续改波形。 */
+.dsu-trace.dsu-in { opacity: 0.74; }
+.dsu-trace-line {
+  stroke-width: 1.25;
+  opacity: 0.92;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--dsu-accent-2) 58%, transparent));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #dsh-startup-root .dsu-checks::after,
+  #dsh-startup-root .dsu-checks-h::after,
+  #dsh-startup-root .dsu-grain { animation: none; }
+  #dsh-startup-root .dsu-field { transition: none; }
+}

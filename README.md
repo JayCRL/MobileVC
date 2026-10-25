@@ -105,19 +105,15 @@ docker compose --profile tunnel up -d
 - **Memory**：读写真实 `AGENTS.md`
 - 审批卡：拒绝 / 允许一次
 
-### 启动画面（可选）
+### 启动画面
 
-如果 web profile 已安装 [`dsh-startup-screen`](https://github.com/QIFANAI/dsh-startup-screen)，MobileVC 会自动读取同源的 `/dsh-startup/config`，并加载它的启动动画；不需要把动画代码复制进 MobileVC。
+MobileVC 内置了 [`dsh-startup-screen`](https://github.com/QIFANAI/dsh-startup-screen) v1.6.0 的浏览器运行时（MIT，见 [`preview/startup/NOTICE.md`](./preview/startup/NOTICE.md)），并适配到 `/mobilevc/startup/`。
 
-```bash
-# 从 release 下载 tgz 后
-dsh plugin --profile web add /path/to/dsh-startup-screen-1.6.0.tgz
-systemctl restart dsh-web
-```
-
-- 打开 `?nostartup=1` 可跳过
-- 未安装该插件时，自动回到普通启动页
-- 插件仍由它自己的设置页管理；动画代码/素材不随 MobileVC 分发
+- 不需要安装 DSH 插件，也不依赖 `/dsh-startup` 路由/DSH web auth
+- PWA 冷启动/新开页面时播放；快速刷新不重复
+- `?nostartup=1` 可跳过
+- 当前运行时使用官方 DeepSeek 鲸鱼标识，不是鲸鱼娘角色
+- 没有内置音频素材；需要声音时由运行时回落到 TTS/WebAudio
 
 ## 架构
 

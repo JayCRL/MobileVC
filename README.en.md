@@ -105,19 +105,15 @@ Deployment, nginx, PWA, upgrade/uninstall and troubleshooting: [INSTALL.en.md](.
 - **Memory** — read/write real `AGENTS.md`
 - Approval card — Reject / Allow once
 
-### Startup screen (optional)
+### Startup screen
 
-If [`dsh-startup-screen`](https://github.com/QIFANAI/dsh-startup-screen) is installed in the web profile, MobileVC reads the same-origin `/dsh-startup/config` and loads its splash animation. The animation code is not vendored into MobileVC.
+MobileVC bundles the browser runtime of [`dsh-startup-screen`](https://github.com/QIFANAI/dsh-startup-screen) v1.6.0 (MIT, see [`preview/startup/NOTICE.md`](./preview/startup/NOTICE.md)), adapted to `/mobilevc/startup/`.
 
-```bash
-# after downloading the release tgz
-dsh plugin --profile web add /path/to/dsh-startup-screen-1.6.0.tgz
-systemctl restart dsh-web
-```
-
+- No DSH plugin install and no dependency on `/dsh-startup` or DSH web auth
+- Plays on a PWA cold start / new page; a quick reload does not replay it
 - Add `?nostartup=1` to skip it
-- Without the plugin, MobileVC uses its normal landing screen
-- The animation and its assets remain managed by that plugin
+- The current runtime uses the official DeepSeek whale mark, not a whale-girl character
+- No audio assets are bundled; the runtime falls back to TTS/WebAudio
 
 ## Architecture
 
