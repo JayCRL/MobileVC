@@ -144,7 +144,7 @@ Not planned: rewriting the Agent loop, adding another relay/E2EE layer inside th
 
 ## Relation to the original MobileVC
 
-The original app was a Flutter client + Go relay + E2EE. It is preserved under [`legacy/`](./legacy/) and in git history, but it is no longer the default client.
+The original app was a Flutter client + Go relay + E2EE. It is preserved under [`legacy/`](https://github.com/JayCRL/MobileVC/tree/main/legacy) and in git history, but it is no longer the default client.
 
 The move to DSH is deliberate: DSH already provides the Agent runtime, durable session log, follow stream, approvals and plugin system. Keeping the Flutter client and relay would mean maintaining a second session/queue/runtime outside DSH — exactly where the old sync and queue problems came from.
 

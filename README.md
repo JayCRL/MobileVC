@@ -144,7 +144,7 @@ flowchart LR
 
 ## 与旧版 MobileVC 的关系
 
-旧版是 Flutter 客户端 + Go relay + E2EE。它保留在 [`legacy/`](./legacy/)，也保留在 git 历史里，但不再是默认客户端。
+旧版是 Flutter 客户端 + Go relay + E2EE。它保留在 [`legacy/`](https://github.com/JayCRL/MobileVC/tree/main/legacy)，也保留在 git 历史里，但不再是默认客户端。
 
 转向 DSH 的原因很简单：DSH 已经提供 Agent runtime、durable session log、follow 流、审批和插件系统。继续维护 Flutter + relay，等于在 DSH 之外再维护一套 session/queue/runtime，这会重新引入同步和队列问题。
 
