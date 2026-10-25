@@ -1701,3 +1701,24 @@ body.bare {
 }
 .queue-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .queue-actions .btn { width: auto; flex: 1 1 auto; min-width: 72px; padding: 7px 10px; font-size: 12px; }
+
+/* ---------- inline interjection banner ---------- */
+.queue-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 2px 8px;
+  padding: 9px 11px;
+  border: 0.5px solid var(--primary-border);
+  border-radius: 13px;
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  cursor: pointer;
+  min-width: 0;
+}
+.queue-banner[hidden] { display: none; }
+.qb-kicker { font-size: 10px; font-weight: 800; flex: none; letter-spacing: .02em; }
+.qb-text { font-size: 11.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
+.qb-action { font-size: 10px; font-weight: 700; flex: none; white-space: nowrap; }
+
+.user-state { margin-top: 5px; font-size: 9.5px; line-height: 1.2; opacity: .65; text-align: right; }

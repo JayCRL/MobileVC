@@ -144,6 +144,7 @@
     state.session = null;
     state.blocks = [];
     state.approvals = [];
+    state.optimisticUser = null;
     state.detailLoading = true;
     state.error = '';
     if (!opts.keepLoading) state.loading = false;
@@ -179,8 +180,10 @@
 
   function applyDetail(data) {
     state.session = data;
-    state.optimisticUser = null;
     state.blocks = data.blocks || [];
+    if (state.optimisticUser && !state.blocks.some((b) => b.type === 'user' && b.text === state.optimisticUser.text)) {
+      state.blocks.push(state.optimisticUser.block);
+    }
     state.approvals = data.approvals || [];
     state.engine = data.engine || state.engine;
     state.model = data.model || state.model;
@@ -396,6 +399,7 @@
       const selector = `[data-optimistic="${CSS.escape(opt.rpcId)}"]`;
       document.querySelector(selector)?.remove();
     } catch (_) {}
+    updateQueueChip();
   }
 
   function applyPatch(patch) {
@@ -596,6 +600,15 @@
       const data = await api(`queue?session=${encodeURIComponent(sid)}`);
       if (seq !== state.queueSeq || state.session?.id !== sid) return;
       state.queue = data.items || [];
+      const mine = state.optimisticUser ? state.queue.find((item) => item.rpcId && item.rpcId === state.optimisticUser.rpcId) : null;
+      if (mine && mine.text && mine.text !== state.optimisticUser.text) {
+        state.optimisticUser.text = mine.text;
+        state.optimisticUser.block.text = mine.text;
+        try {
+          const node = document.querySelector(`[data-optimistic="${CSS.escape(state.optimisticUser.rpcId)}"] .user-text`);
+          if (node) node.textContent = mine.text;
+        } catch (_) {}
+      }
       updateQueueChip();
       const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
       if (title.startsWith('插话')) setSheetBody(queueBody());
@@ -605,20 +618,25 @@
   }
 
   function updateQueueChip() {
-    const chips = document.querySelector('.dock .rail .chips');
-    if (!chips) return;
-    let button = chips.querySelector('[data-act="queue"]');
-    if (!state.queue.length) {
-      button?.remove();
+    const el = $('#queue-banner');
+    if (!el) return;
+    if (state.queue.length) {
+      const latest = state.queue[state.queue.length - 1];
+      el.hidden = false;
+      el.innerHTML = `<span class="qb-kicker">插话队列 · ${state.queue.length}</span>
+        <span class="qb-text">${esc(latest.text || '（无文本）')}</span>
+        <span class="qb-action">查看 / 修改</span>`;
       return;
     }
-    if (!button) {
-      button = document.createElement('button');
-      button.className = 'tchip';
-      button.dataset.act = 'queue';
-      chips.appendChild(button);
+    if (state.optimisticUser && state.optimisticUser.busy) {
+      el.hidden = false;
+      el.innerHTML = `<span class="qb-kicker">插话已发送</span>
+        <span class="qb-text">${esc(state.optimisticUser.text)}</span>
+        <span class="qb-action">同步中…</span>`;
+      return;
     }
-    button.innerHTML = `${icon('chat')}<span>插话 · ${state.queue.length}</span>`;
+    el.hidden = true;
+    el.innerHTML = '';
   }
 
   function queueBody() {
@@ -630,7 +648,10 @@
         <button class="btn primary" data-act="queue-steer" data-id="${esc(item.id)}">立即插话</button>
       </div>
     </div>`).join('');
-    return `<div class="queue-list">${rows || '<div class="note">当前没有待处理的插话。</div>'}</div>
+    const pending = !rows && state.optimisticUser
+      ? `<div class="queue-item"><div class="queue-text">${esc(state.optimisticUser.text)}</div><div class="note">已发送，正在同步 DSH 队列…</div></div>`
+      : '';
+    return `<div class="queue-list">${rows || pending || '<div class="note">当前没有待处理的插话。</div>'}</div>
       <div class="note">插话会在当前回合的步骤边界进入；点「立即插话」可让 DSH 在当前步骤后优先处理。</div>`;
   }
 
@@ -792,13 +813,21 @@
     const text = (state.draft || '').trim();
     if (!text && state.attachments.length === 0) return;
     const pendingAttachments = state.attachments.map((a) => ({ kind: a.kind, name: a.name, mediaType: a.mediaType, data: a.data }));
-    const queued = Boolean(state.session.state === 'running');
+    const busy = Boolean(state.session.state === 'running' || state.session.state === 'waiting');
     state.sending = true;
     updateDockStatus();
     try {
       const requestId = typeof crypto !== 'undefined' && crypto.randomUUID
         ? `mvc-${crypto.randomUUID()}`
         : `mvc-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      if (text) {
+        const block = { type: 'user', text, images: [], files: [], _optimistic: true, _rpcId: requestId, _busy: busy };
+        state.blocks.push(block);
+        state.optimisticUser = { rpcId: requestId, text, block, busy };
+        appendBlocksToTimeline([block]);
+        updateQueueChip();
+        requestAnimationFrame(scrollContentBottom);
+      }
       const r = await fetch(`${API}/prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' },
@@ -837,11 +866,9 @@
         startFollow();
       }
       $('#composer')?.focus();
-      if (queued) {
-        await refreshQueue();
-        if (state.queue.length) queueSheet();
-      }
-      toast(queued ? '已加入插话队列，可在这里修改或立即插话' : '已发送到 DSH');
+      await refreshQueue();
+      if (busy) queueSheet();
+      toast(busy ? '已加入插话队列，可在这里修改或立即插话' : '已发送到 DSH');
     } catch (e) {
       state.sending = false;
       removeOptimisticUser();
@@ -915,7 +942,7 @@
   function chatBlock(b) {
     switch (b.type) {
       case 'user':
-        return `<div class="row user"${b._optimistic ? ` data-optimistic="${esc(b._rpcId || '')}"` : ''}><div class="bubble-user">${userImagesHtml(b.images)}${userFilesHtml(b.files)}${b.text ? `<div class="user-text">${esc(b.text)}</div>` : ''}</div></div>`;
+        return `<div class="row user"${b._optimistic ? ` data-optimistic="${esc(b._rpcId || '')}"` : ''}><div class="bubble-user">${userImagesHtml(b.images)}${userFilesHtml(b.files)}${b.text ? `<div class="user-text">${esc(b.text)}</div>` : ''}${b._optimistic ? `<div class="user-state">${b._busy ? '插话 · 待处理' : '发送中'}</div>` : ''}</div></div>`;
       case 'assistant':
         return `<div class="row"><div class="card-md">${b.html || esc(b.text || '')}</div></div>`;
       case 'thinking': {
@@ -1021,6 +1048,7 @@
         <div class="chips">${chips.map((c) => `<button class="tchip" data-act="${c.act}">${icon(c.ico)}<span>${c.label}</span></button>`).join('')}</div>
         ${s && state.approvals.length ? `<button class="round-btn" data-act="approvals" aria-label="审批">${icon('shield')}<span class="round-count">${state.approvals.length}</span></button>` : ''}
       </div>
+      ${s ? '<div class="queue-banner" id="queue-banner" data-act="queue" hidden></div>' : ''}
       ${s ? '<div class="attach-strip" id="attach-strip" hidden></div>' : ''}
       <div class="inputbox">
         <textarea id="composer" rows="1"${s && INTERACTIVE ? '' : ' readonly'} placeholder="${s ? (INTERACTIVE ? '输入消息，发送给 DSH…' : '在 DSH 中继续对话') : '打开一个会话'}">${s && INTERACTIVE ? esc(state.draft) : ''}</textarea>
