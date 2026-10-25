@@ -681,6 +681,8 @@
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error || `${r.status} ${r.statusText}`);
+      const item = state.queue.find((entry) => entry.id === id);
+      if (action === 'remove' && item && state.optimisticUser?.rpcId === item.rpcId) removeOptimisticUser();
       closeSheet();
       await refreshQueue();
       toast(action === 'edit' ? '插话已修改' : action === 'remove' ? '插话已删除' : '已立即插话');
