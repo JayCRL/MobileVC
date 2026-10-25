@@ -43,6 +43,8 @@ It is not a second Agent and not another relay or session store. Every read and 
 - **Trace** — user → thinking → tool → reply → compaction timeline; simple mode groups thinking/tool chains and folds raw English/tool args, with a full-mode toggle
 - **Files** — real workspace, breadcrumbs and subdirectory browsing
 - **Plugin manager** — real `pluginManager` list and toggles
+- **Background jobs** — browse DSH jobs, read output, stop; long commands no longer block a foreground wait
+- **Web Push** — completion / failure / approval notifications; iOS 16.4+ and Home Screen required
 - **Interjections** — show queued steering, edit/remove, or steer immediately
 - **PWA** — home-screen install, standalone, safe-area, portrait lock, no pinch/double-tap zoom
 - **No manual refresh** — SSE auto-reconnect plus a durable polling fallback for new replies
@@ -118,6 +120,15 @@ Deployment, nginx, PWA, upgrade/uninstall and troubleshooting: [INSTALL.en.md](.
 - **Plugins** — DSH plugin management
 - **Memory** — read/write real `AGENTS.md`
 - Approval card — Reject / Allow once
+- **Settings → Notifications → Enable** to opt into Web Push; **Test** sends a test notification
+
+## Notifications (Web Push)
+
+- Triggers: task complete, task failed, approval needed, background job finished
+- No public IP needed: the DSH host makes outbound HTTPS to Apple/Google push services
+- iPhone: iOS 16.4+, must be added to the Home Screen and launched from its icon; Safari tabs are unsupported
+- Notification payload is generic; tap opens MobileVC
+- No duplicate push while the page is in the foreground; after leaving, Web Push takes over
 
 ## Architecture
 

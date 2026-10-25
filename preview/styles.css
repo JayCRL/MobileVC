@@ -1771,3 +1771,26 @@ body.bare {
 }
 .trace-tool-line b { font-weight: 600; color: var(--text); }
 .trace-note { margin-top: 9px; font-size: 10.5px; color: var(--faint); }
+
+/* ---------- background jobs / push ---------- */
+.tool-time {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--faint);
+  flex: none;
+  margin-left: auto;
+  padding-right: 4px;
+}
+.job-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.job-card {
+  border: 0.5px solid var(--outline-soft);
+  border-radius: 14px;
+  background: var(--surface-low);
+  padding: 12px;
+}
+.job-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.job-head b { font-size: 12.5px; }
+.job-meta { margin-top: 5px; font-size: 10.5px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+.job-actions { display: flex; gap: 8px; margin-top: 10px; }
+.job-actions .btn { width: auto; flex: 0 0 auto; padding: 6px 12px; font-size: 11px; }
+.btn.danger { color: var(--danger); }

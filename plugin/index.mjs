@@ -6,12 +6,16 @@
  * session-log writer, no copy of the state machine.
  */
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import webpush from 'web-push'
 
 const BASE = '/mobilevc'
+const DSH_STATE = join(homedir(), '.dsh')
+const VAPID_FILE = join(DSH_STATE, 'mobilevc-vapid.json')
+const PUSH_FILE = join(DSH_STATE, 'mobilevc-push.json')
 const PREVIEW_ROOT = fileURLToPath(new URL('../preview', import.meta.url))
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -183,6 +187,7 @@ function inspectToBlocks(inspection) {
         body: pretty,
         images: [],
         _callId: callId,
+        startedAt: Number(event?.time ?? 0),
       }
       blocks.push(block)
       calls.set(callId, block)
@@ -199,6 +204,8 @@ function inspectToBlocks(inspection) {
         block.status = status
         block.body = (body || block.body || '').slice(0, 6000)
         block.images = images
+        block.finishedAt = Number(event?.time ?? 0)
+        if (block.startedAt && block.finishedAt) block.durationMs = Math.max(0, block.finishedAt - block.startedAt)
       } else {
         blocks.push({
           type: 'tool',
@@ -639,6 +646,67 @@ export function apply(ctx) {
   const pendingApprovals = new Map()
   const mobilePresence = new Map()
   const PRESENCE_TTL = 45_000
+  let vapidPublic = ''
+  let pushReady = false
+
+  const ensurePush = async () => {
+    if (pushReady) return true
+    try {
+      let keys
+      try {
+        keys = JSON.parse(await readFile(VAPID_FILE, 'utf8'))
+      } catch {
+        keys = webpush.generateVAPIDKeys()
+        await mkdir(DSH_STATE, { recursive: true })
+        await writeFile(VAPID_FILE, JSON.stringify(keys), { mode: 0o600 })
+        await chmod(VAPID_FILE, 0o600).catch(() => {})
+      }
+      if (!keys?.publicKey || !keys?.privateKey) throw new Error('invalid VAPID key file')
+      webpush.setVapidDetails('mailto:mobilevc@localhost', keys.publicKey, keys.privateKey)
+      vapidPublic = keys.publicKey
+      pushReady = true
+      return true
+    } catch (error) {
+      ctx.logger?.warn?.(`mobilevc: push unavailable: ${error?.message || error}`)
+      return false
+    }
+  }
+
+  const readPushSubs = async () => {
+    try {
+      const value = JSON.parse(await readFile(PUSH_FILE, 'utf8'))
+      return Array.isArray(value) ? value.filter((item) => item?.endpoint && item?.keys?.p256dh && item?.keys?.auth) : []
+    } catch {
+      return []
+    }
+  }
+
+  const writePushSubs = async (subs) => {
+    await mkdir(DSH_STATE, { recursive: true })
+    const unique = [...new Map(subs.map((item) => [item.endpoint, item])).values()]
+    await writeFile(PUSH_FILE, JSON.stringify(unique, null, 2), { mode: 0o600 })
+    await chmod(PUSH_FILE, 0o600).catch(() => {})
+    return unique.length
+  }
+
+  const sendPush = async (payload) => {
+    if (!(await ensurePush())) return 0
+    const subs = await readPushSubs()
+    let sent = 0
+    const keep = []
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification(sub, JSON.stringify(payload), { TTL: 3600 })
+        sent += 1
+        keep.push(sub)
+      } catch (error) {
+        const code = Number(error?.statusCode || 0)
+        if (code !== 404 && code !== 410) keep.push(sub)
+      }
+    }
+    if (keep.length !== subs.length) await writePushSubs(keep).catch(() => {})
+    return sent
+  }
 
   const json = (res, status, body) => {
     const text = JSON.stringify(body)
@@ -793,6 +861,77 @@ export function apply(ctx) {
         listCache = { at: 0, value: null }
         cache.delete(sid)
         json(res, 200, { ok: true })
+        return
+      }
+      if (req.method === 'GET' && path === `${BASE}/api/push/key`) {
+        if (!(await ensurePush())) { json(res, 503, { error: 'push unavailable' }); return }
+        json(res, 200, { publicKey: vapidPublic })
+        return
+      }
+      if (req.method === 'GET' && path === `${BASE}/api/push/status`) {
+        json(res, 200, { subscriptions: (await readPushSubs()).length, ready: await ensurePush() })
+        return
+      }
+      if (req.method === 'POST' && path === `${BASE}/api/push/subscribe`) {
+        if (req.headers['x-mobilevc'] !== '1') { json(res, 403, { error: 'missing mobilevc marker' }); return }
+        const body = await readJson(req)
+        const sub = body?.subscription ?? body
+        if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) { json(res, 400, { error: 'invalid subscription' }); return }
+        const subs = await readPushSubs()
+        subs.push({ endpoint: String(sub.endpoint), keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) } })
+        const count = await writePushSubs(subs)
+        json(res, 200, { ok: true, count })
+        return
+      }
+      if (req.method === 'POST' && path === `${BASE}/api/push/unsubscribe`) {
+        if (req.headers['x-mobilevc'] !== '1') { json(res, 403, { error: 'missing mobilevc marker' }); return }
+        const body = await readJson(req)
+        const endpoint = String(body?.endpoint ?? '')
+        const subs = (await readPushSubs()).filter((item) => item.endpoint !== endpoint)
+        await writePushSubs(subs)
+        json(res, 200, { ok: true, count: subs.length })
+        return
+      }
+      if (req.method === 'POST' && path === `${BASE}/api/push/test`) {
+        if (req.headers['x-mobilevc'] !== '1') { json(res, 403, { error: 'missing mobilevc marker' }); return }
+        const sent = await sendPush({ title: 'MobileVC', body: '通知已接通 · 点击查看', url: '/mobilevc/', tag: 'mobilevc-test' })
+        json(res, 200, { ok: true, sent })
+        return
+      }
+      if (req.method === 'GET' && path === `${BASE}/api/jobs`) {
+        const sid = String(url.searchParams.get('session') ?? '')
+        const jobs = ctx.get?.('jobs') || ctx.jobs
+        if (!jobs || !sid) { json(res, 200, { jobs: [] }); return }
+        try {
+          json(res, 200, { jobs: jobs.list(sid).map((job) => ({
+            id: String(job.id), label: String(job.label || job.kind || '任务'), status: String(job.status || ''),
+            progress: String(job.progress || ''), detail: String(job.detail || ''),
+            startedAt: Number(job.startedAt || 0), finishedAt: Number(job.finishedAt || 0),
+          })) })
+        } catch { json(res, 200, { jobs: [] }) }
+        return
+      }
+      if (req.method === 'GET' && path === `${BASE}/api/jobs/output`) {
+        const sid = String(url.searchParams.get('session') ?? '')
+        const id = String(url.searchParams.get('id') ?? '')
+        const jobs = ctx.get?.('jobs') || ctx.jobs
+        if (!jobs || !sid || !id) { json(res, 400, { error: 'session and id are required' }); return }
+        try {
+          const read = jobs.readAt(id, 0, sid)
+          const text = (read.chunks || []).map((chunk) => chunk.text || '').join('').slice(-12000)
+          json(res, 200, { text, lossy: Boolean(read.lossy) })
+        } catch (error) { json(res, 404, { error: error?.message || 'job not found' }) }
+        return
+      }
+      if (req.method === 'POST' && path === `${BASE}/api/jobs/kill`) {
+        if (req.headers['x-mobilevc'] !== '1') { json(res, 403, { error: 'missing mobilevc marker' }); return }
+        const body = await readJson(req)
+        const sid = String(body.sessionId ?? '')
+        const id = String(body.id ?? '')
+        const jobs = ctx.get?.('jobs') || ctx.jobs
+        if (!jobs || !sid || !id) { json(res, 400, { error: 'sessionId and id are required' }); return }
+        try { json(res, 200, { ok: true, result: jobs.kill(id, sid, 'stopped from MobileVC') }) }
+        catch (error) { json(res, 500, { error: error?.message || 'kill failed' }) }
         return
       }
       if (req.method === 'POST' && path === `${BASE}/api/presence`) {
@@ -1207,6 +1346,34 @@ export function apply(ctx) {
       }, { once: true })
     })
   }, { prepend: true }))
+  const pushNotify = (sid, title, body, tag) => {
+    if (!sid || presenceAlive(sid)) return
+    void sendPush({ title, body, url: '/mobilevc/', tag })
+  }
+
+  ctx.effect(() => ctx.on('session/event', (session, event) => {
+    const sid = String(session?.id ?? session?.sessionId ?? '')
+    if (!sid || !event) return
+    if (event.type === 'turn/end') {
+      const failed = event.data?.reason?.kind === 'error' || event.data?.reason?.kind === 'blocked' || event.data?.reason?.kind === 'max-tokens'
+      pushNotify(sid, failed ? 'MobileVC · 任务失败' : 'MobileVC · 任务完成', failed ? 'DSH 任务执行失败，点击查看' : 'DSH 任务已完成，点击查看', `turn-${sid}`)
+      return
+    }
+    if (event.type === 'approval/asked') {
+      pushNotify(sid, 'MobileVC · 等待审批', `${String(event.data?.toolName || '工具')} 等待你的审批`, `approval-${sid}`)
+    }
+  }))
+
+  const jobsService = () => ctx.get?.('jobs') || ctx.jobs
+  if (jobsService()?.events) {
+    ctx.effect(() => jobsService().events.subscribe({ owners: 'all' }, (event) => {
+      if (event.type !== 'settled' || event.awaited) return
+      const sid = String(event.job?.owner ?? '')
+      if (!sid) return
+      pushNotify(sid, 'MobileVC · 后台任务结束', `${String(event.job?.label || '任务')} · ${String(event.job?.status || '')}`, `job-${event.job?.id || sid}`)
+    }))
+  }
+
   ctx.effect(() => {
     const off = ctx.webServer.register({ kind: 'prefix', path: BASE, handler: handle })
     ctx.logger?.info?.('mobilevc: UI and session bridge registered at /mobilevc/')

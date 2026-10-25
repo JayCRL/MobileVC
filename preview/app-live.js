@@ -28,6 +28,7 @@
     file: '<path d="M6 3h7l5 5v13H6V3Z"/><path d="M13 3v5h5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     chat: '<path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.4 9.4 0 0 1-3.2-.6L3 21l1.6-4.5A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5Z"/>',
+    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
     lock: '<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
     play: '<path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor" stroke="none"/>',
     stop: '<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>',
@@ -58,6 +59,8 @@
     optimisticUser: null,
     queue: [],
     queueSeq: 0,
+    jobs: [],
+    jobsSeq: 0,
     memoryDefaultPath: '',
     engine: 'DSH',
     model: '',
@@ -167,6 +170,7 @@
       if (INTERACTIVE) {
         pingPresence();
         refreshQueue();
+        refreshJobs();
         startFollow();
       } else if (data.state === 'running') startPolling();
     } catch (e) {
@@ -195,6 +199,14 @@
     const blocks = data.blocks || [];
     const shape = blocks.map((b) => `${b.type || ''}:${b.status || ''}:${(b.body || b.html || b.text || '').length}`).join(',');
     return `${data.state || ''}|${blocks.length}|${shape}|${data.pending || 0}`;
+  }
+
+  function durationLabel(ms) {
+    const n = Number(ms)
+    if (!n || n < 0) return ''
+    if (n < 1000) return `${Math.round(n)}ms`
+    if (n < 60000) return `${Math.round(n / 1000)}s`
+    return `${Math.floor(n / 60000)}m ${Math.round((n % 60000) / 1000)}s`
   }
 
   function isNearBottom(el, threshold = 90) {
@@ -692,6 +704,123 @@
     }
   }
 
+  async function refreshJobs() {
+    if (!INTERACTIVE || !state.session?.id) return;
+    const sid = state.session.id;
+    const seq = ++state.jobsSeq;
+    try {
+      const data = await api(`jobs?session=${encodeURIComponent(sid)}`);
+      if (seq !== state.jobsSeq || state.session?.id !== sid) return;
+      state.jobs = data.jobs || [];
+      updateJobsChip();
+      const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
+      if (title.startsWith('后台')) setSheetBody(jobsBody());
+    } catch (_) {}
+  }
+
+  function updateJobsChip() {
+    const chips = document.querySelector('.dock .rail .chips');
+    if (!chips) return;
+    let button = chips.querySelector('[data-act="jobs"]');
+    if (!state.jobs.length) { button?.remove(); return; }
+    if (!button) {
+      button = document.createElement('button');
+      button.className = 'tchip';
+      button.dataset.act = 'jobs';
+      chips.appendChild(button);
+    }
+    button.innerHTML = `${icon('play')}<span>后台 · ${state.jobs.length}</span>`;
+  }
+
+  function jobsBody() {
+    const rows = state.jobs.map((job) => {
+      const running = job.status === 'running' || job.status === 'stopping';
+      return `<div class="job-card">
+        <div class="job-head"><b>${esc(job.label || '后台任务')}</b><span class="chip ${running ? 'green' : job.status === 'failed' ? 'red' : ''}">${esc(job.status || '')}</span></div>
+        <div class="job-meta">${esc(job.progress || job.detail || '')}${job.startedAt ? ` · ${durationLabel((job.finishedAt || Date.now()) - job.startedAt)}` : ''}</div>
+        <div class="job-actions"><button class="btn ghost" data-act="job-output" data-id="${esc(job.id)}">输出</button>${running ? `<button class="btn ghost danger" data-act="job-kill" data-id="${esc(job.id)}">停止</button>` : ''}</div>
+      </div>`
+    }).join('');
+    return `<div class="job-list">${rows || '<div class="note">当前没有后台任务。</div>'}</div>
+      <div class="note">后台任务由 DSH jobs 管理；长命令应在后台跑，完成后再回收结果。</div>`;
+  }
+
+  async function jobsSheet() {
+    openSheet({ title: '后台任务', sub: 'DSH jobs · 实时', body: jobsBody() });
+    await refreshJobs();
+  }
+
+  async function killJob(id) {
+    if (!state.session?.id || !id) return;
+    try {
+      const r = await fetch(`${API}/jobs/kill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' },
+        body: JSON.stringify({ sessionId: state.session.id, id }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || r.statusText);
+      toast('已请求停止后台任务');
+      await refreshJobs();
+    } catch (e) { toast(`停止失败：${e.message}`); }
+  }
+
+  async function jobOutput(id) {
+    if (!state.session?.id || !id) return;
+    try {
+      const data = await api(`jobs/output?session=${encodeURIComponent(state.session.id)}&id=${encodeURIComponent(id)}`);
+      openSheet({ title: '后台输出', sub: '只读 · 最近 12KB', tall: true, body: `<pre class="file-pre">${esc(data.text || '（暂无输出）')}</pre>` });
+    } catch (e) { toast(`读取输出失败：${e.message}`); }
+  }
+
+  function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  async function enablePush() {
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      toast('这个浏览器不支持 Web Push'); return;
+    }
+    const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches || navigator.standalone;
+    if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !standalone) {
+      toast('iPhone 请先添加到主屏幕，再从主屏幕打开'); return;
+    }
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') { toast('通知权限未开启'); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const key = await api('push/key');
+      if (!key.publicKey) throw new Error('push key unavailable');
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key.publicKey) });
+      }
+      const r = await fetch(`${API}/push/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' },
+        body: JSON.stringify({ subscription: sub.toJSON() }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || r.statusText);
+      try { localStorage.setItem('mobilevc.push', '1'); } catch (_) {}
+      toast(`通知已开启（${data.count || 1} 台设备）`);
+    } catch (e) { toast(`开启通知失败：${e.message}`); }
+  }
+
+  async function testPush() {
+    try {
+      const r = await fetch(`${API}/push/test`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' }, body: '{}' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || r.statusText);
+      toast(data.sent ? `已发送 ${data.sent} 条测试通知` : '没有已订阅设备，请先开启通知');
+    } catch (e) { toast(`测试通知失败：${e.message}`); }
+  }
+
   async function pingPresence() {
     if (!INTERACTIVE || !state.session?.id || document.hidden) return;
     try {
@@ -956,7 +1085,7 @@
         const running = b.status === '运行中';
         const statusClass = running ? 'running' : b.status === '失败' ? 'error' : '';
         return `<div class="row"><details class="tool-card" data-call-id="${esc(b._callId || '')}">
-          <summary class="tool-head"><span class="tool-ico">${icon(b.name === 'read' ? 'file' : 'terminal')}</span><span class="tool-name">${esc(b.name)}</span><span class="tool-arg">${esc(b.arg || '')}</span><span class="tool-status ${statusClass}">${esc(b.status || '')}</span><span class="tool-caret">${icon('chevron')}</span></summary>
+          <summary class="tool-head"><span class="tool-ico">${icon(b.name === 'read' ? 'file' : 'terminal')}</span><span class="tool-name">${esc(b.name)}</span><span class="tool-arg">${esc(b.arg || '')}</span>${b.durationMs ? `<span class="tool-time">${durationLabel(b.durationMs)}</span>` : ''}<span class="tool-status ${statusClass}">${esc(b.status || '')}</span><span class="tool-caret">${icon('chevron')}</span></summary>
           <div class="tool-content">${toolImagesHtml(b.images)}<pre class="tool-body">${esc(b.body || '')}</pre></div>
         </details></div>`;
       }
@@ -1065,6 +1194,7 @@
       updateAttachStrip();
       updateDockAction();
       updateQueueChip();
+      updateJobsChip();
     });
   }
   function measureDock() {
@@ -1246,7 +1376,7 @@
 
   function traceToolGroup(group) {
     const labels = [...new Set(group.map((b) => toolLabel(b.name)))]
-    return `<details class="trace-row trace-group"><summary><span class="trace-dot tool"></span><div class="trace-main"><div class="trace-title">工具链 <span class="chip">${group.length} 个</span></div><div class="trace-sub">${esc(labels.join(' · '))}</div></div></summary><div class="trace-body"><div class="trace-tool-list">${group.map((b) => `<div class="trace-tool-line"><b>${esc(toolLabel(b.name))}</b><span class="chip ${b.status === '运行中' ? 'amber' : b.status === '失败' ? 'red' : 'green'}">${esc(b.status || '')}</span></div>`).join('')}</div><div class="trace-note">工具参数和执行输出在「完整」模式里查看。</div></div></details>`
+    return `<details class="trace-row trace-group"><summary><span class="trace-dot tool"></span><div class="trace-main"><div class="trace-title">工具链 <span class="chip">${group.length} 个</span></div><div class="trace-sub">${esc(labels.join(' · '))}</div></div></summary><div class="trace-body"><div class="trace-tool-list">${group.map((b) => `<div class="trace-tool-line"><b>${esc(toolLabel(b.name))}</b><span>${b.durationMs ? durationLabel(b.durationMs) : ''}<span class="chip ${b.status === '运行中' ? 'amber' : b.status === '失败' ? 'red' : 'green'}">${esc(b.status || '')}</span></span></div>`).join('')}</div><div class="trace-note">工具参数和执行输出在「完整」模式里查看。</div></div></details>`
   }
 
   function traceFullRow(block) {
@@ -1255,7 +1385,7 @@
       return `<details class="trace-row"><summary><span class="trace-dot think"></span><div class="trace-main"><div class="trace-title">模型思考 <span class="chip">${block.chars || 0} 字</span></div><div class="trace-sub">点开查看原文（可能是英文）</div></div></summary><div class="trace-body trace-raw">${block.html || esc(block.text || '')}</div></details>`
     }
     if (block.type === 'tool') {
-      return `<div class="trace-row"><span class="trace-dot tool"></span><div class="trace-main"><div class="trace-title">${esc(toolLabel(block.name))} <span class="chip ${block.status === '运行中' ? 'amber' : 'green'}">${esc(block.status || '')}</span></div><div class="trace-sub"><code>${esc(block.name)}</code> ${esc(block.arg || '')}</div></div></div>`
+      return `<div class="trace-row"><span class="trace-dot tool"></span><div class="trace-main"><div class="trace-title">${esc(toolLabel(block.name))} ${block.durationMs ? `<span class="chip">${durationLabel(block.durationMs)}</span>` : ''} <span class="chip ${block.status === '运行中' ? 'amber' : 'green'}">${esc(block.status || '')}</span></div><div class="trace-sub"><code>${esc(block.name)}</code> ${esc(block.arg || '')}</div></div></div>`
     }
     if (block.type === 'assistant') return traceAssistantRow(block)
     if (block.type === 'error') return `<div class="trace-row"><span class="trace-dot error"></span><div class="trace-main"><div class="trace-title">${esc(block.title || '模型调用失败')} <span class="chip red">${esc(block.code || 'ERROR')}</span></div><div class="trace-sub">${esc((block.message || '').slice(0, 180))}</div></div></div>`
@@ -1409,6 +1539,8 @@
         <div class="lrow"><span class="ico-badge">${icon('chat')}</span><div class="l-main"><div class="l-title">DSH 连接</div><div class="l-sub">${esc(location.host)} · 复用登录门</div></div><span class="chip green">已连接</span></div>
         <div class="lrow"><span class="ico-badge">${icon('plus')}</span><div class="l-main"><div class="l-title">iOS 全屏</div><div class="l-sub">Safari 分享 → 添加到主屏幕；从主屏幕启动才没有地址栏</div></div></div>
         <div class="lrow"><span class="ico-badge">${icon(state.theme === 'light' ? 'moon' : 'sun')}</span><div class="l-main"><div class="l-title">深色模式</div><div class="l-sub">只影响 MobileVC 界面</div></div><button class="switch ${state.theme === 'dark' ? 'on' : ''}" data-act="theme"></button></div>
+        <div class="lrow"><span class="ico-badge">${icon('bell')}</span><div class="l-main"><div class="l-title">通知</div><div class="l-sub">任务完成 / 失败 / 审批 · iPhone 需从主屏幕打开</div></div><button class="btn ghost" data-act="enable-push">开启</button></div>
+        <div class="lrow"><span class="ico-badge gray">${icon('bell')}</span><div class="l-main"><div class="l-title">测试通知</div><div class="l-sub">验证 Web Push 是否接通</div></div><button class="btn ghost" data-act="test-push">测试</button></div>
         <div class="lrow"><span class="ico-badge gray">${icon('lock')}</span><div class="l-main"><div class="l-title">${INTERACTIVE ? '已接入 DSH 运行时' : '只读预览'}</div><div class="l-sub">${INTERACTIVE ? '发送走 sessionController；审批仍在 DSH' : '发送、审批、模型切换在 DSH 内完成'}</div></div></div>
       </div>
       <button class="btn primary wide" data-act="open-dsh">打开 DSH</button>
@@ -1555,6 +1687,11 @@
     if (act === 'queue-remove') { queueAction(t.dataset.id || '', 'remove'); return; }
     if (act === 'queue-steer') { queueAction(t.dataset.id || '', 'steer'); return; }
     if (act === 'queue-save') { queueAction(t.dataset.id || '', 'edit', $('#queue-edit')?.value || ''); return; }
+    if (act === 'jobs') { jobsSheet(); return; }
+    if (act === 'job-kill') { killJob(t.dataset.id || ''); return; }
+    if (act === 'job-output') { jobOutput(t.dataset.id || ''); return; }
+    if (act === 'enable-push') { enablePush(); return; }
+    if (act === 'test-push') { testPush(); return; }
     if (act === 'refresh') { refreshSession({ forceFollow: true }); return; }
     if (act === 'send') { sendMessage(); return; }
     if (act === 'cancel') { cancelRun(); return; }
@@ -1693,6 +1830,7 @@
   setInterval(syncCurrentSession, 2500);
   setInterval(pingPresence, 15000);
   setInterval(refreshQueue, 2500);
+  setInterval(refreshJobs, 2500);
 
   loadSessions();
 })();
