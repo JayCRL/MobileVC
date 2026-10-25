@@ -28,6 +28,7 @@
     file: '<path d="M6 3h7l5 5v13H6V3Z"/><path d="M13 3v5h5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     chat: '<path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.4 9.4 0 0 1-3.2-.6L3 21l1.6-4.5A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5Z"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 10.5v6M12 7.5h.01"/>',
     bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
     lock: '<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
     play: '<path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor" stroke="none"/>',
@@ -817,7 +818,9 @@
       const r = await fetch(`${API}/push/test`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' }, body: '{}' });
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error || r.statusText);
-      toast(data.sent ? `已发送 ${data.sent} 条测试通知` : '没有已订阅设备，请先开启通知');
+      if (data.sent) toast(`已发送 ${data.sent} 条测试通知`);
+      else if (data.subscriptions > 0) toast(`订阅存在，但推送失败：${data.errors?.[0] || '未知错误'}`);
+      else toast('没有已订阅设备，请先开启通知');
     } catch (e) { toast(`测试通知失败：${e.message}`); }
   }
 
@@ -960,8 +963,10 @@
         updateQueueChip();
         requestAnimationFrame(scrollContentBottom);
       }
+      const promptSignal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(35000) : undefined;
       const r = await fetch(`${API}/prompt`, {
         method: 'POST',
+        signal: promptSignal,
         headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' },
         body: JSON.stringify({
           sessionId: state.session.id,
@@ -1074,7 +1079,7 @@
   function chatBlock(b) {
     switch (b.type) {
       case 'user':
-        return `<div class="row user"${b._optimistic ? ` data-optimistic="${esc(b._rpcId || '')}"` : ''}><div class="bubble-user">${userImagesHtml(b.images)}${userFilesHtml(b.files)}${b.text ? `<div class="user-text">${esc(b.text)}</div>` : ''}${b._optimistic ? `<div class="user-state">${b._busy ? '插话 · 待处理' : '发送中'}</div>` : ''}</div></div>`;
+        return `<div class="row user"${b._optimistic ? ` data-optimistic="${esc(b._rpcId || '')}"` : ''}><div class="bubble-user">${userImagesHtml(b.images)}${userFilesHtml(b.files)}${b.text ? `<div class="user-text">${esc(b.text)}</div>` : ''}${b.source === 'steering' ? '<div class="user-tag">插话</div>' : ''}${b._optimistic ? `<div class="user-state">${b._busy ? '插话 · 待处理' : '发送中'}</div>` : ''}</div></div>`;
       case 'assistant':
         return `<div class="row"><div class="card-md">${b.html || esc(b.text || '')}</div></div>`;
       case 'thinking': {
@@ -1362,7 +1367,7 @@
   }
 
   function traceUserRow(block) {
-    return `<div class="trace-row"><span class="trace-dot user"></span><div class="trace-main"><div class="trace-title">用户</div><div class="trace-sub">${esc((block.text || '').slice(0, 200))}</div></div></div>`
+    return `<div class="trace-row"><span class="trace-dot user"></span><div class="trace-main"><div class="trace-title">${block.source === 'steering' ? '插话' : '用户'}</div><div class="trace-sub">${esc((block.text || '').slice(0, 200))}</div></div></div>`
   }
 
   function traceAssistantRow(block) {
@@ -1390,6 +1395,7 @@
     if (block.type === 'assistant') return traceAssistantRow(block)
     if (block.type === 'error') return `<div class="trace-row"><span class="trace-dot error"></span><div class="trace-main"><div class="trace-title">${esc(block.title || '模型调用失败')} <span class="chip red">${esc(block.code || 'ERROR')}</span></div><div class="trace-sub">${esc((block.message || '').slice(0, 180))}</div></div></div>`
     if (block.type === 'compaction') return `<div class="trace-row"><span class="trace-dot compaction"></span><div class="trace-main"><div class="trace-title">上下文压缩</div><div class="trace-sub">${esc(block.text || '')}</div></div></div>`
+    if (block.type === 'system') return `<div class="trace-row"><span class="trace-dot system"></span><div class="trace-main"><div class="trace-title">${esc(block.title || '系统消息')} <span class="chip">系统注入</span></div><div class="trace-sub">${esc((block.body || '').slice(0, 240))}</div></div></div>`
     return ''
   }
 

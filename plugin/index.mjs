@@ -111,6 +111,28 @@ function relativeTime(ts) {
 }
 
 /** Convert one durable event log into the JSON the MobileVC page renders. */
+const USER_SOURCE_LABELS = {
+  'steering': '插话',
+  'runtime-context': '运行时上下文',
+  'tool-jobs': '后台任务通知',
+  'agent-instructions': 'Agent 指令',
+  'compact-checkpoint': '压缩检查点',
+  'user-approval': '审批结果',
+  'model-selection': '模型切换',
+  'subagent-settled': '子任务完成',
+  'goal': '目标提醒',
+  'schedule': '定时任务',
+}
+
+function sourceLabel(source) {
+  return USER_SOURCE_LABELS[String(source || '')] || '系统消息'
+}
+
+function isHumanSource(source) {
+  const kind = String(source || 'user')
+  return kind === 'user' || kind === 'steering'
+}
+
 function inspectToBlocks(inspection) {
   const events = Array.isArray(inspection?.events) ? inspection.events : []
   const meta = inspection?.meta ?? {}
@@ -146,10 +168,22 @@ function inspectToBlocks(inspection) {
       const text = textOfContent(content)
       const images = contentImages(content, data.meta)
       const files = contentFiles(content)
-      if (text || images.length || files.length) {
-        userCount += 1
-        if (text) lastText = text
-        blocks.push({ type: 'user', text: text.slice(0, 12000), images, files })
+      const source = String(data.source?.kind || 'user')
+      if (isHumanSource(source)) {
+        if (text || images.length || files.length) {
+          userCount += 1
+          if (text) lastText = text
+          blocks.push({ type: 'user', text: text.slice(0, 12000), images, files, source })
+        }
+      } else if (text) {
+        blocks.push({
+          type: 'system',
+          title: sourceLabel(source),
+          body: text.slice(0, 1600),
+          icon: 'info',
+          tone: 'blue',
+          source,
+        })
       }
       continue
     }
@@ -538,9 +572,15 @@ function eventPatch(event) {
     const text = textOfContent(content)
     const images = contentImages(content, data.meta)
     const files = contentFiles(content)
+    const source = String(data.source?.kind || 'user')
+    if (!isHumanSource(source)) {
+      return text
+        ? { blocks: [{ type: 'system', title: sourceLabel(source), body: text.slice(0, 1600), icon: 'info', tone: 'blue', source }] }
+        : null
+    }
     return text || images.length || files.length
       ? {
-          blocks: [{ type: 'user', text: text.slice(0, 12000), images, files }],
+          blocks: [{ type: 'user', text: text.slice(0, 12000), images, files, source }],
           userRpcId: String(data.source?.rpcId ?? ''),
         }
       : null
@@ -662,7 +702,7 @@ export function apply(ctx) {
         await chmod(VAPID_FILE, 0o600).catch(() => {})
       }
       if (!keys?.publicKey || !keys?.privateKey) throw new Error('invalid VAPID key file')
-      webpush.setVapidDetails('mailto:mobilevc@localhost', keys.publicKey, keys.privateKey)
+      webpush.setVapidDetails('mailto:mobilevc@example.com', keys.publicKey, keys.privateKey)
       vapidPublic = keys.publicKey
       pushReady = true
       return true
@@ -693,6 +733,8 @@ export function apply(ctx) {
     if (!(await ensurePush())) return 0
     const subs = await readPushSubs()
     let sent = 0
+    let failed = 0
+    const errors = []
     const keep = []
     for (const sub of subs) {
       try {
@@ -700,12 +742,14 @@ export function apply(ctx) {
         sent += 1
         keep.push(sub)
       } catch (error) {
+        failed += 1
         const code = Number(error?.statusCode || 0)
+        errors.push(`${code || 'error'}: ${String(error?.message || error).slice(0, 120)}`)
         if (code !== 404 && code !== 410) keep.push(sub)
       }
     }
     if (keep.length !== subs.length) await writePushSubs(keep).catch(() => {})
-    return sent
+    return { sent, failed, subscriptions: subs.length, errors: errors.slice(0, 3) }
   }
 
   const json = (res, status, body) => {
@@ -894,8 +938,8 @@ export function apply(ctx) {
       }
       if (req.method === 'POST' && path === `${BASE}/api/push/test`) {
         if (req.headers['x-mobilevc'] !== '1') { json(res, 403, { error: 'missing mobilevc marker' }); return }
-        const sent = await sendPush({ title: 'MobileVC', body: '通知已接通 · 点击查看', url: '/mobilevc/', tag: 'mobilevc-test' })
-        json(res, 200, { ok: true, sent })
+        const result = await sendPush({ title: 'MobileVC', body: '通知已接通 · 点击查看', url: '/mobilevc/', tag: 'mobilevc-test' })
+        json(res, 200, { ok: true, ...result })
         return
       }
       if (req.method === 'GET' && path === `${BASE}/api/jobs`) {

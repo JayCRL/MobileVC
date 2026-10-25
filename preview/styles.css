@@ -1794,3 +1794,17 @@ body.bare {
 .job-actions { display: flex; gap: 8px; margin-top: 10px; }
 .job-actions .btn { width: auto; flex: 0 0 auto; padding: 6px 12px; font-size: 11px; }
 .btn.danger { color: var(--danger); }
+
+/* ---------- injected runtime messages ---------- */
+.user-tag {
+  margin-top: 5px;
+  display: inline-block;
+  font-size: 9px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, .18);
+  color: inherit;
+  opacity: .8;
+}
+.trace-dot.system { background: var(--faint); }
