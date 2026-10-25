@@ -563,6 +563,32 @@ function failureBlock(reason) {
   }
 }
 
+/**
+ * Find the approval/asked event that belongs to an incoming waterfall request.
+ * Prefer toolName + callId; fall back to the newest unresolved ask so a
+ * provider that omits callId cannot make every mobile click stale.
+ */
+function findApprovalCandidate(events, req) {
+  let exact = null
+  let unresolved = null
+  const decided = new Set()
+  for (const event of events || []) {
+    if (event?.type === 'approval/decided' && event.data?.id) decided.add(String(event.data.id))
+  }
+  for (let i = (events || []).length - 1; i >= 0; i -= 1) {
+    const event = events[i]
+    if (event?.type !== 'approval/asked') continue
+    const data = event.data
+    if (!data?.id || decided.has(String(data.id))) continue
+    if (!unresolved) unresolved = data
+    if (data.toolName !== req?.toolName) continue
+    if (req?.callId && data.callId && String(data.callId) !== String(req.callId)) continue
+    exact = data
+    break
+  }
+  return exact || unresolved
+}
+
 /** Map one durable event to a compact patch the live trace can apply. */
 function eventPatch(event) {
   const type = event?.type
@@ -1467,25 +1493,8 @@ export function apply(ctx) {
       approvalLog('incoming', { sid: sid.slice(0, 24), presence, known, recentMobile, tool: req?.toolName, callId: req?.callId })
       if (!sid || (!presence && !recentMobile)) return next()
       let asked
-      let unresolved = null
       try {
-        const events = req.agent.session.snapshotEvents()
-        const decided = new Set()
-        for (const event of events) {
-          if (event?.type === 'approval/decided' && event.data?.id) decided.add(String(event.data.id))
-        }
-        for (let i = events.length - 1; i >= 0; i -= 1) {
-          const event = events[i]
-          if (event?.type !== 'approval/asked') continue
-          const data = event.data
-          if (!data?.id || decided.has(String(data.id))) continue
-          if (!unresolved) unresolved = data
-          if (data.toolName !== req.toolName) continue
-          if (req.callId && data.callId && String(data.callId) !== String(req.callId)) continue
-          asked = data
-          break
-        }
-        if (!asked) asked = unresolved
+        asked = findApprovalCandidate(req.agent.session.snapshotEvents(), req)
       } catch (error) {
         approvalLog('snapshot failed', String(error?.message || error))
         return next()
@@ -1549,5 +1558,7 @@ export function apply(ctx) {
 }
 
 apply.inject = inject
+
+export const __test = { findApprovalCandidate, failureBlock, eventPatch }
 
 export default apply
