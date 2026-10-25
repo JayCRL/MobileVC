@@ -62,6 +62,7 @@
     optimisticUser: null,
     queue: [],
     queueSeq: 0,
+    interjections: [],
     jobs: [],
     jobsSeq: 0,
     account: { available: false, status: 'unknown', links: { topUpUrl: 'https://platform.deepseek.com/top_up', usageUrl: 'https://platform.deepseek.com/usage' }, balance: null },
@@ -660,9 +661,89 @@
     }
   }
 
+  function visibleInterjections() {
+    const sid = state.session?.id;
+    return state.interjections.filter((item) => !item.sessionId || item.sessionId === sid);
+  }
+
+  function stageInterjection(text, attachments, requestId, sessionId) {
+    state.interjections.push({
+      id: `local-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      requestId,
+      sessionId,
+      text,
+      attachments,
+      at: Date.now(),
+    });
+  }
+
+  function removeInterjection(id) {
+    state.interjections = state.interjections.filter((item) => item.id !== id);
+    updateQueueChip();
+    const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
+    if (title.startsWith('插话')) setSheetBody(queueBody());
+  }
+
+  async function sendInterjection(id, mode) {
+    const item = state.interjections.find((entry) => entry.id === id && (!entry.sessionId || entry.sessionId === state.session?.id));
+    if (!item || !state.session?.id || state.sending) {
+      if (state.sending) toast('上一条消息还在发送，请稍候');
+      return;
+    }
+    state.sending = true;
+    state.sendStartedAt = Date.now();
+    updateDockStatus();
+    try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), 35000) : null;
+      let r;
+      try {
+        r = await fetch(`${API}/prompt`, {
+          method: 'POST',
+          ...(controller ? { signal: controller.signal } : {}),
+          headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' },
+          body: JSON.stringify({
+            sessionId: state.session.id,
+            text: item.text,
+            attachments: item.attachments || [],
+            requestId: item.requestId,
+            mode,
+            clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          }),
+        });
+      } finally { if (timer) clearTimeout(timer); }
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || `${r.status} ${r.statusText}`);
+      state.interjections = state.interjections.filter((entry) => entry.id !== id);
+      toast(mode === 'steer' ? '已立即插话' : '已进入排队，当前轮结束后生效');
+      await refreshQueue();
+      startFollow();
+    } catch (e) {
+      const detail = e?.name === 'AbortError' ? '请求超时' : (e?.message || String(e));
+      toast(`插话失败：${detail}`);
+    } finally {
+      state.sending = false;
+      state.sendStartedAt = 0;
+      updateDockStatus();
+      updateDockAction();
+      updateQueueChip();
+      const title = document.querySelector('#sheet-root .sheet-head h2')?.textContent || '';
+      if (title.startsWith('插话')) setSheetBody(queueBody());
+    }
+  }
+
   function updateQueueChip() {
     const el = $('#queue-banner');
     if (!el) return;
+    const local = visibleInterjections();
+    if (local.length) {
+      const latest = local[local.length - 1];
+      el.hidden = false;
+      el.innerHTML = `<span class="qb-kicker">待处理插话 · ${local.length}</span>
+        <span class="qb-text">${esc(latest.text || '（无文本）')}</span>
+        <span class="qb-action">查看 / 立即插话</span>`;
+      return;
+    }
     if (state.queue.length) {
       const latest = state.queue[state.queue.length - 1];
       el.hidden = false;
@@ -683,6 +764,15 @@
   }
 
   function queueBody() {
+    const localRows = visibleInterjections().map((item) => `<div class="queue-item local">
+      <div class="queue-text">${esc(item.text || '（无文本）')}</div>
+      <div class="note">尚未提交 · 选择「立即插话」或「排队」</div>
+      <div class="queue-actions">
+        <button class="btn primary" data-act="interjection-steer" data-id="${esc(item.id)}">立即插话</button>
+        <button class="btn ghost" data-act="interjection-queue" data-id="${esc(item.id)}">排队</button>
+        <button class="btn ghost danger" data-act="interjection-remove" data-id="${esc(item.id)}">删除</button>
+      </div>
+    </div>`).join('');
     const rows = state.queue.map((item) => `<div class="queue-item">
       <div class="queue-text">${esc(item.text || '（无文本）')}</div>
       <div class="queue-actions">
@@ -691,11 +781,11 @@
         <button class="btn primary" data-act="queue-steer" data-id="${esc(item.id)}">立即插话</button>
       </div>
     </div>`).join('');
-    const pending = !rows && state.optimisticUser
+    const pending = !rows && !localRows && state.optimisticUser
       ? `<div class="queue-item"><div class="queue-text">${esc(state.optimisticUser.text)}</div><div class="note">已发送，正在同步 DSH 队列…</div></div>`
       : '';
-    return `<div class="queue-list">${rows || pending || '<div class="note">当前没有待处理的插话。</div>'}</div>
-      <div class="note">插话会在当前回合的步骤边界进入；点「立即插话」可让 DSH 在当前步骤后优先处理。</div>`;
+    return `<div class="queue-list">${localRows || rows || pending || '<div class="note">当前没有待处理的插话。</div>'}</div>
+      <div class="note">发送插话时先暂存；点「立即插话」打断当前轮，点「排队」等当前轮结束后生效。</div>`;
   }
 
   async function queueSheet() {
@@ -1143,6 +1233,21 @@
     if (!text && state.attachments.length === 0) return;
     const pendingAttachments = state.attachments.map((a) => ({ kind: a.kind, name: a.name, mediaType: a.mediaType, data: a.data }));
     const busy = Boolean(state.session.state === 'running' || state.session.state === 'waiting');
+    if (busy) {
+      const requestId = newRequestId();
+      stageInterjection(text, pendingAttachments, requestId, state.session.id);
+      state.draft = '';
+      clearAttachments();
+      const composerEl = $('#composer');
+      if (composerEl) {
+        composerEl.value = '';
+        composerEl.style.height = 'auto';
+      }
+      updateQueueChip();
+      updateDockAction();
+      toast('插话已暂存 · 点「立即插话」打断当前轮，或点「排队」');
+      return;
+    }
     state.sending = true;
     state.sendStartedAt = Date.now();
     updateDockStatus();
@@ -1913,6 +2018,9 @@
     if (act === 'queue-remove') { queueAction(t.dataset.id || '', 'remove'); return; }
     if (act === 'queue-steer') { queueAction(t.dataset.id || '', 'steer'); return; }
     if (act === 'queue-save') { queueAction(t.dataset.id || '', 'edit', $('#queue-edit')?.value || ''); return; }
+    if (act === 'interjection-steer') { sendInterjection(t.dataset.id || '', 'steer'); return; }
+    if (act === 'interjection-queue') { sendInterjection(t.dataset.id || '', 'queue'); return; }
+    if (act === 'interjection-remove') { removeInterjection(t.dataset.id || ''); return; }
     if (act === 'jobs') { jobsSheet(); return; }
     if (act === 'job-kill') { killJob(t.dataset.id || ''); return; }
     if (act === 'job-output') { jobOutput(t.dataset.id || ''); return; }
