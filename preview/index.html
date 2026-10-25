@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#F6F8FC">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Cache-Control" content="no-store">
+  <meta name="application-name" content="MobileVC">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="MobileVC">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icon-180.png">
+  <title>MobileVC</title>
+  <link rel="stylesheet" href="styles.css?v=20261025k">
+</head>
+<body>
+  <div class="stage">
+    <header class="stage-head">
+      <div class="stage-kicker">MOBILEVC · MOBILE UI REFERENCE</div>
+      <h1>移动端交互还原</h1>
+      <p>按 Flutter 源码的 iOS 设计语言重做：浅色、蓝色主色、单一会话界面、底部命令坞。</p>
+    </header>
+
+    <div class="phone">
+      <div class="screen" id="screen">
+        <header class="appbar" id="appbar"></header>
+        <div class="top-fade"></div>
+        <main class="content" id="content"></main>
+        <footer class="dock-wrap" id="dock"></footer>
+        <div class="drawer-root" id="drawer-root"></div>
+        <div class="sheet-root" id="sheet-root"></div>
+        <div class="toast-root" id="toast-root"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    if (new URLSearchParams(location.search).has('bare')) {
+      document.body.classList.add('bare');
+    }
+    try {
+      const saved = localStorage.getItem('mobilevc.theme');
+      if (saved === 'dark' || saved === 'light') {
+        document.documentElement.dataset.theme = saved;
+      }
+    } catch (_) {}
+  </script>
+  <script src="app-live.js?v=20261025x"></script>
+</body>
+</html>

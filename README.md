@@ -1,257 +1,201 @@
-# 📱 MobileVC — 手机就是你的 AI 编程助手控制台
+# MobileVC
+
+**MobileVC-style mobile / PWA surface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).**
+
+It is a DSH **host plugin** + static mobile UI. Not a second Agent, not a relay, not a copy of the session state machine.
 
 <p align="center">
-  <img src="mobile_vc/lib/logo-2.png" alt="MobileVC logo" width="220" />
-</p>
-
-<p align="center">
-  <strong>摆脱键盘和鼠标，用手机直接接管电脑上的 Claude / Codex 会话。</strong>
-</p>
-
-<p align="center">
-  <em>MobileVC 把等待、审批、审核和继续执行，整理成一套适合手机操作的闭环。</em>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Go-1.25-blue" />
-  <img src="https://img.shields.io/badge/Flutter-3.41-blue" />
-  <img src="https://img.shields.io/badge/License-MIT-green" />
-  <img src="https://img.shields.io/npm/v/%40justprove%2Fmobilevc" />
-</p>
-
-<p align="center">
-  <strong>官网：</strong><a href="https://www.mobilevc.top">https://www.mobilevc.top</a>
-</p>
-
-<p align="center">
-  <strong>手机安装：</strong><a href="https://www.mobilevc.top">官网首页</a>（iOS 走 TestFlight，Android 走 APK 下载）
-</p>
-
-<p align="center">
-  <strong>社区讨论：</strong><a href="https://linux.do">LINUX DO</a>
+  <img src="docs/images/image-preview.png" width="360" alt="MobileVC live chat with a read_image tool preview">
 </p>
 
 ---
 
-## 这是什么
+## 项目现状（2026-10）
 
-MobileVC 不是远程桌面，也不是终端镜像。它把电脑上正在运行的 AI 助手 CLI 会话带到手机上，让你在离开电脑时继续推进任务：
+**`main` 现在就是 MobileVC for DSH。**
 
-- 接住权限请求
-- 推进 Plan Mode
-- 审核 diff
-- 恢复历史会话
-- 浏览文件、日志和运行状态
-- 管理 Skill / Memory / Context
+原来的 Flutter 客户端 + Go relay 保留在 [`legacy/`](./legacy/)，只作为历史和参考，不再是默认客户端。
 
----
+在把 MobileVC 接到 DSH 之后，方向发生了变化：
 
-## 快速开始
+- DSH 已经提供 Agent runtime、durable session log、follow 流、tool call、审批、插件系统
+- 如果继续维护 Flutter 客户端 + Go relay，等于在 DSH 之外再维护一套 session/queue/runtime
+- 这正是旧版偶尔同步异常、队列丢失、中转策略混乱的根源
 
-### 一键安装启动
+所以现在只保留一层：
 
-```bash
-npm install -g @justprove/mobilevc
-mobilevc start
-```
+> **DSH owns the runtime. MobileVC owns the surface.**
 
-首次启动会引导你完成基础配置，并打印本机地址、局域网地址和二维码。
+手机端不再同步会话，而是直接读同一个 `ctx.sessionController`。没有第二个 Agent，没有第二份 session log，没有 relay 队列。
 
-> 配置 Token 时，终端输入内容不会显示，这是正常的。直接输入完整 Token 后按回车即可。
+## 现在是什么
 
-### 手机连接
+**是**
 
-1. 手机访问 [官网首页](https://www.mobilevc.top)
-2. iOS 点击 TestFlight 链接安装，Android 点击 APK 下载
-3. 打开客户端，使用扫码连接或手动配置
-4. 连接成功后，在输入框输入 `claude` 或 `codex`
+- 一个给 DSH 用的手机/PWA 界面
+- 真实发送、停止、审批、文件浏览、图片/文件附件、插件管理
+- 一个可安装到 iOS/Android 主屏幕的 PWA
+- MobileVC 移动端交互语言在 Web 上的延续
 
-> 官网可能需要国内网络环境访问。如果页面打不开，先切换到国内网络后再安装。
+**不是**
 
-### 常用命令
+- 原来的 Flutter MobileVC 客户端
+- 原来的 Go relay / E2EE 传输
+- 多租户 SaaS：所有登录用户看到同一个 DSH 用户的会话和文件
+- 桌面 DSH Web 的替代品
 
-```bash
-mobilevc status
-mobilevc logs
-mobilevc logs --follow
-mobilevc config
-mobilevc stop
-```
+## 截图
 
-### Relay 模式
-
-不在同一 WiFi 下也能连：
-
-```bash
-mobilevc public --relay wss://relay.mobilevc.top:9443
-```
-
-如果只想走 Relay，不开放局域网：
-
-```bash
-mobilevc public --relay wss://relay.mobilevc.top:9443 --network-exposure-mode relay-only
-```
-
-Relay 只转发加密数据包，服务器看不到明文。密钥通过扫码带外传递。
-
-自建 Relay 指南见 [docs/guides/relay-deployment.md](docs/guides/relay-deployment.md)。
-
----
-
-## 最近更新
-
-- **全新语音通话助手**：自配 Voice API / TTS API 后，先用语音和助手预沟通、确认任务，再一键交给本机 Claude / Codex 执行；支持自动识别停顿发送、调优静默判定（避免刚开口就被提前发送），交接后的执行态也不再误提示“需要补充信息”
-- **Codex 移动端控制增强**：新增沙箱模式设置，细化权限控制，Codex 目标切换移入聊天工具栏，权限菜单改用审批图标，并跟随 Codex 默认 reasoning 展示
-- **会话更稳**：会话历史窗口可配置、续接历史按窗口收敛；修复会话同步、上下文占用显示和切后台状态跳动等问题
-- **公网 Relay 更可靠**：修复 `mobilevc public --relay` 重启后无法重新注册 / 配对，以及 agent 重连后陈旧连接的恢复问题
-- **界面 polish**：优化移动端浅色模式视觉一致性，修复聊天键盘布局与输入冻结
-- **发布 `0.2.10`**：各平台预编译后端二进制同步更新；Android 切到 `arm64-v8a`（官网入口指向 `1.0.0 (20260601 arm64)`），iOS Release / Profile 的 Archive 签名明确为 `Apple Distribution`
-
----
-
-## 主要能力
-
-- 语音通话预沟通，并把确认后的任务交给本机 Claude / Codex
-- 继续电脑上的 Claude / Codex 会话
-- 处理权限确认和 Plan Mode
-- 按组查看并接受或回滚多文件 diff
-- 浏览文件、日志、运行态和历史会话
-- 管理 Skill / Memory / Session Context
-- 接收权限和进度推送
-- 可选 TTS
-- Android 模拟器调试
-
----
-
-## 对比定位
-
-MobileVC 的定位不是“把终端塞进手机”，而是把 AI 编程助手的高频等待态做成手机上的结构化操作。下面只展示 MobileVC 在这些对比场景里的优势，不评价其他产品优劣。
-
-| 对比对象 | MobileVC 展示出的优势 |
+| 对话 / 工具 | 执行迹 |
 |---|---|
-| Codex-Remote | 同时覆盖 Claude / Codex；本机 npm 后端可控；权限、Plan Mode、diff 审核、Skill / Memory / Context、文件和日志都在同一套移动端工作流里 |
-| 传统 SSH / 远程终端工具 | 不需要在小屏幕里操作终端；常见动作变成按钮和卡片；扫码连接、Token 鉴权、通知、状态同步和文件 / diff 查看都围绕 AI 助手场景设计 |
-| Happy | 更偏本机私有工作台：Go 后端跑在自己的开发机上，支持 LAN + 官方 Relay，安装可从 npm 开始，并围绕 Claude / Codex 的权限、审查、会话恢复和项目文件流做深度整合 |
+| ![chat](docs/images/chat.png) | ![trace](docs/images/trace.png) |
 
----
+| 插件管理 | 会话 |
+|---|---|
+| ![plugins](docs/images/plugins.png) | ![sessions](docs/images/sessions.png) |
 
-## 工作方式
+| 文件浏览 |
+|---|
+| ![files](docs/images/files.png) |
+
+## 功能
+
+- **真实会话**：列表、切换、查看历史
+- **Follow 流**：`sessionController.follow()`，durable events + `reasoning-delta` / `text-delta`
+- **实时思考**：执行中“正在思考”逐字增长；结束后变成可折叠的“深度思考 · N 字”
+- **工具卡**：默认折叠，显示工具名/参数/状态；点开看完整输出
+- **read_image**：从 DSH attachment store 读原图，缩略图 + 全屏
+- **附件**：图片作为 image part；文件通过 `ctx.fileUploads` receipt 发送
+- **直接审批**：允许一次 / 拒绝；另一端已处理时点击自动失效
+- **执行迹**：用户 → 思考 → 工具 → 回复 → 压缩的 DSH 风格 timeline
+- **文件**：真实工作区，面包屑 + 逐级浏览
+- **插件管理**：真实 `listPlugins` / `listBundles` / 开关；MobileVC 锁定自身
+- **PWA**：manifest、图标、service worker、safe-area、禁双指/双击缩放
+- **额度/错误可见**：`turn/end` 失败变成错误卡（例如 QUOTA 402）
+
+## 架构
+
+```mermaid
+flowchart LR
+  B[Phone / PWA] -->|HTTPS + SSE| P[MobileVC host plugin]
+  P --> S[ctx.sessionController]
+  P --> F[ctx.fileUploads]
+  P --> A[approval/request answerer]
+  P --> M[ctx.pluginManager]
+  S --> L[(DSH session log)]
+  F --> O[(DSH attachment store)]
+```
+
+- `/mobilevc/api/follow` → `sessionController.follow({ assistantStream: true })`
+- `/mobilevc/api/prompt` → `sessionController.prompt()`；图片直接作为 image part，文件先 `fileUploads.uploadStream()` 换 receipt
+- `/mobilevc/api/approval` → 手机端 answerer；没有活跃 follow 时 `next()` 交回桌面
+- `/mobilevc/api/plugins` → `pluginManager`
+- 静态 UI 和 API 同源，不需要 CORS
+
+## 安装
+
+### 作为 DSH bundle（推荐）
+
+```bash
+dsh plugin --profile web add "github:JayCRL/MobileVC"
+systemctl restart dsh-web
+```
+
+或本地 clone：
+
+```bash
+git clone https://github.com/JayCRL/MobileVC.git mobilevc
+dsh plugin --profile web add ./mobilevc
+systemctl restart dsh-web
+```
+
+打开：
 
 ```text
-Mobile browser / Flutter app
-        │
-        ▼
-   MobileVC Go server
-        │
-        ├─ WebSocket event stream
-        ├─ PTY / assistant runtime
-        ├─ ADB + WebRTC bridge
-        ├─ session store
-        └─ ChatTTS sidecar (optional)
+http://127.0.0.1:8898/mobilevc/
 ```
 
-### Go 后端
-
-- 入口：`cmd/server/main.go`
-- 负责 `/ws`、`/healthz`、`/download`、`/api/tts/synthesize`
-- 编排会话、权限、文件、日志、Skill / Memory 和 ADB 调试
-
-### Flutter 客户端
-
-- 入口：`mobile_vc/lib/main.dart`
-- 根状态由 `SessionController` 驱动
-- 首页是 `SessionHomePage`
-- 负责把后端事件渲染成手机上可操作的界面
-
----
-
-## 文档导航
-
-- 文档索引：[docs/README.md](docs/README.md)
-- 项目索引：[docs/project-index.md](docs/project-index.md)
-- 架构蓝图：[docs/architecture/blueprint.md](docs/architecture/blueprint.md)
-- 当前逻辑说明：[docs/architecture/current-logic.md](docs/architecture/current-logic.md)
-- Relay 部署指南：[docs/guides/relay-deployment.md](docs/guides/relay-deployment.md)
-- 推送集成清单：[docs/guides/push-integration-checklist.md](docs/guides/push-integration-checklist.md)
-- Web 嵌入链路：[docs/guides/web-embed-path.md](docs/guides/web-embed-path.md)
-- Flutter Web 白屏排查：[docs/troubleshooting/flutter-web-blank-screen.md](docs/troubleshooting/flutter-web-blank-screen.md)
-- 变更历史：[CHANGELOG.md](CHANGELOG.md)
-
----
-
-## 从源码构建
+验证：
 
 ```bash
-git clone https://github.com/JayCRL/MobileVC.git
-cd MobileVC
-npm install
-cd mobile_vc
-flutter pub get
-flutter build web --release
-cd ..
-npm run sync:web
-AUTH_TOKEN=test go run ./cmd/server
+curl http://127.0.0.1:8898/mobilevc/api/health
+# {"ok":true,"plugin":"mobilevc","interactive":true}
 ```
 
-### Flutter 移动端开发
+完整部署、nginx、PWA、升级/卸载、排错：[INSTALL.md](./INSTALL.md)。
 
-```bash
-cd mobile_vc
-flutter pub get
-flutter run
-```
+> `/mobilevc/` 没有自己的登录页，必须放在认证 HTTPS 反向代理后面。
 
-### smoke test
+## 使用
 
-```bash
-AUTH_TOKEN=test ./scripts/test_smoke_flow.sh
-```
+- **+**：发送图片或文件
+- **Enter** 发送，**Shift+Enter** 换行
+- 运行中，发送键右侧红色脉冲按钮：打断当前 turn
+- 点工具卡：展开命令输出
+- 点 `read_image` 缩略图：全屏
+- **迹**：执行 timeline
+- **插件**：DSH 插件管理
+- **Memory**：读写真实 `AGENTS.md`
+- 审批卡：拒绝 / 允许一次
 
----
+## 没有公网 IP 怎么办
 
-## 发布与安装页
+浏览器无法直接连进 NAT 后的 DSH。两条路：
 
-- `mobile_vc/scripts/build_ios_ota.sh`：生成 iPhone OTA IPA，并可选用于内部测试分发
-- `mobile_vc/scripts/build_ios_testflight.sh`：TestFlight 打包 / 上传辅助脚本
-- `mobile_vc/scripts/update_install_page_testflight.sh`：更新官网首页上的 TestFlight 信息
-- `mobile_vc/scripts/render_install_page.py`：统一渲染官网安装入口页面
-- Android release：`flutter build apk --release --target-platform android-arm64`
+1. **单机/朋友**：Cloudflare Tunnel 或 Tailscale，把本机 8898 变成一个可达 URL；不改代码
+2. **产品化**：中心 Relay + `mobilevc-connect` 插件，用户 DSH 主动外连；Relay 只做透明隧道，不存 session
 
----
+当前仓库不内置 Relay；它只提供 `/mobilevc/` 的 Host plugin 和 UI。
 
-## 项目结构
+## 安全边界
+
+`/mobilevc/` 是 Host plugin 自己注册的路径，不走 DSH `/api` 的 browser-trust fence。它可以：
+
+- 读所有会话、日志、工作区文件
+- 发消息、停止、审批
+- 写 `AGENTS.md`
+- 上传图片/文件
+- 启用/禁用 DSH 插件
+
+所有登录用户共享同一个 DSH 身份，没有多租户隔离。公网必须使用认证 + HTTPS，不要把 8898 裸露。
+
+## 方向
+
+近期：
+
+- 发布正式版本 / release
+- 执行迹更细：step 分组、工具耗时
+- 附件体验：粘贴、相机、拖拽
+- 审批 presence：手机 follow 活跃时手机优先，否则桌面（已是当前行为）
+- 可选原生壳复用同一套 PWA/HTTP surface；不引入第二套 session runtime
+
+不做：
+
+- 重写 Agent loop / session log
+- 在插件里再塞一套 relay/E2EE
+- 单 DSH 进程内做多租户隔离
+
+## 目录
 
 ```text
-bin/               # npm 启动器
-cmd/server/        # Go 服务入口
-cmd/server/web/    # 当前嵌入到 Go 二进制的 Flutter Web 产物
-internal/          # 后端编排、运行时、协议、存储
-mobile_vc/         # Flutter 客户端
-mobile_vc/scripts/ # iOS OTA / TestFlight / Android 安装页脚本
-packages/          # npm 预编译后端二进制包
-scripts/           # 仓库级构建脚本
-sidecar/chattts/   # 可选 TTS 侧车
+plugin/index.mjs      Host plugin: /mobilevc + sessionController bridge
+preview/              MobileVC UI (HTML/CSS/JS, no build)
+tools/server.py       Optional read-only Python viewer
+docs/images/          README screenshots
+cordis.patch.yml      DSH bundle patch
+package.json          DSH bundle metadata
+INSTALL.md            Deployment / nginx / PWA / troubleshooting
+legacy/               Original Flutter + Go relay MobileVC
 ```
 
----
+## Legacy
 
-## 测试
+原来的 Flutter + Go relay 代码在 [`legacy/`](./legacy/)。它仍然保留在 git 历史中，但：
 
-```bash
-go test ./...
-cd mobile_vc && flutter test
-```
+- 不再作为默认客户端
+- 不再推荐用于新部署
+- 其中的 relay/session 同步思路已经被 DSH Host plugin 取代
 
----
+## License
 
-## 开源许可
-
-本项目采用 [MIT License](LICENSE) 开源协议。
-
----
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request。
-
-如果你想参与开发或交流实现细节，可以到 [LINUX DO 社区](https://linux.do) 讨论。
+MIT — see [LICENSE](./LICENSE).

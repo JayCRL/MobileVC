@@ -1,0 +1,63 @@
+# 编译产物
+/server
+/mobilevc-server
+/mobilevc-relay
+/qr-relay-pairing*.png
+/relay
+/*.apk
+/*.aab
+/*.ipa
+/*.tgz
+/*.tar
+/*.tar.gz
+/*.zip
+/*.dmg
+/*.pkg
+/*.msi
+/*.deb
+/*.rpm
+/dist/
+/release/
+/out/
+/coverage/
+.nyc_output/
+packages/
+cmd/server/server
+cmd/server/mobilevc-server
+cmd/relay/relay
+cmd/relay/mobilevc-relay
+cmd/server/web/*
+!cmd/server/web/.gitkeep
+
+# 本地环境/部署密钥
+.env
+.env.*
+!.env.example
+
+# 依赖
+node_modules/
+mobile_vc/vendor/flutter_webrtc/android/.gradle/
+
+# 日志
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.fvm/
+.fvmrc
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Claude 工作区
+.claude/worktrees/
+.agents/
+.claude/
+.codex/
+.tmp/
+.trellis/
+image/
