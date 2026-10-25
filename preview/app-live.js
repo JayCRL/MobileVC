@@ -365,17 +365,21 @@
 
   function appendBlocksToTimeline(blocks) {
     const timeline = $('#timeline');
-    const slot = $('#live-slot');
-    if (!timeline || !slot) {
+    if (!timeline) {
       renderContentPreservingOpen();
       return;
     }
+    // WebKit throws "The object can not be found here." if the reference
+    // node is detached from this timeline (for example during a re-render).
+    // Insert before live-slot only when it is really its child.
+    const slot = $('#live-slot');
+    const anchor = slot && slot.parentNode === timeline ? slot : null;
     for (const block of blocks) {
       const html = chatBlock(block);
       if (!html) continue;
       const tmp = document.createElement('div');
       tmp.innerHTML = html;
-      while (tmp.firstChild) timeline.insertBefore(tmp.firstChild, slot);
+      while (tmp.firstChild) timeline.insertBefore(tmp.firstChild, anchor);
     }
   }
 
@@ -949,6 +953,15 @@
     });
   }
 
+  function newRequestId() {
+    try {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return `mvc-${crypto.randomUUID()}`;
+      }
+    } catch (_) {}
+    return `mvc-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
   async function sendMessage() {
     if (!INTERACTIVE) return;
     if (!state.session) { toast('会话还没加载好，请刷新后再发'); return; }
@@ -960,22 +973,30 @@
     state.sending = true;
     state.sendStartedAt = Date.now();
     updateDockStatus();
+    let sendStep = 'init';
+    let promptTimer = null;
     try {
-      const requestId = typeof crypto !== 'undefined' && crypto.randomUUID
-        ? `mvc-${crypto.randomUUID()}`
-        : `mvc-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const requestId = newRequestId();
       if (text) {
-        const block = { type: 'user', text, images: [], files: [], _optimistic: true, _rpcId: requestId, _busy: busy };
-        state.blocks.push(block);
-        state.optimisticUser = { rpcId: requestId, text, block, busy };
-        appendBlocksToTimeline([block]);
-        updateQueueChip();
-        requestAnimationFrame(scrollContentBottom);
+        sendStep = 'optimistic';
+        try {
+          const block = { type: 'user', text, images: [], files: [], _optimistic: true, _rpcId: requestId, _busy: busy };
+          state.blocks.push(block);
+          state.optimisticUser = { rpcId: requestId, text, block, busy };
+          appendBlocksToTimeline([block]);
+          updateQueueChip();
+          requestAnimationFrame(scrollContentBottom);
+        } catch (uiError) {
+          // A UI echo failure must never prevent the actual prompt request.
+          console.warn('mobilevc optimistic ui failed', uiError);
+        }
       }
-      const promptSignal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(35000) : undefined;
+      sendStep = 'fetch';
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      if (controller) promptTimer = setTimeout(() => controller.abort(), 35000);
       const r = await fetch(`${API}/prompt`, {
         method: 'POST',
-        signal: promptSignal,
+        ...(controller ? { signal: controller.signal } : {}),
         headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' },
         body: JSON.stringify({
           sessionId: state.session.id,
@@ -986,6 +1007,8 @@
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
+      if (promptTimer) { clearTimeout(promptTimer); promptTimer = null; }
+      sendStep = 'response';
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error || `${r.status} ${r.statusText}`);
       state.draft = '';
@@ -1017,11 +1040,13 @@
       if (busy) queueSheet();
       toast(busy ? '已加入插话队列，可在这里修改或立即插话' : '已发送到 DSH');
     } catch (e) {
+      if (promptTimer) clearTimeout(promptTimer);
       state.sending = false;
       state.sendStartedAt = 0;
       removeOptimisticUser();
       updateDockStatus();
-      toast(`发送失败：${e.message}`);
+      const detail = e?.name === 'AbortError' ? '请求超时' : (e?.message || String(e));
+      toast(`发送失败[${sendStep}]：${detail}`);
     }
   }
 
