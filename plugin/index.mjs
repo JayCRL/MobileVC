@@ -1452,7 +1452,7 @@ export function apply(ctx) {
         const event = events[i]
         if (event?.type !== 'approval/asked') continue
         if (event.data?.toolName !== req.toolName) continue
-        if (req.callId && event.data?.callId !== req.callId) continue
+        if (req.callId && event.data?.callId && String(event.data.callId) !== String(req.callId)) continue
         asked = event.data
         break
       }

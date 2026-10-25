@@ -556,6 +556,11 @@
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error || `${r.status} ${r.statusText}`);
+      if (data.stale) {
+        toast('这条审批已由其他端处理或已失效，正在同步状态…');
+        void syncCurrentSession(true);
+        return;
+      }
       state.approvals = state.approvals.filter((a) => a.id !== id);
       updateApprovalSlot();
       if (state.session?.state === 'waiting') {
@@ -564,7 +569,7 @@
       }
       updateDockStatus();
       updateDockAction();
-      toast(data.stale ? '已在其他端处理，这次点击已失效' : (outcome === 'allowed-once' ? '已允许一次' : '已拒绝'));
+      toast(outcome === 'allowed-once' ? '已允许一次' : '已拒绝');
     } catch (e) {
       if (button) button.disabled = false;
       toast(`审批失败：${e.message}`);
@@ -1825,14 +1830,11 @@
   }
 
   function approvalsSheet() {
-    const cards = state.approvals.map((a) => `<div class="action-card">
-      <div class="action-head"><span class="action-ico">${icon('shield')}</span><div><div class="action-title">${esc(a.tool || '工具')} <span class="chip amber">待授权</span></div><div class="action-desc">${esc(a.reason || '')}</div></div></div>
-      <div class="action-actions"><button class="btn primary wide" data-act="open-dsh">在 DSH 中处理</button></div>
-    </div>`).join('');
+    const cards = state.approvals.map((a) => approvalCard(a)).join('');
     openSheet({
       title: '待处理授权',
-      sub: '来自真实 DSH 会话',
-      body: `${cards || '<div class="note">当前没有待处理授权。</div>'}<div class="note">手机端只读；批准/拒绝会改变 Agent 行为，必须在 DSH 内完成。</div>`,
+      sub: '来自真实 DSH 会话 · 可直接审批',
+      body: `${cards || '<div class="note">当前没有待处理授权。</div>'}<div class="note">如果另一端已经处理，这次点击会自动失效；列表会重新同步。</div>`,
     });
   }
 
