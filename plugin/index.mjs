@@ -1535,7 +1535,8 @@ export function apply(ctx) {
   })
   const pushNotify = (sid, title, body, tag) => {
     if (!sid || presenceAlive(sid)) return
-    void sendPush({ title, body, url: '/mobilevc/', tag })
+    const url = `/mobilevc/#/chat/${encodeURIComponent(sid)}`
+    void sendPush({ title, body, url, tag })
   }
 
   ctx.effect(() => ctx.on('session/event', (session, event) => {

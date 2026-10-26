@@ -41,6 +41,7 @@
     `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n] || ''}</svg>`;
 
   const API = 'api';
+  const LAST_SESSION_KEY = 'mobilevc.lastSession';
   const INTERACTIVE = /^\/mobilevc(?:\/|$)/.test(location.pathname) && !location.pathname.startsWith('/mobilevc-preview');
   const state = {
     theme: document.documentElement.dataset.theme || 'light',
@@ -131,8 +132,15 @@
       const data = await api('sessions?limit=12');
       state.sessions = data.sessions || [];
       const hashId = (location.hash.match(/^#\/chat\/(.+)$/) || [])[1] || '';
+      let savedId = '';
+      try { savedId = localStorage.getItem(LAST_SESSION_KEY) || ''; } catch (_) {}
+      const running = state.sessions.find((s) => !s.subagent && s.state === 'running');
       const preferred = state.sessions.find((s) => !s.subagent && s.state !== 'running' && s.assistantCount > 0);
-      const target = state.sessions.find((s) => s.id === hashId) || preferred || state.sessions[0];
+      const target = state.sessions.find((s) => s.id === hashId)
+        || state.sessions.find((s) => s.id === savedId)
+        || running
+        || preferred
+        || state.sessions[0];
       if (target) {
         await selectSession(target.id, { keepLoading: true });
       } else {
@@ -176,6 +184,7 @@
       state.detailLoading = false;
       state.contentSig = contentSignature(data);
       history.replaceState(null, '', `#/chat/${id}`);
+      try { localStorage.setItem(LAST_SESSION_KEY, id); } catch (_) {}
       render();
       requestAnimationFrame(scrollContentBottom);
       if (INTERACTIVE) {
@@ -2177,6 +2186,10 @@
   setInterval(refreshQueue, 2500);
   setInterval(refreshJobs, 2500);
 
+  window.addEventListener('hashchange', () => {
+    const id = (location.hash.match(/^#\/chat\/(.+)$/) || [])[1] || '';
+    if (id && id !== state.session?.id) void selectSession(id);
+  });
   loadSessions().finally(() => { void refreshAccount(); });
   void refreshAccount();
   setInterval(() => { if (!document.hidden) void refreshAccount(); }, 30000);
