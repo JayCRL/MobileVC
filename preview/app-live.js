@@ -1153,6 +1153,94 @@
     }
   }
 
+  /* ---------- boot animation ---------- */
+  const BOOT_VIDEO_SRC = 'assets/startup-boot.mp4';
+  let bootActive = false;
+  let bootTimer = null;
+  let hiddenAt = 0;
+
+  function finishBoot() {
+    if (!bootActive) return;
+    bootActive = false;
+    if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
+    const overlay = $('#boot-overlay');
+    const video = $('#boot-video');
+    try { video?.pause(); } catch (_) {}
+    if (!overlay) return;
+    overlay.classList.add('leaving');
+    setTimeout(() => {
+      overlay.hidden = true;
+      overlay.classList.remove('leaving');
+    }, 420);
+  }
+
+  function playMobileBoot(reason = 'launch') {
+    const overlay = $('#boot-overlay');
+    const video = $('#boot-video');
+    if (!overlay || !video || bootActive) return;
+    if (new URLSearchParams(location.search).has('boot=0')) return;
+    bootActive = true;
+    overlay.hidden = false;
+    overlay.classList.remove('leaving');
+    const progress = $('#boot-progress');
+    const hint = $('#boot-hint');
+    const sound = $('#boot-sound');
+    if (progress) progress.style.width = '0%';
+    if (hint) hint.textContent = reason === 'resume' ? '欢迎回来，正在继续…' : '正在启动…';
+    if (sound) sound.textContent = '开启声音';
+    try {
+      video.pause();
+      video.currentTime = 0;
+      video.muted = true;
+      video.volume = 1;
+      const played = video.play();
+      if (played?.catch) played.catch(() => {});
+    } catch (_) {}
+    bootTimer = setTimeout(finishBoot, 15000);
+    overlay.classList.toggle('ready', reason === 'resume');
+  }
+
+  function bindBootControls() {
+    const overlay = $('#boot-overlay');
+    const video = $('#boot-video');
+    const skip = $('#boot-skip');
+    const sound = $('#boot-sound');
+    const progress = $('#boot-progress');
+    if (!overlay || !video) return;
+    const update = () => {
+      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 8;
+      const ratio = Math.max(0, Math.min(1, (video.currentTime || 0) / duration));
+      if (progress) progress.style.width = `${Math.round(ratio * 100)}%`;
+    };
+    video.addEventListener('timeupdate', update);
+    video.addEventListener('loadedmetadata', update);
+    video.addEventListener('ended', finishBoot);
+    video.addEventListener('error', finishBoot);
+    skip?.addEventListener('click', (event) => { event.stopPropagation(); finishBoot(); });
+    overlay.addEventListener('click', (event) => {
+      if (event.target.closest('button')) return;
+      finishBoot();
+    });
+    sound?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      try {
+        video.muted = false;
+        video.volume = 1;
+        void video.play().catch(() => {});
+        if (sound) sound.textContent = '声音已开启';
+      } catch (_) {
+        if (sound) sound.textContent = '声音不可用';
+      }
+    });
+  }
+
+  function maybeBootOnResume() {
+    if (document.hidden || !hiddenAt) return;
+    const away = Date.now() - hiddenAt;
+    hiddenAt = 0;
+    if (away > 1200) playMobileBoot('resume');
+  }
+
   function clearAttachments() {
     for (const item of state.attachments) {
       if (item.preview) URL.revokeObjectURL(item.preview);
@@ -2298,10 +2386,17 @@
   }
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) refreshOnResume();
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      return;
+    }
+    maybeBootOnResume();
+    refreshOnResume();
   });
   window.addEventListener('pageshow', (event) => {
-    if (event.persisted) refreshOnResume();
+    if (!event.persisted) return;
+    maybeBootOnResume();
+    refreshOnResume();
   });
   window.addEventListener('online', refreshOnResume);
   setInterval(() => {
@@ -2319,7 +2414,11 @@
     const id = (location.hash.match(/^#\/chat\/(.+)$/) || [])[1] || '';
     if (id && id !== state.session?.id) void selectSession(id);
   });
+  bindBootControls();
   loadSessions().finally(() => { void refreshAccount(); });
+  if (!new URLSearchParams(location.search).has('boot=0')) {
+    setTimeout(() => playMobileBoot('launch'), 120);
+  }
   void refreshAccount();
   setInterval(() => { if (!document.hidden) void refreshAccount(); }, 30000);
 })();
