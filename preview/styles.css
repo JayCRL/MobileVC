@@ -1992,6 +1992,8 @@ html, body {
   object-position: center center;
   display: block;
   background: #000;
+  transform: scale(0.95);
+  transform-origin: center center;
 }
 
 .boot-sound-hint {
