@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#070b14">
+  <title>绑定 QQ 机器人 · MobileVC</title>
+  <style>
+    :root{color-scheme:dark}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100dvh;background:radial-gradient(120% 70% at 80% 0%,#112344 0%,#070b14 48%,#03050a 100%);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Noto Sans CJK SC",sans-serif;color:#eef5ff;display:flex;align-items:center;justify-content:center;padding:28px 18px}
+    .wrap{width:100%;max-width:430px;text-align:center}
+    .brand{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:28px;color:#dce8f8;font-weight:650;letter-spacing:.02em}
+    .brand img{width:34px;height:34px;object-fit:contain}
+    h1{font-size:27px;line-height:1.2;margin:0 0 9px;letter-spacing:-.03em}
+    .sub{font-size:13px;line-height:1.6;color:#93a8c2;margin:0 0 20px}
+    .card{background:rgba(13,21,36,.86);border:1px solid rgba(93,121,160,.3);border-radius:24px;padding:18px 16px 16px;box-shadow:0 20px 60px -28px #000}
+    .qr{width:min(72vw,260px);aspect-ratio:1;margin:0 auto 12px;background:#fff;border-radius:14px;padding:10px;display:grid;place-items:center}
+    .qr img{width:100%;height:100%;object-fit:contain;display:block}
+    .state{font-size:13px;line-height:1.5;color:#9db4ce;min-height:21px}
+    .state.ok{color:#7de3b0}
+    .state.err{color:#ff9b9b}
+    .hint{font-size:11.5px;line-height:1.6;color:#7086a1;margin:14px 0 0;border-top:1px solid rgba(93,121,160,.2);padding-top:12px}
+    button{appearance:none;border:1px solid rgba(111,157,255,.36);background:#6f9dff;color:#07101d;font:650 13px/1 inherit;height:42px;border-radius:12px;padding:0 18px;margin-top:14px;cursor:pointer}
+    button.ghost{background:transparent;color:#a9bfd8;border-color:rgba(93,121,160,.32);margin-left:6px}
+    button:active{transform:scale(.98)}
+    .foot{font-size:11px;color:#5f748e;margin-top:18px}
+    [hidden]{display:none!important}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="brand"><img src="assets/logo-transparent.png" alt=""><span>MobileVC</span></div>
+    <h1>接入 QQ 群</h1>
+    <p class="sub">用手机 QQ 扫码授权官方机器人<br>绑定后把机器人拉进群，@ 它就能对话</p>
+    <section class="card">
+      <div class="qr" id="qr-box"><div class="state" id="state">正在获取二维码…</div></div>
+      <div class="state" id="state2" hidden></div>
+      <div class="hint">群聊默认需要 @ 机器人；私聊可直接发送。</div>
+      <div>
+        <button id="refresh" type="button">刷新二维码</button>
+        <button id="open" class="ghost" type="button">在 QQ 打开</button>
+      </div>
+    </section>
+    <div class="foot" id="foot">QQ 官方机器人 · 腾讯云开放平台</div>
+  </main>
+  <script>
+  (() => {
+    const $ = (s) => document.querySelector(s);
+    const qrBox = $('#qr-box'), state = $('#state'), state2 = $('#state2');
+    const refresh = $('#refresh'), open = $('#open');
+    let currentUrl = '', timer = null, busy = false;
+    function setState(text, cls = '') {
+      state.textContent = text || ''; state.className = `state ${cls}`.trim();
+      state2.textContent = text || ''; state2.className = `state ${cls}`.trim();
+      state2.hidden = !text;
+    }
+    function showQr(svg) {
+      qrBox.innerHTML = '';
+      const img = document.createElement('img');
+      img.alt = 'QQ 机器人绑定二维码';
+      img.src = svg;
+      qrBox.appendChild(img);
+    }
+    async function load() {
+      if (busy) return;
+      busy = true;
+      try {
+        const r = await fetch('/qqbot/im-qqbot/bind', { credentials: 'same-origin', cache: 'no-store' });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.error || `${r.status}`);
+        currentUrl = data.url || '';
+        open.disabled = !currentUrl;
+        if (data.phase === 'bound') {
+          qrBox.hidden = true;
+          setState('已绑定 · QQ 机器人已就绪', 'ok');
+          refresh.hidden = true;
+          $('#foot').textContent = '可以关掉本页，去 QQ 群里 @ 机器人了。';
+          return;
+        }
+        if (data.qrSvg) {
+          qrBox.hidden = false;
+          showQr(data.qrSvg);
+          setState('等待扫码 · 用手机 QQ 扫描', '');
+          $('#foot').textContent = '二维码有效期有限，过期请点「刷新二维码」。';
+        } else {
+          setState(data.phase === 'expired' ? '二维码已过期，请刷新' : '等待授权…', data.phase === 'expired' ? 'err' : '');
+        }
+      } catch (e) {
+        setState(`读取绑定状态失败：${e.message}`, 'err');
+      } finally {
+        busy = false;
+      }
+    }
+    async function doRefresh() {
+      refresh.disabled = true;
+      try {
+        const r = await fetch('/qqbot/im-qqbot/bind/refresh', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data?.error || `${r.status}`);
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        await load();
+      } catch (e) {
+        setState(`刷新失败：${e.message}`, 'err');
+      } finally {
+        refresh.disabled = false;
+      }
+    }
+    refresh.addEventListener('click', doRefresh);
+    open.addEventListener('click', () => { if (currentUrl) window.open(currentUrl, '_blank', 'noopener'); });
+    load();
+    timer = setInterval(() => { if (!document.hidden) load(); }, 2200);
+    window.addEventListener('pagehide', () => clearInterval(timer));
+  })();
+  </script>
+</body>
+</html>
