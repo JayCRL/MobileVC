@@ -1916,3 +1916,57 @@ html, body {
 .account-state { margin-top: 3px; font-size: 11px; color: var(--muted); }
 .account-links { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .account-links .btn { width: auto; flex: 1 1 auto; }
+
+/* ---------- structured questions (DSH ask_user_question) ---------- */
+.question-card { border-color: color-mix(in srgb, var(--primary) 28%, var(--outline-soft)); }
+.question-card .action-ico { background: var(--primary-soft); color: var(--primary); }
+.question-form { display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px; }
+.q-block {
+  padding: 13px 12px 11px;
+  border-radius: 16px;
+  border: 0.5px solid var(--outline-soft);
+  background: var(--surface-low);
+}
+.q-kicker { font-size: 10px; line-height: 1.4; font-weight: 700; letter-spacing: 0.04em; color: var(--muted); text-transform: uppercase; }
+.q-title { margin-top: 5px; font-size: 14px; font-weight: 750; line-height: 1.45; color: var(--text); }
+.q-detail { margin-top: 5px; font-size: 11.5px; line-height: 1.55; color: var(--muted); white-space: pre-wrap; }
+.q-options { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; }
+.q-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 0.5px solid var(--outline-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.q-option:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.q-option input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--primary);
+  flex: none;
+}
+.q-opt-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.q-opt-label { font-size: 12.5px; line-height: 1.4; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.q-opt-desc { font-size: 11px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.q-custom {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 9px;
+  resize: vertical;
+  border: 0.5px solid var(--outline-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  outline: 0;
+}
+.q-custom:focus { border-color: var(--primary); }
+.q-custom::placeholder { color: var(--muted); opacity: 0.8; }

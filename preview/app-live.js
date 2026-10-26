@@ -50,6 +50,8 @@
     session: null,
     blocks: [],
     approvals: [],
+    questions: [],
+    questionSig: '',
     skills: [],
     memories: [],
     logs: null,
@@ -116,6 +118,7 @@
     if (state.loading) return { label: 'DSH · 读取中', dot: 'busy' };
     if (!state.session) return { label: 'Shell · 未连接', dot: '' };
     if (state.sending) return { label: 'DSH · 发送中', dot: 'busy' };
+    if (state.questions.length) return { label: 'DSH · 等你回答', dot: 'busy' };
     const s = state.session;
     if (s.state === 'running') return { label: `DSH · 运行中`, dot: 'busy' };
     if (s.state === 'waiting') return { label: `DSH · 待授权`, dot: 'busy' };
@@ -167,6 +170,8 @@
     state.session = null;
     state.blocks = [];
     state.approvals = [];
+    state.questions = [];
+    state.questionSig = '';
     state.optimisticUser = null;
     state.detailLoading = true;
     state.error = '';
@@ -292,6 +297,7 @@
       try {
         const data = await api(`sessions/${encodeURIComponent(state.session.id)}`);
         applyDetail(data);
+        void refreshQuestions({ silent: true });
         const active = data.state === 'running' || data.state === 'waiting';
         state.pollIdle = active ? 0 : state.pollIdle + 1;
         renderAppbar();
@@ -372,10 +378,12 @@
       renderContentPreservingOpen();
       updateDockStatus();
       updateDockAction();
+      void refreshQuestions({ silent: true });
       return;
     }
     if (msg.kind === 'durable') {
       applyPatch(msg.patch);
+      void refreshQuestions({ silent: true });
       return;
     }
     if (msg.kind === 'assistant-stream') {
@@ -410,6 +418,11 @@
   function updateApprovalSlot() {
     const slot = $('#approval-slot');
     if (slot) slot.innerHTML = state.approvals.map(approvalCard).join('');
+  }
+
+  function updateQuestionSlot() {
+    const slot = $('#question-slot');
+    if (slot) slot.innerHTML = state.questions.map(questionCard).join('');
   }
 
   function updateToolResult(result) {
@@ -592,6 +605,7 @@
       const data = await api(`sessions/${encodeURIComponent(state.session.id)}`);
       applyDetail(data);
       state.contentSig = contentSignature(data);
+      void refreshQuestions({ silent: true });
       if (preserve) {
         renderAppbar();
         renderContentPreservingOpen();
@@ -1461,6 +1475,115 @@
     </div></div>`;
   }
 
+  function questionCard(entry) {
+    const id = esc(entry.callId || '');
+    const first = entry.questions?.[0] || {};
+    const summary = first.header || first.question || 'DSH 正在等待你的回答';
+    const count = entry.questions?.length || 1;
+    return `<div class="row"><div class="action-card question-card">
+      <div class="action-head"><span class="action-ico">${icon('chat')}</span><div><div class="action-title">需要你回答 <span class="chip blue">DSH</span></div><div class="action-desc">${esc(summary)}${count > 1 ? ` · 共 ${count} 个问题` : ''}</div></div></div>
+      <div class="action-actions"><button class="btn primary wide" data-act="answer-question" data-callid="${id}">回答问题</button></div>
+      <div class="note">回答会直接回到当前会话，不需要切回 DSH。</div>
+    </div></div>`;
+  }
+
+  function questionField(question, index, total) {
+    const options = Array.isArray(question.options) ? question.options : [];
+    const type = question.multiSelect ? 'checkbox' : 'radio';
+    const optionHtml = options.map((option) => `<label class="q-option">
+      <input type="${type}" name="q_${index}" value="${esc(option.label)}">
+      <span class="q-opt-main"><span class="q-opt-label">${esc(option.label)}</span>${option.description ? `<span class="q-opt-desc">${esc(option.description)}</span>` : ''}</span>
+    </label>`).join('');
+    return `<div class="q-block" data-qidx="${index}">
+      <div class="q-kicker">问题 ${index + 1} / ${total}${question.multiSelect ? ' · 可多选' : ''}</div>
+      <div class="q-title">${esc(question.question)}</div>
+      ${question.detail ? `<div class="q-detail">${esc(question.detail)}</div>` : ''}
+      ${optionHtml ? `<div class="q-options">${optionHtml}</div>` : ''}
+      <textarea class="q-custom" data-qcustom="${index}" placeholder="${options.length ? '也可以补充或直接输入回答…' : '输入你的回答…'}"></textarea>
+    </div>`;
+  }
+
+  function questionSheet(callId) {
+    const entry = state.questions.find((item) => item.callId === callId) || state.questions[0];
+    if (!entry) { toast('这个问题已失效，正在同步…'); void refreshQuestions({ silent: true }); return; }
+    const fields = entry.questions.map((question, index) => questionField(question, index, entry.questions.length)).join('');
+    openSheet({
+      title: '回答 DSH 的问题',
+      sub: '提交后会回到当前会话',
+      tall: true,
+      body: `<div class="question-form" id="question-form">${fields}
+        <button class="btn primary wide" data-act="answer-submit" data-callid="${esc(entry.callId)}">提交回答</button>
+        <div class="note">选择选项，或者直接输入回答。提交后 DSH 会继续执行。</div>
+      </div>`,
+    });
+  }
+
+  async function submitQuestionAnswer(callId, button) {
+    const entry = state.questions.find((item) => item.callId === callId);
+    if (!entry) { toast('这个问题已失效'); void refreshQuestions({ silent: true }); return; }
+    const root = $('#question-form');
+    if (!root) return;
+    const answers = [];
+    for (let index = 0; index < entry.questions.length; index += 1) {
+      const block = root.querySelector(`[data-qidx="${index}"]`);
+      const selected = block ? [...block.querySelectorAll('input:checked')].map((input) => input.value) : [];
+      const custom = block?.querySelector(`[data-qcustom="${index}"]`)?.value?.trim() || '';
+      if (!selected.length && !custom) {
+        toast(`请回答第 ${index + 1} 个问题`);
+        block?.querySelector('textarea')?.focus();
+        return;
+      }
+      answers.push({ id: entry.questions[index].id, selected, ...(custom ? { custom } : {}) });
+    }
+    if (button) button.disabled = true;
+    try {
+      const r = await fetch(`${API}/questions/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-MobileVC': '1' },
+        body: JSON.stringify({ sessionId: state.session?.id, callId, answers }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || `${r.status} ${r.statusText}`);
+      if (data.stale) {
+        toast('这个问题已由另一端的回答处理，正在同步…');
+        closeSheet();
+        void refreshQuestions({ silent: true });
+        void syncCurrentSession(true);
+        return;
+      }
+      state.questions = state.questions.filter((item) => item.callId !== callId);
+      state.questionSig = '';
+      updateQuestionSlot();
+      renderDock();
+      closeSheet();
+      toast('已回答 · DSH 继续执行');
+    } catch (e) {
+      if (button) button.disabled = false;
+      toast(`回答失败：${e.message}`);
+    }
+  }
+
+  async function refreshQuestions(opts = {}) {
+    if (!INTERACTIVE || !state.session?.id || state.detailLoading) return;
+    const sid = state.session.id;
+    try {
+      const data = await api(`questions?session=${encodeURIComponent(sid)}`);
+      if (state.session?.id !== sid) return;
+      const next = Array.isArray(data.questions) ? data.questions : [];
+      const sig = JSON.stringify(next.map((entry) => [entry.callId, entry.questions]));
+      if (sig === state.questionSig) return;
+      const previous = state.questions.length;
+      state.questions = next;
+      state.questionSig = sig;
+      updateQuestionSlot();
+      renderDock();
+      if (!previous && next.length) toast('DSH 需要你回答一个问题');
+      if (!next.length && document.querySelector('#sheet-root .sheet-head h2')?.textContent?.startsWith('回答 DSH 的问题')) closeSheet();
+    } catch (_) {
+      /* the next poll or follow snapshot retries */
+    }
+  }
+
   function renderContent() {
     const el = $('#content');
     if (state.loading) {
@@ -1500,8 +1623,9 @@
     const blocks = state.blocks.map(chatBlock).join('');
     const approvals = state.approvals.map(approvalCard).join('');
     const empty = `<div class="row"><div class="card-compact"><span class="ico-badge">${icon('chat')}</span><div class="c-main"><div class="c-title">${esc(state.session.title)}</div><div class="c-body">这个会话还没有可见消息。在 DSH 里继续对话后，这里会同步显示。</div></div></div></div>`;
-    el.innerHTML = `<div class="timeline" id="timeline">${blocks || (state.live ? '' : empty)}<div id="live-slot"></div><div id="approval-slot">${approvals}</div></div>`;
+    el.innerHTML = `<div class="timeline" id="timeline">${blocks || (state.live ? '' : empty)}<div id="live-slot"></div><div id="approval-slot">${approvals}</div><div id="question-slot"></div></div>`;
     updateLiveSlot();
+    updateQuestionSlot();
   }
 
   /* ---------- dock ---------- */
@@ -1513,6 +1637,7 @@
     chips.push({ ico: 'puzzle', label: '插件', act: 'plugins' });
     chips.push({ ico: 'brain', label: 'Memory', act: 'memory' });
     if (s) {
+      if (state.questions.length) chips.push({ ico: 'chat', label: `回答 · ${state.questions.length}`, act: 'questions' });
       if (state.approvals.length) chips.push({ ico: 'shield', label: `权限 · ${state.approvals.length}`, act: 'approvals' });
       if (state.model) chips.push({ ico: 'cpu', label: `模型 · ${state.model.split('/').pop()}`, act: 'models' });
     }
@@ -2021,6 +2146,9 @@
     }
     if (act === 'toggle-plugin') { togglePlugin(t.dataset.kind, t.dataset.id, t.dataset.enabled === '1'); return; }
     if (act === 'approvals') { approvalsSheet(); return; }
+    if (act === 'questions') { questionSheet(state.questions[0]?.callId); return; }
+    if (act === 'answer-question') { questionSheet(t.dataset.callid || state.questions[0]?.callId); return; }
+    if (act === 'answer-submit') { submitQuestionAnswer(t.dataset.callid || '', t); return; }
     if (act === 'models') { modelsSheet(); return; }
     if (act === 'status') { statusSheet(); return; }
     if (act === 'settings') { settingsSheet(); return; }
@@ -2185,6 +2313,7 @@
   setInterval(pingPresence, 15000);
   setInterval(refreshQueue, 2500);
   setInterval(refreshJobs, 2500);
+  setInterval(() => { if (!document.hidden) void refreshQuestions({ silent: true }); }, 1800);
 
   window.addEventListener('hashchange', () => {
     const id = (location.hash.match(/^#\/chat\/(.+)$/) || [])[1] || '';

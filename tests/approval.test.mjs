@@ -40,3 +40,35 @@ test('maps approval asked event to compact patch', () => {
   assert.equal(patch.approval.id, 'x')
   assert.equal(patch.state, 'waiting')
 })
+
+const { findQuestionCallId, normalizeQuestionAnswers } = __test
+
+test('prefers the live wait callId for a question', () => {
+  assert.equal(findQuestionCallId([], { wait: { callId: 'call-wait' } }), 'call-wait')
+})
+
+test('finds the question tool call by its question ids', () => {
+  const events = [
+    { type: 'tool/call', data: { callId: 'call-a', name: 'ask_user_question', arguments: JSON.stringify({ questions: [{ id: 'other' }] }) } },
+    { type: 'tool/call', data: { callId: 'call-b', name: 'ask_user_question', arguments: JSON.stringify({ questions: [{ id: 'q1' }, { id: 'q2' }] }) } },
+  ]
+  assert.equal(findQuestionCallId(events, { questions: [{ id: 'q1' }, { id: 'q2' }] }), 'call-b')
+})
+
+test('normalizes a complete answer batch', () => {
+  const entry = { questions: [{ id: 'q1' }, { id: 'q2' }] }
+  const answers = normalizeQuestionAnswers(entry, [
+    { id: 'q2', selected: ['B'], custom: '补充' },
+    { id: 'q1', selected: ['A'] },
+  ])
+  assert.deepEqual(answers, [
+    { id: 'q1', selected: ['A'] },
+    { id: 'q2', selected: ['B'], custom: '补充' },
+  ])
+})
+
+test('rejects an incomplete or duplicate answer batch', () => {
+  const entry = { questions: [{ id: 'q1' }, { id: 'q2' }] }
+  assert.equal(normalizeQuestionAnswers(entry, [{ id: 'q1', selected: [] }]), null)
+  assert.equal(normalizeQuestionAnswers(entry, [{ id: 'q1' }, { id: 'q1' }]), null)
+})

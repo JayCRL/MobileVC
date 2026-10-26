@@ -589,6 +589,45 @@ function findApprovalCandidate(events, req) {
   return exact || unresolved
 }
 
+/** Find the live ask_user_question tool call that belongs to this waterfall request. */
+function findQuestionCallId(events, req) {
+  if (req?.wait?.callId) return String(req.wait.callId)
+  const wanted = new Set((req?.questions || []).map((question) => String(question?.id ?? '')))
+  let fallback = ''
+  for (let i = (events || []).length - 1; i >= 0; i -= 1) {
+    const event = events[i]
+    if (event?.type !== 'tool/call') continue
+    const name = String(event.data?.name ?? '')
+    if (!/ask_user_question|(^|_)question$/i.test(name)) continue
+    const callId = String(event.data?.callId ?? '')
+    if (!callId) continue
+    let ids = []
+    try {
+      const args = typeof event.data.arguments === 'string' ? JSON.parse(event.data.arguments) : event.data.arguments
+      ids = (args?.questions || []).map((question) => String(question?.id ?? ''))
+    } catch (_) {}
+    if (wanted.size && ids.length && ids.every((id) => wanted.has(id))) return callId
+    if (!fallback) fallback = callId
+  }
+  return fallback
+}
+
+/** Normalize and validate an answer batch for one pending question call. */
+function normalizeQuestionAnswers(entry, raw) {
+  if (!Array.isArray(raw)) return null
+  const byId = new Map()
+  for (const item of raw) {
+    const id = String(item?.id ?? '')
+    if (!id || byId.has(id)) return null
+    const selected = Array.isArray(item?.selected) ? item.selected.map((value) => String(value)) : []
+    const custom = typeof item?.custom === 'string' ? item.custom.trim() : ''
+    byId.set(id, { id, selected, ...(custom ? { custom } : {}) })
+  }
+  if (byId.size !== entry.questions.length) return null
+  if (!entry.questions.every((question) => byId.has(String(question.id)))) return null
+  return entry.questions.map((question) => byId.get(String(question.id)))
+}
+
 /** Map one durable event to a compact patch the live trace can apply. */
 function eventPatch(event) {
   const type = event?.type
@@ -710,11 +749,17 @@ export function apply(ctx) {
   let listCache = { at: 0, value: null }
   const activeFollows = new Map()
   const pendingApprovals = new Map()
+  const pendingQuestions = new Map()
   const mobilePresence = new Map()
   const mobileKnown = new Map()
   const PRESENCE_TTL = 45_000
   const MOBILE_KNOWN_TTL = 10 * 60_000
   const APPROVAL_LOG = join(DSH_STATE, 'mobilevc-approval.log')
+  const QUESTION_LOG = join(DSH_STATE, 'mobilevc-question.log')
+  const questionLog = (...args) => {
+    const line = `${new Date().toISOString()} ${args.map((value) => typeof value === 'string' ? value : JSON.stringify(value)).join(' ')}\n`
+    void appendFile(QUESTION_LOG, line, { mode: 0o600 }).catch(() => {})
+  }
   const approvalLog = (...args) => {
     const line = `${new Date().toISOString()} ${args.map((value) => typeof value === 'string' ? value : JSON.stringify(value)).join(' ')}\n`
     void appendFile(APPROVAL_LOG, line, { mode: 0o600 }).catch(() => {})
@@ -1247,6 +1292,66 @@ export function apply(ctx) {
         json(res, 200, { ok: true })
         return
       }
+      if (req.method === 'GET' && path === `${BASE}/api/questions`) {
+        const sid = String(url.searchParams.get('session') ?? '')
+        const rows = [...pendingQuestions.values()]
+          .filter((entry) => entry.sessionId === sid)
+          .map((entry) => ({
+            callId: entry.callId,
+            questions: entry.questions,
+            createdAt: entry.createdAt,
+          }))
+        json(res, 200, { questions: rows })
+        return
+      }
+      if (req.method === 'POST' && path === `${BASE}/api/questions/answer`) {
+        if (req.headers['x-mobilevc'] !== '1') {
+          json(res, 403, { error: 'missing mobilevc marker' })
+          return
+        }
+        const body = await readJson(req)
+        const sid = String(body.sessionId ?? '')
+        const callId = String(body.callId ?? '')
+        if (!sid || !callId) {
+          json(res, 400, { error: 'sessionId and callId are required' })
+          return
+        }
+        const entry = pendingQuestions.get(callId)
+        if (entry && entry.sessionId !== sid) {
+          json(res, 200, { ok: false, stale: true })
+          return
+        }
+        if (!entry) {
+          // A question can outlive the foreground request as `continued`.
+          // Answer it through the same service the desktop UI uses.
+          try {
+            const agent = await ctx.sessionController.resolveAgent(sid)
+            const service = ctx.get?.('userQuestions') || ctx.userQuestions
+            const accepted = service?.answer?.(agent, callId, { answers: Array.isArray(body.answers) ? body.answers : [] })
+            if (accepted) {
+              questionLog('continued answer', callId)
+              json(res, 200, { ok: true })
+              return
+            }
+          } catch (error) {
+            questionLog('continued answer failed', callId, String(error?.message || error))
+          }
+          questionLog('answer stale', callId)
+          json(res, 200, { ok: false, stale: true })
+          return
+        }
+        const normalized = normalizeQuestionAnswers(entry, body.answers)
+        if (!normalized) {
+          json(res, 400, { error: 'answers must cover each question exactly once' })
+          return
+        }
+        questionLog('answer resolved', callId)
+        pendingQuestions.delete(callId)
+        if (entry.timer) clearTimeout(entry.timer)
+        entry.resolve({ answers: normalized })
+        json(res, 200, { ok: true })
+        return
+      }
       if (req.method === 'GET' && path === `${BASE}/api/attachment`) {
         const id = String(url.searchParams.get('id') ?? '')
         const match = /^sha256:([a-f0-9]{64})$/i.exec(id)
@@ -1480,6 +1585,82 @@ export function apply(ctx) {
     delegatePending(sid)
   }
 
+  // Same claim policy for structured questions: the mobile page answers the
+  // live waterfall while it is open, otherwise the desktop/Remote UI does.
+  ctx.effect(() => {
+    questionLog('question listener registered')
+    return ctx.on('user-questions/request', async (req, next) => {
+      const sid = String(req?.agent?.session?.id ?? '')
+      const presence = Boolean(sid && presenceAlive(sid))
+      const recentMobile = Boolean(sid && (mobileKnown.get(sid) || 0) > Date.now())
+      let subscribed = false
+      try { subscribed = (await readPushSubs()).length > 0 } catch (_) {}
+      if (!sid || (!presence && !recentMobile && !subscribed)) return next()
+      let callId = ''
+      try {
+        callId = findQuestionCallId(req.agent?.session?.snapshotEvents?.() || [], req)
+      } catch (error) {
+        questionLog('snapshot failed', String(error?.message || error))
+      }
+      const questions = Array.isArray(req?.questions)
+        ? req.questions.map((question) => ({
+            id: String(question?.id ?? ''),
+            question: String(question?.question ?? ''),
+            ...(question?.header ? { header: String(question.header) } : {}),
+            ...(question?.detail ? { detail: String(question.detail) } : {}),
+            ...(Array.isArray(question?.options) ? { options: question.options.map((option) => ({
+              label: String(option?.label ?? ''),
+              ...(option?.description ? { description: String(option.description) } : {}),
+            })) } : {}),
+            ...(question?.multiSelect ? { multiSelect: true } : {}),
+          })).filter((question) => question.id && question.question)
+        : []
+      if (!callId || questions.length === 0 || pendingQuestions.has(callId)) {
+        questionLog('no claim', { hasCall: Boolean(callId), count: questions.length })
+        return next()
+      }
+      questionLog('incoming', { sid: sid.slice(0, 24), presence, recentMobile, subscribed, callId })
+      if (!presence) {
+        void pushNotify(sid, 'MobileVC · 需要你回答', questions[0].header || questions[0].question, `question-${sid}`)
+      }
+      return await new Promise((resolve) => {
+        let settled = false
+        const entry = {
+          callId,
+          sessionId: sid,
+          questions,
+          createdAt: Date.now(),
+          timer: null,
+          resolve: (answer) => { if (!settled) { settled = true; resolve(answer) } },
+        }
+        const cleanup = () => {
+          if (entry.timer) clearTimeout(entry.timer)
+          if (pendingQuestions.get(callId) === entry) pendingQuestions.delete(callId)
+        }
+        const delegate = () => {
+          if (settled) return
+          cleanup()
+          questionLog('question timeout, delegating', callId)
+          Promise.resolve().then(() => next()).then(
+            (answer) => { if (!settled) { settled = true; resolve(answer) } },
+            () => { if (!settled) { settled = true; resolve({ answers: [] }) } },
+          )
+        }
+        pendingQuestions.set(callId, entry)
+        entry.timer = setTimeout(delegate, 120_000)
+        req.signal?.addEventListener('abort', () => {
+          if (settled) return
+          questionLog('aborted', callId)
+          cleanup()
+          Promise.resolve().then(() => next()).then(
+            (answer) => { if (!settled) { settled = true; resolve(answer) } },
+            () => { if (!settled) { settled = true; resolve({ answers: [] }) } },
+          )
+        }, { once: true })
+      })
+    }, { prepend: true })
+  })
+
   // Mobile answers first when this session has an open follow stream OR a
   // recent presence heartbeat; otherwise the desktop/Remote answerer gets it.
   approvalLog('plugin apply · approval listener registering')
@@ -1565,6 +1746,6 @@ export function apply(ctx) {
 
 apply.inject = inject
 
-export const __test = { findApprovalCandidate, failureBlock, eventPatch }
+export const __test = { findApprovalCandidate, findQuestionCallId, normalizeQuestionAnswers, failureBlock, eventPatch }
 
 export default apply
