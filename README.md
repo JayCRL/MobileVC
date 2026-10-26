@@ -23,6 +23,15 @@ MobileVC 给 DSH 加一个手机端界面：连上你正在跑的 DSH，直接�
 - 演示：`docs/media/mobilevc-demo.mp4`
 - 宣传片：`docs/media/mobilevc-promo.mp4`
 
+## B 站宣传片
+
+<p align="center">
+  <a href="docs/media/mobilevc-bilibili.mp4">
+    <img src="docs/media/mobilevc-bilibili-cover.png" width="760" alt="MobileVC B 站宣传片">
+  </a>
+</p>
+<p align="center"><sub>102 秒 · 1920×1080 · 无旁白 · 项目演示与真实页面</sub></p>
+
 ## 新版宣传片
 
 <p align="center">
