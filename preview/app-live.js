@@ -1165,7 +1165,8 @@
     if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
     const overlay = $('#boot-overlay');
     const video = $('#boot-video');
-    try { video?.pause(); } catch (_) {}
+    const bg = $('#boot-bg');
+    try { video?.pause(); bg?.pause(); } catch (_) {}
     if (!overlay) return;
     overlay.classList.add('leaving');
     setTimeout(() => {
@@ -1177,6 +1178,7 @@
   function playMobileBoot(reason = 'launch') {
     const overlay = $('#boot-overlay');
     const video = $('#boot-video');
+    const bg = $('#boot-bg');
     if (!overlay || !video || bootActive) return;
     if (new URLSearchParams(location.search).has('boot=0')) return;
     bootActive = true;
@@ -1193,6 +1195,14 @@
       video.currentTime = 0;
       video.muted = true;
       video.volume = 1;
+      if (bg) {
+        try {
+          bg.pause();
+          bg.currentTime = 0;
+          bg.muted = true;
+          void bg.play().catch(() => {});
+        } catch (_) {}
+      }
       const played = video.play();
       if (played?.catch) played.catch(() => {});
     } catch (_) {}

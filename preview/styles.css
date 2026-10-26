@@ -1983,15 +1983,27 @@ html, body {
 }
 .boot-overlay[hidden] { display: none; }
 .boot-overlay.leaving { opacity: 0; pointer-events: none; }
+.boot-bg {
+  position: absolute;
+  inset: -8%;
+  width: 116%;
+  height: 116%;
+  object-fit: cover;
+  object-position: center center;
+  filter: blur(34px) saturate(1.12) brightness(0.52);
+  opacity: 0.76;
+  display: block;
+  pointer-events: none;
+}
 .boot-video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center center;
   display: block;
-  background: #03050a;
+  background: transparent;
 }
 .boot-dim {
   position: absolute;
