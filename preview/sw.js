@@ -1,5 +1,5 @@
 /* MobileVC service worker: installable shell + Web Push. */
-const VERSION = 'mobilevc-2026-10-26-boot';
+const VERSION = 'mobilevc-2026-10-26-boot2';
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', () => {
