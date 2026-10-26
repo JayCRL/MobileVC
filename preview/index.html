@@ -14,7 +14,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="assets/icon-180.png">
   <title>MobileVC</title>
-  <link rel="stylesheet" href="styles.css?v=20261026s">
+  <link rel="stylesheet" href="styles.css?v=20261026t">
 </head>
 <body>
   <div class="orientation-gate" id="orientation-gate">
@@ -41,8 +41,7 @@
   </div>
 
   <div class="boot-overlay" id="boot-overlay" hidden>
-    <video class="boot-bg" id="boot-bg" src="assets/startup-boot.mp4" playsinline preload="auto" muted aria-hidden="true"></video>
-    <video class="boot-video" id="boot-video" src="assets/startup-boot.mp4" playsinline preload="auto" muted></video>
+    <video class="boot-video" id="boot-video" src="assets/startup-boot-portrait.mp4" playsinline preload="auto" muted></video>
     <div class="boot-dim"></div>
     <div class="boot-ui">
       <div class="boot-progress"><i id="boot-progress"></i></div>
@@ -63,6 +62,6 @@
       }
     } catch (_) {}
   </script>
-  <script src="app-live.js?v=20261026s"></script>
+  <script src="app-live.js?v=20261026t"></script>
 </body>
 </html>
