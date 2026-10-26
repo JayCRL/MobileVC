@@ -1,9 +1,29 @@
 /* MobileVC service worker: installable shell + Web Push. */
-const VERSION = 'mobilevc-2026-10-26-boot5';
-self.addEventListener('install', () => self.skipWaiting());
+const VERSION = 'mobilevc-2026-10-26-immersive';
+const BOOT_CACHE = 'mobilevc-boot-immersive-v1';
+const BOOT_URL = '/mobilevc/assets/startup-boot-phone-lite.mp4';
+self.addEventListener('install', (event) => {
+  event.waitUntil((async () => {
+    try {
+      const response = await fetch(BOOT_URL, { cache: 'reload', credentials: 'same-origin' });
+      const type = response.headers.get('content-type') || '';
+      if (response.ok && type.startsWith('video/')) {
+        const cache = await caches.open(BOOT_CACHE);
+        await cache.put(BOOT_URL, response.clone());
+      }
+    } catch (_) {}
+    await self.skipWaiting();
+  })());
+});
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
-self.addEventListener('fetch', () => {
-  /* pass through: the UI needs live DSH data, never a cached API response */
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  if (url.pathname === BOOT_URL) {
+    event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
+    return;
+  }
+  /* everything else passes through: the UI needs live DSH data */
 });
 
 self.addEventListener('push', (event) => {

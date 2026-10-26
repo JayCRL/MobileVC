@@ -1174,7 +1174,7 @@
     }, 420);
   }
 
-  function playMobileBoot(reason = 'launch') {
+  function playMobileBoot() {
     const overlay = $('#boot-overlay');
     const video = $('#boot-video');
     if (!overlay || !video || bootActive) return;
@@ -1182,56 +1182,24 @@
     bootActive = true;
     overlay.hidden = false;
     overlay.classList.remove('leaving');
-    const progress = $('#boot-progress');
-    const hint = $('#boot-hint');
-    const sound = $('#boot-sound');
-    if (progress) progress.style.width = '0%';
-    if (hint) hint.textContent = reason === 'resume' ? '欢迎回来，正在继续…' : '正在启动…';
-    if (sound) sound.textContent = '开启声音';
     try {
       video.pause();
       video.currentTime = 0;
       video.muted = true;
-      video.volume = 1;
       const played = video.play();
       if (played?.catch) played.catch(() => {});
     } catch (_) {}
-    bootTimer = setTimeout(finishBoot, 15000);
-    overlay.classList.toggle('ready', reason === 'resume');
+    bootTimer = setTimeout(finishBoot, 12000);
   }
 
   function bindBootControls() {
     const overlay = $('#boot-overlay');
     const video = $('#boot-video');
-    const skip = $('#boot-skip');
-    const sound = $('#boot-sound');
-    const progress = $('#boot-progress');
     if (!overlay || !video) return;
-    const update = () => {
-      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 8;
-      const ratio = Math.max(0, Math.min(1, (video.currentTime || 0) / duration));
-      if (progress) progress.style.width = `${Math.round(ratio * 100)}%`;
-    };
-    video.addEventListener('timeupdate', update);
-    video.addEventListener('loadedmetadata', update);
     video.addEventListener('ended', finishBoot);
     video.addEventListener('error', finishBoot);
-    skip?.addEventListener('click', (event) => { event.stopPropagation(); finishBoot(); });
-    overlay.addEventListener('click', (event) => {
-      if (event.target.closest('button')) return;
-      finishBoot();
-    });
-    sound?.addEventListener('click', (event) => {
-      event.stopPropagation();
-      try {
-        video.muted = false;
-        video.volume = 1;
-        void video.play().catch(() => {});
-        if (sound) sound.textContent = '声音已开启';
-      } catch (_) {
-        if (sound) sound.textContent = '声音不可用';
-      }
-    });
+    // No visible controls: one tap anywhere skips, video simply ends otherwise.
+    overlay.addEventListener('click', finishBoot);
   }
 
   function maybeBootOnResume() {

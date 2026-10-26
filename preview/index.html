@@ -14,7 +14,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="assets/icon-180.png">
   <title>MobileVC</title>
-  <link rel="stylesheet" href="styles.css?v=20261026v">
+  <link rel="stylesheet" href="styles.css?v=20261026w">
 </head>
 <body>
   <div class="orientation-gate" id="orientation-gate">
@@ -41,14 +41,7 @@
   </div>
 
   <div class="boot-overlay" id="boot-overlay" hidden>
-    <video class="boot-video" id="boot-video" src="assets/startup-boot-phone.mp4" playsinline preload="auto" muted></video>
-    <div class="boot-dim"></div>
-    <div class="boot-ui">
-      <div class="boot-progress"><i id="boot-progress"></i></div>
-      <div class="boot-hint" id="boot-hint">正在启动…</div>
-    </div>
-    <button class="boot-sound" id="boot-sound" type="button" aria-label="开启声音">开启声音</button>
-    <button class="boot-skip" id="boot-skip" type="button" aria-label="跳过启动动画">▶ 点击画面跳过</button>
+    <video class="boot-video" id="boot-video" src="assets/startup-boot-phone-lite.mp4" playsinline preload="auto" muted></video>
   </div>
 
   <script>
@@ -62,6 +55,6 @@
       }
     } catch (_) {}
   </script>
-  <script src="app-live.js?v=20261026v"></script>
+  <script src="app-live.js?v=20261026w"></script>
 </body>
 </html>
