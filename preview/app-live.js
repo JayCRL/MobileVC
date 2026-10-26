@@ -1158,6 +1158,7 @@
   let bootActive = false;
   let bootTimer = null;
   let hiddenAt = 0;
+  let soundUnlocked = false;
 
   function finishBoot() {
     if (!bootActive) return;
@@ -1165,13 +1166,30 @@
     if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
     const overlay = $('#boot-overlay');
     const video = $('#boot-video');
+    const hint = $('#boot-sound-hint');
     try { video?.pause(); } catch (_) {}
+    if (hint) hint.hidden = true;
     if (!overlay) return;
     overlay.classList.add('leaving');
     setTimeout(() => {
       overlay.hidden = true;
       overlay.classList.remove('leaving');
     }, 420);
+  }
+
+  function setBootSoundHint(show) {
+    const hint = $('#boot-sound-hint');
+    if (hint) hint.hidden = !show;
+  }
+
+  function fallbackMutedBoot(video) {
+    try {
+      video.muted = true;
+      video.volume = 1;
+      const p = video.play();
+      if (p?.catch) p.catch(() => {});
+      setBootSoundHint(true);
+    } catch (_) {}
   }
 
   function playMobileBoot() {
@@ -1182,14 +1200,46 @@
     bootActive = true;
     overlay.hidden = false;
     overlay.classList.remove('leaving');
+    setBootSoundHint(false);
     try {
       video.pause();
       video.currentTime = 0;
-      video.muted = true;
+      video.volume = 1;
+      // Try sound first. Browsers may reject unmuted autoplay; fall back to a
+      // muted loop and let the first tap on the page enable the audio.
+      video.muted = false;
       const played = video.play();
-      if (played?.catch) played.catch(() => {});
-    } catch (_) {}
+      if (played?.then) {
+        played.then(() => {
+          if (!video.muted) {
+            soundUnlocked = true;
+            setBootSoundHint(false);
+          }
+        }).catch(() => fallbackMutedBoot(video));
+      }
+    } catch (_) {
+      fallbackMutedBoot(video);
+    }
     bootTimer = setTimeout(finishBoot, 12000);
+  }
+
+  function enableBootSound() {
+    if (!bootActive) return;
+    const video = $('#boot-video');
+    if (!video) return;
+    try {
+      video.muted = false;
+      video.volume = 1;
+      const played = video.play();
+      if (played?.then) {
+        played.then(() => {
+          soundUnlocked = true;
+          setBootSoundHint(false);
+        }).catch(() => setBootSoundHint(true));
+      }
+    } catch (_) {
+      setBootSoundHint(true);
+    }
   }
 
   function bindBootControls() {
@@ -1198,8 +1248,8 @@
     if (!overlay || !video) return;
     video.addEventListener('ended', finishBoot);
     video.addEventListener('error', finishBoot);
-    // No visible controls: one tap anywhere skips, video simply ends otherwise.
-    overlay.addEventListener('click', finishBoot);
+    // No visible controls. A tap anywhere unlocks audio without skipping.
+    document.addEventListener('pointerdown', enableBootSound, { passive: true });
   }
 
   function maybeBootOnResume() {

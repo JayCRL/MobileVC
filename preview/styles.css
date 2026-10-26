@@ -1993,3 +1993,20 @@ html, body {
   display: block;
   background: #03050a;
 }
+
+.boot-sound-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(34px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 2;
+  color: rgba(235,244,255,.72);
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: .02em;
+  text-shadow: 0 1px 8px rgba(0,0,0,.8);
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity .3s ease;
+}
+.boot-sound-hint[hidden] { display: none; }
