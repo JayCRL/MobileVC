@@ -52,6 +52,6 @@ DeepSeek, DeepSeek Harness, DSH, AI Agent, 手机远程, PWA, 效率工具, 程�
 
 - BVID：BV1cind6UExh
 - 链接：https://www.bilibili.com/video/BV1cind6UExh/
-- 状态：审核中（投稿时间 2026-10-26 17:25）
+- 状态：开放浏览（投稿时间 2026-10-26 17:25）
 - 分区：人工智能 / 科技·软件应用
 - 声明：含 AI 生成内容
