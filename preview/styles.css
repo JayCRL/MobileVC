@@ -1976,7 +1976,7 @@ html, body {
   position: fixed;
   inset: 0;
   z-index: 2147482999;
-  background: #03050a;
+  background: #000;
   overflow: hidden;
   opacity: 1;
   transition: opacity 0.42s ease;
@@ -1988,10 +1988,10 @@ html, body {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center center;
   display: block;
-  background: #03050a;
+  background: #000;
 }
 
 .boot-sound-hint {

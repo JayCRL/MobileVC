@@ -1,7 +1,7 @@
 /* MobileVC service worker: installable shell + Web Push. */
-const VERSION = 'mobilevc-2026-10-26-audio';
-const BOOT_CACHE = 'mobilevc-boot-audio-v1';
-const BOOT_URL = '/mobilevc/assets/startup-boot-phone-audio.mp4';
+const VERSION = 'mobilevc-2026-10-26-black';
+const BOOT_CACHE = 'mobilevc-boot-black-v1';
+const BOOT_URL = '/mobilevc/assets/startup-boot-portrait-lite.mp4';
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     try {
