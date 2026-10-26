@@ -47,3 +47,11 @@ DeepSeek, DeepSeek Harness, DSH, AI Agent, 手机远程, PWA, 效率工具, 程�
 - 无旁白，画面文字演示
 - 画面中的会话与页面均为真实 MobileVC / DSH 界面
 - 官网不提供公共实例；MobileVC 连接的是你自己部署的 DSH
+
+## 已投稿
+
+- BVID：BV1cind6UExh
+- 链接：https://www.bilibili.com/video/BV1cind6UExh/
+- 状态：审核中（投稿时间 2026-10-26 17:25）
+- 分区：人工智能 / 科技·软件应用
+- 声明：含 AI 生成内容
