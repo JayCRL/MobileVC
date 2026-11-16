@@ -3,11 +3,11 @@
 `mobilevc-dsh` is a **DSH Web host plugin + static MobileVC UI**. It needs a running DSH Web profile; it is not a standalone app and has no npm build step.
 
 - Tested with DSH `0.2.0-rc.2`, Node.js 22+
-- Plugin entry: `plugin/index.mjs`
-- UI: `preview/` (vanilla HTML/CSS/JS)
-- Optional read-only viewer: `tools/server.py`
+- Plugin entry: `apps/dsh/plugin/index.mjs`
+- UI: `apps/dsh/preview/` (vanilla HTML/CSS/JS)
+- Optional read-only viewer: `apps/dsh/tools/server.py`
 
-> The repository root is this plugin. The original Flutter/Go MobileVC lives under `legacy/` and is not part of the installed package.
+> The repository root is this plugin. The Claude Code / Codex line (Flutter client + Go backend) lives under `apps/remote/` and is a separate product with its own install.
 
 ## 1. Install as a DSH bundle
 
@@ -59,7 +59,7 @@ Copy this package somewhere, then add to `~/.dsh/profiles/web/cordis.patch.yml`:
 
 Restart DSH Web.
 
-The plugin resolves `preview/` relative to its own file, so the package can live anywhere.
+The plugin resolves `../../preview/` relative to its own file (`apps/dsh/plugin/index.mjs`), so the package can live anywhere.
 
 ## 3. Remote access / phone
 
@@ -98,7 +98,7 @@ If DSH Web uses `--trusted-host`, add your domain.
 No plugin, no write path; reads `~/.dsh/sessions` directly.
 
 ```bash
-python3 tools/server.py
+python3 apps/dsh/tools/server.py
 # 127.0.0.1:8931
 ```
 
@@ -110,7 +110,7 @@ Requires the `zstd` command. Reverse proxy `/mobilevc-preview/` behind the same 
 - Node.js 22+
 - DSH with a Web profile
 - Optional: nginx/Caddy + HTTPS
-- Optional: Python 3.10+ and `zstd` for `tools/server.py`
+- Optional: Python 3.10+ and `zstd` for `apps/dsh/tools/server.py`
 
 No `npm install` is needed for the plugin or UI.
 

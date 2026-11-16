@@ -15,7 +15,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.25-blue" />
   <img src="https://img.shields.io/badge/Flutter-3.41-blue" />
-  <img src="https://img.shields.io/badge/License-MIT-green" />
+  <img src="https://img.shields.io/badge/License-AGPL--3.0-blue" />
   <img src="https://img.shields.io/npm/v/%40justprove%2Fmobilevc" />
 </p>
 
@@ -246,7 +246,7 @@ cd mobile_vc && flutter test
 
 ## 开源许可
 
-本项目采用 [MIT License](LICENSE) 开源协议。
+本项目采用 [AGPL-3.0-only](LICENSE) 开源协议。
 
 ---
 

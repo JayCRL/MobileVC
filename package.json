@@ -3,19 +3,20 @@
   "version": "0.1.0",
   "description": "MobileVC-style mobile/PWA surface for DeepSeek Harness, backed by the live DSH session controller.",
   "type": "module",
-  "main": "./plugin/index.mjs",
+  "main": "./apps/dsh/plugin/index.mjs",
   "exports": {
-    ".": "./plugin/index.mjs",
+    ".": "./apps/dsh/plugin/index.mjs",
     "./package.json": "./package.json",
-    "./preview/*": "./preview/*"
+    "./preview/*": "./apps/dsh/preview/*"
   },
   "files": [
-    "plugin/index.mjs",
-    "preview/**/*",
+    "apps/dsh/plugin/index.mjs",
+    "apps/dsh/preview/**/*",
+    "apps/dsh/edge/**/*",
+    "apps/dsh/tools/server.py",
+    "apps/dsh/cordis.patch.yml",
     "docs/**/*",
-    "edge/**/*",
-    "tools/server.py",
-    "cordis.patch.yml",
+    "packages/contract/**/*",
     "README.md",
     "README.en.md",
     "INSTALL.md",
@@ -30,7 +31,7 @@
   },
   "dsh": {
     "bundle": {
-      "patch": "./cordis.patch.yml"
+      "patch": "./apps/dsh/cordis.patch.yml"
     },
     "inventory": {
       "summary": {
@@ -53,11 +54,11 @@
     "pwa",
     "mobilevc"
   ],
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "dependencies": {
     "web-push": "^3.6.7"
   },
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test apps/dsh/tests/*.test.mjs"
   }
 }

@@ -4,6 +4,21 @@
 
 [中文](README.md) | English
 
+**Turn the AI coding session running on your machine into another entry point on your phone.**
+
+This repository hosts two **parallel** product lines that share one promise and differ in how they connect:
+
+| | **MobileVC for DSH** | **MobileVC Remote** |
+|---|---|---|
+| Agent | DeepSeek Harness | Claude Code / Codex (any CLI) |
+| Transport | DSH host plugin, in-process | Self-hosted Go backend + PTY, LAN / relay |
+| Client | PWA / browser | Flutter / browser |
+| Code | [`apps/dsh/`](apps/dsh) | [`apps/remote/`](apps/remote) |
+
+> The repository root is the **DSH plugin** package. Claude Code / Codex users: see [apps/remote/README.md](apps/remote/README.md).
+
+Both lines share a contract, not code: `packages/contract` defines the event names, approval shape and diff structure.
+
 <p align="center">
   <a href="docs/media/mobilevc-demo.mp4">
     <img src="docs/media/mobilevc-demo.gif" width="320" alt="MobileVC for DSH — 30s no-voice demo">
@@ -185,7 +200,7 @@ Not planned: rewriting the Agent loop, adding another relay/E2EE layer inside th
 
 ## Relation to the original MobileVC
 
-The original app was a Flutter client + Go relay + E2EE. It is preserved under [`legacy/`](https://github.com/JayCRL/MobileVC/tree/main/legacy) and in git history, but it is no longer the default client.
+MobileVC Remote (Flutter client + Go backend + relay + E2EE) lives in [`apps/remote/`](apps/remote) as a parallel product line. It is not deprecated and not the default client for DSH users.
 
 The move to DSH is deliberate: DSH already provides the Agent runtime, durable session log, follow stream, approvals and plugin system. Keeping the Flutter client and relay would mean maintaining a second session/queue/runtime outside DSH — exactly where the old sync and queue problems came from.
 
@@ -193,8 +208,12 @@ Today there is one rule:
 
 > **DSH owns the runtime. MobileVC owns the surface.**
 
-The old app remains for historical reference; new deployments should use the DSH install above.
+MobileVC Remote is a parallel product line, not a legacy snapshot. It is maintained independently with its own install path.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+**AGPL-3.0-only** — see [LICENSE](./LICENSE).
+
+Self-hosting, modification and redistribution are all fine. If you expose a modified version to others **as a network service**, you must offer them the complete source. See [NOTICE](./NOTICE).
+
+> Releases up to `a3c6b36` were published under MIT; those snapshots remain MIT-licensed.
