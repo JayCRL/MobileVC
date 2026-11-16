@@ -54,7 +54,7 @@
     "pwa",
     "mobilevc"
   ],
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "dependencies": {
     "web-push": "^3.6.7"
   },

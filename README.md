@@ -148,4 +148,8 @@ flowchart LR
 
 # License
 
-MIT — see [LICENSE](./LICENSE).
+**AGPL-3.0-only** — see [LICENSE](./LICENSE).
+
+这意味着：自用、修改、二次分发都可以；但如果你把修改后的版本作为**网络服务**提供给他人使用，必须向使用者提供完整源码。详见 [NOTICE](./NOTICE)。
+
+> 历史版本（截至 `a3c6b36`）曾以 MIT 发布，那些快照仍然按 MIT 授权，不受本次变更影响。

@@ -208,8 +208,12 @@ Today there is one rule:
 
 > **DSH owns the runtime. MobileVC owns the surface.**
 
-The old app remains for historical reference; new deployments should use the DSH install above.
+MobileVC Remote is a parallel product line, not a legacy snapshot. It is maintained independently with its own install path.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+**AGPL-3.0-only** — see [LICENSE](./LICENSE).
+
+Self-hosting, modification and redistribution are all fine. If you expose a modified version to others **as a network service**, you must offer them the complete source. See [NOTICE](./NOTICE).
+
+> Releases up to `a3c6b36` were published under MIT; those snapshots remain MIT-licensed.
