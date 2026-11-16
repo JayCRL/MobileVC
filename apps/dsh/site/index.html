@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>MobileVC — 把 DeepSeek Harness 装进手机</title>
-  <meta name="description" content="MobileVC 是 DeepSeek Harness 的手机端界面：真实会话、插话、审批、后台任务、执行迹与 Web Push。不是另一个 Agent，也没有模拟数据。">
+  <title>MobileVC — 把 AI 编程会话装进手机</title>
+  <meta name="description" content="把跑在你机器上的 AI 编程会话，变成手机上的另一个入口。两条并行产品线：Claude Code / Codex 用 Remote，DeepSeek Harness 用 DSH。">
   <meta name="theme-color" content="#070b14">
   <meta name="color-scheme" content="dark">
   <link rel="canonical" href="https://mobilevc.top/">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="MobileVC — DSH 的手机端">
-  <meta property="og:description" content="连接你正在运行的 DeepSeek Harness。真实运行时，手机上的会话与审批。">
+  <meta property="og:title" content="MobileVC — 手机上的另一个入口">
+  <meta property="og:description" content="Agent 跑在你自己的机器上，手机只是同一条会话的另一个入口。Claude Code / Codex 走 Remote，DSH 走插件。">
   <meta property="og:image" content="https://mobilevc.top/site/media/demo-cover.png">
   <link rel="icon" type="image/png" href="site/assets/favicon.png">
   <link rel="stylesheet" href="site/styles.css?v=20261026a">
@@ -44,15 +44,15 @@
   <main id="top">
     <section class="hero wrap">
       <div class="hero-copy" data-reveal>
-        <div class="eyebrow"><span class="pulse"></span> DeepSeek Harness · 手机端界面</div>
-        <h1>把 <em>DeepSeek Harness</em><br>装进手机。</h1>
-        <p class="lede">连接你正在运行的 DSH。不是另一个 Agent，也不是模拟数据——手机直接成为同一条会话的另一个入口。</p>
+        <div class="eyebrow"><span class="pulse"></span> 两条并行产品线 · 选你的 Agent</div>
+        <h1>把 AI 编程会话<br>装进<em>手机</em>。</h1>
+        <p class="lede">Agent 跑在你自己的机器上，手机只是同一条会话的另一个入口。它不在等权限、等确认、等长任务的时候把你拽回电脑前。</p>
         <div class="hero-actions">
-          <a class="primary-btn large" href="#start">部署到自己的 DSH <span>→</span></a>
-          <a class="text-btn" href="#demo">看 102 秒演示 <span>↗</span></a>
+          <a class="primary-btn large" href="#start">开始部署 <span>→</span></a>
+          <a class="text-btn" href="#lines">两条线怎么选 <span>↗</span></a>
         </div>
         <div class="hero-note">
-          <span>真实运行时</span><span>SSE 实时流</span><span>PWA</span><span>只连你自己的 DSH</span>
+          <span>Claude Code / Codex</span><span>DeepSeek Harness</span><span>不托管</span><span>数据不出本机</span>
         </div>
       </div>
       <div class="hero-visual" data-reveal>
@@ -84,9 +84,31 @@
       </div>
     </div>
 
+    <section class="section wrap" id="lines">
+      <div class="section-head" data-reveal>
+        <div class="eyebrow">两条线 · 同一个承诺</div>
+        <h2>你用哪个 Agent，<br>就走哪条线。</h2>
+        <p>两条并行的产品线，接入方式不同，承诺相同：Agent 跑在你自己的机器上，手机是它另一个入口。它们共享一套交互契约，不是「新版 / 旧版」。</p>
+      </div>
+      <div class="feature-grid">
+        <article class="feature feature-wide" data-reveal>
+          <div class="feature-icon">⌘</div>
+          <h3>Claude Code / Codex → Remote</h3>
+          <p>自建 Go 后端 + PTY，局域网直连或加密 Relay。手机接住权限确认、Plan Mode、多文件 diff 审核，继续电脑上正在跑的会话。</p>
+          <div class="mini-pill-row"><span class="pill">npm i -g @justprove/mobilevc</span><span class="pill">Flutter 客户端</span><span class="pill">LAN / Relay</span></div>
+        </article>
+        <article class="feature feature-wide" data-reveal>
+          <div class="feature-icon">◈</div>
+          <h3>DeepSeek Harness → DSH</h3>
+          <p>DSH Host 插件，进程内直连宿主的 <code>sessionController</code>。没有第二条 relay，没有复制一份状态机，也没有 mock。</p>
+          <div class="mini-pill-row"><span class="pill">dsh plugin add</span><span class="pill">PWA</span><span class="pill">SSE 实时流</span></div>
+        </article>
+      </div>
+    </section>
+
     <section class="section wrap" id="why">
       <div class="section-head" data-reveal>
-        <div class="eyebrow">为什么不是另一个 App</div>
+        <div class="eyebrow">DSH 线 · 为什么不是另一个 App</div>
         <h2>不是另一个 Agent，<br>只是 DSH 的手机界面。</h2>
         <p>MobileVC 作为 DSH Host 插件运行。所有读写走同一个 <code>sessionController</code>，没有第二条 relay，没有复制一份状态机，也没有 mock。</p>
       </div>
@@ -125,7 +147,7 @@ approval/asked → 手机 → approval/decided</code></pre>
 
     <section class="section wrap" id="features">
       <div class="section-head" data-reveal>
-        <div class="eyebrow">为手机而做</div>
+        <div class="eyebrow">DSH 线 · 为手机而做</div>
         <h2>电脑上能做的，<br>在手机上也能做完。</h2>
         <p>不是把桌面页面缩窄，而是把 DSH 的高频操作重新排进一块 6 英寸的屏幕。</p>
       </div>
@@ -213,8 +235,8 @@ approval/asked → 手机 → approval/decided</code></pre>
       <div class="start-grid">
         <div class="section-head" data-reveal>
           <div class="eyebrow">开始</div>
-          <h2>装在<br>你正在跑的 DSH 上。</h2>
-          <p>不需要新服务器，不需要第二个 Agent。DSH 在哪，MobileVC 就挂在哪。</p>
+          <h2>选一条线，<br>两步装好。</h2>
+          <p>DSH 用户装插件；Claude Code / Codex 用户装 npm 包。都不需要新的服务器来托管你的会话。</p>
           <a class="text-btn" href="https://github.com/JayCRL/MobileVC#readme" target="_blank" rel="noopener">完整安装文档 <span>↗</span></a>
         </div>
         <div class="steps" data-reveal>
@@ -231,12 +253,19 @@ approval/asked → 手机 → approval/decided</code></pre>
             <div><b>手机打开</b><p>局域网或 HTTPS 反代均可；添加到主屏幕就是 PWA。</p></div>
           </div>
           <div class="install-box">
-            <div class="install-head"><span>Terminal</span><button class="copy-mini" data-copy="#install-code">复制</button></div>
+            <div class="install-head"><span>DeepSeek Harness</span><button class="copy-mini" data-copy="#install-code">复制</button></div>
             <pre id="install-code"><code>dsh plugin --profile web add \
   "github:JayCRL/MobileVC"
 
 # 然后重启 dsh web
 # open http://127.0.0.1:8898/mobilevc/</code></pre>
+          </div>
+          <div class="install-box">
+            <div class="install-head"><span>Claude Code / Codex</span><button class="copy-mini" data-copy="#install-npm">复制</button></div>
+            <pre id="install-npm"><code>npm install -g @justprove/mobilevc
+mobilevc start
+
+# 手机扫码连接，输入 claude 或 codex</code></pre>
           </div>
         </div>
       </div>
@@ -274,7 +303,7 @@ approval/asked → 手机 → approval/decided</code></pre>
 
   <footer class="site-footer">
     <div class="wrap footer-inner">
-      <div class="footer-brand"><img src="site/assets/logo.png" alt="" width="28" height="28"><b>MobileVC</b><span>把 DSH 带到手机上。</span></div>
+      <div class="footer-brand"><img src="site/assets/logo.png" alt="" width="28" height="28"><b>MobileVC</b><span>把 AI 编程会话带到手机上。</span></div>
       <div class="footer-links">
         <a href="https://github.com/JayCRL/MobileVC" target="_blank" rel="noopener">GitHub</a>
         <a href="https://github.com/JayCRL/MobileVC#readme" target="_blank" rel="noopener">文档</a>
