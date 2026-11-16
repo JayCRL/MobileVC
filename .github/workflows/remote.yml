@@ -30,8 +30,22 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # 失败时把关键行写进 job summary：GitHub 的 job summary 可以通过公开的
+      # check-runs API 读到，这样没有仓库权限的人（包括自动化）也能定位失败用例。
       - name: go test
-        run: go test ./... -count=1
+        run: |
+          set -o pipefail
+          go test ./... -count=1 2>&1 | tee /tmp/go-test.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "### go test failures"
+              echo '```'
+              grep -E '^(--- FAIL|FAIL\s|panic:|    )' /tmp/go-test.log | head -120
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
 
       - name: contract module compiles
         working-directory: packages/contract
