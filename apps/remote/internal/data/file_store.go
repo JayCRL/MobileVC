@@ -1456,6 +1456,11 @@ func (s *FileStore) appendSessionLogEntriesLocked(sessionID string, index sessio
 	if err != nil {
 		return fmt.Errorf("encode session log entries index: %w", err)
 	}
+	// Windows 不允许替换仍被打开的文件（POSIX 可以）。紧随其后的头部重写会用
+	// rename 覆盖这个 sidecar，因此必须先把写入句柄关掉；defer 保留用于错误路径。
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close session log entries sidecar before header rewrite: %w", err)
+	}
 	if err := s.rewriteSessionLogEntriesHeaderLocked(sessionID, nextIndex.EntryCount); err != nil {
 		return err
 	}
@@ -1524,6 +1529,12 @@ func (s *FileStore) rewriteSessionLogEntriesHeaderLocked(sessionID string, entry
 	if _, err := io.Copy(tmp, reader); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("copy session log entries sidecar body: %w", err)
+	}
+	// Windows 不允许替换仍被打开的文件（POSIX 可以），所以必须在 rename 前关闭源文件。
+	// 正文已经全部复制进临时文件，这里关闭不影响后续。
+	if err := src.Close(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("close session log entries sidecar source: %w", err)
 	}
 	if err := tmp.Chmod(0o644); err != nil {
 		_ = tmp.Close()

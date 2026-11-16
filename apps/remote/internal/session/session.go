@@ -85,12 +85,12 @@ type Controller struct {
 	recentDiff      DiffContext
 
 	// dedup fields
-	lastLogMsg              string
-	lastLogTime             time.Time
-	lastStepMsg             string
-	lastStepStatus          string
-	lastPromptMsg           string
-	resolvedPermissionIDs   []string
+	lastLogMsg            string
+	lastLogTime           time.Time
+	lastStepMsg           string
+	lastStepStatus        string
+	lastPromptMsg         string
+	resolvedPermissionIDs []string
 }
 
 func (c *Controller) RecordUserInput(input string) {
@@ -489,18 +489,18 @@ func (c *Controller) Snapshot() ControllerSnapshot {
 	resolvedIDs := make([]string, len(c.resolvedPermissionIDs))
 	copy(resolvedIDs, c.resolvedPermissionIDs)
 	return ControllerSnapshot{
-		SessionID:              c.sessionID,
-		State:                  c.currentState,
-		CurrentCommand:         c.currentCommand,
-		LastStep:               c.lastStep,
-		LastTool:               c.lastTool,
-		ResumeSession:          c.resumeSession,
-		ClaudeLifecycle:        c.claudeLifecycle,
-		LastUserInput:          c.lastUserInput,
-		ActiveMeta:             c.activeMeta,
-		RecentDiffs:            append([]DiffContext(nil), c.recentDiffs...),
-		RecentDiff:             c.recentDiff,
-		ResolvedPermissionIDs:  resolvedIDs,
+		SessionID:             c.sessionID,
+		State:                 c.currentState,
+		CurrentCommand:        c.currentCommand,
+		LastStep:              c.lastStep,
+		LastTool:              c.lastTool,
+		ResumeSession:         c.resumeSession,
+		ClaudeLifecycle:       c.claudeLifecycle,
+		LastUserInput:         c.lastUserInput,
+		ActiveMeta:            c.activeMeta,
+		RecentDiffs:           append([]DiffContext(nil), c.recentDiffs...),
+		RecentDiff:            c.recentDiff,
+		ResolvedPermissionIDs: resolvedIDs,
 	}
 }
 

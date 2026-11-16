@@ -13,7 +13,10 @@ import (
 
 var (
 	markdownImagePathPattern = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
-	localPathPattern         = regexp.MustCompile("(?m)(?:^|[\\s('\\\"\\[])(/[^\\s)'\\\"<>]+)")
+	// 同时识别 POSIX 绝对路径（/a/b.png）与 Windows 盘符路径（C:\a\b.png、C:/a/b.png）。
+	localPathPattern = regexp.MustCompile(`(?m)(?:^|[\s('"\[(])((?:/[^\s)'"<>]+)|(?:[A-Za-z]:[\\/][^\s)'"<>]+))`)
+	// Windows 盘符路径前缀：C:\ 或 C:/
+	windowsDrivePathPattern = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 )
 
 func TimelineAttachmentsFromText(text, source string) []protocol.TimelineAttachment {
@@ -65,7 +68,8 @@ func timelineAttachmentPaths(text string) []string {
 
 func normalizeLocalAttachmentPath(path string) (string, bool) {
 	trimmed := strings.Trim(strings.TrimSpace(path), ".,;:!?")
-	if !strings.HasPrefix(trimmed, "/") {
+	// POSIX 绝对路径，或 Windows 盘符路径（C:\… / C:/…）
+	if !strings.HasPrefix(trimmed, "/") && !windowsDrivePathPattern.MatchString(trimmed) {
 		return "", false
 	}
 	ext := strings.ToLower(filepath.Ext(trimmed))

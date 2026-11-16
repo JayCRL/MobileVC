@@ -30,14 +30,8 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      # TODO(tech-debt): 完整跑 `go test ./...` 目前不绿。
-      # 长期没有 CI，以下包的用例已经腐烂，集中在「写 JSON 文件 / 重启后状态持久化 /
-      # 原生会话镜像」这一类，需要单独一轮修复后再放开全量：
-      #   internal/gateway (16), internal/relay (4), internal/relay/e2ee (3),
-      #   internal/relayclient (2), internal/session (2)
-      # 在此之前只跑已知通过的包 + 架构边界检查，避免 CI 长期红掉、让真正的回归被淹没。
-      - name: go test (green packages + arch boundaries)
-        run: go test ./internal/tts/... ./tests/unit/... ./internal/archtest/... -count=1
+      - name: go test
+        run: go test ./... -count=1
 
       - name: contract module compiles
         working-directory: packages/contract

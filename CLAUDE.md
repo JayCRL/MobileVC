@@ -40,7 +40,7 @@ node scripts/check-doc-paths.mjs
 1. **契约先行**：事件名、审批、diff 结构只在 `packages/contract` 定义。改契约要同时改两端实现，不允许单边先跑。
 2. **依赖方向**：`apps/remote` 的分层由 `apps/remote/internal/archtest` 用测试锁死，越界即测试失败。规则文本见 `docs/architecture/rules.md`。
 3. **文档不能指向不存在的路径**：`scripts/check-doc-paths.mjs` 会校验文档里的行内路径，CI 红即视为漂移。
-4. **测试要么绿、要么被显式记录**：不允许长期红着。`apps/remote` 目前还有若干包未修好，清单写在 `.github/workflows/remote.yml` 的 TODO 里，修完就放开全量。
+4. **测试必须全绿**：`go test ./...` 是 CI 门禁，不允许长期红着。过去 800+ 个用例因为没有 CI 烂掉过一轮，已修复。
 
 ## 提交
 
