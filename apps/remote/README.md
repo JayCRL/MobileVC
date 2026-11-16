@@ -1,5 +1,8 @@
 # 📱 MobileVC — 手机就是你的 AI 编程助手控制台
 
+> **这是 MobileVC 的两条并行产品线之一：Claude Code / Codex 线。**
+> 如果你在用 DSH，请用 [apps/dsh](../dsh)；两条线共享 [packages/contract](../../packages/contract) 定义的事件、审批与 diff 契约。
+
 <p align="center">
   <img src="mobile_vc/lib/logo-2.png" alt="MobileVC logo" width="220" />
 </p>
