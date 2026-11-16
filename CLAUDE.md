@@ -46,7 +46,10 @@ node scripts/check-doc-paths.mjs
 
 - 允许自动 commit 到本地分支
 - push 前需要用户确认
-- 提交信息用 `type(scope): 说明`（与 NoteBoard 保持一致），例如 `fix(relay): 重连后恢复配对状态`
+- 提交信息用 `type(scope): 说明`，`type` 取 `feat fix chore docs style refactor perf test ci build revert`
+  例：`fix(relay): 重连后恢复配对状态`
+- 启用本地校验（每个 clone 一次）：`git config core.hooksPath .githooks`
+- CI 会检查 PR 标题与推到 main 的提交标题
 - 排除 `.claude/worktrees/`、`node_modules`、构建产物
 
 ## 遇到不确定

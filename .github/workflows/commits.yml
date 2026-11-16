@@ -1,0 +1,33 @@
+name: commits
+
+# 提交信息规范：PR 检查标题，推送到 main 检查最后一条提交的标题。
+# 本地可以启用 .githooks/commit-msg 提前拦截（git config core.hooksPath .githooks）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  message:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: check commit message
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if [ -n "$PR_TITLE" ]; then
+            printf '%s' "$PR_TITLE" > /tmp/msg.txt
+            echo "checking PR title: $PR_TITLE"
+          else
+            git log -1 --pretty=%s > /tmp/msg.txt
+            echo "checking head commit: $(cat /tmp/msg.txt)"
+          fi
+          node scripts/check-commit-msg.mjs /tmp/msg.txt
