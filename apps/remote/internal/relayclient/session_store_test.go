@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"mobilevc/internal/relay/e2ee"
@@ -47,7 +48,7 @@ func TestAgentSessionStoreSaveUsesCompleteJsonFile(t *testing.T) {
 	}
 	if info, err := os.Stat(path); err != nil {
 		t.Fatalf("stat agent session state: %v", err)
-	} else if info.Size() == 0 || info.Mode().Perm() != 0o600 {
+	} else if info.Size() == 0 || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("unexpected agent session file info: size=%d mode=%o", info.Size(), info.Mode().Perm())
 	}
 	loaded, err := store.load()
@@ -77,7 +78,7 @@ func TestEmitPairingFileUsesCompleteJsonFile(t *testing.T) {
 	}
 	if info, err := os.Stat(path); err != nil {
 		t.Fatalf("stat pairing file: %v", err)
-	} else if info.Size() == 0 || info.Mode().Perm() != 0o600 {
+	} else if info.Size() == 0 || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("unexpected pairing file info: size=%d mode=%o", info.Size(), info.Mode().Perm())
 	}
 	raw, err := os.ReadFile(path)

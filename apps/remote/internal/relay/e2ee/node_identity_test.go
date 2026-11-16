@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -130,6 +131,9 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		return // Windows 没有 POSIX 权限位
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("%s mode: got %o want %o", path, got, want)

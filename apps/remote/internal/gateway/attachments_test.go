@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"os"
+	"runtime"
 	"testing"
 
 	"mobilevc/internal/data"
@@ -45,7 +46,8 @@ func TestPersistImageAttachmentsWritesOwnerOnlyFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat persisted image: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows 没有 POSIX 权限位，Chmod 是空操作，这条断言只在类 Unix 上有意义
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("file mode: got %o want 600", info.Mode().Perm())
 	}
 }

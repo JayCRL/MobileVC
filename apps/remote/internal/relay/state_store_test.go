@@ -3,6 +3,7 @@ package relay
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestStateStoreSaveUsesCompleteJsonFile(t *testing.T) {
 	}
 	if info, err := os.Stat(path); err != nil {
 		t.Fatalf("stat relay state: %v", err)
-	} else if info.Size() == 0 || info.Mode().Perm() != 0o600 {
+	} else if info.Size() == 0 || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("unexpected relay state file info: size=%d mode=%o", info.Size(), info.Mode().Perm())
 	}
 	loaded, err := store.load()

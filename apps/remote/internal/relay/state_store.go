@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -151,6 +152,11 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 }
 
 func syncDirectory(path string) error {
+	// Windows 上目录句柄不接受 FlushFileBuffers，dir.Sync() 会返回 Access is denied；
+	// NTFS 的重命名本身是原子的，目录 sync 在这里只是尽力而为。
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	dir, err := os.Open(path)
 	if err != nil {
 		return err
