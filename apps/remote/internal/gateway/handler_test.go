@@ -10799,8 +10799,23 @@ func TestHandlerActiveRuntimeSessionLoadUsesWindowStoreWithoutFullGet(t *testing
 	record.Projection.Runtime.CWD = "/tmp/mobilevc-active-window"
 	record.Projection.Runtime.Source = "mobilevc"
 	record.Summary.Runtime = record.Projection.Runtime
-	if _, err := h.SessionStore.UpsertSession(context.Background(), record); err != nil {
-		t.Fatalf("upsert active session history: %v", err)
+	// 运行态的投影保存是防抖 + 重试的（gateway.go 里的 time.AfterFunc），
+	// 可能在本次种子写入之后才落盘，把 LogEntries 覆盖回运行时自己的条数。
+	// Windows 上恰好种子后到、Linux 上反过来，于是同一个断言在两个平台结果不同。
+	// 这里给延迟写入留一个观察窗口：被覆盖就重新写入，直到种子稳定生效。
+	seedDeadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := h.SessionStore.UpsertSession(context.Background(), record); err != nil {
+			t.Fatalf("upsert active session history: %v", err)
+		}
+		time.Sleep(120 * time.Millisecond)
+		persisted, err := tempStore.GetSession(context.Background(), sessionID)
+		if err == nil && len(persisted.Projection.LogEntries) == len(entries) {
+			break
+		}
+		if time.Now().After(seedDeadline) {
+			t.Fatalf("active session projection kept being overwritten by runtime persistence")
+		}
 	}
 
 	windowCallsBeforeLoad := counting.windowCallCount()
