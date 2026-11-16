@@ -151,6 +151,7 @@ func TestBuildRuntimeInfoResultClaudeModelsFallsBackToNativeCLI(t *testing.T) {
 func TestBuildRuntimeInfoResultVoiceAPIConfigs(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	t.Setenv("CODEX_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")

@@ -3463,6 +3463,7 @@ func TestHandlerSessionResumeUsesWindowStorePath(t *testing.T) {
 func TestHandlerSkillCatalogLifecycle(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	writeTestFile(t,
 		filepath.Join(homeDir, ".claude", "skills", "image-generation", "SKILL.md"),
 		"---\nname: image-generation\ndescription: Generate images from text.\n---\n# Image Generation\n\nUse the image model.\n",
@@ -3583,6 +3584,7 @@ func TestHandlerSkillCatalogLifecycle(t *testing.T) {
 func TestHandlerSkillSyncPullAckAndPingWhileSyncBlocks(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	writeTestFile(t,
 		filepath.Join(homeDir, ".claude", "skills", "blocked-sync-skill", "SKILL.md"),
 		"---\nname: blocked-sync-skill\ndescription: Blocking sync fixture.\n---\n# Blocking Sync Skill\n\nUse this fixture.\n",
@@ -3629,6 +3631,7 @@ func TestHandlerSkillSyncPullAckAndPingWhileSyncBlocks(t *testing.T) {
 func TestHandlerSkillSyncPullDuplicateClientActionDoesNotStartSecondSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	writeTestFile(t,
 		filepath.Join(homeDir, ".claude", "skills", "duplicate-sync-skill", "SKILL.md"),
 		"---\nname: duplicate-sync-skill\ndescription: Duplicate sync fixture.\n---\n# Duplicate Sync Skill\n\nUse this fixture.\n",
@@ -3682,6 +3685,7 @@ func TestHandlerSkillSyncPullDuplicateClientActionDoesNotStartSecondSync(t *test
 func TestHandlerSkillSyncPullFinalStateSurvivesDisconnect(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	writeTestFile(t,
 		filepath.Join(homeDir, ".claude", "skills", "disconnect-sync-skill", "SKILL.md"),
 		"---\nname: disconnect-sync-skill\ndescription: Disconnect sync fixture.\n---\n# Disconnect Sync Skill\n\nUse this fixture.\n",
@@ -3729,6 +3733,7 @@ func TestHandlerSkillSyncPullFinalStateSurvivesDisconnect(t *testing.T) {
 func TestHandlerSkillCatalogLifecycleUsesCodexSkillsForCodexSession(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	writeTestFile(t,
 		filepath.Join(homeDir, ".codex", "skills", "mobilevc-release", "SKILL.md"),
 		"---\nname: mobilevc-release\ndescription: Publish MobileVC.\n---\n# MobileVC Release\n\nDo release work.\n",
@@ -3817,6 +3822,7 @@ func TestHandlerSkillCatalogLifecycleUsesCodexSkillsForCodexSession(t *testing.T
 func TestLoadSkillDefinitionsIncludesSingularAgentSkillsDir(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	writeTestFile(t,
 		filepath.Join(homeDir, ".agent", "skills", "singular-agent-skill", "SKILL.md"),
 		"---\nname: singular-agent-skill\ndescription: Singular agent skill dir.\n---\n# Singular Agent Skill\n\nUse the singular agent skill.\n",
@@ -4011,6 +4017,7 @@ func TestHandlerMemoryListAndUpsert(t *testing.T) {
 func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	h := newTestHandler()
 	tempStore, err := data.NewFileStore(t.TempDir())
 	if err != nil {
@@ -4148,6 +4155,7 @@ func TestHandlerMemorySyncPullEmitsCatalogLifecycle(t *testing.T) {
 func TestHandlerMemorySyncPullFinalStateSurvivesDisconnect(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	projectRoot := filepath.Join(homeDir, "workspace", "disconnect-project")
 	projectChild := filepath.Join(projectRoot, "mobile_vc")
 	if err := os.MkdirAll(projectChild, 0o755); err != nil {
@@ -4214,6 +4222,7 @@ func TestHandlerMemorySyncPullFinalStateSurvivesDisconnect(t *testing.T) {
 func TestHandlerMemorySyncPullUsesCodexMemoryForCodexSession(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	writeTestFile(t,
 		filepath.Join(homeDir, ".codex", "memories", "mobilevc.md"),
 		"# MobileVC\n\nRemember Codex-specific MobileVC notes.\n",
@@ -4284,6 +4293,7 @@ func TestHandlerMemorySyncPullUsesCodexMemoryForCodexSession(t *testing.T) {
 func TestFindClaudeProjectMemoryDirDoesNotFallbackToHomeLevelMemory(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	writeTestFile(t,
 		filepath.Join(
 			homeDir,
@@ -9470,6 +9480,7 @@ func TestHandlerSessionListMergesNativeCodexSessionsByCWD(t *testing.T) {
 		t.Fatalf("mkdir other dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
 
 	h := newTestHandler()
@@ -9571,6 +9582,7 @@ func TestHandlerSessionListKeepsNativeCodexMirrorWhenTrackedByMobileVC(t *testin
 		t.Fatalf("mkdir project dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
 
 	h := newTestHandler()
@@ -9800,6 +9812,7 @@ func TestMergeSessionSummariesExcludesStoredCodexSubagentMirrors(t *testing.T) {
 		t.Fatalf("mkdir project dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	seedNativeCodexThreadsFixture(t, homeDir, []nativeCodexThreadFixture{
 		{ID: "main-thread", CWD: projectDir, Title: "Main desktop session"},
 		{ID: "exec-thread", CWD: projectDir, Title: "Exec session", Source: "exec"},
@@ -9882,6 +9895,7 @@ func TestMergeSessionSummariesEmptyCWDIncludesNativeProjects(t *testing.T) {
 		t.Fatalf("mkdir project B: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	seedNativeCodexThreadsFixture(t, homeDir, []nativeCodexThreadFixture{
 		{ID: "codex-main", CWD: projectA, Title: "Desktop Codex"},
 	})
@@ -9919,6 +9933,7 @@ func TestMergeSessionSummariesCodexNativeScanOverridesStaleClaudeSidecar(t *test
 		t.Fatalf("mkdir project dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
 	sessionID := "codex-thread:" + threadID
 
@@ -9993,6 +10008,7 @@ func TestMergeSessionSummariesSkipsNativeClaudeAfterMobileVCDelete(t *testing.T)
 		t.Fatalf("mkdir project dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	tempStore, err := data.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("new temp store: %v", err)
@@ -10046,6 +10062,7 @@ func TestMergeSessionSummariesListsAllVisibleCodexTUIThreads(t *testing.T) {
 		t.Fatalf("mkdir project dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	seedNativeCodexThreadsFixture(t, homeDir, []nativeCodexThreadFixture{
 		{ID: "visible-cli-user", CWD: projectDir, Title: "CLI user", Source: "cli", ThreadSource: "user"},
 		{ID: "visible-vscode-user", CWD: projectDir, Title: "VS Code user", Source: "vscode", ThreadSource: "user"},
@@ -10209,6 +10226,7 @@ func TestLoadSessionRecordReturnsCodexMirrorAfterUpsertWithoutSecondRead(t *test
 		t.Fatalf("mkdir project dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
 
 	fileStore, err := data.NewFileStore(t.TempDir())
@@ -10297,6 +10315,7 @@ func TestLoadSessionRecordUsesNativeClaudeHistoryOverStaleMirrorCache(t *testing
 		t.Fatalf("mkdir project dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	uuid := "claude-main"
 	if err := claudesync.WriteSessionToJSONL(projectDir, uuid, []claudesync.JSONLEvent{
 		{Type: "user", Text: "native claude prompt", Timestamp: "2026-05-27T01:00:00Z"},
@@ -13050,6 +13069,7 @@ func TestHandlerSessionDeleteCurrentSessionSkipsNativeCodexFallback(t *testing.T
 		t.Fatalf("mkdir project dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	seedNativeCodexSessionFixture(t, homeDir, projectDir)
 
 	h := newTestHandler()
@@ -13094,6 +13114,7 @@ func TestHandlerSessionDeltaRefreshesNativeCodexMirror(t *testing.T) {
 		t.Fatalf("mkdir project dir: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	threadID := seedNativeCodexSessionFixture(t, homeDir, projectDir)
 
 	tempStore, err := data.NewFileStore(t.TempDir())

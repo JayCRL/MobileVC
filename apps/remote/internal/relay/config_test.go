@@ -64,6 +64,7 @@ func TestLoadConfigFromEnvReadsPayloadByteLimit(t *testing.T) {
 func TestLoadConfigFromEnvUsesDefaultStatePath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	withRelayEnv(t, map[string]string{})
 
 	cfg, err := LoadConfigFromEnv()

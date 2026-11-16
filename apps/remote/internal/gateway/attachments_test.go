@@ -14,6 +14,7 @@ import (
 func TestPersistImageAttachmentsWritesOwnerOnlyFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	attachments, err := persistImageAttachments(context.Background(), "session/test", []protocol.ImageAttachment{
 		{
@@ -54,6 +55,7 @@ func TestPersistImageAttachmentsWritesOwnerOnlyFile(t *testing.T) {
 
 func TestPersistImageAttachmentsRejectsUnsupportedMIME(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 
 	_, err := persistImageAttachments(context.Background(), "session-1", []protocol.ImageAttachment{
 		{

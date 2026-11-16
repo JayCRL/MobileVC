@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -770,7 +771,7 @@ func TestFileStoreSavePushTokenUsesOwnerOnlyPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat push tokens: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Fatalf("push token file mode: got %v, want 0600", got)
 	}
 }

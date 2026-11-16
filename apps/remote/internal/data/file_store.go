@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -1531,13 +1532,29 @@ func (s *FileStore) rewriteSessionLogEntriesHeaderLocked(sessionID string, entry
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp log entries sidecar: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := renameFileAtomic(tmpPath, path); err != nil {
 		return fmt.Errorf("replace session log entries sidecar: %w", err)
 	}
 	cleanup = false
 	return nil
 }
 
+// renameFileAtomic 用临时文件替换目标文件。
+// Windows 上刚被关闭的目标文件可能被索引器或杀毒软件短暂持有，
+// MoveFileEx 会返回 Access is denied；短暂重试即可恢复，其他平台直接返回。
+func renameFileAtomic(oldPath, newPath string) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if err = os.Rename(oldPath, newPath); err == nil {
+			return nil
+		}
+		if runtime.GOOS != "windows" {
+			return err
+		}
+		time.Sleep(time.Duration(10*(attempt+1)) * time.Millisecond)
+	}
+	return err
+}
 func writeJSONFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -1565,7 +1582,7 @@ func writeJSONFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp file: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := renameFileAtomic(tmpPath, path); err != nil {
 		return fmt.Errorf("replace file: %w", err)
 	}
 	cleanup = false
@@ -2333,40 +2350,52 @@ func (projection projectionLightweightJSON) toProjectionSnapshot() ProjectionSna
 	}
 }
 
+// sessionFileBase 返回会话 ID 在磁盘上的文件名主干。
+//
+// 会话 ID 形如 "codex-thread:<uuid>" 或 "claude-session:<uuid>"，其中的 ':' 是 Windows
+// 文件名非法字符（写入会得到 "The parameter is incorrect"）。Windows 上把 ':' 转义为
+// "%3A"；macOS / Linux 保持原样，避免改动已有数据目录的文件名。
+func sessionFileBase(sessionID string) string {
+	if runtime.GOOS != "windows" {
+		return sessionID
+	}
+	return strings.ReplaceAll(sessionID, ":", "%3A")
+}
+
 func (s *FileStore) sessionPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".json")
+	return filepath.Join(s.baseDir, sessionFileBase(sessionID)+".json")
 }
 
 func (s *FileStore) sessionLogEntriesPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".log_entries.json")
+	return filepath.Join(s.baseDir, sessionFileBase(sessionID)+".log_entries.json")
 }
 
 func (s *FileStore) sessionLogEntriesIndexPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".log_entries.idx.json")
+	return filepath.Join(s.baseDir, sessionFileBase(sessionID)+".log_entries.idx.json")
 }
 
 func (s *FileStore) sessionRuntimeMetaPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".runtime_meta.json")
+	return filepath.Join(s.baseDir, sessionFileBase(sessionID)+".runtime_meta.json")
 }
 
 func (s *FileStore) sessionContextPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".context.json")
+	return filepath.Join(s.baseDir, sessionFileBase(sessionID)+".context.json")
 }
 
 func (s *FileStore) sessionPermissionPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".permission.json")
+	return filepath.Join(s.baseDir, sessionFileBase(sessionID)+".permission.json")
 }
 
 func (s *FileStore) sessionDiffsPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".diffs.json")
+	return filepath.Join(s.baseDir, sessionFileBase(sessionID)+".diffs.json")
 }
 
 func (s *FileStore) sessionTerminalPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".terminal.json")
+	return filepath.Join(s.baseDir, sessionFileBase(sessionID)+".terminal.json")
 }
 
 func (s *FileStore) sessionTerminalExecutionsPath(sessionID string) string {
-	return filepath.Join(s.baseDir, sessionID+".terminal_executions.json")
+	return filepath.Join(s.baseDir, sessionFileBase(sessionID)+".terminal_executions.json")
 }
 
 func (s *FileStore) BaseDir() string {

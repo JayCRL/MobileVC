@@ -245,6 +245,7 @@ func setupCodexThreadsStore(t *testing.T) (string, *sql.DB) {
 	t.Helper()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	codexDir := filepath.Join(homeDir, ".codex")
 	if err := os.MkdirAll(filepath.Join(codexDir, "sessions"), 0o755); err != nil {
 		t.Fatalf("mkdir codex sessions: %v", err)
@@ -277,6 +278,7 @@ func setupCodexThreadsStoreWithoutThreadSource(t *testing.T) (string, *sql.DB) {
 	t.Helper()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	codexDir := filepath.Join(homeDir, ".codex")
 	if err := os.MkdirAll(filepath.Join(codexDir, "sessions"), 0o755); err != nil {
 		t.Fatalf("mkdir codex sessions: %v", err)

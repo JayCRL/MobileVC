@@ -50,6 +50,7 @@ func TestEncodeCWDToProjectDir(t *testing.T) {
 func TestClaudeProjectsDir_HonorsHome(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	got, err := ClaudeProjectsDir()
 	if err != nil {
 		t.Fatal(err)
@@ -329,6 +330,7 @@ func TestReadFirstSessionID(t *testing.T) {
 func TestWriteSessionToJSONL_AndReadBack(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cwd := "/Users/test/Project"
 	uuid := "uuid-x"
 
@@ -363,6 +365,7 @@ func TestWriteSessionToJSONL_AndReadBack(t *testing.T) {
 func TestWriteSessionToJSONL_AppendsAndChainsParent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cwd := "/Users/test/Project"
 	uuid := "uuid-y"
 
@@ -420,6 +423,7 @@ func TestWriteSessionToJSONL_NoOpInputs(t *testing.T) {
 func TestListNativeSessionsAndFind(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cwd := home // 用 tmp dir 作 cwd, 这样 normalizePath 不会走偏到非测试目录
 	uuid := "uuid-list"
 	if err := WriteSessionToJSONL(cwd, uuid, []JSONLEvent{
@@ -480,6 +484,7 @@ func TestListNativeSessionsAndFind(t *testing.T) {
 func TestListNativeSessions_EmptyCWDListsAllProjects(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	projectA := filepath.Join(home, "workspace", "A")
 	projectB := filepath.Join(home, "workspace", "B")
 	if err := WriteSessionToJSONL(projectA, "uuid-a", []JSONLEvent{{Type: "user", Text: "A"}}); err != nil {
@@ -550,6 +555,7 @@ func TestMirrorRecord_DefaultTitle(t *testing.T) {
 
 func TestMergeJSONLToSession_Empty(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	got, count, err := MergeJSONLToSession("", "u", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -561,6 +567,7 @@ func TestMergeJSONLToSession_Empty(t *testing.T) {
 
 func TestMergeJSONLToSession_FileMissing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	got, count, err := MergeJSONLToSession("/some/cwd", "missing-uuid", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -573,6 +580,7 @@ func TestMergeJSONLToSession_FileMissing(t *testing.T) {
 func TestMergeJSONLToSession_MergesNewEntries(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cwd := "/Users/test"
 	uuid := "uuid-merge"
 
@@ -601,6 +609,7 @@ func TestMergeJSONLToSession_MergesNewEntries(t *testing.T) {
 func TestMergeJSONLToSession_NothingToMergeReturnsNil(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cwd := "/Users/test"
 	uuid := "uuid-allknown"
 
