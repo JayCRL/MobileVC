@@ -1,0 +1,30 @@
+name: docs
+
+# 文档漂移检查：文档里出现的仓库路径必须真实存在。
+# 起因：CLAUDE.md 曾指向 internal/runner、internal/ws、internal/runtime，
+# 三个包早已删除，但没人发现。
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - 'scripts/check-doc-paths.mjs'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - 'scripts/check-doc-paths.mjs'
+      - '.github/workflows/docs.yml'
+
+jobs:
+  doc-paths:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: check doc paths
+        run: node scripts/check-doc-paths.mjs

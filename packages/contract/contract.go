@@ -76,12 +76,14 @@ type Event struct {
 	Kind      string       `json:"kind,omitempty"`
 	Reason    string       `json:"reason,omitempty"`
 	Session   *SessionRef  `json:"session,omitempty"`
+	Messages  []any        `json:"messages,omitempty"`
 	Call      *ToolCall    `json:"call,omitempty"`
 	Output    string       `json:"output,omitempty"`
 	Request   *ApprovalRequest `json:"request,omitempty"`
 	CallID    string       `json:"callId,omitempty"`
 	Decision  ApprovalDecision `json:"decision,omitempty"`
 	Summary   string       `json:"summary,omitempty"`
+	Header    map[string]any `json:"header,omitempty"`
 }
 
 // Command 客户端 → 服务端的指令信封

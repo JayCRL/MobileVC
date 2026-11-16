@@ -1,17 +1,21 @@
 name: tests
 
-# DSH 插件那条线：审批匹配器的单测。只在本目录或包清单变化时触发。
+# DSH 插件那条线：契约漂移检查 + 审批匹配器单测。
 on:
   push:
     branches: [main]
     paths:
       - 'apps/dsh/**'
+      - 'packages/contract/**'
+      - 'scripts/check-contract.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/test.yml'
   pull_request:
     paths:
       - 'apps/dsh/**'
+      - 'packages/contract/**'
+      - 'scripts/check-contract.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/test.yml'
@@ -27,4 +31,6 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      - name: contract drift (TS ↔ Go)
+        run: node scripts/check-contract.mjs
       - run: npm test
