@@ -1,153 +1,188 @@
-# MobileVC
+<p align="center">
+  <img src="docs/images/logo.png" alt="MobileVC" width="180" />
+</p>
 
-**A MobileVC-style mobile / PWA surface for DeepSeek Harness.**
-
-[中文](README.md) | English
-
-**Turn the AI coding session running on your machine into another entry point on your phone.**
-
-This repository hosts two **parallel** product lines that share one promise and differ in how they connect:
-
-| | **MobileVC for DSH** | **MobileVC Remote** |
-|---|---|---|
-| Agent | DeepSeek Harness | Claude Code / Codex (any CLI) |
-| Transport | DSH host plugin, in-process | Self-hosted Go backend + PTY, LAN / relay |
-| Client | PWA / browser | Flutter / browser |
-| Code | [`apps/dsh/`](apps/dsh) | [`apps/remote/`](apps/remote) |
-
-> The repository root is the **DSH plugin** package. Claude Code / Codex users: see [apps/remote/README.md](apps/remote/README.md).
-
-Both lines share a contract, not code: `packages/contract` defines the event names, approval shape and diff structure.
+<h1 align="center">MobileVC</h1>
 
 <p align="center">
-  <a href="docs/media/mobilevc-demo.mp4">
-    <img src="docs/media/mobilevc-demo.gif" width="320" alt="MobileVC for DSH — 30s no-voice demo">
-  </a>
+  <strong>Turn the AI coding session on your computer into another entry point on your phone.</strong>
 </p>
-<p align="center"><sub>▶ 30-second no-voice intro · <a href="docs/media/mobilevc-demo.mp4">MP4</a></sub></p>
-
-MobileVC gives DSH a phone-first interface. Connect it to your running DSH and use the same sessions: read history, send prompts, interrupt a run, approve tools, attach images/files, browse the workspace and manage plugins.
-
-It is not a second Agent and not another relay or session store. Every read and write goes through DSH's `sessionController`: **one session, one runtime**.
-
-- Version: `0.1.0`
-- Tested with: DSH `0.2.0-rc.2`, Node 22+
-- Shape: DSH Host plugin + static PWA UI
-- Website: https://mobilevc.top/
-- Screenshots: `docs/images/`
-- Demo: `docs/media/mobilevc-demo.mp4`
-- Promo: `docs/media/mobilevc-promo.mp4`
-
-## Promo
 
 <p align="center">
-  <a href="docs/media/mobilevc-promo.mp4">
-    <img src="docs/media/mobilevc-promo.gif" width="760" alt="MobileVC promo">
-  </a>
+  <em>Two parallel product lines: Claude Code / Codex users take Remote, DeepSeek Harness users take DSH.</em>
 </p>
-<p align="center"><sub>32s Chinese text-only promo · no voiceover / subtitles · instrumental only</sub></p>
 
-## Features
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.25-blue" />
+  <img src="https://img.shields.io/badge/Flutter-3.41-blue" />
+  <img src="https://img.shields.io/badge/Node-%E2%89%A522-339933" />
+  <img src="https://img.shields.io/badge/License-MIT-green" />
+  <img src="https://img.shields.io/npm/v/%40justprove%2Fmobilevc" />
+</p>
 
-- **Real sessions** — DSH session list, history and tool calls
-- **Live stream** — `sessionController.follow()` with `assistantStream`; token-level reasoning and text
-- **Reasoning cards** — “thinking” while running, then a collapsible “deep thinking · N chars” card
-- **Tool cards** — collapsed by default; name, args and status; tap for full output
-- **Image previews** — `read_image` reads the original from the DSH attachment store; thumbnail + full screen
-- **Attachments** — images as image parts; files via `fileUploads` receipts
-- **Direct approvals** — mobile presence takes priority; survives SSE drops/backgrounding; a stale click becomes a no-op
-- **Trace** — user → thinking → tool → reply → compaction timeline; simple mode groups thinking/tool chains and folds raw English/tool args, with a full-mode toggle
-- **Files** — real workspace, breadcrumbs and subdirectory browsing
-- **Plugin manager** — real `pluginManager` list and toggles
-- **Account balance** — live balance chip and automatic official DeepSeek top-up when credit runs out
-- **Background jobs** — browse DSH jobs, read output, stop; long commands no longer block a foreground wait
-- **Web Push** — completion / failure / approval notifications; iOS 16.4+ and Home Screen required
-- **Interjections** — show queued steering, edit/remove, or steer immediately
-- **PWA** — home-screen install, standalone, safe-area, portrait lock, no pinch/double-tap zoom
-- **No manual refresh** — SSE auto-reconnect plus a durable polling fallback for new replies
-- **Visible failures** — quota/model failures become error cards instead of silence
+<p align="center">
+  <strong>Website:</strong> <a href="https://www.mobilevc.top">https://www.mobilevc.top</a>
+  &nbsp;·&nbsp;
+  <strong>Community:</strong> <a href="https://linux.do">LINUX DO</a>
+  &nbsp;·&nbsp;
+  <a href="README.md">中文</a> | English
+</p>
 
-## Screenshots
+---
 
-| Chat | Trace | Plugins |
+## 📖 What this is
+
+MobileVC is not remote desktop, and not a terminal mirror.
+
+It brings the **AI coding assistant session running on your own machine** to your phone: when the agent is waiting for permission, waiting for confirmation, or running a long task, you do not have to walk back to the computer — you continue from the phone.
+
+- Catch permission requests so the agent does not sit there waiting
+- Drive Plan Mode and review multi-file diffs
+- Resume sessions that are still running on the computer
+- Browse files, logs and runtime status
+- Manage Skills / Memory / Context
+
+It does **not host, simulate or duplicate** your session — the agent runtime always runs on your machine, and your data never leaves it.
+
+---
+
+## 🧭 Two lines, pick one
+
+| | **MobileVC Remote** | **MobileVC for DSH** |
 |---|---|---|
-| <img src="docs/images/chat.png" width="240"> | <img src="docs/images/trace.png" width="240"> | <img src="docs/images/plugins.png" width="240"> |
+| Agent | Claude Code / Codex (any CLI) | DeepSeek Harness |
+| Integration | Self-hosted Go backend + PTY | DSH host plugin, in-process |
+| Transport | WebSocket + E2EE relay | HTTPS + SSE |
+| State | Own session store | Reuses `ctx.sessionController` |
+| Client | Flutter (iOS / Android) + browser | PWA / browser |
+| Distribution | `npm i -g @justprove/mobilevc` | `dsh plugin add` |
+| Code | [`apps/remote/`](apps/remote) | [`apps/dsh/`](apps/dsh) |
 
-More: `docs/images/sessions.png`, `docs/images/files.png`, `docs/images/image-preview.png`.
+The two lines share a **contract, not code**: `packages/contract` defines the event names, approval shape and diff structure; transport and storage are implemented separately.
 
-## Install
+> The repository root is the npm package for **DSH**. Claude Code / Codex users install `@justprove/mobilevc`.
 
-You need a machine already running DSH Web.
+---
 
-### As a DSH bundle (recommended)
+## 🚀 Quick start
+
+### A. DeepSeek Harness
 
 ```bash
 dsh plugin --profile web add "github:JayCRL/MobileVC"
 systemctl restart dsh-web
 ```
 
-Or from a local clone:
-
-```bash
-git clone https://github.com/JayCRL/MobileVC.git mobilevc
-dsh plugin --profile web add ./mobilevc
-systemctl restart dsh-web
-```
-
-Open:
-
-```text
-http://127.0.0.1:8898/mobilevc/
-```
-
-Health check:
+Open `http://127.0.0.1:8898/mobilevc/` and check health:
 
 ```bash
 curl http://127.0.0.1:8898/mobilevc/api/health
 # {"ok":true,"plugin":"mobilevc","interactive":true}
 ```
 
-### Self-host edge (optional)
+`/mobilevc/` has no login page of its own — it **must sit behind an authenticated HTTPS reverse proxy**. Full deployment (nginx / Caddy / Cloudflare Tunnel / PWA / upgrade and uninstall) is in [INSTALL.md](INSTALL.md).
 
-`edge/` packages Caddy + an optional cloudflared tunnel, so users do not have to write nginx or an auth proxy:
+### B. Claude Code / Codex
 
 ```bash
-cd edge
-cp .env.example .env
-./hash-password.sh
-docker compose --profile tunnel up -d
+npm install -g @justprove/mobilevc
+mobilevc start
 ```
 
-See [edge/README.md](./edge/README.md). It packages the edge only; DSH and its runtime stay on the user's machine.
+First run walks you through configuration and prints the local address, the LAN address and a QR code.
 
-Deployment, nginx, PWA, upgrade/uninstall and troubleshooting: [INSTALL.en.md](./INSTALL.en.md) · [中文部署说明](./INSTALL.md).
+1. Visit [the website](https://www.mobilevc.top) on your phone — TestFlight for iOS, APK for Android
+2. Connect by scanning the QR code, or configure manually
+3. Type `claude` or `codex` in the input box
 
-> `/mobilevc/` has no login screen of its own. Put it behind an authenticating HTTPS reverse proxy.
+Not on the same Wi-Fi? Relay mode:
 
-## Usage
+```bash
+mobilevc public --relay wss://relay.mobilevc.top:9443
+```
 
-- **+** — attach an image or file
-- **Enter** send, **Shift+Enter** newline
-- While running, the red stop button right of Send interrupts the current turn
-- Send while running: the message enters the interjection queue; the sheet opens for edit/remove/steer-now
-- Landscape: a portrait-only gate is shown instead of the desktop horizontal layout
-- Tap a tool card to expand its output
-- Tap a `read_image` thumbnail for full screen
-- **Trace** — execution timeline
-- **Plugins** — DSH plugin management
-- **Memory** — read/write real `AGENTS.md`
-- Approval card — Reject / Allow once
-- **Settings → Notifications → Enable** to opt into Web Push; **Test** sends a test notification
+The relay only forwards encrypted packets — it never sees plaintext, and keys are handed over out of band via the QR code.
 
-## Notifications (Web Push)
+---
 
-- Triggers: task complete, task failed, approval needed, background job finished
-- No public IP needed: the DSH host makes outbound HTTPS to Apple/Google push services
-- iPhone: iOS 16.4+, must be added to the Home Screen and launched from its icon; Safari tabs are unsupported
-- Notification payload is generic; tap opens MobileVC
-- No duplicate push while the page is in the foreground; after leaving, Web Push takes over
+## ✨ Capabilities
 
-## Architecture
+### MobileVC Remote (Claude Code / Codex)
+
+- **Resume sessions from the computer**: continue Claude / Codex history on the phone
+- **Permissions and Plan Mode**: approval requests pop up, one tap to continue
+- **Multi-file diff review**: grouped, accept or roll back
+- **Voice pre-briefing**: with your own Voice / TTS API, describe the task by voice first, then hand it to the local agent
+- **Files / logs / runtime status**: no SSH, no terminal on a small screen
+- **Skill / Memory / Context**: managed from mobile
+- **Push notifications**: permission waits, completion, failures
+- **LAN + relay**: direct on the same Wi-Fi, encrypted relay across networks
+- **Android emulator debugging**: ADB + WebRTC bridge
+
+### MobileVC for DSH
+
+- **Real sessions**: reads DSH session list, history and tool calls
+- **Live stream**: `sessionController.follow()` + `assistantStream`, token-by-token reasoning and text
+- **Reasoning and tool cards**: live status while running, collapsible afterwards with full output
+- **Direct approval**: phone presence takes priority, survives a dropped stream or background tab, and goes stale once the other side handles it
+- **Execution trace**: user → reasoning → tools → reply timeline, concise or full
+- **Images and attachments**: `read_image` serves originals, files go through `fileUploads` receipts
+- **Plugin management and background jobs**: real `pluginManager` and DSH jobs
+- **Web Push**: completion / failure / approval notifications (iOS 16.4+ and add-to-home-screen required on iPhone)
+- **Steering mid-run**: queue view, edit, delete, interrupt now
+- **PWA**: install to home screen, standalone, safe-area, portrait lock
+- **Nothing lost**: SSE auto-reconnect plus durable polling as a fallback
+
+---
+
+## 📸 Screenshots
+
+| Chat | Trace | Plugins |
+|---|---|---|
+| <img src="docs/images/chat.png" width="240"> | <img src="docs/images/trace.png" width="240"> | <img src="docs/images/plugins.png" width="240"> |
+
+| Sessions | Files | Image preview |
+|---|---|---|
+| <img src="docs/images/sessions.png" width="240"> | <img src="docs/images/files.png" width="240"> | <img src="docs/images/image-preview.png" width="240"> |
+
+---
+
+## 🎬 Demo
+
+<p align="center">
+  <a href="docs/media/mobilevc-demo.mp4">
+    <img src="docs/media/mobilevc-demo.gif" width="320" alt="MobileVC 30-second demo">
+  </a>
+</p>
+<p align="center"><sub>▶ 30-second no-voice demo · <a href="docs/media/mobilevc-demo.mp4">MP4</a></sub></p>
+
+<p align="center">
+  <a href="docs/media/mobilevc-promo.mp4">
+    <img src="docs/media/mobilevc-promo.gif" width="640" alt="MobileVC promo">
+  </a>
+</p>
+<p align="center"><sub>▶ 32-second promo · <a href="docs/media/mobilevc-promo.mp4">MP4</a> · <a href="docs/media/mobilevc-bilibili.mp4">102-second Bilibili cut</a></sub></p>
+
+---
+
+## 🏗 How it works
+
+### Remote: self-hosted backend + encrypted relay
+
+```text
+Mobile browser / Flutter app
+        │  WebSocket
+        ▼
+   MobileVC Go server          ──►  PTY / Claude / Codex process
+        │
+        ├─ session store        (sessions, history, files, logs)
+        ├─ ADB + WebRTC bridge  (Android debugging)
+        └─ ChatTTS sidecar      (optional TTS)
+
+Across networks: app ⇄ encrypted relay ⇄ your machine (forward only, no plaintext)
+```
+
+### DSH: host plugin, in-process
 
 ```mermaid
 flowchart LR
@@ -160,56 +195,45 @@ flowchart LR
   F --> O[(DSH attachment store)]
 ```
 
-- `/mobilevc/api/follow` → `sessionController.follow({ assistantStream: true })`
-- `/mobilevc/api/prompt` → `sessionController.prompt()`; images as image parts, files first uploaded through `fileUploads.uploadStream()` for a receipt
-- `/mobilevc/api/approval` → mobile presence answerer; without an active follow/presence it delegates with `next()` to the desktop
-- `/mobilevc/api/queue` → `resolveAgent().inbox` lists interjections; `updateQueue()` edits/removes/steers them
-- `/mobilevc/api/plugins` → `pluginManager`
-- UI and API are same-origin; no CORS
+- No second agent, no second relay or session
+- Every read and write goes through DSH's `sessionController`: one session, one runtime
 
-## Remote access / no public IP
+---
 
-A browser cannot dial into a NATed DSH by itself. Two options:
+## 📁 Repository layout
 
-1. **Personal / friends**: Cloudflare Tunnel or Tailscale exposes `127.0.0.1:8898` as a reachable URL. No code changes.
-2. **Product**: a central Relay + a `mobilevc-connect` plugin. DSH dials out; the Relay is a transparent tunnel and stores no session.
+```text
+MobileVC/
+├── apps/
+│   ├── dsh/           DSH host plugin + PWA UI (plugin / preview / site / edge / tools / tests)
+│   └── remote/        Go backend + Flutter client + relay (cmd / internal / mobile_vc / tests)
+├── packages/
+│   └── contract/      Shared mobile contract (events / approvals / diffs)
+├── docs/              Screenshots, demo videos, deployment docs
+├── INSTALL.md         Deployment and troubleshooting
+└── .github/           CI (DSH tests + go vet / go test for Remote)
+```
 
-This repository provides the Host plugin and UI; it does not bundle a Relay.
+---
 
-## Security
+## 🔒 Security and boundaries
 
-`/mobilevc/` is registered by a Host plugin and does not go through DSH's `/api` browser-trust fence. It can:
+- **No hosting**: the agent runtime lives on your machine, MobileVC is only a surface
+- **Relay sees no plaintext**: keys are exchanged out of band, the server is a transparent forwarder
+- **DSH line**: `/mobilevc/` is registered by the host plugin and bypasses DSH's `/api` browser-trust fence; it can read sessions, write `AGENTS.md` and toggle plugins, so **public exposure requires auth + HTTPS**
+- **No multi-tenancy**: every logged-in user shares the same local identity
 
-- read every session, log and workspace file
-- send prompts, stop runs, approve tool calls
-- write `AGENTS.md`
-- upload images/files
-- enable/disable DSH plugins
+Explicitly **out of scope**: rewriting the agent loop, stuffing another relay/E2EE layer into the plugin, or multi-tenant isolation inside a single process.
 
-All authenticated users share one DSH identity; there is no multi-tenant isolation. Use authentication and HTTPS on the public edge; never expose port 8898 directly.
+---
 
-## Direction
+## 🙏 Community and credits
 
-- Cut a proper release
-- Finer trace: step grouping and tool durations
-- Attachment UX: paste, camera, drag/drop
-- Interjection queue UX: keyboard, scrolling and multi-message handling
-- Optional native shell over the same PWA/HTTP surface; no second runtime
+- Discussion: [LINUX DO](https://linux.do)
+- Early versions were shaped together with [@yibaiba](https://github.com/yibaiba), [@Lichenhao_T14](https://github.com/Lichenhao_T14), [@rui](https://github.com/rui) and other contributors
 
-Not planned: rewriting the Agent loop, adding another relay/E2EE layer inside the plugin, or multi-tenant isolation inside one DSH process.
+---
 
-## Relation to the original MobileVC
+## 📄 License
 
-MobileVC Remote (Flutter client + Go backend + relay + E2EE) lives in [`apps/remote/`](apps/remote) as a parallel product line. It is not deprecated and not the default client for DSH users.
-
-The move to DSH is deliberate: DSH already provides the Agent runtime, durable session log, follow stream, approvals and plugin system. Keeping the Flutter client and relay would mean maintaining a second session/queue/runtime outside DSH — exactly where the old sync and queue problems came from.
-
-Today there is one rule:
-
-> **DSH owns the runtime. MobileVC owns the surface.**
-
-The old app remains for historical reference; new deployments should use the DSH install above.
-
-## License
-
-MIT — see [LICENSE](./LICENSE).
+MIT — see [LICENSE](LICENSE).
