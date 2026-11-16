@@ -1,0 +1,34 @@
+name: remote (apps/remote)
+
+# apps/remote 是 Go + Flutter 那条并行产品线。这里只跑它的 Go 静态检查与测试；
+# 老的 836 个测试以前从没在 CI 里跑过，这个 workflow 就是补那个缺口。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/remote/**'
+      - '.github/workflows/remote.yml'
+  pull_request:
+    paths:
+      - 'apps/remote/**'
+      - '.github/workflows/remote.yml'
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/remote
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/remote/go.mod
+          cache-dependency-path: apps/remote/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1
